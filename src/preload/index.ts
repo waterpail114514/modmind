@@ -81,10 +81,10 @@ const api: ModMindApi = {
   },
   externalAgents: {
     detect: () => ipcRenderer.invoke('external-agents:detect'),
-    history: (kind: 'codex' | 'claude') => ipcRenderer.invoke('external-agents:history', kind),
-    install: (kind: 'codex' | 'claude') => ipcRenderer.invoke('external-agents:install', kind),
-    openDocs: (kind: 'codex' | 'claude') => ipcRenderer.invoke('external-agents:openDocs', kind),
-    launch: (kind: 'codex' | 'claude') => ipcRenderer.invoke('external-agents:launch', kind)
+    history: (kind: 'codex' | 'claude' | 'opencode') => ipcRenderer.invoke('external-agents:history', kind),
+    install: (kind: 'codex' | 'claude' | 'opencode') => ipcRenderer.invoke('external-agents:install', kind),
+    openDocs: (kind: 'codex' | 'claude' | 'opencode') => ipcRenderer.invoke('external-agents:openDocs', kind),
+    launch: (kind: 'codex' | 'claude' | 'opencode') => ipcRenderer.invoke('external-agents:launch', kind)
   },
   blockbench: {
     show: (bounds: BlockbenchBounds) => ipcRenderer.invoke('blockbench:show', bounds),

@@ -21,7 +21,7 @@ import { CURRENT_PROJECT_VERSION, MIGRATABLE_PROJECT_VERSION } from './projectVe
 import { inspectProjectPreflight } from './projectPreflight'
 import { recordZipExpansion } from './archiveImportPolicy'
 import { sameProjectPath } from './projectPath'
-import { detectExternalAgents, externalAgentDocsUrl, installExternalAgent, launchExternalAgent, readExternalAgentHistory, runExternalAgent, type ExternalAgentKind } from './externalAgents'
+import { detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, installExternalAgent, launchExternalAgent, readExternalAgentHistory, runExternalAgent, type ExternalAgentKind } from './externalAgents'
 import {
   extractJson,
   extractSingleJsonObject,
@@ -276,7 +276,7 @@ function normalizeProjectName(value: unknown): string {
   const name = value.trim()
   if (!name) throw new Error('项目名称不能为空')
   if (name.length > 100) throw new Error('项目名称不能超过 100 个字符')
-  if (/[\\x00-\\x1f\\x7f]/.test(name)) throw new Error('项目名称不能包含控制字符或换行')
+  if (/[\u0000-\u001f\u007f]/.test(name)) throw new Error('项目名称不能包含控制字符或换行')
   return name
 }
 
@@ -319,8 +319,8 @@ async function copyBundledGradleWrapper(projectRoot: string): Promise<void> {
     ? path.join(process.resourcesPath, 'gradle-wrapper')
     : path.join(app.getAppPath(), 'vendor', 'gradle-wrapper')
   const wrapperFiles = [
-    { source: 'gradlew', target: 'gradlew', sha256: 'b2fe376b143a459ba5d0bd290dc89beed5399fc6d159cd1214bd642ea94bcf07' },
-    { source: 'gradlew.bat', target: 'gradlew.bat', sha256: '9386e790d58b9368ca8e034536a5baa688643d51cb37bfa462503d36fd0291a6' },
+    { source: 'gradlew', target: 'gradlew', sha256: '3bb16d4da8c4daca0999eea1a038173bc0abfb5e40d977214b755860b016dbc3' },
+    { source: 'gradlew.bat', target: 'gradlew.bat', sha256: 'e0fef3aa12f9d0592e9a8e5d8e28147020b7fc8ec83a2b0c2ea5abc8eeac5bfc' },
     { source: 'gradle-wrapper.jar', target: 'gradle/wrapper/gradle-wrapper.jar', sha256: '423cb469ccc0ecc31f0e4e1c309976198ccb734cdcbb7029d4bda0f18f57e8d9' }
   ]
   for (const entry of wrapperFiles) {
@@ -1564,7 +1564,7 @@ interface ActiveAiTask {
   changedFiles: string[]
   prompt: string
   sessionId?: string
-  backend?: 'internal' | 'codex' | 'claude'
+  backend?: 'internal' | 'codex' | 'claude' | 'opencode'
   nextStep: number
   messages: AiChatMessage[]
   state: {
@@ -2676,21 +2676,21 @@ async function runExternalCodingAgent(
   event: Electron.IpcMainInvokeEvent,
   prompt: string,
   sessionId: string | undefined,
-  backend: 'codex' | 'claude',
+  backend: 'codex' | 'claude' | 'opencode',
   recovery?: ActiveAiTask
 ): Promise<CodingResult> {
   const project = requireProject()
   const settings = await readSettings()
   const signal = aiAbortControllers.get(event.sender.id)?.signal
-  const configuredExecutable = backend === 'codex' ? settings.codexExecutable : settings.claudeExecutable
+  const configuredExecutable = backend === 'codex' ? settings.codexExecutable : backend === 'claude' ? settings.claudeExecutable : settings.opencodeExecutable
   if (!configuredExecutable) {
     const detected = (await detectExternalAgents()).find((item) => item.kind === backend)
-    if (!detected?.installed) throw new Error(`${backend === 'codex' ? 'Codex' : 'Claude Code'} CLI 未安装或不在 PATH 中`)
+    if (!detected?.installed) throw new Error(`${backend === 'codex' ? 'Codex' : backend === 'claude' ? 'Claude Code' : 'opencode'} CLI 未安装或不在 PATH 中`)
   }
   const taskId = recovery?.taskId ?? randomUUID()
   const snapshot = recovery?.snapshotId
     ? await readSnapshotInfo(project, recovery.snapshotId)
-    : await createProjectSnapshot(`${backend === 'codex' ? 'Codex' : 'Claude Code'}: ${prompt.slice(0, 36)}`, { taskId })
+    : await createProjectSnapshot(`${externalAgentLabel(backend)}: ${prompt.slice(0, 36)}`, { taskId })
   if (!snapshot) throw new Error('无法创建外部代理任务快照')
   const before = recovery
     ? await managedCodingHashesAt(path.join(project.path, projectDataDirectory(project), 'snapshots', snapshot.id, 'files'))
@@ -2717,7 +2717,7 @@ async function runExternalCodingAgent(
     state: {
       blockbenchResults: [],
       lastBuildSucceeded: false,
-      summary: recovery?.state.summary ?? `${backend === 'codex' ? 'Codex' : 'Claude Code'} 托管任务`,
+      summary: recovery?.state.summary ?? `${externalAgentLabel(backend)} 托管任务`,
       tasks: recovery?.state.tasks ?? [],
       tests: [],
       warnings: [],
@@ -2753,15 +2753,15 @@ Failure detail:
 ${detail.slice(0, 12_000)}
 
 Inspect the current disk state and the build log at ${path.join(project.path, project.toolDataDirectory ?? '.modmind', 'builds', 'minecraft-test-build.log').replaceAll('\\', '/')}. Do not claim success from Gradle's exit code alone: verify that build/libs contains a valid non-empty ${project.loader} Mod JAR with ${descriptorPath(project.loader, project.minecraftVersion).split('/').at(-1)} and class files. Add one new repair Todo item for this failure, complete it only after the fix is written, rerun the appropriate ModMind build/test tool, and finish only after the verification result is successful. Preserve all already-completed Todo items and do not use native apply_patch, junctions, subst drives, or absolute Windows paths.`
-    sendAiOutput(event, 'error', `后置${stage}失败，已将错误交回 ${backend === 'codex' ? 'Codex' : 'Claude Code'} 修复（第 ${attempts + 1}/${maxAttempts} 回合）`)
-    sendAiProgress(event, pipelineEvent('writing', `${backend === 'codex' ? 'Codex' : 'Claude Code'} 正在修复后置验收失败`, detail.slice(0, 500), 'running'))
+    sendAiOutput(event, 'error', `后置${stage}失败，已将错误交回 ${externalAgentLabel(backend)} 修复（第 ${attempts + 1}/${maxAttempts} 回合）`)
+    sendAiProgress(event, pipelineEvent('writing', `${externalAgentLabel(backend)} 正在修复后置验收失败`, detail.slice(0, 500), 'running'))
     return runExternalCodingAgent(event, repairPrompt, activeTask.sessionId ?? sessionId, backend, activeTask)
   }
-  sendAiOutput(event, 'start', `${backend === 'codex' ? 'Codex' : 'Claude Code'} 已接管 Coding AI 任务`)
+  sendAiOutput(event, 'start', `${externalAgentLabel(backend)} 已接管 Coding AI 任务`)
   if (activeTask.state.todo?.length) {
     sendAiProgress(event, pipelineEvent('planning', '恢复外部代理 Todo', `${activeTask.state.todo.length} 个任务已恢复`, 'running', activeTask.state.todo))
   }
-  sendAiProgress(event, pipelineEvent('planning', `${backend === 'codex' ? 'Codex' : 'Claude Code'} 正在接管任务`, '已创建快照并启动 ModMind MCP 桥', 'running'))
+  sendAiProgress(event, pipelineEvent('planning', `${externalAgentLabel(backend)} 正在接管任务`, '已创建快照并启动 ModMind MCP 桥', 'running'))
   try {
     const result = await runExternalAgent({
       kind: backend,
@@ -2968,7 +2968,7 @@ WINDOWS EDITING: For engineering source changes, call modmind_apply_edits with e
       await clearActiveAiTask(project, taskId)
       await fs.rm(path.join(project.path, projectDataDirectory(project), 'snapshots', snapshot.id), { recursive: true, force: true }).catch(() => undefined)
       sendAiOutput(event, 'answer', result.summary.slice(0, 12_000))
-      sendAiProgress(event, pipelineEvent('complete', `${backend === 'codex' ? 'Codex' : 'Claude Code'} 咨询完成`, '已直接回答，没有修改或构建项目', 'success'))
+      sendAiProgress(event, pipelineEvent('complete', `${externalAgentLabel(backend)} 咨询完成`, '已直接回答，没有修改或构建项目', 'success'))
       return {
         summary: result.summary.slice(0, 4_000),
         tasks: [],
@@ -3036,7 +3036,7 @@ WINDOWS EDITING: For engineering source changes, call modmind_apply_edits with e
     await fs.writeFile(resolveProjectPath('docs/last-ai-change.json'), JSON.stringify(report, null, 2), 'utf8')
     await fs.writeFile(resolveProjectPath('docs/last-ai-response.txt'), result.transcript.slice(-120_000), 'utf8')
     await clearActiveAiTask(project, taskId)
-    sendAiProgress(event, pipelineEvent('complete', `${backend === 'codex' ? 'Codex' : 'Claude Code'} 任务完成`, `修改 ${changedFiles.length} 个文件，构建和验收通过`, 'success'))
+    sendAiProgress(event, pipelineEvent('complete', `${externalAgentLabel(backend)} 任务完成`, `修改 ${changedFiles.length} 个文件，构建和验收通过`, 'success'))
     return {
       summary,
       tasks: activeTask.state.tasks,
@@ -3764,7 +3764,7 @@ async function createAiCode(
 ): Promise<CodingResult> {
   const settings = await readSettings()
   const backend = backendOverride ?? settings.codingBackend
-  if (backend === 'codex' || backend === 'claude') {
+  if (backend === 'codex' || backend === 'claude' || backend === 'opencode') {
     return runExternalCodingAgent(event, prompt, sessionId, backend)
   }
   return runCodingAgent(event, prompt, sessionId)
@@ -4362,7 +4362,7 @@ function registerIpc(): void {
   ipcMain.handle('settings:saveAi', async (_event, settings: AiSettings) => {
     const normalized: AiSettings = {
       ...settings,
-      codingBackend: settings.codingBackend === 'codex' || settings.codingBackend === 'claude' ? settings.codingBackend : 'internal',
+      codingBackend: settings.codingBackend === 'codex' || settings.codingBackend === 'claude' || settings.codingBackend === 'opencode' ? settings.codingBackend : 'internal',
       parallelism: Number.isInteger(settings.parallelism) ? Math.min(Math.max(settings.parallelism, 1), 8) : 2,
       agentMaxSteps: Number.isInteger(settings.agentMaxSteps) && settings.agentMaxSteps > 0
         ? Math.min(settings.agentMaxSteps, 1_000)
@@ -4398,22 +4398,22 @@ function registerIpc(): void {
   ipcMain.handle('settings:listModels', (_event, settings: AiSettings) => listAvailableModels(settings))
   ipcMain.handle('external-agents:detect', () => detectExternalAgents())
   ipcMain.handle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
-    if (kind !== 'codex' && kind !== 'claude') throw new Error('不支持的外部代理')
+    if (kind !== 'codex' && kind !== 'claude' && kind !== 'opencode') throw new Error('不支持的外部代理')
     return readExternalAgentHistory(requireProject(), kind)
   })
   ipcMain.handle('external-agents:install', (_event, kind: ExternalAgentKind) => {
-    if (kind !== 'codex' && kind !== 'claude') throw new Error('不支持的外部代理')
+    if (kind !== 'codex' && kind !== 'claude' && kind !== 'opencode') throw new Error('不支持的外部代理')
     return installExternalAgent(kind)
   })
   ipcMain.handle('external-agents:openDocs', (_event, kind: ExternalAgentKind) => {
-    if (kind !== 'codex' && kind !== 'claude') throw new Error('不支持的外部代理')
+    if (kind !== 'codex' && kind !== 'claude' && kind !== 'opencode') throw new Error('不支持的外部代理')
     return shell.openExternal(externalAgentDocsUrl(kind))
   })
   ipcMain.handle('external-agents:launch', async (_event, kind: ExternalAgentKind) => {
-    if (kind !== 'codex' && kind !== 'claude') throw new Error('不支持的外部代理')
+    if (kind !== 'codex' && kind !== 'claude' && kind !== 'opencode') throw new Error('不支持的外部代理')
     const project = requireProject()
     const settings = await readSettings()
-    await launchExternalAgent(kind, project.path, kind === 'codex' ? settings.codexExecutable : settings.claudeExecutable)
+    await launchExternalAgent(kind, project.path, kind === 'codex' ? settings.codexExecutable : kind === 'claude' ? settings.claudeExecutable : settings.opencodeExecutable)
   })
   ipcMain.handle('ai:inspire', (_event, message: string, history: InspirationChatMessage[]) =>
     createInspirationReply(message, Array.isArray(history) ? history : [])

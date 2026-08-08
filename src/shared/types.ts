@@ -132,9 +132,10 @@ export interface AiRecoveryInfo {
 
 export interface AiSettings {
   provider: 'openai-compatible' | 'openai' | 'local'
-  codingBackend: 'internal' | 'codex' | 'claude'
+  codingBackend: 'internal' | 'codex' | 'claude' | 'opencode'
   codexExecutable?: string
   claudeExecutable?: string
+  opencodeExecutable?: string
   baseUrl: string
   model: string
   apiKey: string
@@ -150,7 +151,7 @@ export interface AiSettings {
 }
 
 export interface ExternalAgentStatus {
-  kind: 'codex' | 'claude'
+  kind: 'codex' | 'claude' | 'opencode'
   label: string
   installed: boolean
   executable: string
@@ -250,10 +251,10 @@ export interface ModMindApi {
   }
   externalAgents: {
     detect: () => Promise<ExternalAgentStatus[]>
-    history: (kind: 'codex' | 'claude') => Promise<string>
-    install: (kind: 'codex' | 'claude') => Promise<ExternalAgentStatus>
-    openDocs: (kind: 'codex' | 'claude') => Promise<void>
-    launch: (kind: 'codex' | 'claude') => Promise<void>
+    history: (kind: 'codex' | 'claude' | 'opencode') => Promise<string>
+    install: (kind: 'codex' | 'claude' | 'opencode') => Promise<ExternalAgentStatus>
+    openDocs: (kind: 'codex' | 'claude' | 'opencode') => Promise<void>
+    launch: (kind: 'codex' | 'claude' | 'opencode') => Promise<void>
   }
   blockbench: {
     show: (bounds: BlockbenchBounds) => Promise<void>
