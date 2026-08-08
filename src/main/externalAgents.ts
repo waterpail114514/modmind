@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AiSettings, ProjectInfo } from '../shared/types'
 
-export type ExternalAgentKind = 'codex' | 'claude'
+export type ExternalAgentKind = 'codex' | 'claude' | 'opencode'
 
 export interface ExternalAgentStatus {
   kind: ExternalAgentKind
@@ -78,6 +78,8 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
   const item = parsed?.item as Record<string, unknown> | undefined
   const rawMessage = parsed?.message
   const message = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : undefined
+  const data = parsed?.data && typeof parsed.data === 'object' ? parsed.data as Record<string, unknown> : undefined
+  const part = data?.part && typeof data.part === 'object' ? data.part as Record<string, unknown> : undefined
   const content = Array.isArray(message?.content) ? message.content as Array<Record<string, unknown>> : []
   const contentText = content
     .filter((entry) => (entry.type === 'text' || entry.type === 'output_text') && typeof entry.text === 'string')
@@ -90,16 +92,18 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
       ? String((rawError as Record<string, unknown>).message)
       : ''
   const candidate = typeof item?.text === 'string' ? item.text
-    : typeof parsed?.result === 'string' ? parsed.result
-      : typeof parsed?.text === 'string' ? parsed.text
-        : typeof rawMessage === 'string' ? rawMessage
-          : typeof message?.content === 'string' ? message.content
-            : contentText || errorText || (!parsed ? line : '')
+    : typeof part?.text === 'string' ? part.text
+      : typeof parsed?.result === 'string' ? parsed.result
+        : typeof parsed?.text === 'string' ? parsed.text
+          : typeof rawMessage === 'string' ? rawMessage
+            : typeof message?.content === 'string' ? message.content
+              : contentText || errorText || (!parsed ? line : '')
   const normalized = candidate.trim()
   if (!normalized) return null
   const type = typeof parsed?.type === 'string' ? parsed.type.toLowerCase() : ''
   const agentMessage = item?.type === 'agent_message' || type === 'result' || type === 'assistant'
-  const structuredError = type === 'error' || type === 'turn.failed' || parsed?.is_error === true || Boolean(rawError)
+    || type === 'message.part' || type === 'message.completed' || type === 'session.idle'
+  const structuredError = type === 'error' || type === 'turn.failed' || type === 'session.error' || parsed?.is_error === true || Boolean(rawError)
   const errorPattern = /(?:^|\b)(?:error|fatal|exception|failed|forbidden|unauthorized|timed out|timeout)(?:\b|:)/i
   const warningPattern = /(?:^|\b)(?:warning|warn|deprecated|deprecation)(?:\b|:)/i
   const kind = agentMessage ? 'response'
@@ -111,12 +115,22 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
 
 const EXTERNAL_AGENT_DOCS: Record<ExternalAgentKind, string> = {
   codex: 'https://search.bilibili.com/all?keyword=Codex%20CLI%20%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B',
-  claude: 'https://search.bilibili.com/all?keyword=Claude%20Code%20%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B'
+  claude: 'https://search.bilibili.com/all?keyword=Claude%20Code%20%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B',
+  opencode: 'https://search.bilibili.com/all?keyword=opencode%20CLI%20%E5%AE%89%E8%A3%85%E6%95%99%E7%A8%8B'
 }
 
-const EXTERNAL_AGENT_PACKAGES: Record<ExternalAgentKind, {winget: string; npm: string}> = {
+const EXTERNAL_AGENT_PACKAGES: Record<ExternalAgentKind, {winget?: string; npm: string}> = {
   codex: {winget: 'OpenAI.Codex', npm: '@openai/codex@latest'},
-  claude: {winget: 'Anthropic.ClaudeCode', npm: '@anthropic-ai/claude-code@latest'}
+  claude: {winget: 'Anthropic.ClaudeCode', npm: '@anthropic-ai/claude-code@latest'},
+  opencode: {npm: 'opencode-ai@latest'}
+}
+
+export function externalAgentLabel(kind: ExternalAgentKind): string {
+  switch (kind) {
+    case 'codex': return 'Codex'
+    case 'claude': return 'Claude Code'
+    case 'opencode': return 'opencode'
+  }
 }
 
 const MCP_SERVER = String.raw`import fs from 'node:fs';
@@ -215,7 +229,7 @@ input.on('line', async (line) => {
 `
 
 function executableCandidates(kind: ExternalAgentKind): string[] {
-  const name = kind === 'codex' ? 'codex' : 'claude'
+  const name = kind
   const home = os.homedir()
   const roamingNpm = path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'npm')
   const wingetLinks = path.join(process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local'), 'Microsoft', 'WinGet', 'Links')
@@ -230,20 +244,21 @@ function executableCandidates(kind: ExternalAgentKind): string[] {
     : [name, path.join(home, '.local', 'bin', name), path.join(home, '.npm-global', 'bin', name)]
 }
 
-function spawnManagedCli(executable: string, args: string[], cwd: string): ChildProcessWithoutNullStreams {
+function spawnManagedCli(executable: string, args: string[], cwd: string, env?: Record<string, string>): ChildProcessWithoutNullStreams {
+  const spawnEnv = env ? {...process.env, ...env} : process.env
   if (process.platform === 'win32' && executable.toLowerCase().endsWith('.ps1')) {
     const commandShim = executable.slice(0, -4) + '.cmd'
-    if (existsSync(commandShim)) return spawnManagedCli(commandShim, args, cwd)
+    if (existsSync(commandShim)) return spawnManagedCli(commandShim, args, cwd, env)
     return spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', executable, ...args], {
-      cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+      cwd, env: spawnEnv, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
     })
   }
   if (process.platform === 'win32' && executable.toLowerCase().endsWith('.cmd')) {
     return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', executable, ...args], {
-      cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+      cwd, env: spawnEnv, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
     })
   }
-  return spawn(executable, args, {cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']})
+  return spawn(executable, args, {cwd, env: spawnEnv, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']})
 }
 
 function mcpRuntime(): {command: string; env?: Record<string, string>} {
@@ -296,6 +311,26 @@ function textFromHistoryValue(value: unknown): string {
 }
 
 async function locateSessionFile(kind: ExternalAgentKind, sessionId: string): Promise<string | undefined> {
+  if (kind === 'opencode') {
+    const root = path.join(os.homedir(), '.local', 'share', 'opencode', 'storage')
+    const pending: Array<{directory: string; depth: number}> = [{directory: root, depth: 0}]
+    let visited = 0
+    while (pending.length && visited < 2_000) {
+      const current = pending.shift()
+      if (!current) break
+      const entries = await fs.readdir(current.directory, {withFileTypes: true}).catch(() => [])
+      for (const entry of entries) {
+        visited += 1
+        const fullPath = path.join(current.directory, entry.name)
+        if (entry.isDirectory() && current.depth < 8) {
+          pending.push({directory: fullPath, depth: current.depth + 1})
+          continue
+        }
+        if (entry.isFile() && entry.name.endsWith('.json') && entry.name.includes(sessionId)) return fullPath
+      }
+    }
+    return undefined
+  }
   const root = path.join(os.homedir(), kind === 'codex' ? '.codex' : '.claude', kind === 'codex' ? 'sessions' : 'projects')
   const pending: Array<{directory: string; depth: number}> = [{directory: root, depth: 0}]
   let visited = 0
@@ -317,6 +352,7 @@ async function locateSessionFile(kind: ExternalAgentKind, sessionId: string): Pr
 }
 
 async function readExternalSessionHistory(kind: ExternalAgentKind, sessionId: string): Promise<string> {
+  if (kind === 'opencode') return ''
   const file = await locateSessionFile(kind, sessionId)
   if (!file) return ''
   const raw = await fs.readFile(file, 'utf8').catch(() => '')
@@ -351,13 +387,13 @@ async function readExternalSessionHistory(kind: ExternalAgentKind, sessionId: st
     }
   }
   if (!entries.length) return ''
-  const speaker = kind === 'codex' ? 'Codex' : 'Claude Code'
+  const speaker = externalAgentLabel(kind)
   return entries.map((entry) => `${entry.role === 'user' ? '用户' : speaker}：\n${entry.text}`).join('\n\n')
 }
 
 export async function detectExternalAgents(): Promise<ExternalAgentStatus[]> {
   const result: ExternalAgentStatus[] = []
-  for (const kind of ['codex', 'claude'] as const) {
+  for (const kind of ['codex', 'claude', 'opencode'] as const) {
     let found = ''
     let version: string | undefined
     for (const candidate of executableCandidates(kind)) {
@@ -366,7 +402,7 @@ export async function detectExternalAgents(): Promise<ExternalAgentStatus[]> {
     }
     result.push({
       kind,
-      label: kind === 'codex' ? 'Codex' : 'Claude Code',
+      label: externalAgentLabel(kind),
       installed: Boolean(version),
       executable: found,
       version,
@@ -414,7 +450,7 @@ export async function installExternalAgent(kind: ExternalAgentKind): Promise<Ext
   if (existing?.installed) return existing
   const packageInfo = EXTERNAL_AGENT_PACKAGES[kind]
   let wingetError = ''
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' && packageInfo.winget) {
     try {
       await runInstaller('winget.exe', [
         'install', '--id', packageInfo.winget, '--exact', '--silent', '--disable-interactivity',
@@ -440,10 +476,17 @@ export async function installExternalAgent(kind: ExternalAgentKind): Promise<Ext
 
 export async function launchExternalAgent(kind: ExternalAgentKind, projectPath: string, executable?: string): Promise<void> {
   const command = executable || (await detectExternalAgents()).find((item) => item.kind === kind)?.executable
-  if (!command) throw new Error(`${kind === 'codex' ? 'Codex' : 'Claude Code'} CLI 未安装或不在 PATH 中`)
+  if (!command) throw new Error(`${externalAgentLabel(kind)} CLI 未安装或不在 PATH 中`)
   const prompt = kind === 'codex'
     ? 'You are in the ModMind project workspace. Read .modmind/external-agents/agent-context.md first and use the ModMind MCP tools when available.'
     : 'Read .modmind/external-agents/agent-context.md first. Use the ModMind MCP tools for mappings, builds, tests, and Blockbench.'
+  if (kind === 'opencode') {
+    const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+    const script = `Set-Location -LiteralPath ${quote(projectPath)}; $env:OPENCODE_CONFIG = ${quote(path.join(projectPath, '.modmind', 'external-agents', 'opencode-config.json'))}; & ${quote(command)}`
+    const child = spawn(process.platform === 'win32' ? 'powershell.exe' : 'bash', process.platform === 'win32' ? ['-NoExit', '-Command', script] : ['-c', script], {cwd: projectPath, detached: true, stdio: 'ignore', windowsHide: false})
+    child.unref()
+    return
+  }
   if (process.platform === 'win32') {
     const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
     const argumentsText = kind === 'codex'
@@ -546,7 +589,7 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
   const {mcpConfigPath} = await bridge.start()
   await bridge.writeMcpConfig(mcpConfigPath)
   const executable = options.executable || (await detectExternalAgents()).find((item) => item.kind === options.kind)?.executable
-  if (!executable) { await bridge.stop(); throw new Error(`${options.kind === 'codex' ? 'Codex' : 'Claude Code'} CLI 未安装或不在 PATH 中`) }
+  if (!executable) { await bridge.stop(); throw new Error(`${externalAgentLabel(options.kind)} CLI 未安装或不在 PATH 中`) }
   const contextPath = path.join(options.project.path, options.project.toolDataDirectory ?? '.modmind', 'external-agents', 'agent-context.md')
   const prompt = `${options.prompt}\n\nAlways write user-facing responses in Simplified Chinese unless the user explicitly requests another language. Before inspecting files or using any other ModMind tool, call modmind_set_intent. Choose engineering only when the user explicitly requests a project change. Choose informational for greetings, questions, explanations, reviews, audits, and status checks without a requested change; then answer directly without Todo, edits, build, or test. For engineering work, read ${contextPath.replaceAll('\\', '/')} first, use ModMind for Todo tracking, mappings, build, test, and Blockbench, keep the Todo current, and do not build until every Todo is complete.`
   const runtime = mcpRuntime()
@@ -561,18 +604,43 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
     '-c', 'mcp_servers.modmind.default_tools_approval_mode="approve"',
     ...(runtime.env ? ['-c', 'mcp_servers.modmind.env={ELECTRON_RUN_AS_NODE="1"}'] : [])
   ]
-  const args = options.kind === 'codex'
-    ? persistedSessionId
+  let args: string[]
+  let childEnv: Record<string, string> | undefined
+  if (options.kind === 'opencode') {
+    const opencodeConfigPath = path.join(options.project.path, options.project.toolDataDirectory ?? '.modmind', 'external-agents', 'opencode-config.json')
+    const opencodeConfig = {
+      mcp: {
+        modmind: {
+          type: 'local',
+          command: [runtime.command, path.join(options.project.path, options.project.toolDataDirectory ?? '.modmind', 'external-agents', 'modmind-mcp-server.mjs')],
+          enabled: true,
+          ...(runtime.env ? {environment: {ELECTRON_RUN_AS_NODE: '1'}} : {})
+        }
+      }
+    }
+    await fs.writeFile(opencodeConfigPath, JSON.stringify(opencodeConfig, null, 2), 'utf8')
+    childEnv = {OPENCODE_CONFIG: opencodeConfigPath}
+    args = [
+      'run',
+      '--format', 'json',
+      ...(persistedSessionId ? ['--session', persistedSessionId] : []),
+      '--dir', options.project.path,
+      prompt
+    ]
+  } else if (options.kind === 'codex') {
+    args = persistedSessionId
       ? ['--ask-for-approval', 'never', 'exec', 'resume', persistedSessionId, '--json', '--skip-git-repo-check', ...codexConfig, '-']
       : ['--ask-for-approval', 'never', 'exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only', '-C', options.project.path, ...codexConfig, '-']
-    : ['-p', ...(persistedSessionId ? ['--resume', persistedSessionId] : []), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--mcp-config', mcpConfigPath, '--strict-mcp-config', '--add-dir', options.project.path, '--append-system-prompt', 'Write user-facing responses in Simplified Chinese unless explicitly asked otherwise. Call modmind_set_intent before any inspection or other tool. Informational requests must not create Todo, edit, build, or test. Engineering requests must use modmind_update_todo before edits and whenever task statuses change. Do not edit .modmind.']
-  const historyLabel = options.kind === 'codex' ? 'Codex' : 'Claude Code'
+  } else {
+    args = ['-p', ...(persistedSessionId ? ['--resume', persistedSessionId] : []), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--mcp-config', mcpConfigPath, '--strict-mcp-config', '--add-dir', options.project.path, '--append-system-prompt', 'Write user-facing responses in Simplified Chinese unless explicitly asked otherwise. Call modmind_set_intent before any inspection or other tool. Informational requests must not create Todo, edit, build, or test. Engineering requests must use modmind_update_todo before edits and whenever task statuses change. Do not edit .modmind.']
+  }
+  const historyLabel = externalAgentLabel(options.kind)
   const startContent = `${historyLabel} 托管任务已启动${resumedHistory ? `\n\n[已恢复的 ${historyLabel} 对话上下文]\n${resumedHistory}` : ''}`
   options.onOutput('start', startContent)
-  options.onProgress(`${options.kind === 'codex' ? 'Codex' : 'Claude Code'} 正在分析项目`, '外部代理已连接 ModMind 工具桥', 'running')
+  options.onProgress(`${externalAgentLabel(options.kind)} 正在分析项目`, '外部代理已连接 ModMind 工具桥', 'running')
   let child: ChildProcessWithoutNullStreams
   try {
-    child = spawnManagedCli(executable, args, options.project.path)
+    child = spawnManagedCli(executable, args, options.project.path, childEnv)
   } catch (error) {
     await bridge.stop()
     throw error
@@ -586,7 +654,10 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
     const output = parseExternalAgentOutputLine(line, stream)
     if (!output) return
     const {parsed} = output
-    const discoveredSessionId = typeof parsed?.thread_id === 'string' ? parsed.thread_id : typeof parsed?.session_id === 'string' ? parsed.session_id : undefined
+    const data = parsed?.data && typeof parsed.data === 'object' ? parsed.data as Record<string, unknown> : undefined
+    const discoveredSessionId = typeof data?.sessionID === 'string' ? data.sessionID
+      : typeof parsed?.thread_id === 'string' ? parsed.thread_id
+        : typeof parsed?.session_id === 'string' ? parsed.session_id : undefined
     if (discoveredSessionId && discoveredSessionId !== activeSessionId) {
       activeSessionId = discoveredSessionId
       options.onSessionId?.(discoveredSessionId)
@@ -629,8 +700,8 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
     await bridge.stop()
   }
   if (options.signal.aborted) throw new Error('外部代理任务已停止；已保留当前修改并保存恢复信息')
-  if (exitCode !== 0) throw new Error(`${options.kind === 'codex' ? 'Codex' : 'Claude Code'} 退出码 ${exitCode}\n${transcript.trim().slice(-8_000) || lastMessage}`)
-  options.onProgress(`${options.kind === 'codex' ? 'Codex' : 'Claude Code'} 任务结束`, '正在由 ModMind 检查任务意图与最终结果', 'success')
+  if (exitCode !== 0) throw new Error(`${externalAgentLabel(options.kind)} 退出码 ${exitCode}\n${transcript.trim().slice(-8_000) || lastMessage}`)
+  options.onProgress(`${externalAgentLabel(options.kind)} 任务结束`, '正在由 ModMind 检查任务意图与最终结果', 'success')
   options.onOutput('response', lastMessage || '外部代理已完成任务')
   if (activeSessionId) await persistSession(options.project, options.kind, activeSessionId)
   return {summary: lastMessage || `${options.kind} task completed`, transcript, buildUsed: false, runtimeUsed: false, exitCode, sessionId: activeSessionId}

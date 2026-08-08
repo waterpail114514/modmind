@@ -38,6 +38,7 @@ describe('ModMind external agent MCP bridge', () => {
   it('opens Bilibili installation tutorials', () => {
     expect(externalAgentDocsUrl('codex')).toMatch(/^https:\/\/search\.bilibili\.com\//)
     expect(externalAgentDocsUrl('claude')).toMatch(/^https:\/\/search\.bilibili\.com\//)
+    expect(externalAgentDocsUrl('opencode')).toMatch(/^https:\/\/search\.bilibili\.com\//)
   })
 
   it('does not classify ordinary stderr output as an error', () => {

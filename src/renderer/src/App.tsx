@@ -624,7 +624,7 @@ export default function App(): React.JSX.Element {
   const [aiOutputStatus, setAiOutputStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
   const [externalAgents, setExternalAgents] = useState<ExternalAgentStatus[]>([])
   const [externalAgentsReady, setExternalAgentsReady] = useState(false)
-  const [installingAgents, setInstallingAgents] = useState<Partial<Record<'codex' | 'claude', boolean>>>({})
+  const [installingAgents, setInstallingAgents] = useState<Partial<Record<'codex' | 'claude' | 'opencode', boolean>>>({})
   const aiFollowBottomRef = useRef(true)
   const [aiHistoryLoadedKey, setAiHistoryLoadedKey] = useState('')
   const aiOutputHistoryKey = project ? `modmind-ai-output:${project.path}:${settings.codingBackend}` : ''
@@ -696,7 +696,7 @@ export default function App(): React.JSX.Element {
     if (settings.codingBackend !== 'internal') {
       void window.modmind.externalAgents.history(settings.codingBackend).then((context) => {
         if (cancelled || !context.trim()) return
-        const label = settings.codingBackend === 'codex' ? 'Codex' : 'Claude Code'
+        const label = settings.codingBackend === 'codex' ? 'Codex' : settings.codingBackend === 'claude' ? 'Claude Code' : 'opencode'
         const marker = `[已恢复的 ${label} 对话上下文]`
         setAiOutput((current) => current.includes(marker) ? current : `${marker}\n${context}\n\n${current}`)
         setAiTimeline((current) => {
@@ -1171,7 +1171,7 @@ export default function App(): React.JSX.Element {
         id: `plan-${Date.now()}`,
         stage: 'planning',
         title: 'AI 正在分析请求',
-        detail: settings.codingBackend === 'internal' ? settings.model : settings.codingBackend === 'codex' ? 'Codex 正在判断任务意图' : 'Claude Code 正在判断任务意图',
+        detail: settings.codingBackend === 'internal' ? settings.model : settings.codingBackend === 'codex' ? 'Codex 正在判断任务意图' : settings.codingBackend === 'claude' ? 'Claude Code 正在判断任务意图' : 'opencode 正在判断任务意图',
         status: 'running',
         time: new Date().toISOString()
       },
@@ -1398,18 +1398,18 @@ export default function App(): React.JSX.Element {
     })
   }
 
-  const launchExternalAgent = async (kind: 'codex' | 'claude'): Promise<void> => {
+  const launchExternalAgent = async (kind: 'codex' | 'claude' | 'opencode'): Promise<void> => {
     try {
       await window.modmind.externalAgents.launch(kind)
-      setNotice(`${kind === 'codex' ? 'Codex' : 'Claude Code'} 已在项目目录启动`)
+      setNotice(`${kind === 'codex' ? 'Codex' : kind === 'claude' ? 'Claude Code' : 'opencode'} 已在项目目录启动`)
     } catch (error) {
       setNotice(errorMessage(error))
     }
   }
 
-  const installExternalAgent = async (kind: 'codex' | 'claude'): Promise<void> => {
+  const installExternalAgent = async (kind: 'codex' | 'claude' | 'opencode'): Promise<void> => {
     setInstallingAgents((current) => ({ ...current, [kind]: true }))
-    setNotice(`正在安装 ${kind === 'codex' ? 'Codex' : 'Claude Code'}…`)
+    setNotice(`正在安装 ${kind === 'codex' ? 'Codex' : kind === 'claude' ? 'Claude Code' : 'opencode'}…`)
     try {
       const status = await window.modmind.externalAgents.install(kind)
       setExternalAgents((current) => [...current.filter((item) => item.kind !== kind), status])
@@ -1421,7 +1421,7 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const openExternalAgentDocs = async (kind: 'codex' | 'claude'): Promise<void> => {
+  const openExternalAgentDocs = async (kind: 'codex' | 'claude' | 'opencode'): Promise<void> => {
     try {
       await window.modmind.externalAgents.openDocs(kind)
     } catch (error) {
@@ -1557,6 +1557,7 @@ export default function App(): React.JSX.Element {
                         <button type="button" className={settings.codingBackend === 'internal' ? 'active' : ''} onClick={() => selectCodingBackend('internal')}><Bot size={13} />内部 AI</button>
                         <button type="button" className={settings.codingBackend === 'codex' ? 'active' : ''} onClick={() => selectCodingBackend('codex')}><TerminalSquare size={13} />Codex</button>
                         <button type="button" className={settings.codingBackend === 'claude' ? 'active' : ''} onClick={() => selectCodingBackend('claude')}><Sparkles size={13} />Claude Code</button>
+                        <button type="button" className={settings.codingBackend === 'opencode' ? 'active' : ''} onClick={() => selectCodingBackend('opencode')}><TerminalSquare size={13} />opencode</button>
                       </div>
                     </div>
                     <div className="prompt-box">
@@ -1566,7 +1567,7 @@ export default function App(): React.JSX.Element {
                         placeholder="例如：制作一个可以储存经验值的水晶方块，右键存入，Shift 右键取出……"
                       />
                       <div className="prompt-footer">
-                         <div className="prompt-meta"><span>{settings.codingBackend === 'internal' ? (settings.model || '尚未选择模型') : settings.codingBackend === 'codex' ? 'Codex CLI · ModMind MCP' : 'Claude Code · ModMind MCP'}</span><span>并发 {settings.parallelism}</span></div>
+                         <div className="prompt-meta"><span>{settings.codingBackend === 'internal' ? (settings.model || '尚未选择模型') : settings.codingBackend === 'codex' ? 'Codex CLI · ModMind MCP' : settings.codingBackend === 'claude' ? 'Claude Code · ModMind MCP' : 'opencode · ModMind MCP'}</span><span>并发 {settings.parallelism}</span></div>
                         {planning ? <button className="secondary-button" title="停止 AI 编程" onClick={() => void window.modmind.ai.cancelCode()}><X size={16} />停止 AI</button> : <button className="send-button" title="开始 AI 编程" disabled={!prompt.trim()} onClick={() => void captureIdea()}><Send size={17} /><span>开始开发</span></button>}
                       </div>
                     </div>
@@ -1859,14 +1860,16 @@ export default function App(): React.JSX.Element {
                 <section className="settings-section">
                   <div className="settings-heading"><h2>AI 服务</h2><p>兼容 OpenAI 协议的 API 可以使用自定义地址。</p></div>
                   <div className="external-agent-section">
-                    <div className="settings-heading"><h3>外部 Coding Agent</h3><p>Codex 和 Claude Code 通过 ModMind MCP 接入项目文件、映射、构建、游戏测试和 Blockbench。</p></div>
+                    <div className="settings-heading"><h3>外部 Coding Agent</h3><p>Codex、Claude Code 和 opencode 通过 ModMind MCP 接入项目文件、映射、构建、游戏测试和 Blockbench。</p></div>
                     <div className="external-agent-grid">
-                      {(['codex', 'claude'] as const).map((kind) => {
+                      {(['codex', 'claude', 'opencode'] as const).map((kind) => {
                         const status = externalAgents.find((item) => item.kind === kind)
-                        const configuredPath = kind === 'codex' ? settings.codexExecutable ?? '' : settings.claudeExecutable ?? ''
+                        const kindLabel = kind === 'codex' ? 'Codex' : kind === 'claude' ? 'Claude Code' : 'opencode'
+                        const pathKey = kind === 'codex' ? 'codexExecutable' : kind === 'claude' ? 'claudeExecutable' : 'opencodeExecutable'
+                        const configuredPath = settings[pathKey] ?? ''
                         return <article className="external-agent-card" key={kind}>
-                          <div className="external-agent-card-heading"><div><strong>{kind === 'codex' ? 'Codex' : 'Claude Code'}</strong><small>{status?.installed ? status.version : externalAgentsReady ? '未检测到 CLI' : '正在检测…'}</small></div><span className={`status-dot ${status?.installed ? 'success' : 'warning'}`} /></div>
-                          <input value={configuredPath} onChange={(event) => setSettings({ ...settings, [kind === 'codex' ? 'codexExecutable' : 'claudeExecutable']: event.target.value })} placeholder={status?.executable || '留空则从 PATH 查找'} />
+                          <div className="external-agent-card-heading"><div><strong>{kindLabel}</strong><small>{status?.installed ? status.version : externalAgentsReady ? '未检测到 CLI' : '正在检测…'}</small></div><span className={`status-dot ${status?.installed ? 'success' : 'warning'}`} /></div>
+                          <input value={configuredPath} onChange={(event) => setSettings({ ...settings, [pathKey]: event.target.value })} placeholder={status?.executable || '留空则从 PATH 查找'} />
                           <div className="external-agent-actions">
                             {status?.installed || configuredPath.trim() ? <button className="secondary-button compact" type="button" onClick={() => void launchExternalAgent(kind)}><TerminalSquare size={14} />打开</button> : <button className="primary-button compact" type="button" disabled={!externalAgentsReady || installingAgents[kind]} onClick={() => void installExternalAgent(kind)}>{installingAgents[kind] ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}一键安装</button>}
                             <button className="secondary-button compact" type="button" onClick={() => void openExternalAgentDocs(kind)}><ExternalLink size={14} />B站安装教程</button>
