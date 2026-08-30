@@ -164,3 +164,32 @@ export function timelineToPlainText(items: WorkbenchTimelineItem[]): string {
   const labels: Partial<Record<WorkbenchTimelineItem['kind'], string>> = { history: '已恢复上下文', start: '任务开始', retry: '重试', tool: '工具结果', warning: '警告', error: '错误', diff: '代码修改', status: '状态', user: '你' }
   return items.map((item) => `${labels[item.kind] ? `[${labels[item.kind]}]\n` : ''}${item.content}`).join('\n\n')
 }
+
+/** 回退/编辑重发时，只保留「用户提问 + AI 最终回答」，清掉思考步骤、工具调用、停止残留等半处理中间态。 */
+export function workbenchFinalDialogue(items: WorkbenchTimelineItem[]): WorkbenchTimelineItem[] {
+  return items.filter((item) => item.kind === 'user' || item.kind === 'answer')
+}
+
+/** 删除某条消息时按「轮」整体删除：删除用户提问会连带其后的中间态步骤与回答，删除回答则连带其同轮的中间态步骤，避免留下「查看步骤」等半处理残留。 */
+export function workbenchDeleteTimelineItem(items: WorkbenchTimelineItem[], id: string): WorkbenchTimelineItem[] {
+  const index = items.findIndex((item) => item.id === id)
+  if (index < 0) return items
+  if (items[index].kind === 'user') {
+    let end = index + 1
+    while (end < items.length && items[end].kind !== 'user') end += 1
+    return [...items.slice(0, index), ...items.slice(end)]
+  }
+  let start = index
+  while (start > 0 && items[start - 1].kind !== 'user') start -= 1
+  return [...items.slice(0, start), ...items.slice(index + 1)]
+}
+
+/** 提取用户提问与 AI 最终回答，用于在「回退重发」时把前文作为文字上下文重新注入。 */
+export function workbenchDialogueToText(items: WorkbenchTimelineItem[], maxTurns = 8): string {
+  const lines: string[] = []
+  for (const item of items) {
+    if (item.kind === 'user') lines.push(`用户：${item.content}`)
+    else if (item.kind === 'answer') lines.push(`AI：${item.content}`)
+  }
+  return lines.slice(-maxTurns * 2).join('\n')
+}

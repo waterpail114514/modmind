@@ -1354,6 +1354,12 @@ button { color: inherit; }
 .inspiration-persistence-warning { width: min(860px, calc(100% - 56px)); margin: -14px auto 16px; display: flex; align-items: center; gap: 6px; color: #8a641c; font-size: var(--type-support); }
 .message-action { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 4px 7px; border: 1px solid #d5d5da; border-radius: 4px; background: #fff; color: #1769bd; cursor: pointer; font-size: var(--type-support); }
 .message-action:hover { background: #eef5fc; }
+.inspiration-message > div { position: relative; }
+.inspiration-message-actions { position: absolute; top: 0; right: 0; display: flex; gap: 2px; opacity: 0; transition: opacity .15s ease; }
+.inspiration-message:hover .inspiration-message-actions { opacity: 1; }
+.inspiration-message-actions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; color: #9a9ba1; background: transparent; cursor: pointer; }
+.inspiration-message-actions button:hover { color: #36373c; background: rgba(0,0,0,.06); }
+.app-shell.dark-mode .inspiration-message-actions button:hover { color: #e7e7eb; background: rgba(255,255,255,.08); }
 
 .code-layout { height: 100%; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .mappings-page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -1554,6 +1560,10 @@ button { color: inherit; }
 .agent-message-row time { height: 22px; margin-top: 4px; color: var(--agent-text-3); font-size: 11px; opacity: 0; transition: opacity .15s ease; }
 .agent-message-row.user time { text-align: right; }
 .agent-message-row:hover time { opacity: 1; }
+.agent-message-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
+.agent-message-row:hover .agent-message-actions { opacity: 1; }
+.agent-message-actions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; color: var(--agent-text-3); background: transparent; cursor: pointer; }
+.agent-message-actions button:hover { color: var(--agent-text-1); background: var(--agent-fill-2); }
 .agent-markdown p { margin: 0 0 9px; }
 .agent-markdown p:last-child { margin-bottom: 0; }
 .agent-markdown ul, .agent-markdown ol { padding-left: 22px; }

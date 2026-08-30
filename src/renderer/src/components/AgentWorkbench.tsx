@@ -31,6 +31,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Undo2,
   UserRound
 } from 'lucide-react'
 import type {
@@ -110,6 +111,9 @@ type AgentWorkbenchProps = {
   onFastModeChange?: (enabled: boolean) => void
   placeholder: string
   humanizeActivity: (value: string) => string
+  onEditTimelineItem?: (id: string, content: string) => void
+  onDeleteTimelineItem?: (id: string) => void
+  onRewindTimelineTo?: (id: string) => void
 }
 
 function MarkdownMessage({ content }: { content: string }): React.JSX.Element {
@@ -238,17 +242,17 @@ function ToolGroup({ items, humanizeActivity }: { items: AgentWorkbenchTimelineI
   </section>
 }
 
-function TimelineItem({ item, humanizeActivity }: { item: AgentWorkbenchTimelineItem; humanizeActivity: (value: string) => string }): React.JSX.Element | null {
+function TimelineItem({ item, humanizeActivity, onEdit, onDelete, onRewind }: { item: AgentWorkbenchTimelineItem; humanizeActivity: (value: string) => string; onEdit?: (id: string, content: string) => void; onDelete?: (id: string) => void; onRewind?: (id: string) => void }): React.JSX.Element | null {
   const [expanded, setExpanded] = useState(item.kind === 'error')
   const content = humanizeActivity(item.content)
-  if (item.kind === 'user') return <article className="agent-message-row user"><div className="agent-message agent-message-user"><p>{content}</p></div><time>{formatTime(item.time)}</time></article>
+  if (item.kind === 'user') return <article className="agent-message-row user"><div className="agent-message agent-message-user"><p>{content}</p></div>{(onEdit || onDelete || onRewind) ? <div className="agent-message-actions">{onEdit ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => onEdit(item.id, item.content)}><Pencil size={12} /></button> : null}{onDelete ? <button type="button" title="删除" aria-label="删除" onClick={() => onDelete(item.id)}><Trash2 size={12} /></button> : null}{onRewind ? <button type="button" title="回退到此处" aria-label="回退到此处" onClick={() => onRewind(item.id)}><Undo2 size={12} /></button> : null}</div> : null}<time>{formatTime(item.time)}</time></article>
   if (item.kind === 'thinking') return <ThinkingItem item={item} content={content} />
   if (item.kind === 'start' || item.kind === 'retry' || item.kind === 'history') return <div className="agent-event-muted"><Clock3 size={13} /><span>{content}</span></div>
   if (item.kind === 'diff') return <section className="agent-diff-card">
     <button type="button" className="agent-diff-heading" onClick={() => setExpanded((value) => !value)}><FileCode2 size={14} /><span>{item.diff?.length ?? 0} 个文件变更</span><ChevronRight className={expanded ? 'expanded' : ''} size={12} /></button>
     {expanded ? <div className="agent-diff-body">{item.diff?.map((file) => <div className="agent-diff-file" key={file.path}><code>{file.path}</code><span>+{file.added} -{file.removed}</span><pre>{[...file.additions.map((line) => `+ ${line}`), ...file.removals.map((line) => `- ${line}`)].join('\n')}</pre></div>)}</div> : null}
   </section>
-  if (item.kind === 'answer' || item.kind === 'response') return content ? <article className="agent-message-row assistant"><div className="agent-message agent-message-assistant"><MarkdownMessage content={content} /></div><time>{formatTime(item.time)}</time></article> : null
+  if (item.kind === 'answer' || item.kind === 'response') return content ? <article className="agent-message-row assistant"><div className="agent-message agent-message-assistant"><MarkdownMessage content={content} /></div>{(onDelete || onRewind) ? <div className="agent-message-actions">{onDelete ? <button type="button" title="删除" aria-label="删除" onClick={() => onDelete(item.id)}><Trash2 size={12} /></button> : null}{onRewind ? <button type="button" title="回退到此处" aria-label="回退到此处" onClick={() => onRewind(item.id)}><Undo2 size={12} /></button> : null}</div> : null}<time>{formatTime(item.time)}</time></article> : null
   if (item.kind === 'error' || item.kind === 'warning') {
     if (item.terminal !== true) return <div className="agent-event-muted"><CircleAlert size={13} /><span>{content}</span></div>
     return <div className={`agent-notice ${item.kind}`}><CircleAlert size={14} /><span>{content}</span></div>
@@ -359,7 +363,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
     {props.aiRecovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{props.aiRecovery.backend ? `，将使用 ${backendLabel(props.aiRecovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
 
     <div ref={timelineRef} className="agent-conversation" onScroll={handleScroll}><div className="agent-conversation-surface">
-      {timelineRows.length ? timelineRows.map((row) => row.kind === 'tool-group' ? <ToolGroup key={row.id} items={row.items} humanizeActivity={props.humanizeActivity} /> : <TimelineItem key={row.id} item={row} humanizeActivity={props.humanizeActivity} />) : <div className="agent-empty"><span className="agent-empty-avatar">{backendIcon(effectiveBackend, 24)}</span><strong>{backendLabel(effectiveBackend)}</strong><span>有什么我可以帮助你的？</span></div>}
+      {timelineRows.length ? timelineRows.map((row) => row.kind === 'tool-group' ? <ToolGroup key={row.id} items={row.items} humanizeActivity={props.humanizeActivity} /> : <TimelineItem key={row.id} item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />) : <div className="agent-empty"><span className="agent-empty-avatar">{backendIcon(effectiveBackend, 24)}</span><strong>{backendLabel(effectiveBackend)}</strong><span>有什么我可以帮助你的？</span></div>}
       {taskState === 'success' && aiPlan ? <div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />进入游戏测试</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div> : null}
     </div></div>
 

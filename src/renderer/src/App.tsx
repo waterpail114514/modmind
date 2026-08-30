@@ -63,6 +63,7 @@ import {
   SlidersHorizontal,
   TerminalSquare,
   Trash2,
+  Undo2,
   UserRound,
   WandSparkles,
   X,
@@ -139,7 +140,7 @@ import { PluginPanelHost } from './components/PluginPanelHost'
 import { PluginsManager } from './components/PluginsManager'
 import { PluginOverlayLayer } from './components/PluginOverlayLayer'
 import type { PluginSnapshot } from '../../shared/plugins'
-import { appendUserTurn, normalizeStoredWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, settleWorkbenchActivity, type WorkbenchTimelineItem } from './workbenchTimeline'
+import { appendUserTurn, normalizeStoredWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, settleWorkbenchActivity, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, type WorkbenchTimelineItem } from './workbenchTimeline'
 import {
   createWorkbenchConversation,
   isLegacyWorkbenchConversation,
@@ -951,6 +952,11 @@ function ProjectInspectionDialog({ kind }: { kind: 'project' | 'mod' }): React.J
   )
 }
 
+/** 回退/编辑重发时只保留「用户提问 + AI 最终回答」，清掉工具步骤、进行中/中断残留等半处理中间态。 */
+function isFinalInspirationMessage(message: InspirationChatMessage): boolean {
+  return message.role === 'user' || (message.role === 'assistant' && message.kind !== 'tool' && message.status === 'completed')
+}
+
 function dedupeInspirationMessages(messages: InspirationChatMessage[]): InspirationChatMessage[] {
   return messages.reduce<InspirationChatMessage[]>((result, message) => {
     if (message.role !== 'assistant' || message.kind === 'tool') {
@@ -1006,6 +1012,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
   const [persistenceWarning, setPersistenceWarning] = useState('')
   const sendTokenRef = useRef(0)
+  const sessionResetRef = useRef(false)
   const inspirationSessionRef = useRef('')
   const inspirationConversationRef = useRef('')
   const finalAnswerSessionRef = useRef('')
@@ -1032,6 +1039,32 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
 
   const updateActiveMessages = (updater: (messages: InspirationChatMessage[]) => InspirationChatMessage[]): void => {
     updateConversationMessages(activeConversationId, updater)
+  }
+
+  const [pendingRewindIndex, setPendingRewindIndex] = useState<number | null>(null)
+  const editInspirationMessage = (messageIndex: number, content: string): void => {
+    setDraft(content)
+    setPendingRewindIndex(messageIndex)
+  }
+  const deleteInspirationMessage = (messageIndex: number): void => {
+    setPendingRewindIndex(null)
+    sessionResetRef.current = true
+    updateActiveMessages((current) => {
+      if (messageIndex < 0 || messageIndex >= current.length) return current
+      if (current[messageIndex].role === 'user') {
+        let end = messageIndex + 1
+        while (end < current.length && current[end].role !== 'user') end += 1
+        return [...current.slice(0, messageIndex), ...current.slice(end)]
+      }
+      let start = messageIndex
+      while (start > 0 && current[start - 1].role !== 'user') start -= 1
+      return [...current.slice(0, start), ...current.slice(messageIndex + 1)]
+    })
+  }
+  const rewindInspirationTo = (messageIndex: number): void => {
+    setPendingRewindIndex(null)
+    sessionResetRef.current = true
+    updateActiveMessages((current) => current.slice(0, messageIndex).filter(isFinalInspirationMessage))
   }
 
   useEffect(() => {
@@ -1159,8 +1192,18 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
       return
     }
     const conversationId = activeConversationId
-    const resumeSession = shouldResumeInspirationSession(messages)
-    const handoff = !resumeSession && messages.length ? inspirationConversationHandoff(messages) : ''
+    const rewindIndex = pendingRewindIndex
+    const resetSession = sessionResetRef.current
+    sessionResetRef.current = false
+    const needsReset = rewindIndex !== null || resetSession
+    const baseMessages = needsReset
+      ? (rewindIndex !== null ? messages.slice(0, rewindIndex) : messages).filter(isFinalInspirationMessage)
+      : messages
+    if (pendingRewindIndex !== null) setPendingRewindIndex(null)
+    const resumeSession = needsReset ? false : shouldResumeInspirationSession(messages)
+    const handoff = needsReset
+      ? inspirationConversationHandoff(baseMessages)
+      : (!resumeSession && messages.length ? inspirationConversationHandoff(messages) : '')
     const inspirationPrompt = `Answer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
     const attachmentKeys = attachments.map((attachment) => `${attachment.path}:${attachment.size}`)
     const dedupeKey = aiPromptFingerprint(content, attachmentKeys)
@@ -1170,10 +1213,15 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
     inspirationSessionRef.current = sessionId
     finalAnswerSessionRef.current = ''
     ignoredInspirationSessionRef.current = ''
-    updateActiveMessages((current) => [...current,
-      { role: 'user', content: `${content}${attachments.length ? `\n\n已附 ${attachments.length} 个文件` : ''}`, status: 'completed' },
-      { role: 'assistant', content: '', status: 'streaming', isFinal: false, sessionId }
-    ])
+    updateActiveMessages((current) => {
+      const base = needsReset
+        ? (rewindIndex !== null ? current.slice(0, rewindIndex) : current).filter(isFinalInspirationMessage)
+        : current
+      return [...base,
+        { role: 'user', content: `${content}${attachments.length ? `\n\n已附 ${attachments.length} 个文件` : ''}`, status: 'completed' },
+        { role: 'assistant', content: '', status: 'streaming', isFinal: false, sessionId }
+      ]
+    })
     updateConversationMessages(conversationId, (current) => current.map((message, index) => index === current.length - 2 ? { ...message, dedupeKey } : message))
     setDraft('')
     thinkingStartedAtRef.current = Date.now()
@@ -1290,7 +1338,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
                 : undefined
               return <div className={`inspiration-message ${message.role} ${message.status === 'error' || message.status === 'cancelled' ? 'error' : ''}`} key={row.id}>
                 <span>{message.role === 'assistant' ? <Bot size={16} /> : <UserRound size={16} />}</span>
-                <div><strong>{message.role === 'assistant' ? '灵感台' : '你'}</strong>{message.role === 'assistant' ? <><MarkdownMessage content={message.content} />{message.isFinal && message.status === 'completed' && !busy ? <button className="message-action" type="button" onClick={() => onSendToCoding(message.content)}><Code2 size={13} />交给工作台</button> : null}{message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}</> : <p>{message.content}</p>}</div>
+                <div><strong>{message.role === 'assistant' ? '灵感台' : '你'}</strong>{message.role === 'assistant' ? <><MarkdownMessage content={message.content} />{message.isFinal && message.status === 'completed' && !busy ? <button className="message-action" type="button" onClick={() => onSendToCoding(message.content)}><Code2 size={13} />交给工作台</button> : null}{message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}</> : <p>{message.content}</p>}{!busy ? <div className="inspiration-message-actions">{message.role === 'user' ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => editInspirationMessage(row.index, message.content)}><Pencil size={12} /></button> : null}<button type="button" title="删除" aria-label="删除" onClick={() => deleteInspirationMessage(row.index)}><Trash2 size={12} /></button><button type="button" title="回退到此处" aria-label="回退到此处" onClick={() => rewindInspirationTo(row.index)}><Undo2 size={12} /></button></div> : null}</div>
               </div>
             })}
             {busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null}
@@ -1558,6 +1606,27 @@ export default function App(): React.JSX.Element {
   const setAiTimeline = (value: SetStateAction<AiTimelineItem[]>): void => setWorkbenchValue('timeline', value)
   const setAiOutputStatus = (value: SetStateAction<WorkbenchUiState['outputStatus']>): void => setWorkbenchValue('outputStatus', value)
   const setAiRecovery = (value: SetStateAction<AiRecoveryInfo | null>): void => setWorkbenchValue('recovery', value)
+  const [pendingRewindId, setPendingRewindId] = useState<string | null>(null)
+  const sessionResetRef = useRef(false)
+  const handleEditTimelineItem = (id: string, content: string): void => {
+    setPrompt(content)
+    setPendingRewindId(id)
+    setNotice('已回填到输入框，改写后发送会从这条消息重新生成')
+  }
+  const handleDeleteTimelineItem = (id: string): void => {
+    setAiTimeline((current) => workbenchDeleteTimelineItem(current, id))
+    setPendingRewindId(null)
+    sessionResetRef.current = true
+  }
+  const handleRewindTimelineTo = (id: string): void => {
+    setAiTimeline((current) => {
+      const index = current.findIndex((item) => item.id === id)
+      if (index < 0) return current
+      return workbenchFinalDialogue(current.slice(0, index))
+    })
+    setPendingRewindId(null)
+    sessionResetRef.current = true
+  }
   const [events, setEvents] = useState<PipelineEvent[]>([])
   const [buildResult, setBuildResult] = useState<PreflightResult | null>(null)
   const [buildError, setBuildError] = useState('')
@@ -1828,7 +1897,7 @@ export default function App(): React.JSX.Element {
         setRunningBackend(undefined)
         setBeginnerTaskState('idle')
         setAiOutputStatus('idle')
-        setAiTimeline((current) => settleWorkbenchActivity(current))
+        setAiTimeline((current) => workbenchFinalDialogue(current))
         setNotice(result.status === 'idle' ? '当前没有正在运行的 Agent 任务' : 'Agent 已完全停止，恢复点已保留')
       } catch (error) {
         const taskState = await window.modmind.ai.getProjectTaskState(taskProjectPath).catch(() => null)
@@ -3114,8 +3183,17 @@ export default function App(): React.JSX.Element {
       const saved = JSON.parse(localStorage.getItem(promptHistoryKey) ?? '[]') as unknown
       if (Array.isArray(saved)) taskPromptHistory = saved.filter((value): value is string => typeof value === 'string').slice(-50)
     } catch { /* Keep the in-memory history. */ }
+    const rewindIndex = pendingRewindId ? aiTimelineRef.current.findIndex((item) => item.id === pendingRewindId) : -1
+    const resetSession = sessionResetRef.current
+    sessionResetRef.current = false
+    const needsReset = rewindIndex >= 0 || resetSession
+    const baseTimeline = needsReset ? workbenchFinalDialogue(rewindIndex >= 0 ? aiTimelineRef.current.slice(0, rewindIndex) : aiTimelineRef.current) : aiTimelineRef.current
+    const isRewind = needsReset
+    const dialogueContext = isRewind ? workbenchDialogueToText(baseTimeline) : ''
     const repeated = isRepeatedAiPrompt(requestPrompt, taskPromptHistory)
-    const promptForAgent = repeated ? AI_CONTINUATION_PROMPT : requestPrompt
+    const promptForAgent = isRewind
+      ? `${dialogueContext}\n用户：${requestPrompt}`
+      : repeated ? AI_CONTINUATION_PROMPT : requestPrompt
     const sessionId = `coding-${Date.now()}`
     nextConversations = touchWorkbenchConversation(
       nextConversations,
@@ -3125,7 +3203,8 @@ export default function App(): React.JSX.Element {
     const visibleRequest = aiAttachments.length
       ? `${idea}\n\n附件：${aiAttachments.map((attachment) => attachment.name).join('、')}`
       : idea
-    const nextTimeline = appendUserTurn(aiTimelineRef.current, visibleRequest, sessionId)
+    const nextTimeline = appendUserTurn(baseTimeline, visibleRequest, sessionId)
+    if (pendingRewindId) setPendingRewindId(null)
     const nextHistoryPath = `.modmind/workbench-timeline-${activeConversation.id}.json`
     const nextHistoryKey = `${taskProjectPath}:${activeConversation.id}`
     try {
@@ -3222,7 +3301,7 @@ export default function App(): React.JSX.Element {
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { surface: 'workspace', sessionScope: activeConversation.sessionScope, resumeSession: true, projectPath: taskProjectPath, fallbackPrompt: requestPrompt }
+        { surface: 'workspace', sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: promptForAgent }
       )
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       storeProjectPlan(taskProjectPath, plan)
@@ -4752,6 +4831,9 @@ export default function App(): React.JSX.Element {
               onFastModeChange={(fastMode) => void saveBeginnerAiPreference({ fastMode })}
               placeholder={workspacePromptPlaceholder}
               humanizeActivity={humanizeActivity}
+              onEditTimelineItem={handleEditTimelineItem}
+              onDeleteTimelineItem={handleDeleteTimelineItem}
+              onRewindTimelineTo={handleRewindTimelineTo}
             /> : null}
 
             {[...new Map([...(project ? [project] : []), ...recentProjects].map((entry) => [normalizeProjectPath(entry.path), entry])).values()].map((inspirationProject) => (
