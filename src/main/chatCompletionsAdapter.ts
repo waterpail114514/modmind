@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
+﻿import { createHash, randomUUID } from 'node:crypto'
+import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from 'node:zlib'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 type JsonRecord = Record<string, unknown>
@@ -323,13 +324,27 @@ export function chatCompletionToResponsesEvents(value: unknown, tools: Map<strin
 }
 
 function requestHeaders(headers: IncomingHttpHeaders): Record<string, string> {
-  const result: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' }
+  const result: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' }
   const hopByHop = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'content-encoding'])
   for (const [name, value] of Object.entries(headers)) {
-    if (hopByHop.has(name.toLowerCase()) || typeof value !== 'string' || !value) continue
-    result[name] = value
+    const lower = name.toLowerCase()
+    if (hopByHop.has(lower) || typeof value !== 'string' || !value) continue
+    result[lower] = value
   }
   return result
+}
+
+function decompressRequest(body: Buffer, encoding: string | string[]): Buffer {
+  const value = (Array.isArray(encoding) ? encoding[encoding.length - 1] : encoding).toLowerCase()
+  try {
+    if (value === 'gzip' || value === 'x-gzip') return gunzipSync(body)
+    if (value === 'deflate') return inflateSync(body)
+    if (value === 'br') return brotliDecompressSync(body)
+    if (value === 'zstd') return zstdDecompressSync(body)
+  } catch {
+    throw new Error(`Agent 请求解压失败（${value}），内容可能已损坏`)
+  }
+  throw new Error(`暂不支持 ${value} 压缩的 Agent 请求`)
 }
 
 async function readBody(request: IncomingMessage): Promise<Buffer> {
@@ -373,7 +388,7 @@ async function relayResponse(upstream: Response, response: ServerResponse): Prom
 }
 
 function shouldFallbackToChat(status: number, body: string): boolean {
-  if (status === 404 || status === 405 || status === 501) return true
+  if (status === 404 || status === 405 || status === 415 || status === 501) return true
   if (status !== 400 && status !== 422) return false
   if (/(?:\/v1\/responses|responses endpoint|chat completions)/i.test(body)
     && /(?:unsupported|not supported|not found|unknown|unrecognized|not implemented|does not exist|cannot post|only supports|use chat)/i.test(body)) return true
@@ -386,7 +401,7 @@ function shouldFallbackToChat(status: number, body: string): boolean {
 }
 
 function shouldFallbackToResponses(status: number, body: string): boolean {
-  if (status === 404 || status === 405 || status === 501) return true
+  if (status === 404 || status === 405 || status === 415 || status === 501) return true
   if (status !== 400 && status !== 422) return false
   if (/(?:chat\/completions|chat completions endpoint|responses api)/i.test(body)
     && /(?:unsupported|not supported|not found|unknown|unrecognized|not implemented|does not exist|cannot post|only supports|use responses)/i.test(body)) return true
@@ -463,11 +478,20 @@ export class ChatCompletionsAdapter {
         sendJson(response, 405, { error: { message: 'Method not allowed', type: 'invalid_request_error' } })
         return
       }
-      if (request.headers['content-encoding']) {
-        sendJson(response, 415, { error: { message: '压缩的 Agent 请求暂不支持自动协议适配', type: 'invalid_request_error' } })
-        return
+      const binaryBody = await readBody(request)
+      let body: Buffer
+      const contentEncoding = request.headers['content-encoding']
+      if (contentEncoding) {
+        try {
+          body = decompressRequest(binaryBody, contentEncoding)
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : '压缩的 Agent 请求暂不支持自动协议适配'
+          sendJson(response, 415, { error: { message: detail, type: 'invalid_request_error' } })
+          return
+        }
+      } else {
+        body = binaryBody
       }
-      const body = await readBody(request)
       // Strip invalid token budgets (negative/NaN) on every path — including
       // native Responses passthrough — so one bad field cannot make the
       // provider reject an otherwise valid request.

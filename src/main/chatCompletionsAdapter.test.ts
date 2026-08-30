@@ -1,5 +1,6 @@
-import { createServer } from 'node:http'
+﻿import { createServer } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
+import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, responsesRequestToChatCompletions, sanitizeTokenBudgets } from './chatCompletionsAdapter'
 
 const adapters: ChatCompletionsAdapter[] = []
@@ -124,6 +125,48 @@ describe('Chat Completions compatibility adapter', () => {
       })
       expect(second.status).toBe(200)
       expect(chatRequests).toBe(2)
+    } finally {
+      await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()))
+    }
+  })
+
+  it('decompresses zstd request body and falls back to Chat Completions on 415', async () => {
+    let chatRequests = 0
+    const upstream = createServer((request, response) => {
+      if (request.url === '/responses') {
+        response.writeHead(415, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'Unsupported Media Type' } }))
+        return
+      }
+      if (request.url === '/chat/completions') {
+        chatRequests += 1
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({
+          id: 'chatcmpl-1',
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'via chat after zstd' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+        }))
+        return
+      }
+      response.writeHead(404); response.end()
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = upstream.address()
+      if (!address || typeof address === 'string') throw new Error('missing test server address')
+      const adapter = new ChatCompletionsAdapter()
+      adapters.push(adapter)
+      const baseUrl = await adapter.baseUrl(`http://127.0.0.1:${address.port}`)
+      const body = zstdCompressSync(JSON.stringify({ model: 'm', input: 'hi' }))
+      const first = await fetch(`${baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'zstd' },
+        body
+      })
+      const stream = await first.text()
+      expect(first.status).toBe(200)
+      expect(stream).toContain('via chat after zstd')
+      expect(chatRequests).toBe(1)
     } finally {
       await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()))
     }
