@@ -158,6 +158,7 @@ import { applyModpackPlan, planModpack } from './modpackPlanner'
 import { auditModpackLock, lockedModFromFile, readModpackLock, writeModpackLock } from './modpackLockService'
 import { applyKeybindPreset, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
 import { readFtbQuestBook, saveFtbQuestBook } from './ftbQuestBookService'
+import { resolveFtbQuestDependencyTexture, resolveFtbQuestIcon, resolveFtbQuestItemNames, resolveFtbQuestShapes } from './ftbQuestIconService'
 import { downloadModpackContent, importModpackContent, listModpackContent, modpackContentProjectPath, removeModpackContent } from './modpackContentInventoryService'
 import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from './serverPackService'
 import { SERVER_PACK_CREATOR_MIN_JAVA } from './serverPackCreatorService'
@@ -7368,6 +7369,10 @@ function registerIpc(): void {
     return applyModpackPlan(requireModProviderRegistry(), project, input as Parameters<typeof applyModpackPlan>[2])
   })
   ipcMain.handle('modpack:readFtbQuestBook', () => readFtbQuestBook(requireProject()))
+  ipcMain.handle('modpack:ftbQuestIcon', (_event, itemId: unknown) => resolveFtbQuestIcon(requireProject(), typeof itemId === 'string' ? itemId : ''))
+  ipcMain.handle('modpack:ftbQuestItemNames', (_event, itemIds: unknown) => resolveFtbQuestItemNames(requireProject(), Array.isArray(itemIds) ? itemIds.filter((id): id is string => typeof id === 'string') : []))
+  ipcMain.handle('modpack:ftbQuestDependencyTexture', () => resolveFtbQuestDependencyTexture(requireProject()))
+  ipcMain.handle('modpack:ftbQuestShapes', () => resolveFtbQuestShapes(requireProject()))
   ipcMain.handle('modpack:saveFtbQuestBook', (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('invalid FTB Quests book')
     return saveFtbQuestBook(requireProject(), input as Parameters<typeof saveFtbQuestBook>[1])

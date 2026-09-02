@@ -3,7 +3,7 @@ import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import JSON5 from 'json5'
 import { parse as parseSnbt, stringify as stringifySnbt } from 'ftbq-nbt'
-import type { FtbQuestBook, FtbQuestBookFormat, FtbQuestDiagnostic, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestRewardDocument, FtbQuestSaveResult, FtbQuestTaskDocument, ProjectInfo } from '../shared/types'
+import type { FtbQuestBook, FtbQuestBookFormat, FtbQuestDiagnostic, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestRewardDocument, FtbQuestRewardTable, FtbQuestRewardTableEntry, FtbQuestSaveResult, FtbQuestTaskDocument, ProjectInfo } from '../shared/types'
 
 type RawRecord = Record<string, unknown>
 
@@ -55,12 +55,12 @@ function collectFtbObjectIds(value: unknown, ids: Set<string>): void {
 
 function taskFromRaw(value: unknown): FtbQuestTaskDocument {
   const raw = asRecord(value)
-  return { id: text(raw.id, createId()), type: text(raw.type, 'checkmark'), title: text(raw.title), item: text(raw.item), raw }
+  return { id: text(raw.id, createId()), type: text(raw.type, 'checkmark'), title: text(raw.title), raw }
 }
 
 function rewardFromRaw(value: unknown): FtbQuestRewardDocument {
   const raw = asRecord(value)
-  return { id: text(raw.id, createId()), type: text(raw.type, 'item'), title: text(raw.title), item: text(raw.item), count: number(raw.count, 1), xp: number(raw.xp), command: text(raw.command), raw }
+  return { id: text(raw.id, createId()), type: text(raw.type, 'item'), title: text(raw.title), raw }
 }
 
 function questFromRaw(value: unknown): FtbQuestDocumentQuest {
@@ -70,8 +70,9 @@ function questFromRaw(value: unknown): FtbQuestDocumentQuest {
   const explicitTitle = text(raw.title)
   const fallbackTitle = tasks.map((task) => task.title?.trim()).find(Boolean) || text(raw.subtitle) || `任务 ${id.slice(0, 8)}`
   return {
-    id, title: explicitTitle || fallbackTitle, titleIsFallback: !explicitTitle, subtitle: text(raw.subtitle), description: readDescription(raw.description), icon: text(raw.icon), shape: text(raw.shape, 'square'), x: number(raw.x), y: number(raw.y),
-    dependencies: textList(raw.dependencies), tasks, rewards: asList(raw.rewards).map(rewardFromRaw), raw
+    id, title: explicitTitle || fallbackTitle, titleIsFallback: !explicitTitle, subtitle: text(raw.subtitle), description: readDescription(raw.description), icon: text(raw.icon), shape: text(raw.shape, 'circle'), x: number(raw.x), y: number(raw.y),
+    dependencies: textList(raw.dependencies), minRequiredTasks: raw.min_required_tasks === undefined ? undefined : number(raw.min_required_tasks), hideDependencyLines: raw.hide_dependency_lines === undefined ? undefined : Boolean(raw.hide_dependency_lines),
+    tasks, rewards: asList(raw.rewards).map(rewardFromRaw), raw
   }
 }
 
@@ -82,6 +83,34 @@ function chapterFromRaw(value: unknown, source: string): FtbQuestDocumentChapter
     id: text(raw.id, createId()), title: text(raw.title, 'Untitled chapter'), subtitle: text(raw.subtitle), icon: text(raw.icon), group: text(raw.group), filename, source,
     quests: asList(raw.quests).map(questFromRaw), raw
   }
+}
+
+// 奖励表（游戏 quest/loot/RewardTable）：reward_tables/ 目录下每表一个文件。
+function rewardTableEntryFromRaw(value: unknown): FtbQuestRewardTableEntry {
+  const raw = asRecord(value)
+  return { id: text(raw.id, createId()), type: text(raw.type, 'item'), title: text(raw.title), weight: raw.weight === undefined ? 1 : number(raw.weight, 1), raw }
+}
+
+function rewardTableFromRaw(value: unknown, source: string): FtbQuestRewardTable {
+  const raw = asRecord(value)
+  const filename = path.basename(source).replace(/\.(snbt|json5)$/i, '')
+  const crateRaw = asRecord(raw.loot_crate)
+  const drops = asRecord(crateRaw.drops)
+  const lootCrate = text(crateRaw.string_id) || text(crateRaw.item_name) || crateRaw.color !== undefined || crateRaw.glow !== undefined || crateRaw.drops !== undefined
+    ? { stringId: text(crateRaw.string_id), itemName: text(crateRaw.item_name), color: number(crateRaw.color, 0xFFFFFF), glow: Boolean(crateRaw.glow), passive: number(drops.passive), monster: number(drops.monster), boss: number(drops.boss) }
+    : null
+  return {
+    id: text(raw.id, createId()), filename, source,
+    title: text(raw.title, '奖励表'), useTitle: Boolean(raw.use_title), hideTooltip: Boolean(raw.hide_tooltip),
+    emptyWeight: number(raw.empty_weight), lootSize: number(raw.loot_size, 1), lootCrate,
+    rewards: asList(raw.rewards).map(rewardTableEntryFromRaw), raw
+  }
+}
+
+async function readRewardTableFiles(root: string): Promise<Array<{ source: string; content: string }>> {
+  const folder = path.join(root, 'reward_tables')
+  const entries = await fs.readdir(folder, { withFileTypes: true }).catch(() => [])
+  return Promise.all(entries.filter((entry) => entry.isFile() && /\.(snbt|json5)$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name)).map(async (entry) => ({ source: `reward_tables/${entry.name}`, content: await fs.readFile(path.join(folder, entry.name), 'utf8') })))
 }
 
 function parseContent(content: string, format: FtbQuestBookFormat): RawRecord {
@@ -145,12 +174,44 @@ export function validateFtbQuestBook(book: FtbQuestBook): FtbQuestDiagnostic[] {
   }
   const seen = new Set<string>()
   for (const id of quests.keys()) visit(id, seen, new Set())
+  // 奖励表：重复 ID / 重复文件名 / random、choice、all_table 奖励引用不存在的表。
+  const tableIds = new Set<string>()
+  const tableFilenames = new Set<string>()
+  const tableNumericIds = new Set<bigint>()
+  for (const table of book.rewardTables) {
+    collectFtbObjectIds(table.raw, objectIds)
+    if (!table.id.trim()) diagnostics.push({ severity: 'error', code: 'reward-table-id-empty', message: '奖励表缺少 ID' })
+    else if (tableIds.has(table.id)) diagnostics.push({ severity: 'error', code: 'reward-table-id-duplicate', message: `重复的奖励表 ID：${table.id}` })
+    else tableIds.add(table.id)
+    objectIds.add(table.id)
+    // 游戏 table_id 用 64 位整数引用表（SNBT 里以长整型存储），用 BigInt 精确比较。
+    if (/^[0-9A-Fa-f]+$/.test(table.id)) { try { tableNumericIds.add(BigInt(`0x${table.id}`)) } catch { /* 非法 ID，跳过 */ } }
+    if (!table.title.trim()) diagnostics.push({ severity: 'error', code: 'reward-table-title-empty', message: '奖励表标题不能为空' })
+    if (!/^[A-Za-z0-9_.-]+$/.test(table.filename) || table.filename === '.' || table.filename === '..') diagnostics.push({ severity: 'error', code: 'reward-table-filename-invalid', message: `奖励表文件名包含不支持的字符：${table.filename}` })
+    else if (tableFilenames.has(table.filename)) diagnostics.push({ severity: 'error', code: 'reward-table-filename-duplicate', message: `重复的奖励表文件名：${table.filename}` })
+    else tableFilenames.add(table.filename)
+    const entryIds = new Set<string>()
+    for (const entry of table.rewards) {
+      if (!entry.id.trim()) diagnostics.push({ severity: 'error', code: 'reward-table-entry-id-empty', message: `奖励表“${table.title}”的条目缺少 ID` })
+      else if (entryIds.has(entry.id)) diagnostics.push({ severity: 'error', code: 'reward-table-entry-id-duplicate', message: `奖励表“${table.title}”内存在重复条目 ID：${entry.id}` })
+      else entryIds.add(entry.id)
+      objectIds.add(entry.id)
+      if (!entry.type.trim()) diagnostics.push({ severity: 'error', code: 'reward-table-entry-type-empty', message: `奖励表“${table.title}”的条目缺少类型` })
+    }
+  }
+  for (const chapter of book.chapters) for (const quest of chapter.quests) for (const reward of quest.rewards) {
+    if (reward.type !== 'random' && reward.type !== 'choice' && reward.type !== 'all_table') continue
+    const tableId = asRecord(reward.raw).table_id
+    const numeric = typeof tableId === 'bigint' ? tableId : typeof tableId === 'number' && Number.isFinite(tableId) ? BigInt(Math.trunc(tableId)) : typeof tableId === 'string' && /^-?\d+$/.test(tableId) ? BigInt(tableId) : null
+    if (numeric !== null && !tableNumericIds.has(numeric)) diagnostics.push({ severity: 'error', code: 'reward-table-missing', message: `奖励“${reward.title || quest.title}”引用的奖励表不存在：${String(tableId)}`, chapterId: chapter.id, questId: quest.id })
+  }
   return diagnostics
 }
 
 export async function readFtbQuestBook(project: ProjectInfo): Promise<FtbQuestBook> {
   const root = questRoot(project)
   const files = await readChapterFiles(root)
+  const tableFiles = await readRewardTableFiles(root)
   const formats = new Set(files.map((file) => file.source.toLowerCase().endsWith('.json5') ? 'json5' : 'snbt' as FtbQuestBookFormat))
   const format: FtbQuestBookFormat = formats.has('json5') ? 'json5' : 'snbt'
   const diagnostics: FtbQuestDiagnostic[] = []
@@ -161,29 +222,66 @@ export async function readFtbQuestBook(project: ProjectInfo): Promise<FtbQuestBo
     try { chapters.push(chapterFromRaw(parseContent(file.content, fileFormat), file.source)) }
     catch (error) { diagnostics.push({ severity: 'error', code: 'parse-failed', message: `${file.source} 无法解析：${error instanceof Error ? error.message : String(error)}` }) }
   }
-  const book: FtbQuestBook = { format, root: relative(project, root), chapters, diagnostics }
+  const rewardTables: FtbQuestRewardTable[] = []
+  for (const file of tableFiles) {
+    const fileFormat: FtbQuestBookFormat = file.source.toLowerCase().endsWith('.json5') ? 'json5' : 'snbt'
+    try { rewardTables.push(rewardTableFromRaw(parseContent(file.content, fileFormat), file.source)) }
+    catch (error) { diagnostics.push({ severity: 'error', code: 'parse-failed', message: `${file.source} 无法解析：${error instanceof Error ? error.message : String(error)}` }) }
+  }
+  const book: FtbQuestBook = { format, root: relative(project, root), chapters, rewardTables, diagnostics }
   return { ...book, diagnostics: [...diagnostics, ...validateFtbQuestBook(book)] }
 }
 
 function compiledTask(task: FtbQuestTaskDocument): RawRecord {
-  const { id: _id, type: _type, title: _title, item: _item, ...preserved } = task.raw
-  return { ...preserved, id: task.id, type: task.type, ...(task.title ? { title: task.title } : {}), ...(task.item ? { item: task.item } : {}) }
+  const { id: _id, type: _type, title: _title, ...preserved } = task.raw
+  return { ...preserved, id: task.id, type: task.type, ...(task.title ? { title: task.title } : {}) }
 }
 function compiledReward(reward: FtbQuestRewardDocument): RawRecord {
-  const { id: _id, type: _type, title: _title, item: _item, count: _count, xp: _xp, command: _command, ...preserved } = reward.raw
-  return { ...preserved, id: reward.id, type: reward.type, ...(reward.title ? { title: reward.title } : {}), ...(reward.item ? { item: reward.item } : {}), ...(reward.count !== undefined ? { count: reward.count } : {}), ...(reward.xp !== undefined ? { xp: reward.xp } : {}), ...(reward.command ? { command: reward.command } : {}) }
+  const { id: _id, type: _type, title: _title, ...preserved } = reward.raw
+  return { ...preserved, id: reward.id, type: reward.type, ...(reward.title ? { title: reward.title } : {}) }
 }
 function compiledQuest(quest: FtbQuestDocumentQuest): RawRecord {
-  const { id: _id, title: _title, subtitle: _subtitle, icon: _icon, shape: _shape, x: _x, y: _y, description: originalDescription, dependencies: _dependencies, tasks: _tasks, rewards: _rewards, ...preserved } = quest.raw
+  const { id: _id, title: _title, subtitle: _subtitle, icon: _icon, shape: _shape, x: _x, y: _y, description: originalDescription, dependencies: _dependencies, min_required_tasks: _minRequiredTasks, hide_dependency_lines: _hideDependencyLines, tasks: _tasks, rewards: _rewards, ...preserved } = quest.raw
   return {
     ...preserved, id: quest.id, ...(quest.titleIsFallback ? {} : { title: quest.title }), subtitle: quest.subtitle, icon: quest.icon, shape: quest.shape, x: Math.trunc(quest.x), y: Math.trunc(quest.y),
     ...(quest.description ? { description: Array.isArray(originalDescription) ? quest.description.split('\n') : quest.description } : {}),
+    ...(quest.minRequiredTasks !== undefined && quest.minRequiredTasks > 0 ? { min_required_tasks: Math.trunc(quest.minRequiredTasks) } : {}),
+    ...(quest.hideDependencyLines ? { hide_dependency_lines: true } : {}),
     dependencies: quest.dependencies, tasks: quest.tasks.map(compiledTask), rewards: quest.rewards.map(compiledReward)
   }
 }
 function compiledChapter(chapter: FtbQuestDocumentChapter): RawRecord {
   const { id: _id, filename: _filename, title: _title, subtitle: _subtitle, icon: _icon, group: _group, quests: _quests, ...preserved } = chapter.raw
   return { ...preserved, id: chapter.id, filename: chapter.filename, title: chapter.title, subtitle: chapter.subtitle, icon: chapter.icon, ...(chapter.group ? { group: chapter.group } : {}), quests: chapter.quests.map(compiledQuest) }
+}
+
+// 与游戏 RewardTable#write 一致：空值字段省略，loot_crate 仅在启用时写入。
+function compiledRewardTableEntry(entry: FtbQuestRewardTableEntry): RawRecord {
+  const { id: _id, type: _type, title: _title, weight: _weight, ...preserved } = entry.raw
+  return { ...preserved, id: entry.id, type: entry.type, ...(entry.title ? { title: entry.title } : {}), ...(entry.weight !== 1 ? { weight: entry.weight } : {}) }
+}
+
+function compiledRewardTable(table: FtbQuestRewardTable): RawRecord {
+  const { id: _id, filename: _filename, title: _title, use_title: _useTitle, hide_tooltip: _hideTooltip, empty_weight: _emptyWeight, loot_size: _lootSize, rewards: _rewards, loot_crate: _lootCrate, ...preserved } = table.raw
+  const result: RawRecord = {
+    ...preserved, id: table.id, title: table.title,
+    ...(table.emptyWeight > 0 ? { empty_weight: table.emptyWeight } : {}),
+    loot_size: Math.max(1, Math.trunc(table.lootSize)),
+    ...(table.hideTooltip ? { hide_tooltip: true } : {}),
+    ...(table.useTitle ? { use_title: true } : {}),
+    rewards: table.rewards.map(compiledRewardTableEntry)
+  }
+  if (table.lootCrate) {
+    const crate = table.lootCrate
+    result.loot_crate = {
+      ...(crate.stringId ? { string_id: crate.stringId } : {}),
+      ...(crate.itemName ? { item_name: crate.itemName } : {}),
+      color: crate.color,
+      ...(crate.glow ? { glow: true } : {}),
+      drops: { passive: crate.passive, monster: crate.monster, boss: crate.boss }
+    }
+  }
+  return result
 }
 
 async function restoreFiles(original: Map<string, string | null>): Promise<void> {
@@ -213,7 +311,16 @@ export async function saveFtbQuestBook(project: ProjectInfo, input: FtbQuestBook
     desired.set(target, stringifyContent(compiledChapter({ ...chapter, source }), format))
   }
   const existingFiles = await readChapterFiles(root)
-  const existing = new Set(existingFiles.map((file) => path.resolve(root, file.source)))
+  const existingTableFiles = await readRewardTableFiles(root)
+  const existing = new Set([...existingFiles, ...existingTableFiles].map((file) => path.resolve(root, file.source)))
+  // 奖励表文件：reward_tables/{filename}.{format}（与游戏 RewardTable 存储一致，每表一个文件）。
+  for (const table of book.rewardTables) {
+    const source = `reward_tables/${table.filename}.${format}`
+    const target = path.resolve(root, source)
+    if (!isInside(rootResolved, target)) throw new Error('unsafe reward table path')
+    if (desired.has(target)) throw new Error(`reward table filename is duplicated: ${table.filename}`)
+    desired.set(target, stringifyContent(compiledRewardTable(table), format))
+  }
   const removed = [...existing].filter((file) => !desired.has(file))
   const original = new Map<string, string | null>()
   for (const target of new Set([...desired.keys(), ...removed])) original.set(target, await fs.readFile(target, 'utf8').catch(() => null))
@@ -243,5 +350,5 @@ export function newFtbQuestChapter(format: FtbQuestBookFormat, index: number): F
 }
 
 export function newFtbQuest(index: number): FtbQuestDocumentQuest {
-  return { id: createId(), title: `新任务 ${index + 1}`, titleIsFallback: false, subtitle: '', description: '', icon: 'minecraft:book', shape: 'square', x: index * 2, y: 0, dependencies: [], tasks: [{ id: createId(), type: 'checkmark', raw: {} }], rewards: [], raw: {} }
+  return { id: createId(), title: `新任务 ${index + 1}`, titleIsFallback: false, subtitle: '', description: '', icon: 'minecraft:book', shape: 'circle', x: index * 2, y: 0, dependencies: [], tasks: [{ id: createId(), type: 'checkmark', raw: {} }], rewards: [], raw: {} }
 }
