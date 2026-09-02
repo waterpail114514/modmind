@@ -166,7 +166,7 @@ export interface FtbQuestTaskDocument {
   id: string
   type: string
   title?: string
-  item?: string
+  /** 所有类型专属字段（item、count、entity、value…）都保存在 raw 中并原样读写。 */
   raw: Record<string, unknown>
 }
 
@@ -174,10 +174,7 @@ export interface FtbQuestRewardDocument {
   id: string
   type: string
   title?: string
-  item?: string
-  count?: number
-  xp?: number
-  command?: string
+  /** 所有类型专属字段（item、count、xp、command…）都保存在 raw 中并原样读写。 */
   raw: Record<string, unknown>
 }
 
@@ -193,6 +190,10 @@ export interface FtbQuestDocumentQuest {
   x: number
   y: number
   dependencies: string[]
+  /** 完成依赖任务的最少数量；未设置时表示需要全部完成。 */
+  minRequiredTasks?: number
+  /** 隐藏依赖连线（游戏中只显示依赖图标）。 */
+  hideDependencyLines?: boolean
   tasks: FtbQuestTaskDocument[]
   rewards: FtbQuestRewardDocument[]
   raw: Record<string, unknown>
@@ -214,13 +215,70 @@ export interface FtbQuestBook {
   format: FtbQuestBookFormat
   root: string
   chapters: FtbQuestDocumentChapter[]
+  /** 奖励表（reward_tables/ 目录，每表一个文件）。 */
+  rewardTables: FtbQuestRewardTable[]
   diagnostics: FtbQuestDiagnostic[]
+}
+
+/** 奖励表中的单个条目：一个奖励 + 抽取权重。 */
+export interface FtbQuestRewardTableEntry {
+  id: string
+  type: string
+  title?: string
+  /** 抽取权重（游戏默认 1.0）。 */
+  weight: number
+  /** 类型专属字段（item、count、xp…）原样读写。 */
+  raw: Record<string, unknown>
+}
+
+/**
+ * FTB Quests 奖励表（游戏 quest/loot/RewardTable，存储于 reward_tables/{filename}.snbt）。
+ * lootCrate 为战利品箱物品配置（游戏 LootCrate：string_id/item_name/color/glow + drops 权重）。
+ */
+export interface FtbQuestRewardTable {
+  id: string
+  filename: string
+  source: string
+  title: string
+  /** 用表标题作为战利品箱物品名。 */
+  useTitle: boolean
+  /** 隐藏任务提示中的表内容。 */
+  hideTooltip: boolean
+  /** 空结果权重（>=1 时可能抽不到奖励）。 */
+  emptyWeight: number
+  /** 每次抽取的物品数量。 */
+  lootSize: number
+  lootCrate: { stringId: string; itemName: string; color: number; glow: boolean; passive: number; monster: number; boss: number } | null
+  rewards: FtbQuestRewardTableEntry[]
+  raw: Record<string, unknown>
 }
 
 export interface FtbQuestSaveResult {
   written: string[]
   removed: string[]
   diagnostics: FtbQuestDiagnostic[]
+}
+
+/** 从整合包 mod jar 提取出的物品图标。动画贴图为纵向精灵图，渲染端按帧裁剪并播放。 */
+export interface FtbQuestIconResult {
+  /** PNG data URL（动画贴图为整张精灵图） */
+  url: string
+  frameWidth: number
+  frameHeight: number
+  frameCount: number
+  /** 每帧时长（毫秒），原版动画默认 50ms */
+  frametimeMs: number
+  animated: boolean
+}
+
+/**
+ * 任务节点形状的三层贴图（取自 ftbquests 模组 jar 的 textures/shapes/{id}/）。
+ * 与游戏 QuestShape 一致：shape（深灰底）+ background（白色高光）+ outline（状态色描边）。
+ */
+export interface FtbQuestShapeSet {
+  shape: string
+  background: string
+  outline: string
 }
 
 export interface ModpackContentImportResult {
@@ -1116,6 +1174,11 @@ export interface ModMindApi {
     plan: (concept: unknown) => Promise<unknown>
     applyPlan: (plan: unknown) => Promise<unknown>
     readFtbQuestBook: () => Promise<FtbQuestBook>
+    ftbQuestIcon: (itemId: string) => Promise<FtbQuestIconResult | null>
+    /** 批量解析模组物品/流体显示名（zh_cn 优先，en_us 兜底）；原版命名空间由渲染端 CDN 处理。 */
+    ftbQuestItemNames: (itemIds: string[]) => Promise<Record<string, string>>
+    ftbDependencyTexture: () => Promise<string | null>
+    ftbQuestShapes: () => Promise<Record<string, FtbQuestShapeSet>>
     saveFtbQuestBook: (book: FtbQuestBook) => Promise<FtbQuestSaveResult>
     writeFtbQuest: (input: unknown) => Promise<string>
     writePatchouliBook: (input: unknown) => Promise<string[]>

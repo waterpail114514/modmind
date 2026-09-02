@@ -2164,6 +2164,13 @@ button { color: inherit; }
 .image-output-actions button:hover { color: #1769d1; border-color: #9fc3ef; }
 .react-flow__edge-path { cursor: pointer; }
 .react-flow__edge.selected .react-flow__edge-path { stroke: #2677d4; stroke-width: 3; }
+/* 原版 FTB 依赖连线：dependency.png 斜条纹贴图沿连线平移（对应游戏内 mu 偏移，
+   速度 = 选中速度 1.0 → 每秒一个贴图周期；SMIL patternTransform 在 Chromium 中不生效，改用 CSS 平移 mask 内贴图矩形） */
+@keyframes ftb-dep-pattern-flow {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--ftb-dep-tile)); }
+}
+.ftb-dep-flow { animation: ftb-dep-pattern-flow 1s linear infinite; }
 .image-connection-editor { padding: 12px; border: 1px solid #dfe1e5; border-radius: 6px; background: #f7f8fa; }
 .image-connection-editor strong { display: block; font-size: 12px; }
 .image-connection-editor p { margin: 8px 0 0; color: #727781; font-size: 11px; line-height: 1.5; }
@@ -2510,52 +2517,100 @@ button { color: inherit; }
 @media (max-width: 760px) { .modpack-tool-workspace { padding-inline: 16px; } .modpack-tool-workspace > .content-toolbar { margin-inline: -16px; } .modpack-form-grid, .modpack-form-grid.three { grid-template-columns: 1fr; } .modpack-form-grid label.wide { grid-column: auto; } .inline-field { width: 100%; grid-template-columns: 1fr; } .inline-field select { width: 100%; } }
 
 /* FTB Quests uses the same canvas grammar as the image workflow, with a task book navigator. */
-.ftb-quest-editor { display: flex; min-height: 0; flex-direction: column; }
+.ftb-quest-editor { position: relative; display: flex; min-height: 0; flex-direction: column; }
 .ftb-quest-toolbar { align-items: center; }
 .ftb-quest-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .ftb-quest-health { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid rgba(40, 120, 75, .24); border-radius: 7px; color: #27784e; background: #edf8f1; font-size: var(--type-support); font-weight: 650; }
 .ftb-quest-health.error { border-color: rgba(183, 66, 59, .28); color: #b3423b; background: #fff0ee; }
-.ftb-quest-layout { display: grid; grid-template-columns: 224px minmax(430px, 1fr) 330px; min-height: 650px; height: calc(100vh - 205px); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #f7f8fa; box-shadow: 0 8px 26px rgba(30, 38, 48, .05); }
-.ftb-quest-chapters, .ftb-quest-inspector { min-width: 0; overflow: auto; background: rgba(255, 255, 255, .95); }
-.ftb-quest-chapters { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
-.ftb-quest-inspector { padding: 18px; border-left: 1px solid var(--line); }
+/* 游戏内 FTB Quests 视觉：深色 MC 界面、物品图标方块、形状遮罩、底部任务/奖励小图标。 */
+.ftb-quest-layout { display: grid; grid-template-columns: 224px minmax(430px, 1fr); min-height: 650px; height: calc(100vh - 205px); border: 1px solid #3c3d42; border-radius: 8px; overflow: hidden; background: #101013; box-shadow: 0 8px 26px rgba(0, 0, 0, .35); }
+.ftb-quest-chapters, .ftb-quest-inspector { min-width: 0; overflow: auto; background: #1e1f24; }
+.ftb-quest-chapters { display: flex; flex-direction: column; border-right: 1px solid #3c3d42; }
+.ftb-quest-inspector { padding: 18px; border-left: 1px solid #3c3d42; }
 .ftb-quest-panel-title, .ftb-quest-canvas-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.ftb-quest-panel-title { min-height: 48px; padding: 0 14px; border-bottom: 1px solid var(--line); color: var(--text); font-size: 12px; font-weight: 700; }
+.ftb-quest-panel-title { min-height: 48px; padding: 0 14px; border-bottom: 1px solid #3c3d42; color: #e6e6ea; font-size: 12px; font-weight: 700; }
 .ftb-quest-panel-title > span, .ftb-quest-panel-title > div, .ftb-quest-book-meta { display: inline-flex; align-items: center; gap: 7px; }
-.ftb-quest-book-meta { padding: 11px 14px; color: var(--muted); font-size: 10px; }
+.ftb-quest-book-meta { padding: 11px 14px; color: #9a9ea6; font-size: 10px; }
 .ftb-quest-chapter-list { display: grid; align-content: start; gap: 2px; padding: 5px; overflow: auto; }
-.ftb-quest-chapter-list button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 53px; padding: 8px 9px; border: 1px solid transparent; border-radius: 6px; color: #53575f; background: transparent; text-align: left; cursor: pointer; }
-.ftb-quest-chapter-list button:hover { background: #f0f3f6; }
-.ftb-quest-chapter-list button.selected { border-color: rgba(0, 122, 255, .2); color: #145fad; background: #eaf3ff; }
+.ftb-quest-chapter-list button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 53px; padding: 8px 9px; border: 1px solid transparent; border-radius: 6px; color: #c9ccd3; background: transparent; text-align: left; cursor: pointer; }
+.ftb-quest-chapter-list button:hover { background: #2a2b31; }
+.ftb-quest-chapter-list button.selected { border-color: #6e5a2a; color: #ffd75e; background: #322c1c; }
 .ftb-quest-chapter-list button > span { display: grid; min-width: 0; gap: 3px; }
 .ftb-quest-chapter-list strong, .ftb-quest-chapter-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ftb-quest-chapter-list strong { font-size: 11px; }
-.ftb-quest-chapter-list small { color: var(--muted); font-size: 10px; }
+.ftb-quest-chapter-list small { color: #9a9ea6; font-size: 10px; }
 .ftb-quest-add-chapter { margin: auto 12px 12px; }
 .ftb-quest-canvas-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
-.ftb-quest-canvas-heading { min-height: 49px; padding: 0 13px 0 18px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.7); }
+.ftb-quest-canvas-heading { min-height: 49px; padding: 0 13px 0 18px; border-bottom: 1px solid #3c3d42; background: #1a1b1f; }
 .ftb-quest-canvas-heading > div { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.ftb-quest-canvas-heading input { width: min(250px, 40vw); min-width: 0; padding: 4px 0; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: 13px; font-weight: 700; }
-.ftb-quest-canvas-heading span { color: var(--muted); font-size: 10px; }
-.ftb-quest-canvas { position: relative; min-height: 0; flex: 1; background: #f0f3f7; }
-.ftb-quest-empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--muted); font-size: 12px; pointer-events: none; }
+.ftb-quest-canvas-heading input { width: min(250px, 40vw); min-width: 0; padding: 4px 0; border: 0; outline: 0; color: #ffd75e; background: transparent; font: inherit; font-size: 13px; font-weight: 700; }
+.ftb-quest-canvas-heading span { color: #9a9ea6; font-size: 10px; }
+.ftb-quest-canvas { position: relative; min-height: 0; flex: 1; background: linear-gradient(180deg, #2c2d33, #24252a 60%, #202126); }
+.ftb-quest-empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; color: #9a9ea6; font-size: 12px; pointer-events: none; }
 .ftb-quest-empty .primary-button { pointer-events: auto; }
-.ftb-quest-node { display: grid; grid-template-columns: 29px minmax(106px, 1fr); gap: 8px; min-width: 178px; padding: 10px; border: 1px solid #cbd7e5; border-radius: 7px; color: #29313b; background: rgba(255,255,255,.98); box-shadow: 0 4px 12px rgba(31, 47, 68, .1); }
-.ftb-quest-node-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 5px; color: #a66a18; background: #fff5dd; }
-.ftb-quest-node strong, .ftb-quest-node small, .ftb-quest-node span { display: block; }
-.ftb-quest-node strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.ftb-quest-node small { margin-top: 3px; overflow: hidden; color: #777e88; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.ftb-quest-node span { display: flex; align-items: center; gap: 3px; margin-top: 7px; color: #5d6875; font-size: 9px; }
-.ftb-quest-node span svg:nth-of-type(2) { margin-left: 5px; }
-.ftb-quest-node .ftb-quest-handle { width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #7b8795; opacity: 0; transition: opacity .14s ease, transform .14s ease, background .14s ease; }
-.ftb-quest-node:hover .ftb-quest-handle, .react-flow__node-quest.selected .ftb-quest-handle, .ftb-quest-node .ftb-quest-handle.connectingto, .ftb-quest-node .ftb-quest-handle.connectingfrom { opacity: 1; }
+.ftb-quest-node { position: relative; width: 64px; height: 64px; display: grid; place-items: center; }
+/* 游戏内 QuestButton#draw 三层形状贴图叠加：
+   shape.png 深灰底(#373737) + background.png 白高光(alpha 150) + outline.png 状态色描边(未开始=白 alpha 150)。
+   三层均为白色/灰度剪影贴图，渲染端用 CSS mask 按 alpha 着色，等价于游戏里"剪影 × 颜色"的乘法着色；
+   贴图被拉伸铺满整个按钮（与 ImageIcon.draw(graphics,x,y,w,h) 一致）。 */
+.ftb-quest-shape-layer { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; }
+/* 形状贴图尚未就绪/缺失时的兜底：深灰圆底 + 浅色描边，避免节点空白。 */
+.ftb-quest-shape-fallback { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; border-radius: 50%; background: #373737; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35), inset 0 0 14px rgba(255, 255, 255, .12); }
+/* 图标容器：透明，只承载物品贴图，居中在形状上方；游戏内图标尺寸 = 按钮宽 × 2/3（QuestButton#draw: s = w * 2/3）。 */
+.ftb-quest-tile { position: relative; z-index: 1; display: grid; place-items: center; width: 42px; height: 42px; }
+.ftb-quest-tile span { overflow: hidden; max-width: 40px; color: #f4e9c8; font-size: 8.5px; font-weight: 700; letter-spacing: .2px; text-align: center; text-overflow: ellipsis; text-shadow: 1px 1px 0 rgba(0, 0, 0, .8); white-space: nowrap; }
+.ftb-quest-tile-img { width: 42px; height: 42px; image-rendering: pixelated; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .55)); }
+/* 任务含多种物品时的数量角标：与游戏内物品叠堆数字一致，放在图标右下角。 */
+.ftb-quest-tile-count { position: absolute; right: -4px; bottom: -4px; z-index: 2; min-width: 13px; height: 13px; padding: 0 3px; box-sizing: border-box; display: grid; place-items: center; border-radius: 3px; background: rgba(16, 16, 22, .88); color: #fff8e7; font-size: 8.5px; font-weight: 700; line-height: 13px; text-align: center; text-shadow: 1px 1px 0 rgba(0, 0, 0, .9); box-shadow: 0 1px 2px rgba(0, 0, 0, .55); max-width: none; overflow: visible; white-space: nowrap; }
+/* 动画贴图（纵向精灵图）：以 background 定位逐帧裁剪，steps() 按帧播放，与游戏内动态纹理一致。
+   关键帧用 --fqi-shift（每帧高的整数倍）保证每步恰好前进一帧，不做百分比缩放导致逐帧偏移。 */
+.ftb-quest-tile-img.animated { image-rendering: pixelated; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .55)); }
+@keyframes ftb-quest-icon-flow {
+  from { background-position: 0 0; }
+  to { background-position: 0 var(--fqi-shift); }
+}
+/* 选中任务：黄色光晕（与游戏选中任务描边高亮一致），不再依赖旧版 tile 边框。 */
+.react-flow__node-quest.selected { filter: drop-shadow(0 0 6px rgba(255, 215, 94, .5)); }
+.ftb-quest-node-tooltip { position: absolute; bottom: calc(100% + 6px); left: 50%; z-index: 6; display: grid; gap: 2px; min-width: 132px; max-width: 230px; padding: 7px 9px; border: 1px solid #5a5b61; border-radius: 4px; background: rgba(14, 14, 17, .96); box-shadow: 0 6px 18px rgba(0, 0, 0, .55); opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(3px); transition: opacity .12s ease, transform .12s ease; }
+.ftb-quest-node:hover .ftb-quest-node-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+.ftb-quest-node-tooltip strong { color: #ffffff; font-size: 11px; }
+.ftb-quest-node-tooltip small { color: #b9bac1; font-size: 9.5px; }
+.ftb-quest-node-tooltip em { color: #e0b45c; font-size: 9px; font-style: normal; }
+.ftb-quest-node .ftb-quest-handle { width: 9px; height: 9px; border: 2px solid #2a2b31; border-radius: 50%; background: #7b8795; opacity: 0; transition: opacity .14s ease, transform .14s ease, background .14s ease; }
+/* 与游戏一致：节点周围不显示连接锚点，仅在拖拽连线的过程中短暂显示。 */
+.ftb-quest-node .ftb-quest-handle.connectingto, .ftb-quest-node .ftb-quest-handle.connectingfrom { opacity: 1; }
 .ftb-quest-node .ftb-quest-handle.source { background: #1976d2; }
 .ftb-quest-node .ftb-quest-handle.target { background: #3b8b62; }
-.ftb-quest-node .ftb-quest-handle.top.target, .ftb-quest-node .ftb-quest-handle.bottom.target { left: 34%; }
-.ftb-quest-node .ftb-quest-handle.top.source, .ftb-quest-node .ftb-quest-handle.bottom.source { left: 66%; }
-.ftb-quest-node .ftb-quest-handle.left.target, .ftb-quest-node .ftb-quest-handle.right.target { top: 34%; }
-.ftb-quest-node .ftb-quest-handle.left.source, .ftb-quest-node .ftb-quest-handle.right.source { top: 66%; }
-.react-flow__node-quest.selected .ftb-quest-node { border-color: #1677d2; box-shadow: 0 0 0 3px rgba(22,119,210,.16), 0 5px 15px rgba(31,47,68,.13); }
+.ftb-quest-node .ftb-quest-handle.top.target, .ftb-quest-node .ftb-quest-handle.bottom.target { left: 32%; }
+.ftb-quest-node .ftb-quest-handle.top.source, .ftb-quest-node .ftb-quest-handle.bottom.source { left: 68%; }
+.ftb-quest-node .ftb-quest-handle.left.target, .ftb-quest-node .ftb-quest-handle.right.target { top: 32%; }
+.ftb-quest-node .ftb-quest-handle.left.source, .ftb-quest-node .ftb-quest-handle.right.source { top: 68%; }
+/* 右键菜单：对应游戏编辑模式下的 ContextMenu（深灰面板 + 边框 + 像素字体）。 */
+.ftb-ctx-backdrop { position: fixed; inset: 0; z-index: 90; }
+.ftb-ctx-menu { position: fixed; z-index: 91; min-width: 168px; padding: 3px; border: 1px solid #1b1d1e; border-radius: 4px; background: rgba(24, 24, 28, .97); box-shadow: 0 6px 18px rgba(0, 0, 0, .55); }
+.ftb-ctx-menu button { display: block; width: 100%; padding: 6px 10px; border: 0; border-radius: 3px; color: #d9dade; background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.ftb-ctx-menu button:hover:not(:disabled) { color: #ffffff; background: #37383f; }
+.ftb-ctx-menu button:disabled { color: #66676d; cursor: default; }
+.ftb-ctx-menu .ftb-ctx-sep { height: 1px; margin: 3px 6px; background: #3c3d42; }
+/* 奖励表管理弹层（对应游戏 RewardTablesScreen / EditRewardTableScreen）。 */
+.ftb-reward-tables { max-height: 86vh; overflow-y: auto; }
+.ftb-rt-list { display: flex; flex-direction: column; gap: 5px; padding: 4px 0 10px; }
+.ftb-rt-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; text-align: left; }
+.ftb-rt-row:hover { border-color: #c7d8ea; background: #edf6ff; }
+.ftb-rt-row-icon { flex: none; width: 16px; height: 16px; border: 1px solid rgba(0, 0, 0, .35); border-radius: 3px; }
+.ftb-rt-row-title { display: grid; gap: 2px; min-width: 0; flex: 1; color: var(--text); }
+.ftb-rt-row-title strong { font-size: 11px; }
+.ftb-rt-row-title small { color: var(--muted); font-size: 9px; }
+.ftb-rt-empty { margin: 12px 2px; color: var(--muted); font-size: 10.5px; line-height: 1.7; }
+.ftb-rt-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 6px 0 12px; }
+.ftb-rt-meta .field-label > input { margin-top: 6px; }
+.ftb-rt-drops { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ftb-rt-weight { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; margin-right: 6px; color: #6b6e77; font-size: 9px; font-weight: 600; }
+.ftb-rt-weight input { width: 52px; min-height: 22px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; color: inherit; background: var(--surface); font: inherit; font-size: 9px; }
+.ftb-quest-canvas .react-flow__controls { border: 1px solid #3c3d42; border-radius: 6px; overflow: hidden; box-shadow: none; }
+.ftb-quest-canvas .react-flow__controls-button { border-bottom: 1px solid #3c3d42; color: #d9dade; background: #2a2b31; }
+.ftb-quest-canvas .react-flow__controls-button:hover { background: #37383f; }
+.ftb-quest-canvas .react-flow__minimap { border: 1px solid #3c3d42; border-radius: 6px; background: #1e1f24; }
 .ftb-quest-inspector .field-label { margin-top: 13px; }
 .ftb-quest-inspector .field-label > input, .ftb-quest-inspector .field-label > select, .ftb-quest-inspector .field-label > textarea { margin-top: 6px; }
 .ftb-quest-inspector textarea { min-height: 86px; resize: vertical; line-height: 1.5; }
@@ -2568,6 +2623,18 @@ button { color: inherit; }
 .ftb-quest-rule.reward { grid-template-columns: 70px minmax(0, 1fr) 48px auto; }
 .ftb-quest-rule select, .ftb-quest-rule input, .ftb-quest-dependencies select { min-width: 0; min-height: 29px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; color: inherit; background: var(--surface); font: inherit; font-size: 10px; }
 .ftb-quest-rule.reward:has(input:only-of-type) { grid-template-columns: 70px minmax(0, 1fr) auto; }
+.ftb-quest-rule.task-card { display: block; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.ftb-quest-rule-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.ftb-quest-rule-fields { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.ftb-quest-field { display: grid; gap: 3px; color: var(--muted); font-size: 10px; }
+.ftb-quest-field.boolean { display: flex; align-items: center; gap: 6px; min-height: 29px; color: var(--text); cursor: pointer; }
+.ftb-quest-field.boolean input { margin: 0; }
+.ftb-quest-field input, .ftb-quest-field select { min-width: 0; min-height: 27px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; color: inherit; background: var(--surface); font: inherit; font-size: 10px; }
+.ftb-quest-checkbox { display: flex; align-items: center; gap: 7px; min-height: 34px; color: var(--text); font-size: 11px; cursor: pointer; }
+.ftb-quest-checkbox input { margin: 0; }
+.app-shell.dark-mode .ftb-quest-rule.task-card { border-color: var(--line); background: #232429; }
+.app-shell.dark-mode .ftb-quest-field input, .app-shell.dark-mode .ftb-quest-field select { border-color: var(--line); color: var(--dark-text); background: #202126; }
+.app-shell.dark-mode .ftb-quest-field { color: #989ea9; }
 .ftb-quest-advanced { margin-top: 19px; padding-top: 14px; border-top: 1px solid var(--line); }
 .ftb-quest-advanced summary { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 11px; font-weight: 700; cursor: pointer; }
 .ftb-quest-advanced textarea { width: 100%; min-height: 145px; margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; }
@@ -2576,21 +2643,46 @@ button { color: inherit; }
 .ftb-quest-inspector-empty { display: grid; place-items: center; min-height: 180px; text-align: center; }
 .ftb-quest-message { display: flex; align-items: center; gap: 7px; min-height: 37px; padding: 0 12px; border: 1px solid rgba(40,120,75,.2); border-top: 0; border-radius: 0 0 8px 8px; color: #397556; background: #f1faf4; font-size: 11px; }
 .ftb-quest-message.error { border-color: rgba(183,66,59,.24); color: #a94b44; background: #fff2f0; }
-.app-shell.dark-mode .ftb-quest-layout { border-color: var(--line); background: #1d1e22; box-shadow: none; }
-.app-shell.dark-mode .ftb-quest-chapters, .app-shell.dark-mode .ftb-quest-inspector, .app-shell.dark-mode .ftb-quest-canvas-heading { border-color: var(--line); background: #25262b; }
-.app-shell.dark-mode .ftb-quest-chapter-list button { color: #c7cbd2; }
-.app-shell.dark-mode .ftb-quest-chapter-list button:hover { background: #303239; }
-.app-shell.dark-mode .ftb-quest-chapter-list button.selected { border-color: #2a6291; color: #b9ddfb; background: #22384a; }
-.app-shell.dark-mode .ftb-quest-canvas { background: #1c1d21; }
-.app-shell.dark-mode .ftb-quest-node { border-color: #4d5663; color: #e2e4e8; background: #2b2d32; box-shadow: 0 5px 15px rgba(0,0,0,.22); }
-.app-shell.dark-mode .ftb-quest-node small, .app-shell.dark-mode .ftb-quest-node span { color: #adb3bd; }
-.app-shell.dark-mode .ftb-quest-node-icon { color: #e0ab4d; background: #463a22; }
-.app-shell.dark-mode .ftb-quest-node .ftb-quest-handle { border-color: #2b2d32; }
-.app-shell.dark-mode .ftb-quest-inspector .field-label > input, .app-shell.dark-mode .ftb-quest-inspector .field-label > select, .app-shell.dark-mode .ftb-quest-inspector .field-label > textarea, .app-shell.dark-mode .ftb-quest-rule select, .app-shell.dark-mode .ftb-quest-rule input, .app-shell.dark-mode .ftb-quest-dependencies select { border-color: var(--line); color: var(--dark-text); background: #202126; }
+/* 检查器/表单同样使用游戏深色风格（不随应用明暗主题变化） */
+/* 游戏内任务详情书页：居中金色标题 + 副标题，金色段落标题 + 行式条目。 */
+.ftb-quest-inspector { padding: 0; }
+.ftb-quest-inspector:has(.ftb-quest-detail-head) { display: flex; flex-direction: column; }
+.ftb-quest-inspector:has(.ftb-quest-panel-title), .ftb-quest-inspector:has(.ftb-quest-inspector-empty) { padding: 18px; }
+.ftb-quest-detail-head { position: relative; display: grid; justify-items: center; gap: 3px; padding: 14px 44px 12px; border-bottom: 2px solid #4a3f28; background: linear-gradient(180deg, #26241d, #1e1f24); }
+.ftb-quest-detail-title-input { width: 100%; min-width: 0; padding: 2px 0; border: 0; outline: 0; color: #ffd75e; background: transparent; font: inherit; font-size: 16px; font-weight: 700; text-align: center; text-shadow: 1px 1px 0 rgba(0, 0, 0, .85); }
+.ftb-quest-detail-title-input::placeholder { color: rgba(255, 215, 94, .35); }
+.ftb-quest-detail-subtitle-input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; color: #b9bac1; background: transparent; font: inherit; font-size: 10.5px; text-align: center; }
+.ftb-quest-detail-subtitle-input::placeholder { color: rgba(185, 186, 193, .35); }
+.ftb-quest-detail-actions { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; }
+.ftb-quest-detail-body { padding: 12px 18px 18px; }
+.ftb-quest-detail-desc { width: 100%; min-height: 60px; margin: 2px 0 4px; padding: 6px 8px; border: 1px solid transparent; border-radius: 4px; outline: 0; color: #dcdcdf; background: transparent; font: inherit; font-size: 11.5px; line-height: 1.6; resize: vertical; }
+.ftb-quest-detail-desc:hover { border-color: #3c3d42; }
+.ftb-quest-detail-desc:focus { border-color: #55565e; background: rgba(0, 0, 0, .25); }
+.ftb-quest-detail-desc::placeholder { color: #6f7178; }
+.ftb-quest-settings-body { padding-top: 4px; }
+.ftb-quest-inspector .field-label { color: #b9bac1; }
+.ftb-quest-inspector .field-label > input, .ftb-quest-inspector .field-label > select, .ftb-quest-inspector .field-label > textarea, .ftb-quest-rule select, .ftb-quest-rule input, .ftb-quest-dependencies select, .ftb-quest-field input, .ftb-quest-field select, .ftb-quest-section-title select { border-color: #3c3d42; color: #e6e6ea; background: #2a2b31; }
+.ftb-quest-checkbox input, .ftb-quest-field.boolean input { accent-color: #e8b13a; }
+.ftb-quest-inspector .field-label > input::placeholder, .ftb-quest-field input::placeholder { color: #6f7178; }
+/* 段落标题：游戏内 Tasks:/Rewards: 的金色小标题样式 */
+.ftb-quest-section-title { border-top-color: #3c3d42; color: #ffd75e; letter-spacing: .5px; }
+.ftb-quest-section-title span { text-shadow: 1px 1px 0 rgba(0, 0, 0, .8); }
+.ftb-quest-dependencies button { border-color: #4a4430; color: #ffd75e; background: #2e2a1d; }
+/* 行式条目：游戏任务/奖励行（左侧图标方块 + 内容） */
+.ftb-quest-rule.task-card { border-color: #17181b; background: linear-gradient(180deg, #2b2c32, #232429); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04), inset 0 -1px 0 rgba(0, 0, 0, .35); }
+.ftb-quest-rule-head { gap: 8px; }
+.ftb-quest-type-glyph { display: grid; place-items: center; flex: none; width: 26px; height: 26px; overflow: hidden; border: 2px solid #5c5c62; color: #f4e9c8; font-size: 11px; font-weight: 700; text-shadow: 1px 1px 0 rgba(0, 0, 0, .8); background: linear-gradient(180deg, #73737a, #4a4a51); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5); }
+.ftb-quest-type-glyph.reward { border-color: #8a6d2c; color: #ffe9a8; background: linear-gradient(180deg, #8a7440, #5d4d24); }
+.ftb-quest-field { color: #9a9ea6; }
+.ftb-quest-field.boolean { color: #e6e6ea; }
+.ftb-quest-checkbox { color: #e6e6ea; }
+.ftb-quest-advanced { border-top-color: #3c3d42; }
+.ftb-quest-advanced summary { color: #e6e6ea; }
+.ftb-quest-inspector-empty, .ftb-quest-inline-copy { color: #8f939b; }
 .app-shell.dark-mode .ftb-quest-health { border-color: #366f50; color: #9ed8b1; background: #22382a; }
 .app-shell.dark-mode .ftb-quest-health.error, .app-shell.dark-mode .ftb-quest-message.error { border-color: #70433e; color: #ffb4ac; background: #482722; }
 .app-shell.dark-mode .ftb-quest-message { border-color: #37684c; color: #a9d9b7; background: #203527; }
-@media (max-width: 1180px) { .ftb-quest-layout { grid-template-columns: 204px minmax(340px, 1fr) 292px; } }
+@media (max-width: 1180px) { .ftb-quest-layout { grid-template-columns: 204px minmax(340px, 1fr); } }
 @media (max-width: 900px) { .ftb-quest-layout { height: auto; min-height: 0; grid-template-columns: 190px minmax(0, 1fr); } .ftb-quest-inspector { grid-column: 1 / -1; min-height: 350px; border-top: 1px solid var(--line); border-left: 0; } .ftb-quest-canvas { min-height: 540px; } }
 @media (max-width: 640px) { .ftb-quest-toolbar { align-items: flex-start; flex-direction: column; gap: 12px; } .ftb-quest-toolbar-actions { justify-content: flex-start; } .ftb-quest-layout { grid-template-columns: 1fr; } .ftb-quest-chapters { min-height: 155px; border-right: 0; border-bottom: 1px solid var(--line); } .ftb-quest-chapter-list { display: flex; overflow-x: auto; } .ftb-quest-chapter-list button { min-width: 160px; } .ftb-quest-add-chapter { display: none; } .ftb-quest-canvas { min-height: 460px; } .ftb-quest-rule, .ftb-quest-rule.reward { grid-template-columns: 72px minmax(0, 1fr) auto; } .ftb-quest-rule.reward input[type="number"] { grid-column: 2; } }
 
@@ -4123,3 +4215,67 @@ body {
 .mcp-bridge-path { display: block; padding: 8px 12px; border-radius: 8px; font-family: Consolas, monospace; font-size: 11.5px; color: var(--agent-text-1, #303137); background: var(--agent-fill-1, #f1f1f4); border: 1px solid var(--line, #dddde0); overflow-wrap: anywhere; }
 .mcp-bridge-actions { margin-top: 8px; }
 .app-shell.dark-mode .mcp-bridge-path { color: var(--dark-text); background: var(--dark-field); border-color: var(--dark-border); }
+
+/* ── FTB 任务详情书页（游戏内 ViewQuestPanel 风格）────── */
+/* 点击任务节点后，在画布中央弹出模态书页：居中金色标题、右上关闭、Tasks/Rewards 两栏、副标题与描述。 */
+/* Minecraft 像素字体：与游戏内 FTB Quests 默认字体观感一致（通过 CDN 加载，与 mcmeta 贴图同源策略） */
+@font-face {
+  font-family: 'Monocraft';
+  src: url('https://cdn.jsdelivr.net/gh/IdreesInc/Monocraft@main/dist/Monocraft-ttf/Monocraft.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+.ftb-quest-editor { font-family: 'Monocraft', 'Courier New', monospace; }
+.ftb-quest-editor input, .ftb-quest-editor select, .ftb-quest-editor textarea, .ftb-quest-editor button { font-family: inherit; }
+.ftb-quest-editor .ftb-quest-node-tooltip strong, .ftb-quest-editor .ftb-quest-node-tooltip small, .ftb-quest-editor .ftb-quest-node-tooltip em { font-family: inherit; }
+.ftb-quest-book-overlay { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; padding: 22px; overflow: auto; background: rgba(8, 8, 10, .62); backdrop-filter: blur(1.5px); }
+.ftb-quest-book { position: relative; width: min(700px, 100%); max-height: 100%; display: flex; flex-direction: column; overflow: auto; border: 2px solid #4a3f28; border-radius: 4px; background: linear-gradient(180deg, #221f18, #1b1a1f 26%); box-shadow: 0 0 0 1px rgba(0, 0, 0, .65), 0 24px 60px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05); }
+/* 书页头：居中金色标题（可编辑）+ 右上操作按钮 */
+.ftb-quest-book-head { position: relative; display: grid; place-items: center; padding: 15px 52px 11px; border-bottom: 2px solid #4a3f28; flex-shrink: 0; }
+.ftb-quest-book-actions { position: absolute; top: 9px; right: 9px; display: flex; gap: 3px; }
+.ftb-quest-book-nav { position: absolute; top: 9px; left: 9px; display: flex; gap: 3px; }
+.ftb-quest-book-nav .icon-button:disabled { opacity: .35; cursor: default; }
+.ftb-quest-book-title { width: 100%; min-width: 0; padding: 2px 0; border: 0; outline: 0; color: #ffd75e; background: transparent; font: inherit; font-size: 16px; font-weight: 700; text-align: center; text-shadow: 1px 1px 0 rgba(0, 0, 0, .85); }
+.ftb-quest-book-title::placeholder { color: rgba(255, 215, 94, .35); }
+/* 内容两栏：Tasks | Rewards */
+.ftb-quest-book-columns { display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr); gap: 14px; padding: 12px 16px 8px; }
+.ftb-quest-book-divider { width: 1px; height: 100%; min-height: 40px; background: #4a3f28; }
+.ftb-quest-book-column { min-width: 0; }
+.ftb-quest-book-col-title { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; color: #ffd75e; font-size: 12px; font-weight: 700; letter-spacing: .4px; text-shadow: 1px 1px 0 rgba(0, 0, 0, .8); }
+.ftb-quest-book-col-title small { color: #9c9b95; font-size: 9.5px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; }
+.ftb-quest-book-col-title select { margin-left: auto; padding: 2px 6px; border: 1px solid #4a4430; border-radius: 4px; color: #ffd75e; background: #2e2a1d; font: inherit; font-size: 10px; cursor: pointer; }
+.ftb-quest-book-tiles { display: flex; flex-direction: column; gap: 4px; }
+/* 行式条目：图标方块 + 标签 + 标题 + 删除 */
+.ftb-quest-book-tile { border: 1px solid #17181b; border-radius: 4px; background: linear-gradient(180deg, #2b2c32, #232429); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04), inset 0 -1px 0 rgba(0, 0, 0, .35); }
+.ftb-quest-book-tile.expanded { border-color: #4a4430; }
+.ftb-quest-book-tile-btn { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; padding: 4px 6px; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+.ftb-quest-book-tile .ftb-quest-type-glyph { width: 20px; height: 20px; flex: 0 0 20px; border-width: 1px; font-size: 10px; }
+.ftb-quest-book-tile-label { flex: none; color: #c9c8c2; font-size: 10px; font-weight: 600; }
+.ftb-quest-book-tile-title { min-width: 0; overflow: hidden; color: #8f939b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.ftb-quest-book-tile-del { display: grid; place-items: center; flex: none; width: 18px; height: 18px; margin-left: auto; border-radius: 4px; color: #777a82; }
+.ftb-quest-book-tile-del:hover { color: #ff8e86; background: rgba(255, 142, 134, .1); }
+/* 展开的字段编辑区 */
+.ftb-quest-book-tile-fields { display: flex; flex-direction: column; gap: 6px; margin: 2px 6px 7px; padding-top: 6px; border-top: 1px solid #35363c; }
+.ftb-quest-book-tile-fields .field-label, .ftb-quest-book-tile-fields .ftb-quest-field { margin: 0; }
+.ftb-quest-book-tile-fields .ftb-quest-field { padding-left: 0; }
+.ftb-quest-book-type { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 7px; color: #b9bac1; font-size: 10px; }
+.ftb-quest-book-type select { padding: 3px 6px; border: 1px solid #3c3d42; border-radius: 4px; color: #e6e6ea; background: #2a2b31; font: inherit; font-size: 10.5px; }
+/* 底部：副标题（斜体灰居中）+ 描述 */
+.ftb-quest-book-rule { margin: 0 18px; border-top: 1px solid #4a3f28; flex-shrink: 0; }
+.ftb-quest-book-footer { padding: 4px 18px 12px; flex-shrink: 0; }
+.ftb-quest-book-subtitle { width: 100%; padding: 2px 0; border: 0; outline: 0; color: #b9bac1; background: transparent; font: inherit; font-size: 10.5px; font-style: italic; text-align: center; }
+.ftb-quest-book-subtitle::placeholder { color: rgba(185, 186, 193, .35); }
+.ftb-quest-book-desc { width: 100%; min-height: 62px; margin-top: 5px; padding: 6px 8px; border: 1px solid #31322f; border-radius: 4px; outline: 0; color: #dcdcdf; background: rgba(0, 0, 0, .22); font: inherit; font-size: 11.5px; line-height: 1.6; resize: vertical; }
+.ftb-quest-book-desc:hover { border-color: #3c3d42; }
+.ftb-quest-book-desc:focus { border-color: #55565e; }
+.ftb-quest-book-desc::placeholder { color: #6f7178; }
+/* 书页内的折叠设置区 */
+.ftb-quest-book .ftb-quest-advanced { padding: 8px 16px 12px; margin-top: 0; }
+.ftb-quest-book .ftb-quest-advanced summary { color: #e6e6ea; }
+.ftb-quest-book .ftb-quest-settings-body { padding-top: 8px; }
+.ftb-quest-book .ftb-quest-dependencies button { border-color: #4a4430; color: #ffd75e; background: #2e2a1d; }
+/* 前置关系视图（点击连线时） */
+.ftb-quest-book-edge-title { color: #ffd75e; font-size: 15px; font-weight: 700; text-align: center; text-shadow: 1px 1px 0 rgba(0, 0, 0, .85); }
+.ftb-quest-book-edge-info { margin: 10px 18px 6px; color: #b9bac1; font-size: 11.5px; line-height: 1.6; text-align: center; }
+.ftb-quest-book-edge-delete { margin: 0 0 12px; }
