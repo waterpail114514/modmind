@@ -1607,7 +1607,7 @@ export class BlockbenchBridge {
 
   private async waitUntilReady(): Promise<string | undefined> {
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      if (this.destroyed) throw new Error('Blockbench bridge was destroyed while loading')
+      if (this.destroyed) throw new Error('Blockbench 桥接在加载过程中被销毁')
       const probe: unknown = await this.view.webContents.executeJavaScript(
         `(() => {
           const root = globalThis;
@@ -1625,7 +1625,7 @@ export class BlockbenchBridge {
       }
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
-    throw new Error('Blockbench loaded, but its editor API did not become ready')
+    throw new Error('Blockbench 已加载，但编辑器 API 未就绪')
   }
 
   private async applyTheme(): Promise<void> {
@@ -1689,10 +1689,17 @@ export class BlockbenchBridge {
         style.id = id;
         document.head.appendChild(style);
       }
-      style.textContent = ${JSON.stringify(`body { ${css} } #corner_logo { display: none !important; }`)};
+      const layoutCss = ${JSON.stringify(`#corner_logo, #web_download_button { display: none !important; } #menu_bar { padding: 0 4px !important; gap: 2px !important; } #menu_bar > li { padding: 0 6px !important; font-size: 12px !important; } #menu_bar > li > .menu_bar_selector { padding: 4px 6px !important; }`)};
+      style.textContent = ${JSON.stringify(`body { ${css} }`)} + layoutCss;
       document.documentElement.style.colorScheme = ${JSON.stringify(this.theme)};
       document.body.dataset.modmindTheme = ${JSON.stringify(this.theme)};
       document.body.classList.toggle('light_mode', ${this.theme === 'light'});
+      if (!window.__modmindMobileResize) {
+        window.__modmindMobileResize = true;
+        const updateMobile = () => { document.body.classList.toggle('is_mobile', window.innerWidth < 900); };
+        window.addEventListener('resize', updateMobile);
+        updateMobile();
+      }
       if (globalThis.CustomTheme && CustomTheme.data && CustomTheme.data.colors) {
         Object.assign(CustomTheme.data.colors, ${JSON.stringify(palette)});
         if (typeof CustomTheme.updateColors === 'function') CustomTheme.updateColors();

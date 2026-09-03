@@ -1,20 +1,55 @@
+:root {
+  --bb-intent-docked-min: 320px;
+  --bb-intent-docked-max: 430px;
+  --bb-bp-compact: 900px;
+  --bb-bp-narrow: 620px;
+  --bb-panels-top: 82px; /* toolbar(46) + document-bar(34)+1px 边框，浮出面板统一由此驱动 */
+}
+
 .bb-workspace {
   position: relative;
   width: 100%;
   height: 100%;
   min-width: 0;
-  min-height: 520px;
+  min-height: 0;
   display: grid;
-  grid-template-rows: 42px 32px minmax(0, 1fr) 25px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   color: #27272a;
   background: #ececee;
+  container-type: inline-size;
+  container-name: bb-workspace;
 }
 
 .bb-workspace button {
   color: inherit;
   font: inherit;
   letter-spacing: 0;
+}
+
+.bb-workspace.intent-open.intent-docked {
+  grid-template-columns: minmax(280px, 1fr) minmax(var(--bb-intent-docked-min), var(--bb-intent-docked-max));
+}
+
+.bb-workspace.intent-open.intent-docked .bb-toolbar,
+.bb-workspace.intent-open.intent-docked .bb-document-bar,
+.bb-workspace.intent-open.intent-docked .bb-statusbar {
+  grid-column: 1 / -1;
+}
+
+.bb-workspace.intent-open.intent-docked .bb-viewport-shell {
+  grid-column: 1;
+}
+
+.bb-workspace.intent-open.intent-docked .bb-intent-panel {
+  position: static;
+  grid-column: 2;
+  grid-row: 3;
+  width: auto;
+  max-height: none;
+  border-radius: 0;
+  border-width: 0 0 0 1px;
+  box-shadow: none;
 }
 
 .bb-toolbar {
@@ -205,9 +240,11 @@
 .bb-intent-panel {
   position: absolute;
   z-index: 6;
-  top: 82px;
+  top: var(--bb-panels-top);
   right: 12px;
-  width: min(430px, calc(100% - 24px));
+  width: 430px;
+  min-width: 280px;
+  max-width: 520px;
   max-height: calc(100% - 120px);
   padding: 12px;
   border: 1px solid rgba(60, 60, 67, .2);
@@ -218,6 +255,21 @@
   background: rgba(250, 250, 252, .98);
   box-shadow: 0 14px 42px rgba(0, 0, 0, .2);
 }
+
+.bb-panel-resize-handle {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  border-radius: 3px;
+  cursor: ew-resize;
+  z-index: 7;
+  background: transparent;
+  transition: background .12s ease;
+}
+.bb-panel-resize-handle:hover { background: rgba(0, 0, 0, .14); }
+.bb-resize-left { left: 3px; }
+.bb-resize-right { right: 3px; }
 
 .bb-intent-head {
   display: flex;
@@ -253,6 +305,38 @@
 }
 
 .bb-intent-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bb-intent-nl { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.bb-intent-nl-editor {
+  width: 100%;
+  min-height: 52px;
+  max-height: 160px;
+  padding: 9px;
+  border: 1px solid #d6d6da;
+  border-radius: 6px;
+  resize: vertical;
+  color: #2a2a2e;
+  background: #fff;
+  font: 12px/1.5 inherit;
+}
+.bb-intent-nl-editor:focus { outline: none; border-color: #1768b8; }
+.bb-intent-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bb-intent-step { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; line-height: 1.45; }
+.bb-intent-step-icon { display: inline-flex; flex-shrink: 0; margin-top: 1px; color: #1768b8; }
+.bb-intent-step.success .bb-intent-step-icon { color: #25713b; }
+.bb-intent-step.error .bb-intent-step-icon { color: #b22f28; }
+.bb-intent-step.warning .bb-intent-step-icon { color: #b97a1f; }
+.bb-intent-step-copy { display: flex; flex-direction: column; min-width: 0; color: #2a2a2e; }
+.bb-intent-step-copy strong { font-weight: 600; }
+.bb-intent-step-copy em { font-style: normal; color: #777; overflow-wrap: anywhere; }
+.bb-intent-advanced { margin-bottom: 10px; border-top: 1px dashed #d6d6da; padding-top: 10px; }
+.bb-intent-advanced > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  user-select: none;
+}
+.bb-intent-advanced > summary:focus { outline: none; }
 .bb-intent-modes {
   min-height: 58px;
   padding: 2px;
@@ -305,7 +389,7 @@
 .bb-intent-secondary:disabled { opacity: .45; cursor: default; }
 .bb-intent-message { margin: 0; color: #b22f28; font-size: 10px; overflow-wrap: anywhere; }
 .bb-intent-message.success { color: #25713b; }
-.bb-intent-captures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.bb-intent-captures { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; }
 .bb-intent-captures img { width: 100%; aspect-ratio: 1; border: 1px solid #d6d6da; border-radius: 5px; object-fit: contain; object-position: center; image-rendering: auto; background: #ececee; }
 .bb-intent-captures figure { min-width: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 .bb-intent-captures.split figure img { min-width: 0; }
@@ -343,7 +427,9 @@
   z-index: 6;
   top: 82px;
   left: 12px;
-  width: min(340px, calc(100% - 24px));
+  width: 340px;
+  min-width: 260px;
+  max-width: 520px;
   max-height: calc(100% - 120px);
   padding: 12px;
   border: 1px solid rgba(60, 60, 67, .2);
@@ -397,6 +483,10 @@
 
 .bb-viewport-placeholder.error {
   color: #e0837c;
+}
+
+.app-shell.dark-mode .bb-viewport-placeholder.error {
+  color: #f0918a;
 }
 
 .bb-statusbar {
@@ -464,7 +554,7 @@
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 900px) {
+@container bb-workspace (max-width: 900px) {
   .bb-toolbar {
     grid-template-columns: 1fr auto;
   }
@@ -474,7 +564,13 @@
   }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 860px) {
+  .bb-workspace.intent-open.intent-docked {
+    grid-template-columns: minmax(240px, 1fr) 340px;
+  }
+}
+
+@container bb-workspace (max-width: 620px) {
   .bb-ai-state span,
   .bb-status-message {
     display: none;
@@ -484,6 +580,12 @@
     width: 29px;
     padding: 0;
     justify-content: center;
+  }
+}
+
+@media (max-width: 620px) {
+  .bb-workspace.intent-open.intent-docked {
+    grid-template-columns: minmax(0, 1fr) 300px;
   }
 }
 

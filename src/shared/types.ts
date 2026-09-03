@@ -858,7 +858,7 @@ export interface InspirationChatMessage {
   isFinal?: boolean
 }
 
-export type AiSurface = 'workspace' | 'inspiration'
+export type AiSurface = 'workspace' | 'inspiration' | 'modeling'
 
 export interface AiCreateCodeOptions {
   surface?: AiSurface

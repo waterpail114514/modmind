@@ -13,6 +13,7 @@ import {
   Puzzle,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
   Clock3,
   CloudUpload,
   Code2,
@@ -141,6 +142,9 @@ import { PluginsManager } from './components/PluginsManager'
 import { PluginOverlayLayer } from './components/PluginOverlayLayer'
 import type { PluginSnapshot } from '../../shared/plugins'
 import { appendUserTurn, normalizeStoredWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, settleWorkbenchActivity, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
+import { GUIDE_AUTO_DISABLED_KEY, pageGuideSeenKey, PAGE_TOURS, SHELL_TOUR_STEPS } from './pageGuides'
+import { PageGuideModal, WelcomeTour } from './components/PageGuide'
+import { TourGuide } from './components/TourGuide'
 import {
   createWorkbenchConversation,
   isLegacyWorkbenchConversation,
@@ -1755,6 +1759,18 @@ export default function App(): React.JSX.Element {
   const [imageStudioSettings, setImageStudioSettings] = useState<ImageStudioSettings>({ baseUrl: 'https://ai.soulecho.cc/v1', model: 'gpt-image-2', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true })
   const [imageApiKey, setImageApiKey] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [pageGuideOpen, setPageGuideOpen] = useState(false)
+  const [activeTour, setActiveTour] = useState<'page' | 'shell' | null>(null)
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(GUIDE_AUTO_DISABLED_KEY)) return
+      if (localStorage.getItem(pageGuideSeenKey(view))) return
+      localStorage.setItem(pageGuideSeenKey(view), 'auto')
+      setPageGuideOpen(true)
+    } catch {
+      /* localStorage 不可用时跳过自动弹出 */
+    }
+  }, [view])
   const [sidebarOrders, setSidebarOrders] = useState<Record<string, string[]>>({})
   const [sidebarGroupOrder, setSidebarGroupOrder] = useState<string[]>([])
   const [detachedSidebarItemIds, setDetachedSidebarItemIds] = useState<Set<ViewId>>(() => new Set())
@@ -4705,9 +4721,10 @@ export default function App(): React.JSX.Element {
       {!isDetachedWindow ? <header className="titlebar">
         <div className="titlebar-name"><img src={appLogo} alt="" />{projectLauncherOpen ? 'ModMind' : project?.name ?? 'ModMind'}</div>
         <div className="titlebar-actions">
-          <button className="hosted-titlebar-button" type="button" title="ModMind 账号与额度" onClick={() => setDeviceAccountOpen(true)}><UserRound size={14} /><span>{deviceState.status === 'connected' ? formatBalanceCents(deviceState.balanceCents) : '连接账号'}</span></button>
-          <label className="expert-mode-toggle" title="开启后显示完整开发工具与设置"><span>专业模式</span><input type="checkbox" checked={uiMode === 'advanced'} onChange={(event) => selectUiMode(event.target.checked ? 'advanced' : 'beginner')} /><span className="expert-mode-track" aria-hidden="true" /></label>
+          <button className="hosted-titlebar-button" type="button" data-tour="titlebar-account" title="ModMind 账号与额度" onClick={() => setDeviceAccountOpen(true)}><UserRound size={14} /><span>{deviceState.status === 'connected' ? formatBalanceCents(deviceState.balanceCents) : '连接账号'}</span></button>
+          <label className="expert-mode-toggle" data-tour="titlebar-mode" title="开启后显示完整开发工具与设置"><span>专业模式</span><input type="checkbox" checked={uiMode === 'advanced'} onChange={(event) => selectUiMode(event.target.checked ? 'advanced' : 'beginner')} /><span className="expert-mode-track" aria-hidden="true" /></label>
           <button className="titlebar-icon" title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setSidebarCollapsed((current) => !current)}><PanelLeft size={15} /></button>
+          <button className="titlebar-icon" data-tour="titlebar-help" title="本页使用指南" aria-label="本页使用指南" onClick={() => setPageGuideOpen(true)}><CircleHelp size={15} /></button>
           <div className="titlebar-menu-wrap" ref={titlebarMenuRef}>
             <button className="titlebar-icon" title="更多操作" aria-label="更多操作" aria-expanded={titlebarMenuOpen} onClick={() => setTitlebarMenuOpen((current) => !current)}><MoreHorizontal size={16} /></button>
             {titlebarMenuOpen ? <div className="titlebar-menu" role="menu">
@@ -4727,7 +4744,7 @@ export default function App(): React.JSX.Element {
         {(!isDetachedWindow || initialDetachedGroup) ? <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${initialDetachedGroup ? 'detached-group-sidebar' : ''}`}>
           <div className="brand-row">
             <img className="brand-mark" src={appLogo} alt="ModMind" />
-            <div><strong>ModMind</strong><span>Minecraft 创作工具</span></div>
+            <div><strong>ModMind{import.meta.env.DEV ? <span className="dev-badge">DEV</span> : null}</strong><span>Minecraft 创作工具</span></div>
           </div>
 
           <nav ref={sidebarNavRef} className="sidebar-nav" onDragOver={(event) => updateSidebarDragScroll(event.clientY)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) stopSidebarDragScroll() }} onWheel={handleSidebarWheel}>
@@ -4768,6 +4785,7 @@ export default function App(): React.JSX.Element {
                 <button
                   key={item.id}
                   data-sidebar-drag-key={`item:${item.id}`}
+                  data-tour={`nav:${item.id}`}
                   draggable
                   className={`sidebar-nav-item ${view === item.id ? 'active' : ''} ${sidebarDraggedId === item.id ? 'dragging' : ''} ${sidebarDropTargetId === item.id ? 'drop-target' : ''}`}
                   aria-current={view === item.id ? 'page' : undefined}
@@ -4966,7 +4984,7 @@ export default function App(): React.JSX.Element {
             {project ? (
               <KeepAliveRoute key={`blockbench:${project.path}`} active={view === 'blockbench'}>
                 <div className="blockbench-page">
-                  <BlockbenchWorkspace visible={view === 'blockbench'} darkMode={settings.darkMode} project={project} />
+                  <BlockbenchWorkspace visible={view === 'blockbench'} darkMode={settings.darkMode} project={project} suppressed={deviceAccountOpen || titlebarMenuOpen || pageGuideOpen} />
                 </div>
               </KeepAliveRoute>
             ) : null}
@@ -5423,6 +5441,14 @@ export default function App(): React.JSX.Element {
       </div>
 
       <GlobalDownloadIndicator />
+      <PageGuideModal view={view} open={pageGuideOpen} onClose={() => setPageGuideOpen(false)} onLaunchTour={PAGE_TOURS[view] ? () => { setPageGuideOpen(false); setActiveTour('page') } : undefined} />
+      <WelcomeTour onLaunchShellTour={() => setActiveTour('shell')} />
+      {activeTour === 'page' && PAGE_TOURS[view]
+        ? <TourGuide steps={PAGE_TOURS[view]} open title="互动引导" onFinish={() => setActiveTour(null)} />
+        : null}
+      {activeTour === 'shell'
+        ? <TourGuide steps={SHELL_TOUR_STEPS} open title="ModMind 快速上手" onFinish={() => setActiveTour(null)} />
+        : null}
       {showCreate ? <CreateProjectDialog onClose={() => setShowCreate(false)} onCreated={(created) => { setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
       {existingImportPicker ? <ExistingImportPicker onClose={() => setExistingImportPicker(false)} onSelect={(sourceType) => { setExistingImportPicker(false); void inspectExistingProject(sourceType) }} /> : null}

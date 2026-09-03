@@ -5521,7 +5521,9 @@ function codingHashesEqual(left: Map<string, string> | null, right: Map<string, 
   return true
 }
 
-const MANDATORY_CODING_WORKFLOW = `${MANAGED_DOWNLOAD_POLICY}
+const MANDATORY_CODING_WORKFLOW = `始终使用简体中文回复用户：所有说明、分析、汇报、Todo 标题与状态描述一律用中文（代码、标识符、报错日志原文除外），除非用户明确要求其他语言。
+
+${MANAGED_DOWNLOAD_POLICY}
 
 MANDATORY MODMIND COMPLETION AUDIT. The only hard gate is the independent audit before your final answer. Planning and setup helpers are optional: modmind_project_info and modmind_set_intent are useful when context is needed. You are strongly encouraged, but not required, to call modmind_update_todo for engineering work so the user can see the plan, progress, remaining work, and recovery state; never repeat Todo work only to satisfy a gate, and Todo status never determines audit approval.
 
@@ -5532,6 +5534,17 @@ Native Agent tools, terminal commands, and file tools remain available for uncov
 Do not claim completion when applicable audit evidence is missing. The independent ModMind Review Agent audits the result before releasing your final answer. If it reports missing stages, continue the task and perform exactly those missing stages.`
 
 const NETEASE_CODING_WORKFLOW = `NETEASE MOD SDK RULES. Inspect existing project files first and implement promptly using the Python Mod SDK layout (behavior_pack/modMain.py, behavior_pack/<namespace>/clientSystem.py, behavior_pack/<namespace>/serverSystem.py, and resource-pack UI JSON/textures). Do not use Gradle, Java mappings, Sourcegraph, or broad web scraping. Use official NetEase documentation only for a specific unresolved API after inspecting local templates. Engineering tasks must produce concrete edits, implement client/server events and per-save persistence where required, then call modmind_validate_content and modmind_build_project. ModMind validates and packages the project; runtime testing belongs in the official NetEase developer workbench.`
+
+const MODELING_SYSTEM_PROMPT = `你是 ModMind 内置的 Blockbench 建模 Agent。你必须通过 Modmind 注入的 modmind_* MCP 工具，在实时 Blockbench 视口中直接建模，产出可编辑的 .bbmodel 模型；不要只描述模型，也不要手填 Asset Intent JSON。你与用户的全部交流、说明、汇报、状态描述，一律使用简体中文（除非用户明确要求其他语言）。遵守以下硬规则（闭环）：
+
+1. 动笔前先调用 modmind_blockbench_project_state 读取 revision；之后每次变更都把该 revision 作为 expectedRevision 传入，并在变更后刷新状态。
+2. 修改既有模型前，先 modmind_blockbench_checkpoint 建立命名检查点，并保留至最终校验通过。
+3. 用 modmind_asset_compile_intent（或高级/精修工具）生成候选，再用 modmind_asset_preview_intent 预览。
+4. 用 modmind_blockbench_capture_views 抓取前/侧/等轴三视角截图，必须亲眼看截图做 critique，至少完成一轮 modmind_asset_compile_refinement 精修并再次预览；视觉分目标 ≥82。默认 Production 档，仅当用户明确要求才用 Draft。
+5. 用 modmind_asset_apply_intent 应用候选，再 modmind_blockbench_validate 校验，并目视实时结果后才保存/导出。
+6. Reference Asset（参考图转网格）严禁用于动物/角色/载具类资产生成。
+7. 至多三轮 critique 修正；仍不达标则保留未保存或还原检查点并如实说明缺陷。
+8. 验收通过后才保存可编辑 .bbmodel 与贴图，并汇报格式、路径、数量、视角、校验与视觉分。`
 
 function codingWorkflowPrompt(project: ProjectInfo): string {
   return project.loader === 'netease-pc' || project.loader === 'netease-mobile'
@@ -5590,8 +5603,12 @@ async function runExternalCodingAgent(
   const project = requireProject()
   const signal = taskSignal ?? new AbortController().signal
   throwIfAborted(signal, 'Agent 任务已停止')
-  const surface: AiSurface = context.surface === 'inspiration' ? 'inspiration' : 'workspace'
+  const surface: AiSurface =
+    context.surface === 'inspiration' ? 'inspiration' :
+    context.surface === 'modeling' ? 'modeling' :
+    'workspace'
   const isInspiration = surface === 'inspiration'
+  const isModeling = surface === 'modeling'
   const recoveryBackend = recovery?.backend
   const backendChanged = Boolean(recoveryBackend && recoveryBackend !== backend)
   const nativeSessionId = recovery?.nativeSessions?.[backend]
@@ -5690,7 +5707,7 @@ async function runExternalCodingAgent(
     executionProfile,
     lifecycle: 'running',
     workflow: recovery?.workflow ?? {
-      required: isInspiration ? [] : requiredWorkflowStages(project, declaredIntent),
+      required: (isInspiration || isModeling) ? [] : requiredWorkflowStages(project, declaredIntent),
       completed: [],
       evidence: {}
     },
@@ -5713,7 +5730,7 @@ async function runExternalCodingAgent(
   }
   const workflow = {
     ...(activeTask.workflow ?? { completed: [], evidence: {} }),
-    required: isInspiration ? [] : requiredWorkflowStages(project, declaredIntent)
+    required: (isInspiration || isModeling) ? [] : requiredWorkflowStages(project, declaredIntent)
   }
   activeTask.workflow = workflow
   const writeTask = (): Promise<void> => isInspiration ? Promise.resolve() : writeActiveAiTask(activeTask, project)
@@ -5745,7 +5762,7 @@ async function runExternalCodingAgent(
       return
     }
     if (declaredIntent === 'engineering' || hasEngineeringEvidence) {
-      workflow.required = isInspiration ? [] : requiredWorkflowStages(project, 'engineering')
+      workflow.required = (isInspiration || isModeling) ? [] : requiredWorkflowStages(project, 'engineering')
     }
   }
   const recordManagedDownload = (action: ManagedDownloadAction): void => {
@@ -5816,7 +5833,9 @@ async function runExternalCodingAgent(
       pluginTarget: createPluginBridgeTarget(),
       systemPrompt: isInspiration
         ? `你处于灵感台快速只读模式。优先直接回答；只有答案确实依赖当前实现时才读取项目。普通问题最多做 3 次目录发现或文件读取；只有用户明确要求深入分析、完整审计或逐文件检查时才可超过。不得修改文件、安装依赖、构建、测试或调用任何写入工具。需要浏览目录时，优先调用 modmind_project_files；不要使用 Get-ChildItem -Force、dir 或其它宽泛枚举。读取具体文件时使用明确的项目相对路径。本轮推理强度为 ${reasoningEffort ?? 'low'}。`
-        : codingWorkflowPrompt(project),
+        : isModeling
+          ? MODELING_SYSTEM_PROMPT
+          : codingWorkflowPrompt(project),
       sessionScope,
       // A conversation owns its native CLI thread. Inspiration may resume
       // that thread for context, but never gets workspace recovery sessions.
@@ -6428,7 +6447,7 @@ async function runExternalCodingAgent(
       const missing = finalWorkflowAudit.missing.join(', ')
       throw new Error(`Review Agent rejected completion because the mandatory workflow is incomplete. Missing stages: ${missing || 'independent review approval'}. The active task and snapshot were preserved for recovery.`)
     }
-    const finalIntent = declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational')
+    const finalIntent = isModeling ? 'informational' : (declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational'))
     activeTask.changedFiles = changedFiles
     const finalResponse = completedAnswer(result).slice(-120_000)
     const summary = finalResponse.slice(0, 4_000)
@@ -8364,7 +8383,10 @@ function registerIpc(): void {
       error.name = 'AbortError'
       throw error
     }
-    const requestedSurface: AiSurface = options?.surface === 'inspiration' ? 'inspiration' : 'workspace'
+    const requestedSurface: AiSurface =
+      options?.surface === 'inspiration' ? 'inspiration' :
+      options?.surface === 'modeling' ? 'modeling' :
+      'workspace'
     const project = await resolveAiProject(options)
     if (requestedSurface === 'workspace' && isAiAbandonmentRequest(prompt)) {
       const recovery = await readActiveAiTask(project)
