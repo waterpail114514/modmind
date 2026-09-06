@@ -24,8 +24,13 @@ const EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS = 5_000
  * outside the application's control.
  */
 export function nativePermissionArgs(kind: ExternalAgentKind, readOnly = false): string[] {
-  if (kind === 'codex') return readOnly ? ['-s', 'read-only'] : ['--dangerously-bypass-approvals-and-sandbox']
-  if (kind === 'claude') return readOnly ? ['--permission-mode', 'plan', '--tools', 'Read', 'Glob', 'Grep'] : ['--dangerously-skip-permissions']
+  if (kind === 'codex') {
+    // Codex 0.146 predates --approve-for-me; these are its equivalent native Auto-review settings.
+    return readOnly
+      ? ['-s', 'read-only']
+      : ['-s', 'workspace-write', '-a', 'on-request', '-c', 'approvals_reviewer="auto_review"']
+  }
+  if (kind === 'claude') return readOnly ? ['--permission-mode', 'plan', '--tools', 'Read', 'Glob', 'Grep'] : ['--permission-mode', 'auto']
   return []
 }
 
@@ -139,6 +144,8 @@ export interface ExternalAgentRunOptions {
   /** Internal: the session was emitted by the current managed run. */
   trustSessionId?: boolean
   sessionScope?: string
+  /** Product route lane; separates quota Codex from user-configured Codex. */
+  sessionLane?: string
   resumeSession?: boolean
   fallbackPrompt?: string
   readOnly?: boolean
@@ -152,12 +159,7 @@ export interface ExternalAgentRunOptions {
   persistentRetry?: boolean
   /** Test-only timing override for retry and cooldown waits. */
   retryDelayMs?: number
-  /**
-   * Maximum time the managed CLI may stay completely silent. The production
-   * default is intentionally generous because a provider can spend time
-   * establishing a connection before its first streamed event. Tests may use
-   * a shorter value to exercise the recovery path without waiting five minutes.
-   */
+  /** @deprecated Silence is not a failure signal; retained for API compatibility. */
   noOutputTimeoutMs?: number
   signal: AbortSignal
   /** Called after the target CLI process has been spawned successfully. */
@@ -171,14 +173,17 @@ export interface ExternalAgentRunOptions {
   retryScope?: string
   /** Invalidates persisted native sessions after provider/model/CLI changes. */
   sessionFingerprint?: string
+  /** Test-only override for exercising the app-server protocol adapter. */
+  forceCodexAppServer?: boolean
+  /** Native branch request. Codex can honor lastTurnId; Claude only HEAD fork. */
+  forkFrom?: { sessionId: string; lastTurnId?: string; beforeTurnId?: string; nativeMode: 'native' | 'visible-history-rebuild' }
   /** Reports a native command that appears to download an artifact ModMind covers. Return false to stop it. */
   onNativeDownload?: (action: ManagedNativeDownloadAction, command: string) => boolean | void
-  onOutput: (kind: 'start' | 'delta' | 'tool' | 'response' | 'warning' | 'error' | 'retry', content: string) => void
+  onOutput: (kind: 'start' | 'delta' | 'tool' | 'response' | 'warning' | 'error' | 'retry', content: string, identity?: { itemId?: string; streamId?: string }) => void
   onProgress: (title: string, detail: string, status: 'running' | 'success' | 'warning' | 'error') => void
   bridge: ExternalAgentBridgeHandlers
 }
 
-export const EXTERNAL_AGENT_NO_OUTPUT_TIMEOUT_MS = 5 * 60_000
 export const EXTERNAL_AGENT_MAX_ATTEMPTS = 1
 /** Transient provider failures (rate limit / gateway) get patient retries. */
 export const EXTERNAL_AGENT_TRANSIENT_MAX_ATTEMPTS = 4
@@ -217,6 +222,268 @@ export function classifyAgentStreamFailure(message: string): { status: number | 
   const streamDisconnect = /stream disconnected|connection (?:reset|closed|refused)|request timed out|ECONNRESET|ETIMEDOUT|ENOTFOUND|network error|fetch failed/i.test(message)
   if (streamDisconnect) return { status: null, transient: true, kind: 'connection', reason: '与模型服务的连接中断' }
   return { status: null, transient: false, kind: 'unknown', reason: message.trim().slice(0, 300) || '模型服务返回了未知错误' }
+}
+
+function useCodexAppServer(executable: string, force = false): boolean {
+  // Test fixtures intentionally emulate the legacy JSONL CLI. Production
+  // Codex, including the bundled executable and configured installs, uses the
+  // official app-server protocol. This keeps fixture contracts deterministic.
+  return force || process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test' && Boolean(executable)
+}
+
+type AppServerRpc = { id?: number | string; method?: string; params?: Record<string, unknown>; result?: Record<string, unknown>; error?: { message?: string } }
+
+async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, executable: string, persistedSessionId: string | undefined, mcpConfigPath: string): Promise<ExternalAgentRunResult> {
+  const mcpServerPath = path.join(path.dirname(mcpConfigPath), 'modmind-mcp-server.mjs')
+  const args = [
+    '-s', options.readOnly ? 'read-only' : 'workspace-write', '-a', 'on-request', '-c', 'approvals_reviewer="auto_review"',
+    '-c', `mcp_servers.modmind.command=${JSON.stringify(mcpRuntime().command)}`,
+    '-c', `mcp_servers.modmind.args=[${JSON.stringify(mcpServerPath)}]`,
+    ...(mcpRuntime().env ? ['-c', 'mcp_servers.modmind.env={ELECTRON_RUN_AS_NODE="1"}'] : []),
+    ...(options.reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(options.reasoningEffort)}`] : []),
+    'app-server', '--listen', 'stdio://'
+  ]
+  const child = spawnManagedCli(executable, args, options.project.path, options.env)
+  options.onOutput('start', '托管任务已启动')
+  let closed = false
+  let threadId = persistedSessionId
+  let turnId = ''
+  let sequence = 0
+  let transcript = ''
+  let finalMessage = ''
+  let terminalFailure = ''
+  let completion: Record<string, unknown> | undefined
+  let inputBuffer = ''
+  let rpcId = 0
+  const pending = new Map<number, { resolve: (value: AppServerRpc) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }>()
+  const processExit = new Promise<{ error?: unknown }>((resolve) => {
+    child.once('error', (error) => {
+      closed = true
+      for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(error) }
+      pending.clear()
+      resolve({ error })
+    })
+    child.once('close', () => {
+      closed = true
+      for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(new Error('Codex app-server 在响应前退出')) }
+      pending.clear()
+      resolve({})
+    })
+  })
+  let shutdownTimer: ReturnType<typeof setTimeout> | undefined
+  const forceStop = (): void => {
+    if (closed) return
+    if (process.platform === 'win32' && child.pid) {
+      try { spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' }).unref() } catch { try { child.kill() } catch { /* exited */ } }
+    } else {
+      try { child.kill('SIGTERM') } catch { /* exited */ }
+    }
+  }
+  const scheduleShutdownFallback = (): void => {
+    if (shutdownTimer) return
+    shutdownTimer = setTimeout(forceStop, 2_000)
+    shutdownTimer.unref?.()
+  }
+  const send = (method: string, params: Record<string, unknown> = {}): number => {
+    const id = ++rpcId
+    child.stdin.write(`${JSON.stringify({ method, id, params })}\n`)
+    return id
+  }
+  const notify = (method: string, params: Record<string, unknown> = {}): void => { child.stdin.write(`${JSON.stringify({ method, params })}\n`) }
+  const request = (method: string, params: Record<string, unknown>, timeoutMs = 30_000): Promise<AppServerRpc> => new Promise((resolve, reject) => {
+    const id = send(method, params)
+    const timer = setTimeout(() => {
+      pending.delete(id)
+      reject(new Error(`Codex app-server ${method} 回执超时`))
+    }, timeoutMs)
+    timer.unref?.()
+    pending.set(id, { resolve, reject, timer })
+  })
+  const emit = (kind: 'delta' | 'tool' | 'response' | 'warning' | 'error', content: string): void => {
+    if (!content) return
+    sequence += 1
+    transcript += `${content}\n`
+    if (kind === 'delta' || kind === 'response') finalMessage = kind === 'delta' ? `${finalMessage}${content}` : content
+    options.onOutput(kind, content)
+  }
+  const processRpc = (message: AppServerRpc): void => {
+    if (!message.method && typeof message.id === 'number' && pending.has(message.id)) {
+      const waiter = pending.get(message.id)!
+      pending.delete(message.id)
+      clearTimeout(waiter.timer)
+      if (message.error) waiter.reject(new Error(message.error.message || 'Codex app-server 请求失败'))
+      else waiter.resolve(message)
+      return
+    }
+    const params = message.params ?? {}
+    const method = message.method ?? ''
+    if (message.id !== undefined && method) {
+      const respond = (result: Record<string, unknown>): void => { child.stdin.write(`${JSON.stringify({ id: message.id, result })}\n`) }
+      if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval') {
+        emit('warning', 'Codex Auto-review 未处理本次审批，ModMind 已拒绝该操作以避免任务挂起')
+        respond({ decision: 'decline' })
+        return
+      }
+      if (method === 'execCommandApproval' || method === 'applyPatchApproval') {
+        emit('warning', 'Codex Auto-review 未处理本次旧版审批，ModMind 已拒绝该操作以避免任务挂起')
+        respond({ decision: { denied: { rejection: 'Auto-review did not resolve this request' } } })
+        return
+      }
+      if (method === 'item/tool/requestUserInput') {
+        const questions = Array.isArray(params.questions) ? params.questions : []
+        const answers = Object.fromEntries(questions.flatMap((question) => question && typeof question === 'object' && typeof (question as Record<string, unknown>).id === 'string'
+          ? [[String((question as Record<string, unknown>).id), { answers: [] }]]
+          : []))
+        emit('warning', 'Codex 请求了交互式补充信息；当前版本未代替用户选择，Agent 将收到空回答并自行说明需要的信息')
+        respond({ answers })
+        return
+      }
+      if (method === 'mcpServer/elicitation/request') {
+        emit('warning', '外部工具需要额外交互确认，本次调用已取消')
+        respond({ action: 'cancel', content: null, _meta: null })
+        return
+      }
+      if (method === 'item/tool/call') { respond({ contentItems: [], success: false }); return }
+    }
+    if (method === 'thread/started') {
+      const thread = params.thread && typeof params.thread === 'object' ? params.thread as Record<string, unknown> : params
+      if (typeof thread.id === 'string') {
+        threadId = thread.id
+        options.onSessionId?.(thread.id)
+      }
+      return
+    }
+    if (method === 'turn/started') {
+      const turn = params.turn && typeof params.turn === 'object' ? params.turn as Record<string, unknown> : params
+      if (typeof turn.id === 'string') turnId = turn.id
+      return
+    }
+    if (method === 'item/agentMessage/delta' && typeof params.delta === 'string') { emit('delta', params.delta); return }
+    if (method === 'item/completed' && params.item && typeof params.item === 'object') {
+      const item = params.item as Record<string, unknown>
+      if (item.type === 'agentMessage' && typeof item.text === 'string') { finalMessage = item.text; emit('response', item.text) }
+      else if (item.type === 'commandExecution') {
+        const output = typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : ''
+        emit('tool', `命令已完成${typeof item.command === 'string' ? `：${item.command}` : ''}${output ? `\n${output}` : ''}`)
+      }
+      return
+    }
+    if (method === 'item/started' && params.item && typeof params.item === 'object') {
+      const item = params.item as Record<string, unknown>
+      if (item.type === 'commandExecution' && typeof item.command === 'string') emit('tool', `正在执行命令：${item.command}`)
+      return
+    }
+    if (method === 'thread/tokenUsage/updated' && params.tokenUsage && typeof params.tokenUsage === 'object') {
+      const usage = params.tokenUsage as Record<string, unknown>
+      const last = usage.last && typeof usage.last === 'object' ? usage.last as Record<string, unknown> : {}
+      const window = typeof usage.modelContextWindow === 'number' ? usage.modelContextWindow : undefined
+      options.onUsage?.({ inputTokens: typeof last.inputTokens === 'number' ? last.inputTokens : undefined, cachedInputTokens: typeof last.cachedInputTokens === 'number' ? last.cachedInputTokens : undefined, outputTokens: typeof last.outputTokens === 'number' ? last.outputTokens : undefined, contextWindow: window })
+      return
+    }
+    if (method === 'turn/completed') {
+      completion = params.turn && typeof params.turn === 'object' ? params.turn as Record<string, unknown> : params
+      const status = completion.status
+      if (status === 'failed') terminalFailure = typeof (completion.error as Record<string, unknown> | undefined)?.message === 'string' ? String((completion.error as Record<string, unknown>).message) : 'Codex turn failed'
+      scheduleShutdownFallback()
+      setTimeout(() => { if (!closed) { try { child.stdin.end() } catch { /* already closed */ } } }, 50).unref?.()
+      return
+    }
+    if (method === 'error' || method === 'warning') {
+      const messageValue = typeof params.message === 'string' ? params.message : JSON.stringify(params)
+      if (method === 'error') { terminalFailure = messageValue; scheduleShutdownFallback(); try { child.stdin.end() } catch { /* already closed */ } }
+      else emit('warning', messageValue)
+      return
+    }
+    // Legacy fixture lines are accepted while the adapter is exercised with a
+    // fake executable, but are never emitted by app-server itself.
+    if (method === 'turn.completed' || method === 'item.completed') return
+  }
+  const consume = (chunk: Buffer): void => {
+    inputBuffer += chunk.toString('utf8')
+    const lines = inputBuffer.split(/\r?\n/)
+    inputBuffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.trim()) continue
+      transcript += `${line}\n`
+      try { processRpc(JSON.parse(line) as AppServerRpc) } catch { /* Diagnostics remain in transcript. */ }
+    }
+  }
+  child.stdout.on('data', consume)
+  child.stderr.on('data', (chunk) => { transcript += chunk.toString('utf8') })
+  const stop = async (): Promise<void> => {
+    if (closed) return
+    scheduleShutdownFallback()
+    if (threadId && turnId) {
+      try {
+        await request('turn/interrupt', { threadId, turnId }, 1_500)
+      } catch { /* Process fallback is already scheduled. */ }
+    }
+    try { child.stdin.end() } catch { /* already closed */ }
+  }
+  const onAbort = (): void => { void stop() }
+  options.signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    await request('initialize', { clientInfo: { name: 'modmind', title: 'ModMind', version: options.appVersion ?? 'development' }, capabilities: { experimentalApi: true } })
+    notify('initialized', {})
+    const common = { cwd: options.project.path, approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: options.readOnly ? 'read-only' : 'workspace-write' }
+    if (options.forkFrom?.nativeMode === 'native') {
+      const forked = await request('thread/fork', { threadId: options.forkFrom.sessionId, ...(options.forkFrom.beforeTurnId ? { beforeTurnId: options.forkFrom.beforeTurnId } : options.forkFrom.lastTurnId ? { lastTurnId: options.forkFrom.lastTurnId } : {}), ...common, excludeTurns: true })
+      const forkedThread = forked.result?.thread
+      if (forkedThread && typeof forkedThread === 'object' && typeof (forkedThread as Record<string, unknown>).id === 'string') { threadId = String((forkedThread as Record<string, unknown>).id); options.onSessionId?.(threadId) }
+    } else if (persistedSessionId) {
+      let resumed: AppServerRpc
+      try { resumed = await request('thread/resume', { threadId: persistedSessionId, ...common, excludeTurns: true }) }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (isResumedPromptRejection({ error: { message } })) throw new ResumedPromptRejectionError(persistedSessionId, 'Codex')
+        const failure = classifyAgentStreamFailure(message)
+        if (failure.transient) throw new ExternalAgentTransientFailureError(failure.reason, failure.status, failure.kind === 'connection' ? 'connection' : undefined)
+        throw error
+      }
+      const resumedThread = resumed.result?.thread
+      if (resumedThread && typeof resumedThread === 'object' && typeof (resumedThread as Record<string, unknown>).id === 'string') { threadId = String((resumedThread as Record<string, unknown>).id); options.onSessionId?.(threadId) }
+    } else {
+      const started = await request('thread/start', common)
+      const startedThread = started.result?.thread
+      if (startedThread && typeof startedThread === 'object' && typeof (startedThread as Record<string, unknown>).id === 'string') { threadId = String((startedThread as Record<string, unknown>).id); options.onSessionId?.(threadId) }
+    }
+    if (!threadId) throw new Error('Codex app-server 未返回 thread id')
+    options.onProgress(persistedSessionId ? 'Codex 已恢复会话' : 'Codex 正在分析项目', persistedSessionId ? '正在使用原生 thread 继续任务' : '已连接 Codex app-server', 'running')
+    const startedTurn = await request('turn/start', { threadId, input: [{ type: 'text', text: options.prompt, text_elements: [] }] })
+    const started = startedTurn.result?.turn
+    if (started && typeof started === 'object' && typeof (started as Record<string, unknown>).id === 'string') turnId = String((started as Record<string, unknown>).id)
+    options.onStarted?.()
+    const exited = await processExit
+    if (exited.error) throw exited.error
+  } catch (error) {
+    if (!options.signal.aborted) terminalFailure = error instanceof Error ? error.message : String(error)
+  } finally {
+    options.signal.removeEventListener('abort', onAbort)
+    if (shutdownTimer) clearTimeout(shutdownTimer)
+    for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(new Error('Codex app-server 已关闭')) }
+    pending.clear()
+    if (!closed) { try { child.kill() } catch { /* exited */ } }
+  }
+  if (options.signal.aborted) throw Object.assign(new Error('外部代理任务已停止；已保留当前修改并保存恢复信息'), { name: 'AbortError' })
+  if (terminalFailure) {
+    const classification = classifyAgentStreamFailure(terminalFailure)
+    if (classification.transient) throw new ExternalAgentTransientFailureError(classification.reason, classification.status)
+    if (classification.kind === 'invalid-request') throw new ExternalAgentCompatibilityFailureError(classification.reason, classification.status)
+    throw new Error(terminalFailure)
+  }
+  if (!completion || (completion.status !== 'completed' && completion.status !== 'interrupted')) {
+    const error = new Error(`Codex app-server 异常退出${finalMessage ? `：${finalMessage.slice(0, 300)}` : ''}`)
+    error.name = 'ExternalAgentProcessError'
+    throw error
+  }
+  if (!isUsableAiAnswer(finalMessage)) {
+    const error = new Error('Codex app-server 已结束，但没有返回可显示的回答')
+    error.name = 'ExternalAgentEmptyResponseError'
+    throw error
+  }
+  options.onProgress('Codex 任务结束', '原生 turn 已完成', 'success')
+  if (threadId) await persistSession(options.project, 'codex', threadId, options.sessionScope, options.sessionFingerprint, options.sessionLane).catch(() => undefined)
+  return { summary: finalMessage, transcript, buildUsed: false, runtimeUsed: false, exitCode: 0, sessionId: threadId, ...(turnId ? { nativeTurnId: turnId } : {}), completionAudit: auditExternalAgentCompletion({ rawExitCode: 0, terminalEventSeen: true, noOutputTimedOut: false, terminalFailure: false }), usage: undefined }
 }
 
 /** A provider-side transient failure worth retrying with backoff. */
@@ -274,6 +541,7 @@ export interface ExternalAgentRunResult {
   runtimeUsed: boolean
   exitCode: number | null
   sessionId?: string
+  nativeTurnId?: string
   completionAudit: ExternalAgentCompletionAudit
   /** Latest CLI-reported token usage for the completed turn. */
   usage?: AiTokenUsage
@@ -301,6 +569,8 @@ export interface ParsedExternalAgentOutput {
   content: string
   agentMessage: boolean
   usage?: AiTokenUsage
+  itemId?: string
+  streamId?: string
 }
 
 /** Codex can leave its process in an interactive wait after completing a turn. */
@@ -331,6 +601,8 @@ export function isResumedPromptRejection(parsedLine: Record<string, unknown> | n
     : typeof error?.message === 'string' ? error.message
       : typeof parsedLine.message === 'string' ? parsedLine.message : ''
   if (message.includes('Invalid Responses API request')) return true
+  if (/(?:session|thread|rollout|history|context|会话|线程|历史|上下文)[\s\S]{0,120}(?:not found|不存在|expired|过期|失效|invalid|无效|无法识别)/i.test(message)
+    || /(?:not found|不存在|expired|过期|失效|invalid|无效|无法识别)[\s\S]{0,120}(?:session|thread|rollout|history|context|会话|线程|历史|上下文)/i.test(message)) return true
   return /(?:session|thread|resume|rollout|history|context|会话|线程|历史|上下文|条目)[\s\S]{0,120}(?:invalid_request_error|请求参数无效|invalid|无法识别|不存在)|(?:invalid_request_error|请求参数无效|invalid|无法识别)[\s\S]{0,120}(?:session|thread|resume|rollout|history|context|会话|线程|历史|上下文|条目)/i.test(message)
 }
 
@@ -436,8 +708,9 @@ export function extractCodexTokenUsage(parsed: Record<string, unknown> | null): 
 export function extractClaudeTokenUsage(parsed: Record<string, unknown> | null): AiTokenUsage | undefined {
   if (!parsed || parsed.type?.toString().toLowerCase() !== 'result') return undefined
   const message = parsed.message && typeof parsed.message === 'object' ? parsed.message as Record<string, unknown> : undefined
-  const usage = message?.usage && typeof message.usage === 'object' ? message.usage as Record<string, unknown> : undefined
-  const model = typeof message?.model === 'string' ? message.model : ''
+  const usageValue = parsed.usage ?? message?.usage
+  const usage = usageValue && typeof usageValue === 'object' ? usageValue as Record<string, unknown> : undefined
+  const model = typeof parsed.model === 'string' ? parsed.model : typeof message?.model === 'string' ? message.model : ''
   if (!usage) return undefined
   const inputTokens = asFiniteNumber(usage.input_tokens)
   const cacheRead = asFiniteNumber(usage.cache_read_input_tokens)
@@ -461,6 +734,8 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
   const item = parsed?.item as Record<string, unknown> | undefined
   const part = parsed?.part as Record<string, unknown> | undefined
   const payload = parsed?.payload as Record<string, unknown> | undefined
+  const streamEvent = parsed?.event && typeof parsed.event === 'object' ? parsed.event as Record<string, unknown> : undefined
+  const streamDelta = streamEvent?.delta && typeof streamEvent.delta === 'object' ? streamEvent.delta as Record<string, unknown> : undefined
   const rawMessage = parsed?.message
   const message = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : undefined
   const content = Array.isArray(message?.content) ? message.content as Array<Record<string, unknown>> : []
@@ -514,7 +789,8 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
     .filter((entry) => (entry.type === 'text' || entry.type === 'output_text') && typeof entry.text === 'string')
     .map((entry) => String(entry.text))
     .join('\n')
-  const candidate = commandText || responseItemToolText || (typeof item?.text === 'string' ? item.text
+  const candidate = commandText || responseItemToolText || (typeof streamDelta?.text === 'string' ? streamDelta.text
+    : typeof item?.text === 'string' ? item.text
     : typeof part?.text === 'string' ? part.text
       : typeof payload?.text === 'string' ? payload.text
         : typeof payload?.message === 'string' ? payload.message
@@ -523,12 +799,15 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
               : typeof rawMessage === 'string' ? rawMessage
                 : typeof message?.content === 'string' ? message.content
                   : contentText || errorText || (!parsed ? line : '')))
-  const normalized = candidate.trim()
-  if (!normalized) return null
+  const streamingCandidate = type === 'stream_event' && streamEvent?.type === 'content_block_delta' && streamDelta?.type === 'text_delta'
+    || type === 'content_block_delta' || type === 'delta' || type === 'text'
+  const normalized = streamingCandidate ? candidate : candidate.trim()
+  if (!normalized.length) return null
   const structuredError = type === 'error' || type === 'turn.failed' || parsed?.is_error === true || parsed?.is_api_error_message === true || Boolean(rawError) || commandFailed
   const agentMessage = !structuredError && (item?.type === 'agent_message'
     || payload?.type === 'agent_message'
     || type === 'response_item' && payloadType === 'message' && payload?.role === 'assistant'
+    || type === 'stream_event' && streamEvent?.type === 'content_block_delta' && streamDelta?.type === 'text_delta'
     || type === 'result'
     || type === 'assistant'
     || type === 'text' && part?.type === 'text'
@@ -539,10 +818,14 @@ export function parseExternalAgentOutputLine(line: string, stream: 'stdout' | 's
     : structuredError || (stream === 'stderr' && errorPattern.test(normalized)) ? 'error'
       : warningPattern.test(normalized) ? 'warning'
         : parsed || stream === 'stderr' ? 'tool' : 'delta'
-  return {parsed, kind, content: normalized.slice(0, 12_000), agentMessage}
+  const rawItemId = item?.id ?? payload?.id ?? message?.id ?? parsed?.item_id ?? parsed?.itemId
+  const itemId = typeof rawItemId === 'string' && rawItemId.trim() ? rawItemId.trim() : undefined
+  const rawStreamId = streamEvent?.id ?? parsed?.stream_id ?? parsed?.streamId
+  const streamId = typeof rawStreamId === 'string' && rawStreamId.trim() ? rawStreamId.trim() : undefined
+  return { parsed, kind, content: normalized.slice(0, 12_000), agentMessage, ...(itemId ? { itemId } : {}), ...(streamId ? { streamId } : {}) }
 }
 
-function managedRunPlan(kind: ExternalAgentKind, projectPath: string, mcpConfigPath: string, persistedSessionId?: string, readOnly = false, systemPrompt?: string, reasoningEffort?: ReasoningEffort): AgentCommandPlan {
+function managedRunPlan(kind: ExternalAgentKind, projectPath: string, mcpConfigPath: string, persistedSessionId?: string, readOnly = false, systemPrompt?: string, reasoningEffort?: ReasoningEffort, forkFrom?: ExternalAgentRunOptions['forkFrom']): AgentCommandPlan {
   const mcpServerPath = path.join(path.dirname(mcpConfigPath), 'modmind-mcp-server.mjs').replaceAll('\\', '\\\\')
   if (kind === 'codex') {
     const permissionArgs = nativePermissionArgs(kind, readOnly)
@@ -563,7 +846,7 @@ function managedRunPlan(kind: ExternalAgentKind, projectPath: string, mcpConfigP
   if (kind === 'claude') {
     const systemArgs = !persistedSessionId && systemPrompt?.trim() ? ['--append-system-prompt', systemPrompt.trim()] : []
     return {
-      args: ['-p', ...nativePermissionArgs(kind, readOnly), ...(persistedSessionId ? ['--resume', persistedSessionId] : []), '--output-format', 'stream-json', '--verbose', '--strict-mcp-config', '--mcp-config', mcpConfigPath, '--add-dir', projectPath, ...systemArgs],
+      args: ['-p', ...nativePermissionArgs(kind, readOnly), ...(forkFrom?.nativeMode === 'native' ? ['--resume', forkFrom.sessionId, '--fork-session'] : persistedSessionId ? ['--resume', persistedSessionId] : []), '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--strict-mcp-config', '--mcp-config', mcpConfigPath, '--add-dir', projectPath, ...systemArgs],
       acceptsPromptOnStdin: true,
       supportsSessions: true
     }
@@ -1052,16 +1335,18 @@ async function commandVersion(executable: string): Promise<string | undefined> {
   })
 }
 
-function sessionFilePath(project: ProjectInfo, kind: ExternalAgentKind, sessionScope = 'workspace'): string {
+function sessionFilePath(project: ProjectInfo, kind: ExternalAgentKind, sessionScope = 'workspace', sessionLane: string = kind): string {
   const scope = sessionScope.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
-  if (!scope || scope === 'workspace') return path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents', `session-${kind}.json`)
+  const lane = sessionLane.trim().replaceAll(/[^\w.-]+/gu, '-') || kind
+  const fileName = lane === kind ? `session-${kind}.json` : `session-${lane}-${kind}.json`
+  if (!scope || scope === 'workspace') return path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents', fileName)
   const parts = scope.split('/').filter((part) => part && part !== '.' && part !== '..' && /^[\w.-]+$/u.test(part))
   const directory = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents', 'sessions', ...parts)
-  return path.join(directory, `session-${kind}.json`)
+  return path.join(directory, fileName)
 }
 
-async function readPersistedSession(project: ProjectInfo, kind: ExternalAgentKind, sessionScope = 'workspace', expectedFingerprint?: string): Promise<string | undefined> {
-  const file = sessionFilePath(project, kind, sessionScope)
+async function readPersistedSession(project: ProjectInfo, kind: ExternalAgentKind, sessionScope = 'workspace', expectedFingerprint?: string, sessionLane: string = kind): Promise<string | undefined> {
+  const file = sessionFilePath(project, kind, sessionScope, sessionLane)
   const value = await fs.readFile(file, 'utf8').then((text) => JSON.parse(text) as PersistedExternalSession).catch(() => null)
   if (!value || value.kind !== kind || typeof value.sessionId !== 'string' || !value.sessionId.trim()) return undefined
   // Session IDs are tied to a CLI working directory. Older files did not
@@ -1071,10 +1356,10 @@ async function readPersistedSession(project: ProjectInfo, kind: ExternalAgentKin
     await fs.rm(file, {force: true}).catch(() => undefined)
     return undefined
   }
-  if (expectedFingerprint && value.fingerprint !== expectedFingerprint) {
-    await fs.rm(file, {force: true}).catch(() => undefined)
-    return undefined
-  }
+  // Credentials and model preferences may rotate while the native Codex
+  // thread remains valid. Let the CLI decide whether it can resume instead of
+  // deleting a session pointer based on ModMind's provider fingerprint.
+  void expectedFingerprint
   return value.sessionId.trim()
 }
 
@@ -1083,8 +1368,8 @@ export async function readExternalAgentHistory(project: ProjectInfo, kind: Exter
   return sessionId ? readExternalSessionHistory(kind, sessionId) : ''
 }
 
-async function persistSession(project: ProjectInfo, kind: ExternalAgentKind, sessionId: string, sessionScope = 'workspace', fingerprint?: string): Promise<void> {
-  const file = sessionFilePath(project, kind, sessionScope)
+async function persistSession(project: ProjectInfo, kind: ExternalAgentKind, sessionId: string, sessionScope = 'workspace', fingerprint?: string, sessionLane: string = kind): Promise<void> {
+  const file = sessionFilePath(project, kind, sessionScope, sessionLane)
   const directory = path.dirname(file)
   await fs.mkdir(directory, {recursive: true})
   await fs.writeFile(file, JSON.stringify({kind, sessionId, projectPath: project.path, updatedAt: new Date().toISOString(), ...(fingerprint ? {fingerprint} : {})} satisfies PersistedExternalSession, null, 2), 'utf8')
@@ -1105,7 +1390,7 @@ function textFromHistoryValue(value: unknown): string {
 
 async function locateSessionFile(kind: ExternalAgentKind, sessionId: string, sessionHome?: string): Promise<string | undefined> {
   const roots = kind === 'codex'
-    ? [...new Set([path.join(os.homedir(), '.codex'), sessionHome, getPreparedCodexHome()].filter((value): value is string => Boolean(value)))]
+    ? [...new Set([sessionHome, getPreparedCodexHome(), path.join(os.homedir(), '.codex')].filter((value): value is string => Boolean(value)))]
     : [path.join(os.homedir(), '.claude')]
   const pending: Array<{directory: string; depth: number}> = roots.map((root) => ({
     directory: path.join(root, kind === 'codex' ? 'sessions' : 'projects'),
@@ -1311,8 +1596,8 @@ export function externalAgentContextText(project: ProjectInfo): string {
     `Namespace: ${project.namespace}`,
     `Toolchain: ${toolchain}`,
     '',
-    'This is a trusted local-agent session. The mandatory ModMind workflow in the system prompt must be completed before the final answer. The Review Agent will reject incomplete evidence.',
-    'The completion audit is mandatory, but project_info, intent classification, and Todo are optional helpers. Strongly prefer modmind_update_todo for engineering work because it exposes the plan and progress to the user; not using Todo never blocks completion. Native Agent tools and terminal commands remain available; use ModMind tools only to record required completion evidence when needed.',
+    'This is a trusted local-agent session. ModMind workflow tools are available as guidance; choose the smallest useful set for the user request and report any checks you could not run.',
+    'Strongly prefer modmind_update_todo for multi-step engineering work because it exposes the plan and progress to the user, but do not repeat work merely to satisfy a checklist. Native Agent tools and terminal commands remain available; use managed ModMind tools when they materially improve reliability.',
     'Managed build policy: never run Gradle build, assemble, compileJava, runClient, runServer, or runGameTestServer directly. Use modmind_build_project, modmind_test_matrix, or modmind_test_minecraft so ModMind can serialize, cancel, and clean up Java processes.',
     'Process policy: never use Stop-Process -Force, taskkill /f, kill -9, or delete Gradle daemon registry files. Use ModMind stop/cancel operations and let managed tools clean up their own process trees.',
     'Windows shell policy: commands run in Windows PowerShell 5.1. Do not use Bash-only operators such as || or &&; use PowerShell conditionals and explicit exit-code checks.',
@@ -1490,8 +1775,8 @@ export class ModMindBridge {
       `Namespace: ${this.project.namespace}`,
       `Toolchain: ${toolchain}`,
       '',
-      'This is a trusted local-agent session. The mandatory ModMind workflow in the system prompt must be completed before the final answer. The Review Agent will reject incomplete evidence.',
-      'The completion audit is mandatory, but project_info, intent classification, and Todo are optional helpers. Strongly prefer modmind_update_todo for engineering work because it exposes the plan and progress to the user; not using Todo never blocks completion. Native Agent tools and terminal commands remain available; use ModMind tools only to record required completion evidence when needed.',
+       'This is a trusted local-agent session. ModMind workflow tools are available as guidance; choose the smallest useful set for the user request and report any checks you could not run.',
+       'Strongly prefer modmind_update_todo for multi-step engineering work because it exposes the plan and progress to the user, but do not repeat work merely to satisfy a checklist. Native Agent tools and terminal commands remain available; use managed ModMind tools when they materially improve reliability.',
       'Managed build policy: never run Gradle build, assemble, compileJava, runClient, runServer, or runGameTestServer directly. Use modmind_build_project, modmind_test_matrix, or modmind_test_minecraft so ModMind can serialize, cancel, and clean up Java processes.',
       'Process policy: never use Stop-Process -Force, taskkill /f, kill -9, or delete Gradle daemon registry files. Use ModMind stop/cancel operations and let managed tools clean up their own process trees.',
       'Windows shell policy: commands run in Windows PowerShell 5.1. Do not use Bash-only operators such as || or &&; use PowerShell conditionals and explicit exit-code checks.',
@@ -1525,8 +1810,8 @@ export class ModMindBridge {
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {action?: string; input?: Record<string, unknown>}
       const input = body.input ?? {}
-      // 用户插件 action：在只读闸与 AI Review 之前分流，插件工具自带注解决定只读放行，
-      // 且不走 REVIEWED_ACTIONS 审查（调用会记录到 toolCalled 审计）。
+      // User plugin actions are routed through their own annotations before
+      // the read-only gate and do not use the normal operation review list.
       if (body.action?.startsWith('plugin_')) {
         if (this.readOnly && body.action !== 'plugin_tools' && body.action !== 'plugin_read_source' && body.action !== 'plugin_tool_call') {
           throw new Error(`只读灵感台禁止调用 ${body.action}`)
@@ -1924,6 +2209,55 @@ function isReadOnlyNetworkProbe(command: string): boolean {
     || /\bwget(?:\.exe)?\b[^\r\n]*\s--spider(?:\s|$)/i.test(command)
 }
 
+/** Deletes native persisted state when the user permanently deletes a branch. */
+export async function deleteExternalAgentSession(project: ProjectInfo, kind: ExternalAgentKind, sessionId: string, sessionHome?: string, requestedExecutable?: string): Promise<void> {
+  if (!sessionId.trim()) return
+  if (kind === 'claude') {
+    const file = await locateSessionFile(kind, sessionId, sessionHome)
+    if (file) await fs.rm(file, { force: true }).catch(() => undefined)
+    return
+  }
+  const executable = requestedExecutable && existsSync(requestedExecutable) ? requestedExecutable : getPreparedCodexExecutable()
+  if (!executable) {
+    const file = await locateSessionFile(kind, sessionId, sessionHome)
+    if (file) await fs.rm(file, { force: true }).catch(() => undefined)
+    return
+  }
+  const child = spawnManagedCli(executable, ['app-server', '--listen', 'stdio://'], project.path, sessionHome ? { CODEX_HOME: sessionHome } : undefined)
+  let buffer = ''
+  let id = 0
+  const pending = new Map<number, (message: AppServerRpc) => void>()
+  const request = (method: string, params: Record<string, unknown>): Promise<AppServerRpc> => new Promise((resolve) => {
+    const requestId = ++id
+    pending.set(requestId, resolve)
+    child.stdin.write(`${JSON.stringify({ method, id: requestId, params })}\n`)
+  })
+  const onData = (chunk: Buffer): void => {
+    buffer += chunk.toString('utf8')
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      try {
+        const message = JSON.parse(line) as AppServerRpc
+        if (typeof message.id === 'number') pending.get(message.id)?.(message)
+      } catch { /* diagnostics only */ }
+    }
+  }
+  child.stdout.on('data', onData)
+  try {
+    const initialized = await Promise.race([request('initialize', { clientInfo: { name: 'modmind', title: 'ModMind', version: 'development' }, capabilities: { experimentalApi: true } }), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Codex delete initialize timeout')), 5_000))])
+    if (initialized.error) throw new Error(initialized.error.message || 'Codex delete initialize failed')
+    child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`)
+    const deleted = await Promise.race([request('thread/delete', { threadId: sessionId }), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Codex thread delete timeout')), 5_000))])
+    if (deleted.error) throw new Error(deleted.error.message || 'Codex thread delete failed')
+  } catch {
+    const file = await locateSessionFile(kind, sessionId, sessionHome)
+    if (file) await fs.rm(file, { force: true }).catch(() => undefined)
+  }
+  try { child.stdin.end() } catch { /* already closed */ }
+  setTimeout(() => { try { child.kill() } catch { /* exited */ } }, 1_000).unref?.()
+}
+
 function remoteNetworkTargets(command: string): string[] {
   const targets = command.match(/https?:\/\/[^\s'"`]+/gi) ?? []
   return targets.filter((target) => !/^https?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?=[:/]|$)/i.test(target))
@@ -2015,10 +2349,11 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
   const auditMaxAttempts = persistent ? 0 : attemptsPerBatch
   let totalAttempt = 0
   let batchAttempt = 0
-  let compatibilityFailures = 0
   let forceFreshSession = false
   let nextPrompt: string | undefined
-  let activeReasoningEffort = options.reasoningEffort
+  const activeReasoningEffort = options.reasoningEffort
+  let resumableSessionId = options.sessionId?.trim() || undefined
+  let trustResumableSession = options.trustSessionId === true
 
   const waitForRetry = async (error: ExternalAgentTransientFailureError | ExternalAgentCompatibilityFailureError, exhaustedBatch: boolean, immediate = false): Promise<void> => {
     const category: ExternalAgentRecoveryCategory = error instanceof ExternalAgentCompatibilityFailureError ? 'compatibility' : error.category
@@ -2074,13 +2409,16 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
     const freshAttempt = forceFreshSession
     forceFreshSession = false
     const prompt = nextPrompt ?? options.prompt
+    const hasExplicitRecoveryPrompt = Boolean(nextPrompt)
     nextPrompt = undefined
     const attemptPrompt = freshAttempt
       ? { prompt: options.fallbackPrompt?.trim() || prompt, fallbackPrompt: undefined, retryOnly: false }
+      : hasExplicitRecoveryPrompt
+        ? { prompt, fallbackPrompt: undefined, retryOnly: false }
       : externalAgentAttemptPrompt(
         { prompt, fallbackPrompt: options.fallbackPrompt },
         totalAttempt > 1 ? 1 : 0,
-        Boolean(options.sessionId) || Boolean(options.resumeSession)
+        Boolean(resumableSessionId)
       )
     try {
       const result = await runExternalAgentAttempt({
@@ -2090,8 +2428,16 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
           ? { env: { ...options.env, CLAUDE_CODE_EFFORT_LEVEL: activeReasoningEffort } }
           : {}),
         reasoningEffort: activeReasoningEffort,
-        ...(freshAttempt ? { sessionId: undefined, resumeSession: false, trustSessionId: false } : {}),
-        onSessionId: (sessionId) => options.onSessionId?.(sessionId)
+        sessionId: freshAttempt ? undefined : resumableSessionId,
+        resumeSession: freshAttempt ? false : options.resumeSession || Boolean(resumableSessionId),
+        trustSessionId: freshAttempt ? false : trustResumableSession,
+        forkFrom: freshAttempt ? undefined : options.forkFrom,
+        onSessionId: (sessionId) => {
+          resumableSessionId = sessionId
+          trustResumableSession = true
+          options.forkFrom = undefined
+          options.onSessionId?.(sessionId)
+        }
       })
       if (totalAttempt > 1) options.onProgress(`${historyLabel} 恢复成功`, '模型服务已恢复，任务继续进行', 'success')
       if (options.retryScope) externalAgentFailureCircuits.delete(options.retryScope)
@@ -2114,33 +2460,10 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
         immediateRecovery = true
       } else if (caught instanceof ExternalAgentTransientFailureError) {
         recoverable = caught
-      } else if (caught instanceof ExternalAgentCompatibilityFailureError && persistent) {
-        const previousEffort = activeReasoningEffort
-        if (previousEffort !== undefined) {
-          activeReasoningEffort = previousEffort === 'low' ? 'medium' : undefined
-          recoverable = new ExternalAgentCompatibilityFailureError(
-            `${caught.message}；已将本次任务的推理强度从 ${previousEffort} 回退为 ${activeReasoningEffort ?? '服务默认值'}`,
-            caught.failureStatus
-          )
-          immediateRecovery = true
-        } else {
-          recoverable = caught
-          compatibilityFailures += 1
-        }
-        forceFreshSession = true
-        nextPrompt = options.fallbackPrompt?.trim() || options.prompt
-        if (previousEffort === undefined) immediateRecovery = compatibilityFailures === 1
-      } else if (persistent && caught instanceof Error && caught.name === 'ExternalAgentNoOutputTimeoutError') {
-        recoverable = new ExternalAgentTransientFailureError(caught.message, null, 'no-output')
-        forceFreshSession = true
-        nextPrompt = options.fallbackPrompt?.trim() || options.prompt
       } else if (persistent && caught instanceof Error && (caught.name === 'ExternalAgentProcessError' || caught.name === 'ExternalAgentEmptyResponseError')) {
         recoverable = new ExternalAgentTransientFailureError(caught.message, null, 'process')
-        forceFreshSession = true
-        nextPrompt = options.fallbackPrompt?.trim() || options.prompt
       } else if (persistent && /Native download blocked by policy|原生 Gradle 构建已停止|强制结束系统进程的命令已停止/i.test(detail)) {
         recoverable = new ExternalAgentTransientFailureError(detail, null, 'policy')
-        forceFreshSession = true
         nextPrompt = `${options.fallbackPrompt?.trim() || options.prompt}\n\nRECOVERY NOTE: A native command was blocked by ModMind policy. Continue through the corresponding modmind_* managed tool; do not repeat the blocked command.`
         immediateRecovery = true
       }
@@ -2173,7 +2496,6 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   let executable = ''
   const sessionScope = options.sessionScope?.trim() || 'workspace'
   let persistedSessionId: string | undefined
-  let resumedHistory = ''
   try {
     const bridgePaths = await awaitWithAbort(bridge.start(), options.signal, '外部 Agent 启动已停止')
     mcpConfigPath = bridgePaths.mcpConfigPath
@@ -2182,20 +2504,12 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
     executable = options.executable || (options.kind === 'codex' ? getPreparedCodexExecutable() : undefined) || (await awaitWithAbort(detectExternalAgents(), options.signal, '外部 Agent 启动已停止')).find((item) => item.kind === options.kind)?.executable || ''
     if (!executable) throw new Error(`${externalAgentLabel(options.kind)} CLI 未安装或不在 PATH 中`)
     persistedSessionId = options.sessionId?.trim() || (options.resumeSession
-      ? await awaitWithAbort(readPersistedSession(options.project, options.kind, sessionScope, options.sessionFingerprint), options.signal, '外部 Agent 启动已停止')
+      ? await awaitWithAbort(readPersistedSession(options.project, options.kind, sessionScope, options.sessionFingerprint, options.sessionLane), options.signal, '外部 Agent 启动已停止')
       : undefined)
-    resumedHistory = persistedSessionId && (options.kind === 'codex' || options.kind === 'claude')
-      ? await awaitWithAbort(readExternalSessionHistory(options.kind, persistedSessionId, options.sessionHome), options.signal, '外部 Agent 启动已停止')
-      : ''
     throwIfAborted(options.signal, '外部 Agent 启动已停止')
   } catch (error) {
     await awaitWithAbort(bridge.stop(), AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
     throw error
-  }
-  // A missing/expired persisted thread must not receive a bare "continue".
-  // Fall back to the original request so a fresh Codex thread has context.
-  if (persistedSessionId && options.resumeSession && !options.trustSessionId && !resumedHistory) {
-    persistedSessionId = undefined
   }
   const effectivePrompt = !persistedSessionId && options.fallbackPrompt?.trim()
     ? options.fallbackPrompt.trim()
@@ -2212,7 +2526,14 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   const prompt = options.retryOnly
     ? externalAgentRetryPrompt()
     : `${systemInstructions}${effectivePrompt}${continuationInstruction}${resumedReadOnlyInstruction}\n\nThis is a trusted local-agent session. Project context and workflows are available at ${contextPath.replaceAll('\\', '/')}. Write user-facing responses in Simplified Chinese unless the user requests another language.`
-  const plan = managedRunPlan(options.kind, options.project.path, mcpConfigPath, persistedSessionId, options.readOnly === true, options.systemPrompt, options.reasoningEffort)
+  if (options.kind === 'codex' && useCodexAppServer(executable, options.forceCodexAppServer === true)) {
+    try {
+      return await runCodexAppServerAttempt({ ...options, prompt }, executable, persistedSessionId, mcpConfigPath)
+    } finally {
+      await awaitWithAbort(bridge.stop(), AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
+    }
+  }
+  const plan = managedRunPlan(options.kind, options.project.path, mcpConfigPath, persistedSessionId, options.readOnly === true, options.systemPrompt, options.reasoningEffort, options.forkFrom)
   if (persistedSessionId && plan.supportsSessions) options.onSessionId?.(persistedSessionId)
   const args = plan.acceptsPromptOnStdin ? plan.args : plan.args.map((value) => value === '' ? prompt : value)
   const historyLabel = externalAgentLabel(options.kind)
@@ -2227,32 +2548,40 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   }
   let processClosed = false
   let terminationRequested = false
+  let terminationAttempt = 0
   let terminationFallbackTimer: ReturnType<typeof setTimeout> | undefined
   const terminate = (): void => {
-    if (processClosed || terminationRequested) return
+    if (processClosed) return
     terminationRequested = true
+    terminationAttempt += 1
     if (process.platform === 'win32' && child.pid) {
-      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {windowsHide: true, stdio: 'ignore'})
-      killer.unref()
+      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe']})
+      let killError = ''
+      killer.stderr.on('data', (chunk: Buffer | string) => { killError = `${killError}${String(chunk)}`.slice(-1_000) })
+      killer.once('error', (error) => { killError = error.message })
+      killer.once('close', (code) => {
+        if (processClosed || code === 0) return
+        options.onProgress('正在停止 Agent', `进程树终止尝试 ${terminationAttempt} 未确认成功${killError.trim() ? `：${killError.trim()}` : ''}`, 'warning')
+        try { child.kill('SIGKILL') } catch { /* The process may have exited between checks. */ }
+      })
     } else {
-      child.kill('SIGTERM')
+      child.kill(terminationAttempt === 1 ? 'SIGTERM' : 'SIGKILL')
     }
+    if (terminationFallbackTimer) clearTimeout(terminationFallbackTimer)
     terminationFallbackTimer = setTimeout(() => {
       if (processClosed) return
-      if (process.platform === 'win32' && child.pid) {
-        const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {windowsHide: true, stdio: 'ignore'})
-        killer.unref()
-      } else {
-        child.kill('SIGKILL')
-      }
-    }, 2_500)
+      terminate()
+    }, terminationAttempt === 1 ? 750 : 1_500)
     terminationFallbackTimer.unref?.()
   }
   child.once('spawn', () => {
     if (options.signal.aborted || terminationRequested) return
     try { options.onStarted?.() } catch { /* Lifecycle notifications must not stop the Agent. */ }
   })
-  child.stdin.end(plan.acceptsPromptOnStdin ? prompt : undefined)
+  if (plan.acceptsPromptOnStdin) {
+    if (options.kind === 'claude') child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } })}\n`)
+    else child.stdin.end(prompt)
+  }
   let transcript = ''
   let lastMessage = ''
   let activeSessionId = persistedSessionId
@@ -2262,8 +2591,6 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   let streamFailureMessage = ''
   let firstStreamErrorShown = false
   let terminalShutdownTimer: ReturnType<typeof setTimeout> | undefined
-  let noOutputTimer: ReturnType<typeof setTimeout> | undefined
-  let noOutputTimedOut = false
   let blockedNativeDownloadCommand: string | undefined
   let blockedNativeGradleCommand: string | undefined
   let blockedForcefulTerminationCommand: string | undefined
@@ -2276,19 +2603,6 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   let rejectedResumedPrompt = false
   const nativeDownloadCommands = new Set<string>()
   const buffers = {stdout: '', stderr: ''}
-  const noOutputTimeoutMs = Math.max(1, options.noOutputTimeoutMs ?? EXTERNAL_AGENT_NO_OUTPUT_TIMEOUT_MS)
-  const armNoOutputWatchdog = (): void => {
-    if (noOutputTimer) clearTimeout(noOutputTimer)
-    noOutputTimer = setTimeout(() => {
-      if (processClosed || options.signal.aborted) return
-      noOutputTimedOut = true
-      terminate()
-    }, noOutputTimeoutMs)
-    noOutputTimer.unref?.()
-  }
-  const markOutputActivity = (): void => {
-    if (!noOutputTimedOut && !processClosed) armNoOutputWatchdog()
-  }
   const processLine = (line: string, stream: 'stdout' | 'stderr'): void => {
     // Codex emits `thread.started` with a thread_id but no text payload. Read
     // the session identifier before the content parser can discard that line.
@@ -2311,6 +2625,7 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
         terminalEventSeen = true
       }
       if (!terminalShutdownTimer) {
+        try { child.stdin.end() } catch { /* The process may already be closing. */ }
         terminalShutdownTimer = setTimeout(() => {
           if (!processClosed) terminate()
         }, 750)
@@ -2338,7 +2653,7 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
       activeSessionId = discoveredSessionId
       options.sessionId = discoveredSessionId
       options.onSessionId?.(discoveredSessionId)
-      sessionPersistence = sessionPersistence.then(() => persistSession(options.project, options.kind, discoveredSessionId, sessionScope, options.sessionFingerprint)).catch(() => undefined)
+      sessionPersistence = sessionPersistence.then(() => persistSession(options.project, options.kind, discoveredSessionId, sessionScope, options.sessionFingerprint, options.sessionLane)).catch(() => undefined)
     }
     // Token usage arrives on data-only events the content parser would drop,
     // so it is captured here before any text-based early return.
@@ -2355,7 +2670,6 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
     if (completionEventLine) return
     const output = parseExternalAgentOutputLine(line, stream)
     if (!output) return
-    markOutputActivity()
     if (output.parsed?.item && typeof output.parsed.item === 'object') {
       const item = output.parsed.item as Record<string, unknown>
       if ((item.type === 'command_execution' || item.type === 'command-execution') && typeof item.command === 'string' && isForcefulProcessTerminationCommand(item.command)) {
@@ -2396,22 +2710,22 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
         return
       }
     }
+    let deliveredKind = output.kind
     if (output.agentMessage) {
       const outputType = typeof output.parsed?.type === 'string' ? output.parsed.type.toLowerCase() : ''
-      const streamingText = outputType === 'text' || outputType === 'content_block_delta' || outputType === 'delta'
+      const event = output.parsed?.event && typeof output.parsed.event === 'object' ? output.parsed.event as Record<string, unknown> : undefined
+      const streamingText = outputType === 'text' || outputType === 'content_block_delta' || outputType === 'delta' || outputType === 'stream_event' && event?.type === 'content_block_delta'
       lastMessage = streamingText ? `${lastMessage}${output.content}` : output.content
+      if (streamingText) deliveredKind = 'delta'
       // Codex emits both event_msg/agent_message and response_item/message for
       // the same reply. Keep one UI event while accepting both wire formats.
       if (!streamingText && output.content === lastDeliveredAgentMessage) return
       lastDeliveredAgentMessage = output.content
     }
-    options.onOutput(output.kind, output.content)
+    options.onOutput(deliveredKind, output.content, { ...(output.itemId ? { itemId: output.itemId } : {}), ...(output.streamId ? { streamId: output.streamId } : {}) })
   }
   const consume = (chunk: Buffer, stream: 'stdout' | 'stderr'): void => {
     const text = chunk.toString('utf8')
-    // Liveness is transport-level: a new JSON event proves the managed CLI is
-    // still receiving data even if this version does not render that event.
-    if (text) markOutputActivity()
     transcript += text
     buffers[stream] += text
     const lines = buffers[stream].split(/\r?\n/)
@@ -2420,9 +2734,17 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   }
   child.stdout.on('data', (chunk) => consume(chunk, 'stdout'))
   child.stderr.on('data', (chunk) => consume(chunk, 'stderr'))
-  armNoOutputWatchdog()
-  if (options.signal.aborted) terminate()
-  options.signal.addEventListener('abort', terminate, {once: true})
+  let nativeInterruptFallback: ReturnType<typeof setTimeout> | undefined
+  const requestCancellation = (): void => {
+    if (options.kind !== 'claude' || processClosed) return terminate()
+    try {
+      child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } })}\n`)
+      nativeInterruptFallback = setTimeout(terminate, 2_000)
+      nativeInterruptFallback.unref?.()
+    } catch { terminate() }
+  }
+  if (options.signal.aborted) requestCancellation()
+  options.signal.addEventListener('abort', requestCancellation, {once: true})
   let exitCode: number | null
   try {
     exitCode = await new Promise<number | null>((resolve, reject) => {
@@ -2433,12 +2755,12 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
       })
     })
   } finally {
-    options.signal.removeEventListener('abort', terminate)
+    options.signal.removeEventListener('abort', requestCancellation)
     processLine(buffers.stdout, 'stdout')
     processLine(buffers.stderr, 'stderr')
     if (terminalShutdownTimer) clearTimeout(terminalShutdownTimer)
-    if (noOutputTimer) clearTimeout(noOutputTimer)
     if (terminationFallbackTimer) clearTimeout(terminationFallbackTimer)
+    if (nativeInterruptFallback) clearTimeout(nativeInterruptFallback)
     await awaitWithAbort(sessionPersistence, AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
     await awaitWithAbort(bridge.stop(), AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
   }
@@ -2452,23 +2774,17 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   if (blockedForcefulTerminationCommand) {
     throw new Error(`强制结束系统进程的命令已停止。请使用 ModMind 的停止或取消操作，不能按 PID 强杀 Java、Gradle 或其他进程：${blockedForcefulTerminationCommand}`)
   }
-  const completionAudit = auditExternalAgentCompletion({ rawExitCode: exitCode, terminalEventSeen, noOutputTimedOut, terminalFailure: Boolean(terminalFailureMessage) })
+  const completionAudit = auditExternalAgentCompletion({ rawExitCode: exitCode, terminalEventSeen, noOutputTimedOut: false, terminalFailure: Boolean(terminalFailureMessage) })
   if (terminalFailureMessage) {
     const classification = classifyAgentStreamFailure(terminalFailureMessage)
     if (classification.transient) throw new ExternalAgentTransientFailureError(classification.reason, classification.status)
     if (classification.kind === 'invalid-request') throw new ExternalAgentCompatibilityFailureError(classification.reason, classification.status)
     throw new Error(classification.status !== null || classification.kind !== 'unknown' ? classification.reason : terminalFailureMessage)
   }
-  if (!completionAudit.complete && completionAudit.reason === 'no-output-timeout') {
-    const duration = noOutputTimeoutMs >= 60_000 ? `${Math.round(noOutputTimeoutMs / 60_000)} 分钟` : `${Math.round(noOutputTimeoutMs / 1_000)} 秒`
-    const error = new Error(`${historyLabel} 等待 ${duration} 后，上游模型仍未返回任何内容。任务进度已保存，可安全重建进程继续。`)
-    error.name = 'ExternalAgentNoOutputTimeoutError'
-    throw error
-  }
   if (!completionAudit.complete && rejectedResumedPrompt) {
     // The persisted thread itself is unusable server-side. Remove it so the
     // recovery attempt below starts a fresh thread instead of resuming again.
-    const file = sessionFilePath(options.project, options.kind, sessionScope)
+    const file = sessionFilePath(options.project, options.kind, sessionScope, options.sessionLane)
     await fs.rm(file, {force: true}).catch(() => undefined)
     throw new ResumedPromptRejectionError(persistedSessionId ?? activeSessionId ?? '', historyLabel)
   }
@@ -2506,6 +2822,6 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   // Session persistence is useful for the next user turn, but once Codex has
   // emitted a terminal event it must never turn this completed attempt back
   // into a retry. Discovery-time persistence above has already been queued.
-  if (plan.supportsSessions && activeSessionId) await persistSession(options.project, options.kind, activeSessionId, sessionScope, options.sessionFingerprint).catch(() => undefined)
+  if (plan.supportsSessions && activeSessionId) await persistSession(options.project, options.kind, activeSessionId, sessionScope, options.sessionFingerprint, options.sessionLane).catch(() => undefined)
   return {summary: lastMessage || `${options.kind} task completed`, transcript, buildUsed: false, runtimeUsed: false, exitCode, sessionId: activeSessionId, completionAudit, usage: lastTokenUsage}
 }

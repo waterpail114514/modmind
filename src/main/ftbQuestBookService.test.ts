@@ -41,7 +41,7 @@ describe('FTB Quests book service', () => {
     const book = await readFtbQuestBook(pack)
     expect(book.format).toBe('snbt')
     expect(book.chapters).toHaveLength(1)
-    expect(book.chapters[0].quests[0]).toMatchObject({ title: 'Collect Stone', dependencies: [], tasks: [{ type: 'item', item: 'minecraft:stone' }] })
+    expect(book.chapters[0].quests[0]).toMatchObject({ title: 'Collect Stone', dependencies: [], tasks: [{ type: 'item', raw: { item: 'minecraft:stone' } }] })
     book.chapters[0].title = 'Start Here'
     book.chapters[0].quests[0].dependencies = []
     const saved = await saveFtbQuestBook(pack, book)
@@ -103,5 +103,35 @@ describe('FTB Quests book service', () => {
     await saveFtbQuestBook(pack, book)
     const written = await fs.readFile(path.join(chapters, 'modern.json5'), 'utf8')
     expect(written).toContain('Updated')
+  })
+
+  it('preserves 64-bit reward table ids and rejects missing table references', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-ftbquests-reward-table-'))
+    roots.push(root)
+    const pack = project(root)
+    const questRoot = path.join(root, 'overrides', 'config', 'ftbquests', 'quests')
+    await fs.mkdir(path.join(questRoot, 'chapters'), { recursive: true })
+    await fs.mkdir(path.join(questRoot, 'reward_tables'), { recursive: true })
+    await fs.writeFile(path.join(questRoot, 'chapters', 'reward.snbt'), `{
+      id: "CHAPTER00000000000000000000000002"
+      filename: "reward"
+      title: "Reward"
+      quests: [{ id: "QUEST00000000000000000000000000002" title: "Roll" tasks: [] rewards: [{ id: "REWARD000000000000000000000000002" type: "random" table_id: "999" }] }]
+    }`, 'utf8')
+    await fs.writeFile(path.join(questRoot, 'reward_tables', 'loot.snbt'), `{
+      id: "FEDCBA9876543210"
+      title: "Loot"
+      rewards: []
+    }`, 'utf8')
+    const book = await readFtbQuestBook(pack)
+    expect(book.rewardTables[0].id).toBe('FEDCBA9876543210')
+    expect(book.diagnostics.some((entry) => entry.code === 'reward-table-missing')).toBe(true)
+    const reward = book.chapters[0].quests[0].rewards[0]
+    reward.raw.table_id = '-81985529216486896'
+    expect(validateFtbQuestBook(book).some((entry) => entry.code === 'reward-table-id-invalid')).toBe(false)
+    expect(validateFtbQuestBook(book).some((entry) => entry.code === 'reward-table-missing')).toBe(false)
+    await saveFtbQuestBook(pack, book)
+    const written = await fs.readFile(path.join(questRoot, 'chapters', 'reward.snbt'), 'utf8')
+    expect(written).toContain('-81985529216486896')
   })
 })

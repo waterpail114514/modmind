@@ -39,7 +39,7 @@ import { requireManagedRuntimePreparation } from './managedRuntimePreparation'
 import { isAddonPlatform, isJavaLoader, platformLabel, PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { normalizeProjectName, validateProjectNameInput } from '../shared/projectName'
 import { buildBedrockAddon, buildNeteaseArchive, createStoredZip } from './bedrockAddon'
-import { detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, installExternalAgent, launchExternalAgent, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
+import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, installExternalAgent, launchExternalAgent, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
 import { createPluginBridgeTarget, getPluginService, getPluginRuntime, importPluginZipInteractive, initializePlugins, refreshPluginRegistry, registerPluginProtocolSchemeEarly, shutdownPlugins, waitForPluginRegistry } from './pluginBridgeIntegration'
 import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from '../shared/plugins'
 import { clearPreparedCodexCredentials, ensureManagedCodexRuntime, isManagedCodexVersion, managedCodexExecutablePath, prepareCodex, type CodexServerConfig, type CodexSetupProgress } from './codexSetup'
@@ -63,6 +63,7 @@ import { aiConversationIdForSession, aiRecoveryMatchesSessionScope, aiRecoverySe
 import { describeAiFailureForUser } from '../shared/aiFailure'
 import { selectFinalAiAnswer } from '../shared/aiOutput'
 import { WorkbenchDataStore } from './workbenchDataStore'
+import { ConversationStore } from './conversationStore'
 import {
   checkAppVersion,
   DEFAULT_DEVICE_MODEL,
@@ -158,6 +159,7 @@ import { applyModpackPlan, planModpack } from './modpackPlanner'
 import { auditModpackLock, lockedModFromFile, readModpackLock, writeModpackLock } from './modpackLockService'
 import { applyKeybindPreset, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
 import { readFtbQuestBook, saveFtbQuestBook } from './ftbQuestBookService'
+import { resolveFtbQuestDependencyTexture, resolveFtbQuestIcon, resolveFtbQuestItemNames, resolveFtbQuestShapes } from './ftbquesticonservice'
 import { downloadModpackContent, importModpackContent, listModpackContent, modpackContentProjectPath, removeModpackContent } from './modpackContentInventoryService'
 import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from './serverPackService'
 import { SERVER_PACK_CREATOR_MIN_JAVA } from './serverPackCreatorService'
@@ -168,7 +170,7 @@ import { McmodService, readManualModRequirements, saveManualModRequirements } fr
 import { assessModpackMigration, createModpackMigration, inspectModpackMigrationJar } from './modpackMigrationService'
 import { modpackModsRoot } from './modpackPaths'
 import { assertSeparateMigrationTrees } from './migrationPathSafety'
-import { reviewAiAction, reviewAiCompletion, type AiReviewerConfig } from './aiReviewer'
+import { reviewAiAction, type AiReviewerConfig } from './aiReviewer'
 import { RemoteControllerAgent, type RemoteAppAction, type RemoteAppState, type RemoteProjectSummary, type RemoteQuotaConfig } from './remoteAgentController'
 import { RemoteClientService, remoteEndpointFromSite, type RemoteServerCancel } from './remoteClientService'
 import { DiagnosticArchiveCollector, summarizeDiagnosticDirectory } from './diagnosticArchive'
@@ -225,6 +227,7 @@ const workbenchDataStore = new WorkbenchDataStore(app.getPath('userData'), (entr
     error: entry.error
   })
 })
+const conversationStore = new ConversationStore(workbenchDataStore)
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
   'workspace', 'relationships', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
@@ -1565,10 +1568,23 @@ const managedCodexPreparations = new Map<string, ReturnType<typeof prepareCodex>
 const managedCodexPreparationListeners = new Map<string, Set<(progress: CodexSetupProgress) => void>>()
 let managedCodexPreparationTail = Promise.resolve()
 
-function managedCodexHome(project: ProjectInfo, sessionScope: string, serverConfig: CodexServerConfig): string {
+function managedCodexHome(project: ProjectInfo, sessionScope: string, configSource: 'device' | 'local-settings'): string {
   const scopeKey = createHash('sha256').update(sessionScope.trim() || 'workspace').digest('hex').slice(0, 20)
-  const providerKey = createHash('sha256').update(`${serverConfig.baseUrl}\n${codexProviderIdentity(serverConfig)}`).digest('hex').slice(0, 20)
-  return path.join(project.path, projectDataDirectory(project), 'external-agents', 'codex-homes', scopeKey, providerKey)
+  const lane = configSource === 'device' ? 'quota' : 'configured-codex'
+  return path.join(project.path, projectDataDirectory(project), 'external-agents', 'codex-homes', scopeKey, lane)
+}
+
+async function migrateLegacyManagedCodexSessions(home: string): Promise<void> {
+  const scopeRoot = path.dirname(home)
+  const legacyHomes = await fs.readdir(scopeRoot, { withFileTypes: true }).catch(() => [])
+  for (const entry of legacyHomes) {
+    if (!entry.isDirectory() || !/^[0-9a-f]{20}$/i.test(entry.name)) continue
+    const source = path.join(scopeRoot, entry.name, 'sessions')
+    const target = path.join(home, 'sessions')
+    if (!await pathExists(source)) continue
+    await fs.mkdir(target, { recursive: true })
+    await fs.cp(source, target, { recursive: true, force: false, errorOnExist: false }).catch(() => undefined)
+  }
 }
 
 function codexProviderIdentity(config: Pick<CodexServerConfig, 'baseUrl' | 'apiKey' | 'model'>): string {
@@ -1592,7 +1608,8 @@ async function prepareManagedCodex(
   onProgress?: (progress: CodexSetupProgress) => void,
   signal?: AbortSignal
 ): ReturnType<typeof prepareCodex> {
-  const home = managedCodexHome(project, sessionScope, serverConfig)
+  const home = managedCodexHome(project, sessionScope, configSource)
+  await migrateLegacyManagedCodexSessions(home)
   const key = process.platform === 'win32' ? home.toLowerCase() : home
   const listeners = managedCodexPreparationListeners.get(key) ?? new Set<(progress: CodexSetupProgress) => void>()
   managedCodexPreparationListeners.set(key, listeners)
@@ -1841,7 +1858,7 @@ async function handleWindowClose(): Promise<void> {
     closeRequestInFlight = false
     return
   }
-  await workbenchDataStore.flush()
+  await conversationStore.flush()
   allowWindowClose = true
   mainWindow.close()
   closeRequestInFlight = false
@@ -3416,7 +3433,7 @@ async function deleteProjectDirectory(projectPath: string): Promise<ProjectInfo[
   const key = resolved.toLowerCase()
   if (!recent.some((entry) => path.resolve(entry.path).toLowerCase() === key)) throw new Error('项目不在最近项目列表中')
 
-  await fs.rm(resolved, { recursive: true, force: false })
+  await shell.trashItem(resolved)
   const remaining = recent.filter((entry) => path.resolve(entry.path).toLowerCase() !== key)
   await writeRecentProjects(remaining)
   if (currentProject && sameProjectPath(currentProject.path, resolved)) currentProject = null
@@ -3996,25 +4013,36 @@ async function readSnapshotInfo(project: ProjectInfo, id: string): Promise<Snaps
 }
 
 function sendAiProgress(event: Electron.IpcMainInvokeEvent, item: PipelineEvent, sessionId?: string, projectPath?: string, runId?: string): void {
-  const actualBackend = runId ? activeAiRuns.get(runId)?.backend : undefined
+  const run = runId ? activeAiRuns.get(runId) ?? recentAiRunRoutes.get(runId) : undefined
+  const actualBackend = run?.backend
+  const routedItem: PipelineEvent = {
+    ...item,
+    ...(run?.conversationId ? { conversationId: run.conversationId } : {}),
+    ...(run?.generation !== undefined ? { generation: run.generation } : {}),
+    ...(run?.turnId ? { turnId: run.turnId } : {}),
+    ...(runId ? { runId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(projectPath ? { projectPath } : {}),
+    ...(actualBackend ? { backend: actualBackend } : {})
+  }
   diagnosticJournal.record({
     subsystem: 'ai',
     operation: item.stage,
     phase: item.status === 'error' && item.terminal !== false ? 'error' : item.status,
     level: item.status === 'error' && item.terminal !== false ? 'error' : item.status === 'warning' || item.status === 'error' ? 'warning' : 'info',
     message: item.title,
-    data: { detail: item.detail, sessionId, projectPath, runId, todo: item.todo }
+    data: { detail: item.detail, sessionId, projectPath, runId, conversationId: routedItem.conversationId, turnId: routedItem.turnId, todo: item.todo }
   })
-  if (event.sender.isDestroyed()) return
-  event.sender.send('ai:progress', {
-    ...item,
-    ...(sessionId ? { sessionId } : {}),
-    ...(projectPath ? { projectPath } : {}),
-    ...(runId ? { runId } : {}),
-    ...(actualBackend ? { backend: actualBackend } : {}),
-    title: sanitizeAiUserText(item.title),
-    detail: sanitizeAiUserText(item.detail)
-  })
+  const publish = (value: PipelineEvent): void => {
+    const payload = { ...value, title: sanitizeAiUserText(value.title), detail: sanitizeAiUserText(value.detail) }
+    const windows = BrowserWindow.getAllWindows()
+    if (windows.length) {
+      for (const window of windows) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('ai:progress', payload)
+    } else if (!event.sender.isDestroyed()) event.sender.send('ai:progress', payload)
+  }
+  if (projectPath && routedItem.conversationId && routedItem.turnId && routedItem.generation !== undefined) {
+    void conversationStore.appendProgress(projectPath, routedItem).then(publish).catch(() => publish(routedItem))
+  } else publish(routedItem)
   if (!sessionId?.startsWith('inspiration-') && (item.stage === 'complete' || (item.stage === 'error' && item.terminal !== false))) {
     notifyUser(item.status === 'error' ? 'ModMind 任务失败' : 'ModMind 任务完成', item.detail || item.title)
   }
@@ -4037,13 +4065,14 @@ function sendAiOutput(
   sessionId?: string,
   projectPath?: string,
   runId?: string,
-  options?: Pick<AiOutputEvent, 'terminal' | 'recoverable' | 'usage' | 'backend'>
+  options?: Pick<AiOutputEvent, 'terminal' | 'recoverable' | 'usage' | 'backend' | 'itemId' | 'streamId'>
 ): void {
   const time = new Date().toISOString()
   const safeContent = sanitizeAiUserText(content)
-  const actualBackend = options?.backend ?? (runId ? activeAiRuns.get(runId)?.backend : undefined)
+  const run = runId ? activeAiRuns.get(runId) ?? recentAiRunRoutes.get(runId) : undefined
+  const actualBackend = options?.backend ?? run?.backend
   const terminalError = kind === 'error' && options?.terminal !== false
-  const payload = { kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
+  const payload: AiOutputEvent = { kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(run?.conversationId ? { conversationId: run.conversationId } : {}), ...(run?.generation !== undefined ? { generation: run.generation } : {}), ...(run?.turnId ? { turnId: run.turnId } : {}), ...(options?.itemId ? { itemId: options.itemId } : {}), ...(options?.streamId ? { streamId: options.streamId } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
   if (kind !== 'delta') {
     diagnosticJournal.record({
       subsystem: 'ai',
@@ -4061,8 +4090,15 @@ function sendAiOutput(
       await fs.appendFile(path.join(app.getPath('logs'), 'ai-output-events.jsonl'), `${redactDiagnosticText(JSON.stringify(logPayload))}\n`, 'utf8')
     }).catch(() => undefined)
   }
-  if (event.sender.isDestroyed()) return
-  event.sender.send('ai:output', payload)
+  const publish = (value: AiOutputEvent): void => {
+    const windows = BrowserWindow.getAllWindows()
+    if (windows.length) {
+      for (const window of windows) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('ai:output', value)
+    } else if (!event.sender.isDestroyed()) event.sender.send('ai:output', value)
+  }
+  if (projectPath && payload.conversationId && payload.turnId && payload.generation !== undefined) {
+    void conversationStore.appendOutput(projectPath, payload).then(publish).catch(() => publish(payload))
+  } else publish(payload)
 }
 
 /** Keep provider responses unchanged in the user-facing AI timeline. */
@@ -4088,15 +4124,19 @@ interface ActiveAiRun {
   executionProfile: AiExecutionProfile
   backend: AgentSettings['codingBackend']
   surface: AiSurface
+  conversationId?: string
+  generation?: number
+  turnId?: string
 }
 
 const aiAbortControllers = new Map<string | number, AbortController>()
 const aiCancelRequests = new Set<string | number>()
 const activeAiRuns = new Map<string, ActiveAiRun>()
+const recentAiRunRoutes = new Map<string, ActiveAiRun>()
 const aiBackendSwitchCoordinator = new BackendSwitchCoordinator<AgentSettings, { backend: AgentSettings['codingBackend']; switchId?: number }>()
 const activeAiBackendSwitches = new Map<string, { sequence: number; controller: AbortController }>()
 const REMOTE_SENDER_ID = -1
-const AI_CANCEL_CONFIRM_TIMEOUT_MS = 15_000
+const AI_CANCEL_CONFIRM_TIMEOUT_MS = 8_000
 const AI_BACKEND_START_TIMEOUT_MS = 2 * 60_000
 
 function aiRunId(senderId: number, projectPath: string, sessionId?: string): string {
@@ -4168,6 +4208,7 @@ function registerAiRun(run: ActiveAiRun): void {
     throw new Error('该灵感对话已有处理中的任务，请先等待当前回答完成')
   }
   activeAiRuns.set(run.id, run)
+  recentAiRunRoutes.set(run.id, run)
 }
 
 async function withAiRun<T>(run: ActiveAiRun, controller: AbortController, operation: () => Promise<T>): Promise<T> {
@@ -4181,6 +4222,9 @@ async function withAiRun<T>(run: ActiveAiRun, controller: AbortController, opera
     aiAbortControllers.delete(run.id)
     aiCancelRequests.delete(run.id)
     activeAiRuns.delete(run.id)
+    const route = recentAiRunRoutes.get(run.id)
+    const timer = setTimeout(() => { if (recentAiRunRoutes.get(run.id) === route) recentAiRunRoutes.delete(run.id) }, 60_000)
+    timer.unref?.()
   }
 }
 
@@ -4309,6 +4353,19 @@ interface SnapshotManifest extends SnapshotInfo {
   projectPath?: string
 }
 
+async function prepareConversationRequest(project: ProjectInfo, prompt: string, surface: AiSurface, options: AiCreateCodeOptions, recovery?: ActiveAiTask): Promise<{ options: AiCreateCodeOptions; document: Awaited<ReturnType<typeof conversationStore.read> >; turnId: string }> {
+  const conversationId = options.conversationId?.trim() || recovery?.conversationId || `${surface === 'workspace' ? 'ws' : 'idea'}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
+  const created = await conversationStore.create(project.path, { id: conversationId, surface })
+  const generation = options.generation ?? created.generation
+  const turnId = options.turnId?.trim() || `turn-${randomUUID()}`
+  const nextOptions = { ...options, conversationId, generation, turnId }
+  // The user turn is the recovery boundary. Native provider output is appended
+  // later, but the request itself is durable before the provider is spawned.
+  const existing = created.events.some((event) => event.turnId === turnId && event.kind === 'user')
+  if (!existing) await conversationStore.appendUser(project.path, conversationId, generation, turnId, { prompt }, options.runId)
+  return { options: nextOptions, document: await conversationStore.read(project.path, conversationId), turnId }
+}
+
 type AiWorkflowStage = 'project_info' | 'intent' | 'plan' | 'implementation' | 'validate' | 'build' | 'runtime_test' | 'managed_download' | 'todo_complete'
 
 type ManagedDownloadAction = 'dependency_install' | 'maven_dependency_install' | 'addon_prepare' | 'modpack_apply_plan' | 'modpack_apply_optimization_profile' | 'modpack_download_content'
@@ -4333,11 +4390,6 @@ interface AiWorkflowState {
   evidence: Partial<Record<AiWorkflowStage, string>>
 }
 
-// Only completion evidence is a hard gate. Planning helpers such as project
-// info, intent classification, and Todo remain useful but optional.
-const ENGINEERING_WORKFLOW_STAGES: AiWorkflowStage[] = ['implementation', 'validate', 'build']
-const INFORMATIONAL_WORKFLOW_STAGES: AiWorkflowStage[] = []
-
 interface ActiveAiTask {
   taskId: string
   runId?: string
@@ -4346,6 +4398,7 @@ interface ActiveAiTask {
   startedAt: string
   changedFiles: string[]
   prompt: string
+  fallbackPrompt?: string
   surface?: AiSurface
   conversationId?: string
   sessionScope?: string
@@ -5523,15 +5576,15 @@ function codingHashesEqual(left: Map<string, string> | null, right: Map<string, 
 
 const MANDATORY_CODING_WORKFLOW = `${MANAGED_DOWNLOAD_POLICY}
 
-MANDATORY MODMIND COMPLETION AUDIT. The only hard gate is the independent audit before your final answer. Planning and setup helpers are optional: modmind_project_info and modmind_set_intent are useful when context is needed. You are strongly encouraged, but not required, to call modmind_update_todo for engineering work so the user can see the plan, progress, remaining work, and recovery state; never repeat Todo work only to satisfy a gate, and Todo status never determines audit approval.
+MODMIND WORKFLOW GUIDANCE. Choose the smallest workflow that reliably satisfies the user's request. Project info, intent classification, Todo, validation, managed builds, runtime tests, and independent review are available helpers, not completion gates. Do not repeat work merely to satisfy a process checklist.
 
-For an engineering change, make sure the applicable completion evidence exists before the final answer: the requested implementation/diff, content validation, and a successful managed build. Prefer a managed runtime test when the task changes startup, registration, mixin, world-generation, networking, loader compatibility, or gameplay behavior, or when the user asks for game verification; it is valuable evidence, but not a universal completion gate. The Agent smoke-test path uses HeadlessMC in an isolated, hidden, offline instance; it must not open the user's Minecraft window. These audit stages may be performed in any order that is efficient for the task. Informational tasks do not need engineering build/test stages.
+For engineering changes, implement the requested behavior and use the most relevant validation. Prefer a managed build when compilation or packaging matters, and a managed runtime test when the task changes startup, registration, mixins, world generation, networking, loader compatibility, or gameplay behavior. The Agent smoke-test path uses HeadlessMC in an isolated, hidden, offline instance; it must not open the user's Minecraft window. If a useful check cannot be run, state that plainly in the final answer instead of retrying completed work.
 
-Native Agent tools, terminal commands, and file tools remain available for uncovered work. Never run Gradle build, assemble, compileJava, runClient, runServer, or runGameTestServer directly; use modmind_build_project, modmind_test_matrix, or modmind_test_minecraft so ModMind owns serialization, cancellation, and process cleanup. Never use Stop-Process -Force, taskkill /f, kill -9, or delete Gradle daemon registry files. On Windows, commands run in Windows PowerShell 5.1, so do not use Bash-only operators such as || or &&. Native actions alone may not create ModMind evidence: after using a native tool for a stage, call the corresponding ModMind evidence tool when one exists. Do not waste tokens replaying optional planning steps or following a fixed sequence.
+Native Agent tools, terminal commands, and file tools remain available for uncovered work. Never run Gradle build, assemble, compileJava, runClient, runServer, or runGameTestServer directly; use modmind_build_project, modmind_test_matrix, or modmind_test_minecraft so ModMind owns serialization, cancellation, and process cleanup. Never use Stop-Process -Force, taskkill /f, kill -9, or delete Gradle daemon registry files. On Windows, commands run in Windows PowerShell 5.1, so do not use Bash-only operators such as || or &&. Do not waste tokens replaying optional planning or verification steps.
 
-Do not claim completion when applicable audit evidence is missing. The independent ModMind Review Agent audits the result before releasing your final answer. If it reports missing stages, continue the task and perform exactly those missing stages.`
+Treat completion review as advice. Never start another implementation turn only because an optional review or checklist recommends more work.`
 
-const NETEASE_CODING_WORKFLOW = `NETEASE MOD SDK RULES. Inspect existing project files first and implement promptly using the Python Mod SDK layout (behavior_pack/modMain.py, behavior_pack/<namespace>/clientSystem.py, behavior_pack/<namespace>/serverSystem.py, and resource-pack UI JSON/textures). Do not use Gradle, Java mappings, Sourcegraph, or broad web scraping. Use official NetEase documentation only for a specific unresolved API after inspecting local templates. Engineering tasks must produce concrete edits, implement client/server events and per-save persistence where required, then call modmind_validate_content and modmind_build_project. ModMind validates and packages the project; runtime testing belongs in the official NetEase developer workbench.`
+const NETEASE_CODING_WORKFLOW = `NETEASE MOD SDK GUIDANCE. Inspect existing project files first and implement promptly using the Python Mod SDK layout (behavior_pack/modMain.py, behavior_pack/<namespace>/clientSystem.py, behavior_pack/<namespace>/serverSystem.py, and resource-pack UI JSON/textures). Do not use Gradle, Java mappings, Sourcegraph, or broad web scraping. Use official NetEase documentation only for a specific unresolved API after inspecting local templates. For engineering tasks, prefer concrete edits plus modmind_validate_content and modmind_build_project when they materially help; runtime testing belongs in the official NetEase developer workbench.`
 
 function codingWorkflowPrompt(project: ProjectInfo): string {
   return project.loader === 'netease-pc' || project.loader === 'netease-mobile'
@@ -5540,10 +5593,9 @@ function codingWorkflowPrompt(project: ProjectInfo): string {
 }
 
 function requiredWorkflowStages(project: ProjectInfo, intent: 'engineering' | 'informational' | null): AiWorkflowStage[] {
-  if (intent !== 'engineering') return [...INFORMATIONAL_WORKFLOW_STAGES]
-  return ENGINEERING_WORKFLOW_STAGES.filter((stage) => project.loader === 'bedrock' || project.loader === 'netease-pc' || project.loader === 'netease-mobile'
-    ? stage !== 'runtime_test'
-    : true)
+  void project
+  void intent
+  return []
 }
 
 function markWorkflowStage(workflow: AiWorkflowState, stage: AiWorkflowStage, evidence: string): void {
@@ -5594,8 +5646,10 @@ async function runExternalCodingAgent(
   const isInspiration = surface === 'inspiration'
   const recoveryBackend = recovery?.backend
   const backendChanged = Boolean(recoveryBackend && recoveryBackend !== backend)
+  const storedConversation = context.conversationId ? await conversationStore.read(project.path, context.conversationId).catch(() => null) : null
   const nativeSessionId = recovery?.nativeSessions?.[backend]
     ?? (!backendChanged && recoveryBackend === backend ? recovery?.sessionId : undefined)
+    ?? storedConversation?.native[backend]?.sessionId
   // Resumed checkpoints keep their original conversation scope so the CLI
   // session continues inside the same workbench thread.
   const sessionScope = recovery ? aiRecoverySessionScope(recovery) : normalizeAiSessionScope(context.sessionScope)
@@ -5619,9 +5673,7 @@ async function runExternalCodingAgent(
   const quotaRunConfiguration = isInspiration && usesQuota
     ? await inspirationQuotaConfig(inspirationQuestion, signal)
     : undefined
-  let reviewerConfig = await awaitWithAbort(getAiReviewerConfig(usesQuota, externalBackend, settings, project.path).catch(() => null), signal, 'Agent 任务已停止')
-  let reviewerUnavailableNotified = false
-  let reviewerFallbackNotified = false
+  const safetyReviewerConfig: AiReviewerConfig = { reviewMode: 'codex-auto' }
   let codexSetup: Awaited<ReturnType<typeof prepareCodex>> | undefined
   if (usesQuota) {
     await awaitWithAbort(ensureQuotaAccountReady(), signal, 'Agent 任务已停止')
@@ -5637,9 +5689,6 @@ async function runExternalCodingAgent(
     }
   }
   throwIfAborted(signal, 'Agent 任务已停止')
-  if (reviewerConfig?.reviewMode === 'codex-auto' && codexSetup?.environment) {
-    reviewerConfig = { ...reviewerConfig, codexExecutable: codexSetup.executable, environment: codexSetup.environment }
-  }
   let configuredExecutable = codexSetup?.executable ?? runExternalConfiguration.executable
   if (!configuredExecutable) {
     const detected = await awaitWithAbort(detectExternalAgent(externalBackend, externalBackend === 'codex'
@@ -5671,7 +5720,9 @@ async function runExternalCodingAgent(
   let lastBuildHashes: Map<string, string> | null = null
   let lastRuntimeHashes: Map<string, string> | null = null
   const runtime = requireMinecraftRuntime()
-  const conversationId = aiConversationIdForSession(recovery ?? { sessionScope })
+  const conversationId = context.conversationId ?? aiConversationIdForSession(recovery ?? { sessionScope })
+  const generation = context.generation ?? storedConversation?.generation ?? 0
+  const turnId = context.turnId ?? `turn-${taskId}`
   const activeTask: ActiveAiTask = {
     taskId,
     runId: context.runId ?? recovery?.runId ?? taskId,
@@ -5680,6 +5731,7 @@ async function runExternalCodingAgent(
     startedAt: recovery?.startedAt ?? new Date().toISOString(),
     changedFiles: recovery?.changedFiles ?? [],
     prompt,
+    ...(context.fallbackPrompt || recovery?.fallbackPrompt ? { fallbackPrompt: context.fallbackPrompt ?? recovery?.fallbackPrompt } : {}),
     surface,
     sessionScope,
     ...(conversationId ? { conversationId } : {}),
@@ -5723,15 +5775,18 @@ async function runExternalCodingAgent(
     : []
   let workflowWrite = Promise.resolve()
   let bufferedFinalResponse: string | undefined
+  let bufferedFinalIdentity: { itemId?: string; streamId?: string } | undefined
   const deliveredResponseContents = new Set<string>()
   const flushBufferedProgress = (): void => {
     if (!bufferedFinalResponse) return
     const content = bufferedFinalResponse
     bufferedFinalResponse = undefined
+    bufferedFinalIdentity = undefined
     const key = content.trim()
     if (!key || deliveredResponseContents.has(key)) return
     deliveredResponseContents.add(key)
-    sendAiOutput(event, 'response', content, sessionId, project.path, context.runId)
+    sendAiOutput(event, 'response', content, sessionId, project.path, context.runId, bufferedFinalIdentity)
+    bufferedFinalIdentity = undefined
   }
   // Read-only informational tasks may still run content validation. Validation
   // alone must not turn a question into a full engineering workflow.
@@ -5785,11 +5840,11 @@ async function runExternalCodingAgent(
           ...settings,
           externalAgents: { ...settings.externalAgents, [externalBackend]: runExternalConfiguration }
         }), signal, 'Agent 任务已停止')
-    const providerIdentity = usesQuota
-      ? await awaitWithAbort(Promise.resolve(quotaRunConfiguration ?? readBeginnerAgentServerConfig()), signal, 'Agent 任务已停止').then((config) => `${config.baseUrl}\n${config.model}\n${codexSetup?.version ?? ''}\n${createHash('sha256').update(config.apiKey).digest('hex')}`)
-      : `${runExternalConfiguration.baseUrl ?? 'local'}\n${runExternalConfiguration.model ?? 'local'}\n${configuredExecutable ?? 'detected'}\n${createHash('sha256').update(runExternalConfiguration.apiKey ?? '').digest('hex')}`
-    const providerFingerprint = createHash('sha256').update(`${externalBackend}\n${providerIdentity}`).digest('hex').slice(0, 24)
-    const savedReviewFeedback = recovery?.state.reviewFeedback?.trim()
+    const providerRouteIdentity = usesQuota
+      ? await awaitWithAbort(Promise.resolve(quotaRunConfiguration ?? readBeginnerAgentServerConfig()), signal, 'Agent 任务已停止').then((config) => `${config.baseUrl}\n${config.model}\n${codexSetup?.version ?? ''}`)
+      : `${runExternalConfiguration.baseUrl ?? 'local'}\n${runExternalConfiguration.model ?? 'local'}\n${configuredExecutable ?? 'detected'}`
+    const retryScope = createHash('sha256').update(`${backend}\n${providerRouteIdentity}`).digest('hex').slice(0, 24)
+    const sessionFingerprint = createHash('sha256').update(`${backend}\n${externalBackend}`).digest('hex').slice(0, 24)
     const addonService = createAddonRelationshipService(() => project)
     const addonContext = isInspiration
       ? null
@@ -5799,7 +5854,7 @@ async function runExternalCodingAgent(
       ? `\n\nUNIFIED CONTEXT HANDOFF (revision ${activeTask.contextRevision ?? 0}). The user switched the execution backend from ${recoveryBackend} to ${backend}. This is the same conversation and the same task, not a new request.\nOriginal request: ${recovery.prompt}\nLast summary: ${recovery.state.summary || '(none)'}\nTodo: ${JSON.stringify(recovery.state.todo ?? [])}\nChanged files: ${JSON.stringify(recovery.changedFiles ?? [])}\nCompleted workflow stages: ${JSON.stringify(recovery.workflow?.completed ?? [])}\nTests: ${JSON.stringify(recovery.state.tests ?? [])}\nWarnings: ${JSON.stringify(recovery.state.warnings ?? [])}\nContinue from this unified state. Inspect current project files before editing and do not repeat completed work.`
       : ''
     const initialExternalPrompt = recovery
-      ? `${prompt}${unifiedHandoff}\n\nContinue the unfinished action from the unified conversation context. Do not recap context or announce preparation; proceed with the next substantive action. Complete only these missing workflow stages: ${missingRecoveryStages.join(', ') || 'none recorded'}.${savedReviewFeedback ? `\n\nPERSISTED REVIEW FEEDBACK: ${savedReviewFeedback}\nResolve only the stated feedback and the listed missing stages. Do not repeat completed stages.` : ''}`
+      ? `${prompt}${unifiedHandoff}\n\nContinue the unfinished action from the unified conversation context. Do not recap context or announce preparation; proceed with the next substantive action.${missingRecoveryStages.length ? ` Suggested unfinished checks: ${missingRecoveryStages.join(', ')}.` : ''} Do not repeat completed work.`
       : prompt
     const platformPrompt = project.loader === 'netease-pc' || project.loader === 'netease-mobile'
       ? `${initialExternalPrompt}\n\n${NETEASE_CODING_WORKFLOW}`
@@ -5818,13 +5873,15 @@ async function runExternalCodingAgent(
         ? `你处于灵感台快速只读模式。优先直接回答；只有答案确实依赖当前实现时才读取项目。普通问题最多做 3 次目录发现或文件读取；只有用户明确要求深入分析、完整审计或逐文件检查时才可超过。不得修改文件、安装依赖、构建、测试或调用任何写入工具。需要浏览目录时，优先调用 modmind_project_files；不要使用 Get-ChildItem -Force、dir 或其它宽泛枚举。读取具体文件时使用明确的项目相对路径。本轮推理强度为 ${reasoningEffort ?? 'low'}。`
         : codingWorkflowPrompt(project),
       sessionScope,
+      sessionLane: backend,
       // A conversation owns its native CLI thread. Inspiration may resume
       // that thread for context, but never gets workspace recovery sessions.
       resumeSession: context.resumeSession === true || (!isInspiration && Boolean(nativeSessionId)),
-      ...(context.fallbackPrompt ? { fallbackPrompt: context.fallbackPrompt } : {}),
+      ...(context.fallbackPrompt || recovery?.fallbackPrompt ? { fallbackPrompt: context.fallbackPrompt ?? recovery?.fallbackPrompt } : {}),
       readOnly: isInspiration,
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(nativeSessionId ? { sessionId: nativeSessionId } : {}),
+      ...(context.forkFrom ? { forkFrom: context.forkFrom } : {}),
       prompt: platformPrompt,
       signal: signal ?? new AbortController().signal,
       persistentRetry: true,
@@ -5837,11 +5894,16 @@ async function runExternalCodingAgent(
       onSessionId: (externalSessionId) => {
         activeTask.sessionId = externalSessionId
         activeTask.nativeSessions = { ...activeTask.nativeSessions, [backend]: externalSessionId }
+        externalRunOptions.sessionId = externalSessionId
+        externalRunOptions.resumeSession = true
+        if (activeTask.conversationId) {
+          void conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, externalSessionId, undefined, undefined, codexSetup?.home).catch(() => undefined)
+        }
         workflowWrite = workflowWrite.then(writeTask).catch(() => undefined)
       },
       onAttemptAudit: (audit) => writeAiAttemptAudit(audit, sessionId, project.path),
-      retryScope: providerFingerprint,
-      sessionFingerprint: providerFingerprint,
+      retryScope,
+      sessionFingerprint,
       onRetryState: (state) => {
         activeTask.lifecycle = state.phase === 'waiting' ? 'waiting_retry' : 'repairing'
         activeTask.recovery = {
@@ -5866,7 +5928,7 @@ async function runExternalCodingAgent(
         }
         return fallbackAllowed
       },
-      onOutput: (kind, content) => {
+      onOutput: (kind, content, identity) => {
         if (kind === 'response') {
           // A newer reply proves the previous one was progress narration, so
           // it is safe to show before the final completion audit.
@@ -5874,6 +5936,9 @@ async function runExternalCodingAgent(
           if (!key || key === bufferedFinalResponse?.trim() || deliveredResponseContents.has(key)) return
           flushBufferedProgress()
           bufferedFinalResponse = content
+          bufferedFinalIdentity = identity
+          activeTask.state.summary = content.slice(-4_000)
+          workflowWrite = workflowWrite.then(writeTask).catch(() => undefined)
           return
         }
         // A tool/action after an Agent reply likewise proves that reply was
@@ -5886,7 +5951,7 @@ async function runExternalCodingAgent(
           sessionId,
           project.path,
           context.runId,
-          kind === 'error' ? { terminal: false, recoverable: true } : undefined
+          kind === 'error' ? { terminal: false, recoverable: true, ...(identity ?? {}) } : identity
         )
       },
       onProgress: (title, detail, status) => sendCodingProgress(pipelineEvent(
@@ -5906,15 +5971,9 @@ async function runExternalCodingAgent(
           if (action === 'update_todo') recordWorkflow('plan', 'modmind_update_todo published the ordered plan')
         },
         reviewAction: async (action, input) => {
-          const decision = await reviewAiAction(reviewerConfig, { project, request: prompt, action, input }, signal)
-          if (decision.fallback === 'local-rules' && !reviewerFallbackNotified) {
-            reviewerFallbackNotified = true
-            sendCodingProgress(pipelineEvent('checking', '审查 Agent 已切换本地规则', decision.feedback, 'warning'))
-          } else if (decision.unavailable && !reviewerUnavailableNotified) {
-            reviewerUnavailableNotified = true
-            sendCodingProgress(pipelineEvent('checking', '审查 Agent 暂不可用', decision.feedback, 'warning'))
-          } else if (!decision.unavailable) {
-            sendCodingProgress(pipelineEvent('checking', decision.approved ? '审查 Agent 已放行操作' : '审查 Agent 要求调整操作', decision.feedback || `${action} 风险：${decision.risk}`, decision.approved ? 'success' : 'warning'))
+          const decision = await reviewAiAction(safetyReviewerConfig, { project, request: prompt, action, input }, signal)
+          if (!decision.approved) {
+            sendCodingProgress(pipelineEvent('checking', '安全策略已阻止操作', decision.feedback || `${action} 风险：${decision.risk}`, 'warning'))
           }
           return decision
         },
@@ -6355,7 +6414,6 @@ async function runExternalCodingAgent(
         }
       }
     }
-    const baseExternalPrompt = platformPrompt
     const completedAnswer = (candidate: Awaited<ReturnType<typeof runExternalAgent>>): string => selectFinalAiAnswer(bufferedFinalResponse, candidate.summary, deliveredResponseContents)
     const runUntilAnswer = async (): Promise<Awaited<ReturnType<typeof runExternalAgent>>> => {
       const requestedRunPrompt = externalRunOptions.prompt
@@ -6373,61 +6431,18 @@ async function runExternalCodingAgent(
         await awaitWithAbort(new Promise((resolve) => setTimeout(resolve, 1_000)), signal, 'Agent 任务已停止')
       }
     }
-    let result = await runUntilAnswer()
+    const result = await runUntilAnswer()
+    if (activeTask.conversationId && result.sessionId) {
+      await conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, result.sessionId, result.nativeTurnId, turnId, codexSetup?.home).catch(() => undefined)
+    }
     updateManagedDownloadAudit(workflow, project, prompt, activeTask.changedFiles, activeTask.state.managedDownloads ?? [], activeTask.state.managedDownloadFailures ?? [], activeTask.state.nativeCoveredDownloads ?? [])
     let finalWorkflowAudit = auditWorkflow(workflow, [], buildUsed, runtimeUsed, activeTask.state.todo)
-    let reviewApproved = isInspiration
     if (isInspiration) finalWorkflowAudit = { ...finalWorkflowAudit, missing: [] }
-    for (let reviewRound = 0; reviewRound < (isInspiration ? 0 : 3); reviewRound += 1) {
-      const reviewedAfter = await managedCodingHashes(project)
-      const reviewedFiles = [...new Set([...before.keys(), ...reviewedAfter.keys()])].filter((file) => before.get(file) !== reviewedAfter.get(file))
-      ensureEngineeringRequirements(reviewedFiles)
-      updateManagedDownloadAudit(workflow, project, prompt, reviewedFiles, activeTask.state.managedDownloads ?? [], activeTask.state.managedDownloadFailures ?? [], activeTask.state.nativeCoveredDownloads ?? [])
-      finalWorkflowAudit = auditWorkflow(workflow, reviewedFiles, buildUsed, runtimeUsed, activeTask.state.todo)
-      const rawDecision = await reviewAiCompletion(reviewerConfig, {
-        project,
-        request: prompt,
-        summary: result.summary,
-        changedFiles: reviewedFiles,
-        transcriptTail: result.transcript,
-        workflow: {
-          required: finalWorkflowAudit.required,
-          completed: finalWorkflowAudit.completed,
-          missing: finalWorkflowAudit.missing,
-          evidence: finalWorkflowAudit.evidence as Record<string, string>
-        }
-      }, signal)
-      const missingWorkflow = finalWorkflowAudit.missing
-      const workflowFeedback = missingWorkflow.length
-        ? `Mandatory workflow incomplete. Missing stages: ${missingWorkflow.join(', ')}.`
-        : ''
-      const decision = missingWorkflow.length
-        ? { ...rawDecision, complete: false, feedback: [workflowFeedback, rawDecision.feedback].filter(Boolean).join(' ') }
-        : rawDecision
-      if ((decision.approved && decision.complete && missingWorkflow.length === 0) || (decision.unavailable && missingWorkflow.length === 0)) {
-        reviewApproved = true
-        break
-      }
-      const feedback = decision.feedback || '请继续检查用户需求、实现完整性和验证结果'
-      await workflowWrite
-      activeTask.state.reviewFeedback = feedback.slice(0, 4_000)
-      activeTask.state.reviewRound = (activeTask.state.reviewRound ?? 0) + 1
-      await writeTask()
-      sendCodingProgress(pipelineEvent('checking', '审查 Agent 要求继续完善', feedback, 'warning'))
-      sendAiOutput(event, 'retry', `审查 Agent 反馈：${feedback}`, sessionId, project.path, context.runId)
-      externalRunOptions.prompt = `${baseExternalPrompt}\n\nREVIEW AGENT FEEDBACK: ${feedback}\nResolve only this feedback and the currently missing workflow stages. Preserve completed work; do not replay completed planning, implementation, build, or runtime stages.`
-      bufferedFinalResponse = undefined
-      result = await runUntilAnswer()
-    }
     const after = isInspiration ? before : await managedCodingHashes(project)
     const changedFiles = [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file))
     ensureEngineeringRequirements(changedFiles)
     updateManagedDownloadAudit(workflow, project, prompt, changedFiles, activeTask.state.managedDownloads ?? [], activeTask.state.managedDownloadFailures ?? [], activeTask.state.nativeCoveredDownloads ?? [])
     finalWorkflowAudit = auditWorkflow(workflow, changedFiles, buildUsed, runtimeUsed, activeTask.state.todo)
-    if (!reviewApproved || finalWorkflowAudit.missing.length > 0) {
-      const missing = finalWorkflowAudit.missing.join(', ')
-      throw new Error(`Review Agent rejected completion because the mandatory workflow is incomplete. Missing stages: ${missing || 'independent review approval'}. The active task and snapshot were preserved for recovery.`)
-    }
     const finalIntent = declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational')
     activeTask.changedFiles = changedFiles
     const finalResponse = completedAnswer(result).slice(-120_000)
@@ -6466,7 +6481,9 @@ async function runExternalCodingAgent(
     // candidate response is intentionally withheld from the ordinary stream
     // so consumers cannot render it once as progress and once as the answer.
     bufferedFinalResponse = undefined
-    sendAiOutput(event, 'answer', finalResponse, sessionId, project.path, context.runId, result.usage ? { usage: result.usage } : undefined)
+    const answerOptions = result.usage ? { usage: result.usage, ...(bufferedFinalIdentity ?? {}) } : (bufferedFinalIdentity ?? undefined)
+    bufferedFinalIdentity = undefined
+    sendAiOutput(event, 'answer', finalResponse, sessionId, project.path, context.runId, answerOptions)
     sendCodingProgress(pipelineEvent('complete', `${agentLabel} 任务完成`, changedFiles.length ? `检测到 ${changedFiles.length} 个文件变化` : '任务已完成，没有要求文件变化', 'success'))
     return {
       summary,
@@ -7368,6 +7385,10 @@ function registerIpc(): void {
     return applyModpackPlan(requireModProviderRegistry(), project, input as Parameters<typeof applyModpackPlan>[2])
   })
   ipcMain.handle('modpack:readFtbQuestBook', () => readFtbQuestBook(requireProject()))
+  ipcMain.handle('modpack:ftbQuestIcon', (_event, itemId: unknown) => resolveFtbQuestIcon(requireProject(), typeof itemId === 'string' ? itemId : ''))
+  ipcMain.handle('modpack:ftbQuestItemNames', (_event, itemIds: unknown) => resolveFtbQuestItemNames(requireProject(), Array.isArray(itemIds) ? itemIds.filter((id): id is string => typeof id === 'string') : []))
+  ipcMain.handle('modpack:ftbQuestDependencyTexture', () => resolveFtbQuestDependencyTexture(requireProject()))
+  ipcMain.handle('modpack:ftbQuestShapes', () => resolveFtbQuestShapes(requireProject()))
   ipcMain.handle('modpack:saveFtbQuestBook', (_event, input: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('invalid FTB Quests book')
     return saveFtbQuestBook(requireProject(), input as Parameters<typeof saveFtbQuestBook>[1])
@@ -7652,6 +7673,53 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return workbenchDataStore.write(project.path, relativePath, content)
   })
+  ipcMain.handle('conversations:list', async (_event, projectPath: string, surface?: AiSurface, includeArchived?: boolean) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.list(project.path, surface, includeArchived === true)
+  })
+  ipcMain.handle('conversations:read', async (_event, projectPath: string, conversationId: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.read(project.path, conversationId)
+  })
+  ipcMain.handle('conversations:create', async (_event, projectPath: string, input) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.create(project.path, input)
+  })
+  ipcMain.handle('conversations:saveView', async (_event, projectPath: string, conversationId: string, generation: number, view, title?: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.saveView(project.path, conversationId, generation, view, title)
+  })
+  ipcMain.handle('conversations:eventsSince', async (_event, projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.eventsSince(project.path, conversationId, generation, afterSequence, limit)
+  })
+  ipcMain.handle('conversations:fork', async (_event, projectPath: string, input) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.fork(project.path, input)
+  })
+  ipcMain.handle('conversations:archive', async (_event, projectPath: string, conversationId: string, archived: boolean) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.archive(project.path, conversationId, archived === true)
+  })
+  ipcMain.handle('conversations:delete', async (_event, projectPath: string, conversationId: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    const document = await conversationStore.read(project.path, conversationId)
+    if (document) {
+      await Promise.allSettled(Object.entries(document.native).map(([backend, state]) => state?.sessionId
+        ? deleteExternalAgentSession(project, backend === 'quota' ? 'codex' : backend as ExternalAgentKind, state.sessionId, state.sessionHome, backend === 'quota' || backend === 'codex' ? managedCodexExecutablePath(app.getPath('userData')) : undefined)
+        : Promise.resolve()))
+    }
+    return conversationStore.delete(project.path, conversationId)
+  })
+  ipcMain.handle('conversations:flush', () => conversationStore.flush())
   ipcMain.handle('project:writeFile', async (_event, relativePath: string, content: string, projectPath?: string) => {
     if (typeof content !== 'string' || content.length > 2 * 1024 * 1024) throw new Error('文件内容超过 2 MB 编辑上限')
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
@@ -8386,18 +8454,26 @@ function registerIpc(): void {
       : recovery?.backend === 'quota' || recovery?.backend === 'codex' || recovery?.backend === 'claude'
         ? recovery.backend
         : (await readSettings()).codingBackend
+    const preparedConversation = await prepareConversationRequest(project, prompt, requestedSurface, options ?? {}, recovery)
+    const branchNative = preparedConversation.document?.native[selectedBackend]
+    const conversationOptions: AiCreateCodeOptions = branchNative && preparedConversation.document?.parent && preparedConversation.document.nativeForkPending
+      ? { ...preparedConversation.options, forkFrom: { sessionId: branchNative.sessionId, ...(preparedConversation.document.parent.nativeTurnId ? preparedConversation.document.parent.boundary === 'before' ? { beforeTurnId: preparedConversation.document.parent.nativeTurnId } : { lastTurnId: preparedConversation.document.parent.nativeTurnId } : branchNative.lastTurnId ? { lastTurnId: branchNative.lastTurnId } : {}), nativeMode: preparedConversation.document.parent.nativeMode } }
+      : preparedConversation.options
     const normalizedExecutionProfile: AiExecutionProfile = recovery?.executionProfile === 'beginner-unlimited' || executionProfile === 'beginner-unlimited'
       ? 'beginner-unlimited'
       : 'standard'
     const run: ActiveAiRun = {
-      id: aiRunId(event.sender.id, project.path, sessionId), senderId: event.sender.id, startedAt: recovery?.startedAt ?? new Date().toISOString(), sessionId, sessionScope: options?.sessionScope, projectPath: project.path,
-      executionProfile: normalizedExecutionProfile, backend: selectedBackend, surface: requestedSurface
+      id: aiRunId(event.sender.id, project.path, sessionId), senderId: event.sender.id, startedAt: recovery?.startedAt ?? new Date().toISOString(), sessionId, sessionScope: conversationOptions.sessionScope, projectPath: project.path,
+      executionProfile: normalizedExecutionProfile, backend: selectedBackend, surface: requestedSurface,
+      conversationId: conversationOptions.conversationId,
+      generation: conversationOptions.generation,
+      turnId: conversationOptions.turnId
     }
     const controller = new AbortController()
     try {
       return await withAiRun(run, controller, () => recovery
-        ? runExternalCodingAgent(event, recovery.prompt, sessionId, selectedBackend, normalizedExecutionProfile, recovery, { ...options, runId: run.id, surface: 'workspace', projectPath: project.path }, controller.signal)
-        : createAiCode(event, prompt, sessionId, selectedBackend, normalizedExecutionProfile, { ...options, runId: run.id, surface: requestedSurface, projectPath: project.path }, controller.signal))
+        ? runExternalCodingAgent(event, recovery.prompt, sessionId, selectedBackend, normalizedExecutionProfile, recovery, { ...conversationOptions, runId: run.id, surface: 'workspace', projectPath: project.path }, controller.signal)
+        : createAiCode(event, prompt, sessionId, selectedBackend, normalizedExecutionProfile, { ...conversationOptions, runId: run.id, surface: requestedSurface, projectPath: project.path }, controller.signal))
     } catch (error) {
       const message = describeAgentRunError(error)
       const cancellation = error instanceof Error && error.name === 'AbortError'
@@ -8441,7 +8517,16 @@ function registerIpc(): void {
     const remaining = remainingRuns + (switchRemaining && (!switchSharesRun || remainingRuns === 0) ? 1 : 0)
     // Cancellation preserves the checkpoint. A later natural-language
     // "继续" resumes only the missing stages and saved review feedback.
-    return { status: stopped ? 'stopped' : 'timed_out', matched, remaining }
+    const result: AiCancellationResult = { status: stopped ? 'stopped' : 'timed_out', matched, remaining }
+    diagnosticJournal.record({
+      subsystem: 'ai',
+      operation: 'cancel',
+      phase: stopped ? 'success' : 'timeout',
+      level: stopped ? 'info' : 'warning',
+      message: stopped ? `Stopped ${matched} Agent run(s)` : `Agent cancellation timed out with ${remaining} run(s) still registered`,
+      data: { projectPath, sessionId, matched, remaining }
+    })
+    return result
   })
   ipcMain.handle('ai:clearQuotaCredentials', () => clearPreparedCodexCredentials())
   ipcMain.handle('ai:getRecovery', (_event, projectPath?: string) => getAiRecoveryInfo(projectPath))
@@ -8463,10 +8548,12 @@ function registerIpc(): void {
     if (!recovery) throw new Error('没有找到可继续的 AI 任务')
     const executionProfile = recovery.executionProfile === 'beginner-unlimited' ? 'beginner-unlimited' : 'standard'
     const backend = recovery.backend === 'quota' || recovery.backend === 'codex' || recovery.backend === 'claude' ? recovery.backend : 'codex'
-    const run: ActiveAiRun = { id: aiRunId(event.sender.id, project.path, recovery.sessionId), senderId: event.sender.id, startedAt: recovery.startedAt, sessionId: recovery.sessionId, sessionScope: recovery.sessionScope, projectPath: project.path, executionProfile, backend, surface: 'workspace' }
+    const recoveryConversation = recovery.conversationId ? await conversationStore.read(project.path, recovery.conversationId).catch(() => null) : null
+    const recoveryTurnId = `turn-${recovery.taskId}`
+    const run: ActiveAiRun = { id: aiRunId(event.sender.id, project.path, recovery.sessionId), senderId: event.sender.id, startedAt: recovery.startedAt, sessionId: recovery.sessionId, sessionScope: recovery.sessionScope, projectPath: project.path, executionProfile, backend, surface: 'workspace', ...(recovery.conversationId ? { conversationId: recovery.conversationId } : {}), ...(recoveryConversation ? { generation: recoveryConversation.generation } : {}), turnId: recoveryTurnId }
     const controller = new AbortController()
     try {
-      return await withAiRun(run, controller, () => runExternalCodingAgent(event, recovery.prompt, recovery.sessionId, backend, executionProfile, recovery, { runId: run.id, surface: 'workspace', projectPath: project.path }, controller.signal))
+      return await withAiRun(run, controller, () => runExternalCodingAgent(event, recovery.prompt, recovery.sessionId, backend, executionProfile, recovery, { runId: run.id, surface: 'workspace', projectPath: project.path, fallbackPrompt: recovery.fallbackPrompt ?? recovery.prompt, ...(recovery.conversationId ? { conversationId: recovery.conversationId } : {}), ...(recoveryConversation ? { generation: recoveryConversation.generation } : {}), turnId: recoveryTurnId }, controller.signal))
     } catch (error) {
       const message = describeAgentRunError(error)
       const cancellation = error instanceof Error && error.name === 'AbortError'
@@ -8535,6 +8622,8 @@ function registerIpc(): void {
         return { status: 'idle', backend: requestedBackend }
       }
       const scope = sessionScope?.trim() || recovery.sessionScope
+      const recoveryConversation = recovery.conversationId ? await conversationStore.read(project.path, recovery.conversationId).catch(() => null) : null
+      const recoveryTurnId = `turn-${recovery.taskId}`
       run = {
         id: aiRunId(event.sender.id, project.path, recovery.sessionId ?? `switch-${generation}`),
         senderId: event.sender.id,
@@ -8544,7 +8633,10 @@ function registerIpc(): void {
         projectPath: project.path,
         executionProfile: requestedBackend === 'quota' && recovery.executionProfile === 'beginner-unlimited' ? 'beginner-unlimited' : 'standard',
         backend: requestedBackend,
-        surface: 'workspace'
+        surface: 'workspace',
+        ...(recovery.conversationId ? { conversationId: recovery.conversationId } : {}),
+        ...(recoveryConversation ? { generation: recoveryConversation.generation } : {}),
+        turnId: recoveryTurnId
       }
       if (!aiBackendSwitchCoordinator.isCurrent(switchState)) return { status: 'superseded', backend: requestedBackend }
       const activeRecovery = recovery
@@ -8556,7 +8648,7 @@ function registerIpc(): void {
         requestedBackend,
         activeRun.executionProfile,
         activeRecovery,
-        { runId: activeRun.id, surface: 'workspace', projectPath: project.path, sessionScope: scope, resumeSession: true, fallbackPrompt: activeRecovery.prompt },
+        { runId: activeRun.id, surface: 'workspace', projectPath: project.path, sessionScope: scope, resumeSession: true, fallbackPrompt: activeRecovery.fallbackPrompt ?? activeRecovery.prompt, ...(activeRecovery.conversationId ? { conversationId: activeRecovery.conversationId } : {}), ...(recoveryConversation ? { generation: recoveryConversation.generation } : {}), turnId: recoveryTurnId },
         controller.signal,
         {
           onBackendReady: () => {

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId } from '../shared/types'
+import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
@@ -166,6 +166,10 @@ const api: ModMindApi = {
     plan: (concept: unknown) => invoke('modpack:plan', concept),
     applyPlan: (plan: unknown) => invoke('modpack:applyPlan', plan),
     readFtbQuestBook: () => invoke('modpack:readFtbQuestBook'),
+    ftbQuestIcon: (itemId: string) => invoke('modpack:ftbQuestIcon', itemId),
+    ftbQuestItemNames: (itemIds: string[]) => invoke('modpack:ftbQuestItemNames', itemIds),
+    ftbDependencyTexture: () => invoke('modpack:ftbQuestDependencyTexture'),
+    ftbQuestShapes: () => invoke('modpack:ftbQuestShapes'),
     saveFtbQuestBook: (book) => invoke('modpack:saveFtbQuestBook', book),
     writeFtbQuest: (input: unknown) => invoke('modpack:writeFtbQuest', input),
     writePatchouliBook: (input: unknown) => invoke('modpack:writePatchouliBook', input),
@@ -285,6 +289,17 @@ const api: ModMindApi = {
       ipcRenderer.on('ai:output', handler)
       return () => ipcRenderer.removeListener('ai:output', handler)
     }
+  },
+  conversations: {
+    list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => invoke('conversations:list', projectPath, surface, includeArchived),
+    read: (projectPath: string, conversationId: string) => invoke('conversations:read', projectPath, conversationId),
+    create: (projectPath: string, input: ConversationCreateInput) => invoke('conversations:create', projectPath, input),
+    saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => invoke('conversations:saveView', projectPath, conversationId, generation, view, title),
+    eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => invoke('conversations:eventsSince', projectPath, conversationId, generation, afterSequence, limit),
+    fork: (projectPath: string, input: ConversationForkInput) => invoke('conversations:fork', projectPath, input),
+    archive: (projectPath: string, conversationId: string, archived: boolean) => invoke('conversations:archive', projectPath, conversationId, archived),
+    delete: (projectPath: string, conversationId: string) => invoke('conversations:delete', projectPath, conversationId),
+    flush: () => invoke('conversations:flush')
   },
   beginnerCodex: {
     prepare: (projectPath?: string) => invoke('beginner-codex:prepare', projectPath),

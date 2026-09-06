@@ -105,4 +105,15 @@ describe('WorkbenchDataStore', () => {
     expect(loaded).toMatchObject({ status: 'missing', source: 'tombstone' })
     expect((await filesBelow(path.join(project, '.modmind', 'workbench-store'))).filter((file) => file.endsWith('.snapshot.gz')).length).toBeGreaterThanOrEqual(2)
   })
+
+  it('serializes concurrent journal appends across store instances', async () => {
+    const { project, userData } = await fixture()
+    const journal = '.modmind/conversations-v3/ws-race.jsonl'
+    const a = new WorkbenchDataStore(userData)
+    const b = new WorkbenchDataStore(userData)
+    const lines = Array.from({ length: 12 }, (_, index) => `${JSON.stringify({ eventId: `e-${index}`, conversationId: 'ws-race', generation: 0, turnId: `t-${index}`, sequence: index + 1, kind: 'system', time: new Date().toISOString(), payload: { index } })}\n`)
+    await Promise.all(lines.map((line, index) => (index % 2 ? b : a).appendJournal(project, journal, line)))
+    const stored = await a.readJournal(project, journal)
+    expect(new Set(stored).size).toBe(12)
+  })
 })

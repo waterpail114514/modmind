@@ -1,5 +1,5 @@
 import { normalizeAiTurnReplay, replayUserText } from '../../shared/aiReplay'
-import type { AiOutputEvent, AiTokenUsage, AiTurnReplay, PipelineEvent } from '../../shared/types'
+import type { AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationEventRecord, PipelineEvent } from '../../shared/types'
 
 export type WorkbenchTimelineDiff = { path: string; added: number; removed: number; additions: string[]; removals: string[] }
 
@@ -9,6 +9,11 @@ export type WorkbenchTimelineItem = {
   content: string
   time: string
   runId?: string
+  turnId?: string
+  itemId?: string
+  streamId?: string
+  stage?: string
+  sequence?: number
   status?: 'running' | 'done' | 'warning' | 'error'
   terminal?: boolean
   recoverable?: boolean
@@ -55,8 +60,36 @@ function findLastMatchingIndex(items: WorkbenchTimelineItem[], predicate: (item:
   return -1
 }
 
-function eventIdentity(event: Pick<AiOutputEvent, 'runId' | 'sessionId' | 'time'>): string {
-  return event.runId || event.sessionId || event.time
+function eventIdentity(event: Pick<AiOutputEvent, 'runId' | 'sessionId' | 'time' | 'turnId' | 'eventId' | 'itemId'> & { sequence?: number }): string {
+  return event.itemId || event.eventId || (event.sequence !== undefined ? `seq-${event.sequence}` : undefined)
+    || `${event.runId || event.sessionId || event.turnId || 'event'}:${event.time}`
+}
+
+function streamIdentity(event: AiOutputEvent): string {
+  return event.streamId || event.itemId || (event.turnId ? `${event.turnId}:assistant` : event.runId || event.sessionId || eventIdentity(event))
+}
+
+/** Sequence is authoritative for replay. The index fallback keeps legacy items stable. */
+function orderTimeline(items: WorkbenchTimelineItem[]): WorkbenchTimelineItem[] {
+  return items.map((item, index) => ({ item, index })).sort((left, right) => {
+    const a = Number.isSafeInteger(left.item.sequence) ? left.item.sequence! : Number.MAX_SAFE_INTEGER
+    const b = Number.isSafeInteger(right.item.sequence) ? right.item.sequence! : Number.MAX_SAFE_INTEGER
+    const at = Date.parse(left.item.time)
+    const bt = Date.parse(right.item.time)
+    if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt
+    if (a !== b && a !== Number.MAX_SAFE_INTEGER && b !== Number.MAX_SAFE_INTEGER) return a - b
+    if (a !== b) return a === Number.MAX_SAFE_INTEGER ? -1 : 1
+    return left.index - right.index
+  }).map(({ item }) => item)
+}
+
+export function isWorkbenchInternalPrompt(content: string): boolean {
+  return /^\s*SYSTEM WORKFLOW INSTRUCTIONS:/iu.test(content)
+    || /(?:READ-ONLY TURN RULES:|This is a trusted local-agent session\.|Project context and workflows are available at )/iu.test(content)
+}
+
+export function normalizeWorkbenchTimeline(items: WorkbenchTimelineItem[]): WorkbenchTimelineItem[] {
+  return orderTimeline(items.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content))))
 }
 
 function mergeStreamingText(current: string, incoming: string): string {
@@ -77,10 +110,10 @@ export function settleWorkbenchActivity(items: WorkbenchTimelineItem[], thinking
 }
 
 export function appendUserTurn(items: WorkbenchTimelineItem[], text: string, runId: string, time = new Date().toISOString(), replay?: AiTurnReplay): WorkbenchTimelineItem[] {
-  return bounded([...items, { id: `${runId}:user`, kind: 'user', content: text, time, runId, status: 'done', ...(replay ? { replay } : {}) }])
+  return bounded([...items, { id: `${runId}:user`, kind: 'user', content: text, time, runId, turnId: `turn-${runId}`, status: 'done', ...(replay ? { replay } : {}) }])
 }
 
-export function reduceWorkbenchOutput(
+function legacyReduceWorkbenchOutput(
   items: WorkbenchTimelineItem[],
   event: AiOutputEvent,
   normalize: (value: string) => string = (value) => value
@@ -93,9 +126,9 @@ export function reduceWorkbenchOutput(
     : items
   if (event.kind === 'delta') {
     const index = currentItems.findIndex((item) => item.id === assistantId)
-    if (index < 0) return bounded([...currentItems, { id: `${identity}:assistant:${event.time}`, kind: 'response', content, time: event.time, runId: event.runId, status: 'running' }])
+    if (index < 0) return bounded([...currentItems, { id: assistantId, kind: 'response', content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: 'running' }])
     const next = [...currentItems]
-    next[index] = { ...next[index], content: mergeStreamingText(next[index].content, content), status: 'running' }
+    next[index] = { ...next[index], content: mergeStreamingText(next[index].content, content), sequence: event.sequence ?? next[index].sequence, status: 'running' }
     return next
   }
   if (content.startsWith('__CODE_DIFF__')) {
@@ -110,6 +143,12 @@ export function reduceWorkbenchOutput(
     return bounded([...currentItems, { id: assistantId, kind: 'response', content: '', time: event.time, runId: event.runId, status: 'running' }])
   }
   if (event.kind === 'response' || event.kind === 'answer') {
+    const matchingIndex = currentItems.findIndex((item) => item.id === assistantId)
+    if (matchingIndex >= 0) {
+      const next = [...currentItems]
+      next[matchingIndex] = { ...next[matchingIndex], kind: event.kind, content: content || next[matchingIndex].content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: event.kind === 'answer' ? 'done' : 'running', ...(event.usage ? { usage: event.usage } : {}) }
+      return next
+    }
     const lastUserIndex = findLastMatchingIndex(currentItems, (item) => item.kind === 'user')
     const lastResponseIndex = findLastMatchingIndex(currentItems, (item, itemIndex) => (
       itemIndex > lastUserIndex
@@ -121,7 +160,7 @@ export function reduceWorkbenchOutput(
       next[lastResponseIndex] = { ...next[lastResponseIndex], id: assistantId, kind: event.kind, content: content || next[lastResponseIndex].content, time: event.time, runId: event.runId, status: 'done', ...(event.usage ? { usage: event.usage } : {}) }
       return next
     }
-    return bounded([...currentItems, { id: assistantId, kind: event.kind, content, time: event.time, runId: event.runId, status: event.kind === 'answer' ? 'done' : 'running', ...(event.usage ? { usage: event.usage } : {}) }])
+    return bounded([...currentItems, { id: assistantId, kind: event.kind, content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: event.kind === 'answer' ? 'done' : 'running', ...(event.usage ? { usage: event.usage } : {}) }])
   }
   if (event.kind === 'start') return bounded([...currentItems, { id: `${identity}:start:${event.time}`, kind: 'start', content, time: event.time, runId: event.runId, status: 'done' }])
   if (event.kind === 'retry') return bounded([...currentItems, { id: `${identity}:retry:${event.time}`, kind: 'retry', content, time: event.time, runId: event.runId, status: 'warning', terminal: false, recoverable: true }])
@@ -141,14 +180,106 @@ export function reduceWorkbenchOutput(
   }])
 }
 
+export function reduceWorkbenchOutput(
+  items: WorkbenchTimelineItem[],
+  event: AiOutputEvent,
+  normalize: (value: string) => string = (value) => value
+): WorkbenchTimelineItem[] {
+  const content = normalize(event.content)
+  const current = event.kind === 'answer' || (event.kind === 'error' && event.terminal === true)
+    ? settleWorkbenchActivity(items)
+    : items
+  const identity = eventIdentity(event)
+  if (event.kind === 'delta' || event.kind === 'stream-start') {
+    const streamId = streamIdentity(event)
+    const index = current.findIndex((item) => item.kind === 'response' && item.status === 'running' && item.streamId === streamId)
+    if (index >= 0) {
+      if (event.kind === 'stream-start') return current
+      const next = [...current]
+      next[index] = {
+        ...next[index],
+        content: mergeStreamingText(next[index].content, content),
+        sequence: event.sequence ?? next[index].sequence,
+        status: 'running'
+      }
+      return orderTimeline(next)
+    }
+    if (event.kind === 'stream-start' && !content) {
+      return orderTimeline([...current, { id: event.turnId && !event.itemId && !event.streamId ? `${event.turnId}:assistant` : `stream:${streamId}`, kind: 'response', content: '', time: event.time, runId: event.runId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, status: 'running' }])
+    }
+    return orderTimeline([...current, { id: event.turnId && !event.itemId && !event.streamId ? `${event.turnId}:assistant` : `stream:${streamId}`, kind: 'response', content, time: event.time, runId: event.runId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, status: 'running' }])
+  }
+  if (content.startsWith('__CODE_DIFF__')) {
+    try {
+      const diff = JSON.parse(content.slice('__CODE_DIFF__'.length)) as WorkbenchTimelineDiff[]
+      return orderTimeline([...current, { id: `diff:${identity}`, kind: 'diff', content: '代码修改已应用', time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: 'done', diff }])
+    } catch {
+      return orderTimeline([...current, { id: `warning:${identity}`, kind: 'warning', content: '代码修改已应用，但 Diff 详情无法解析', time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: 'warning', terminal: false, recoverable: true }])
+    }
+  }
+  if (event.kind === 'response' || event.kind === 'answer') {
+    const answerTurnKey = event.turnId ?? event.runId ?? event.sessionId ?? event.time
+    const duplicate = event.kind === 'answer' && current.some((item) => item.kind === 'answer'
+      && (item.turnId ?? item.runId ?? item.time) === answerTurnKey
+      && item.content.trim() === content.trim())
+    if (duplicate) return current
+    if (event.kind === 'answer') {
+      const turnKey = event.turnId ?? event.runId ?? event.sessionId
+      const responseIndex = findLastMatchingIndex(current, (item) => item.kind === 'response'
+        && (item.status === 'running' || item.status === 'done')
+        && (item.turnId ?? item.runId) === turnKey
+        && item.content.trim() === content.trim())
+      if (responseIndex >= 0) {
+        const next = [...current]
+        next[responseIndex] = { ...next[responseIndex], id: `answer:${identity}`, kind: 'answer', content: content || next[responseIndex].content, time: event.time, sequence: event.sequence ?? next[responseIndex].sequence, status: 'done', terminal: true, ...(event.usage ? { usage: event.usage } : {}) }
+        return orderTimeline(next)
+      }
+      const legacyResponse = findLastMatchingIndex(current, (item) => item.kind === 'response' && item.status === 'running' && !event.turnId && !item.turnId && item.runId === event.runId && item.content.trim() === content.trim())
+      if (legacyResponse >= 0) {
+        const next = [...current]
+        next[legacyResponse] = { ...next[legacyResponse], id: `answer:${identity}`, kind: 'answer', content, time: event.time, sequence: event.sequence ?? next[legacyResponse].sequence, status: 'done', terminal: true, ...(event.usage ? { usage: event.usage } : {}) }
+        return orderTimeline(next)
+      }
+    }
+    // A provider response is its own durable item. It is only reconciled with
+    // the active stream when it carries the same stream identity and content.
+    const streamId = streamIdentity(event)
+    const streamIndex = event.kind === 'response'
+      ? current.findIndex((item) => item.kind === 'response' && item.status === 'running' && item.streamId === streamId && item.content.trim() === content.trim())
+      : -1
+    if (streamIndex >= 0) {
+      const next = [...current]
+      next[streamIndex] = { ...next[streamIndex], sequence: event.sequence ?? next[streamIndex].sequence, time: event.time, ...(event.usage ? { usage: event.usage } : {}) }
+      return orderTimeline(next)
+    }
+    return orderTimeline([...current, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId, turnId: event.turnId, itemId: event.itemId, sequence: event.sequence, status: event.kind === 'answer' ? 'done' : 'running', ...(event.usage ? { usage: event.usage } : {}) }])
+  }
+  if (event.kind === 'start' || event.kind === 'retry') {
+    const settled = event.kind === 'retry'
+      ? current.map((item) => item.kind === 'response' && item.status === 'running' && item.turnId === event.turnId ? { ...item, status: 'done' as const } : item)
+      : current
+    return orderTimeline([...settled, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: event.kind === 'retry' ? 'warning' : 'done', ...(event.kind === 'retry' ? { terminal: false, recoverable: true } : {}) }])
+  }
+  const kind: WorkbenchTimelineItem['kind'] = event.kind === 'tool' ? 'tool' : event.kind === 'warning' ? 'warning' : event.kind === 'error' ? 'error' : 'status'
+  const errorLike = event.kind === 'error' || event.kind === 'warning'
+  const terminal = errorLike ? event.terminal === true : event.terminal
+  const recoverable = errorLike ? event.recoverable ?? !terminal : event.recoverable
+  return orderTimeline([...current, {
+    id: `${kind}:${identity}`, kind, content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, stage: event.kind,
+    status: event.kind === 'error' ? 'error' : event.kind === 'warning' ? 'warning' : 'done',
+    ...(terminal !== undefined ? { terminal } : {}), ...(recoverable !== undefined ? { recoverable } : {})
+  }])
+}
+
 export function reduceWorkbenchProgress(
   items: WorkbenchTimelineItem[],
   event: PipelineEvent,
   normalize: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
   const currentItems = settleWorkbenchActivity(items, true)
-  const identity = event.runId || event.sessionId || event.time
-  const id = `${identity}:progress:${event.stage}`
+  const liveItems = items
+  const identity = event.eventId || event.id || (event.sequence !== undefined ? `seq-${event.sequence}` : undefined) || event.runId || event.sessionId || event.time
+  const id = `${identity}:progress`
   const content = [normalize(event.title), normalize(event.detail)].filter(Boolean).join('\n')
   const index = currentItems.findIndex((item) => item.id === id)
   const status = event.status === 'running' ? 'running' : event.status === 'error' ? 'error' : event.status === 'warning' ? 'warning' : 'done'
@@ -159,14 +290,69 @@ export function reduceWorkbenchProgress(
     content,
     time: event.time,
     runId: event.runId,
+    turnId: event.turnId,
+    sequence: event.sequence,
+    stage: event.stage,
     status,
     ...(event.terminal !== undefined ? { terminal: event.terminal } : {}),
     ...(event.recoverable !== undefined ? { recoverable: event.recoverable } : {})
   }
-  if (index < 0) return bounded([...currentItems, item])
+  if (index < 0) {
+    // A running stage followed by its terminal update is one lifecycle item;
+    // distinct completed stages still remain separate records.
+    const lifecycleIndex = liveItems.findIndex((candidate) => candidate.kind === 'thinking'
+      && candidate.status === 'running' && candidate.runId === item.runId && candidate.turnId === item.turnId
+      && candidate.stage === item.stage && status !== 'running')
+    if (lifecycleIndex >= 0) {
+      const next = [...currentItems]
+      next[lifecycleIndex] = item
+      return orderTimeline(next)
+    }
+    return orderTimeline(bounded([...currentItems, item]))
+  }
   const next = [...currentItems]
   next[index] = item
-  return next
+  return orderTimeline(next)
+}
+
+/**
+ * Rebuilds the visible timeline from the complete durable journal. This follows
+ * the same item-reconciliation rule as Codex/OpenCode: only a matching stream
+ * updates an existing projection item; all other records retain their order.
+ */
+export function replayWorkbenchEvents(
+  view: WorkbenchTimelineItem[],
+  events: ConversationEventRecord[],
+  normalizeActivity: (value: string) => string = (value) => value,
+  normalizeOutput: (value: string) => string = (value) => value
+): WorkbenchTimelineItem[] {
+  if (!events.length) return normalizeWorkbenchTimeline(view)
+  const result = view.filter((item) => item.kind === 'user' && !isWorkbenchInternalPrompt(item.content)).map((item) => ({ ...item }))
+  const knownUsers = new Map(result.filter((item) => item.turnId).map((item) => [item.turnId!, item]))
+  for (const record of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (record.kind === 'user') {
+      const payload = record.payload && typeof record.payload === 'object' ? record.payload as { prompt?: unknown } : undefined
+      if (typeof payload?.prompt === 'string' && isWorkbenchInternalPrompt(payload.prompt)) continue
+      const existing = knownUsers.get(record.turnId)
+      if (existing) {
+        existing.sequence = record.sequence
+        continue
+      }
+      const content = typeof payload?.prompt === 'string' ? payload.prompt : ''
+      const item: WorkbenchTimelineItem = { id: `user:${record.eventId}`, kind: 'user', content, time: record.time, runId: record.runId, turnId: record.turnId, sequence: record.sequence, status: 'done' }
+      result.push(item)
+      knownUsers.set(record.turnId, item)
+      continue
+    }
+    if (record.kind === 'progress' && record.payload && typeof record.payload === 'object') {
+      result.splice(0, result.length, ...reduceWorkbenchProgress(result, { ...(record.payload as PipelineEvent), sequence: record.sequence, eventId: record.eventId }, normalizeActivity))
+      continue
+    }
+    if (record.kind === 'output' && record.payload && typeof record.payload === 'object') {
+      result.splice(0, result.length, ...reduceWorkbenchOutput(result, { ...(record.payload as AiOutputEvent), sequence: record.sequence, eventId: record.eventId }, normalizeOutput))
+    }
+  }
+  return settleWorkbenchActivity(orderTimeline(result))
 }
 
 export function normalizeStoredWorkbenchTimeline(item: WorkbenchTimelineItem): WorkbenchTimelineItem {
@@ -214,7 +400,7 @@ export function workbenchRewindTimelineTo(items: WorkbenchTimelineItem[], id: st
 }
 
 /** 提取用户提问与 AI 最终回答，用于在「回退重发」时把前文作为文字上下文重新注入。 */
-export function workbenchDialogueToText(items: WorkbenchTimelineItem[], maxTurns = 8, maxChars = 12_000): string {
+export function workbenchDialogueToText(items: WorkbenchTimelineItem[], maxTurns = 1_000, maxChars = 120_000): string {
   const lines: string[] = []
   for (const item of items) {
     if (item.kind === 'user') lines.push(`用户：${replayUserText(item.content, item.replay)}`)

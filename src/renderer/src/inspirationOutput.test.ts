@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
+import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
 
 describe('inspiration output settlement', () => {
+  it('replays a durable cumulative delta and terminal answer after a crash', () => {
+    const pending = [{ role: 'assistant' as const, turnId: 'turn-a', content: '', status: 'streaming' as const }]
+    const restored = replayInspirationEvents(pending, [
+      { eventId: 'e1', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 2, kind: 'output', time: 'T1', payload: { kind: 'delta', content: 'partial', time: 'T1', turnId: 'turn-a' } },
+      { eventId: 'e2', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 3, kind: 'output', time: 'T2', payload: { kind: 'answer', content: 'complete', time: 'T2', turnId: 'turn-a' } }
+    ])
+    expect(restored).toEqual([expect.objectContaining({ turnId: 'turn-a', content: 'complete', status: 'completed', isFinal: true, sequence: 3 })])
+  })
+
+  it('settles a durable terminal failure after a crash instead of restoring an endless stream', () => {
+    const pending = [{ role: 'assistant' as const, turnId: 'turn-a', content: '', status: 'streaming' as const, sessionId: 'run-a' }]
+    const restored = replayInspirationEvents(pending, [
+      { eventId: 'e1', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 2, kind: 'output', time: 'T1', payload: { kind: 'delta', content: 'partial', time: 'T1', turnId: 'turn-a', sessionId: 'run-a' } },
+      { eventId: 'e2', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 3, kind: 'output', time: 'T2', payload: { kind: 'error', content: 'network unavailable', time: 'T2', turnId: 'turn-a', sessionId: 'run-a', terminal: false, recoverable: true } }
+    ])
+    expect(restored.at(-1)).toMatchObject({ turnId: 'turn-a', content: 'network unavailable', status: 'error', isFinal: true, sequence: 3 })
+    expect(restored.some((message) => message.status === 'streaming')).toBe(false)
+  })
   it('renders retry/tool steps in order between the question and provisional answer', () => {
     const rows = buildInspirationRows([
       { role: 'user', content: 'question', status: 'completed' },
@@ -64,7 +82,7 @@ describe('inspiration output settlement', () => {
       { role: 'assistant' as const, content: `answer-${index}`, status: 'completed' as const, isFinal: true }
     ])).flat()
     expect(shouldResumeInspirationSession(messages.slice(0, 2))).toBe(true)
-    expect(shouldResumeInspirationSession(messages)).toBe(false)
+    expect(shouldResumeInspirationSession(messages)).toBe(true)
     const handoff = inspirationConversationHandoff(messages, 120)
     expect(handoff.length).toBeLessThanOrEqual(120)
     expect(handoff).toContain('answer-7')

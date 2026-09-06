@@ -70,6 +70,34 @@ the MIT License by the electron-builder contributors.
 - Project: https://github.com/electron-userland/electron-builder
 - License: MIT
 
+## React Virtuoso
+
+ModMind uses the unmodified `Virtuoso` React component for viewport-only rendering
+of long local conversation timelines. Conversation history remains complete in the
+local ConversationStore journal; virtualization only limits mounted DOM nodes.
+
+- Version: 4.18.13
+- Project: https://github.com/petyosi/react-virtuoso
+- License: MIT
+
+## proper-lockfile
+
+ModMind uses `proper-lockfile` for the advisory inter-process lock around each
+append-only conversation journal. The package is used without source changes.
+
+- Version: 4.1.2
+- Project: https://github.com/moxystudio/node-proper-lockfile
+- License: MIT
+
+## OpenCode and Roo Code storage patterns
+
+The conversation journal adapter follows the upstream append/reconcile conventions
+used by OpenCode and Roo Code. No upstream runtime is bundled; the local adapter is
+limited to the project storage boundary and keeps this application's existing types.
+
+- OpenCode: https://github.com/anomalyco/opencode (MIT)
+- Roo Code: https://github.com/RooCodeInc/Roo-Code (Apache-2.0)
+
 ## smol-toml
 
 ModMind uses `smol-toml` to parse Forge and NeoForge mod descriptors according to

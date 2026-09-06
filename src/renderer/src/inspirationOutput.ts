@@ -1,6 +1,7 @@
 import type { CodingResult, InspirationChatMessage } from '../../shared/types'
 import { replayUserText } from '../../shared/aiReplay'
 import { isUsableAiAnswer } from '../../shared/aiOutput'
+import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 
 type IdFactory = () => string
 
@@ -28,6 +29,62 @@ export function buildInspirationRows(messages: InspirationChatMessage[]): Inspir
   })
   flushTools()
   return rows
+}
+
+function mergeOutputText(current: string, incoming: string): string {
+  if (!current || incoming.startsWith(current)) return incoming
+  if (!incoming || current.endsWith(incoming)) return current
+  return `${current}${incoming}`
+}
+
+/** Rebuilds a stale view from events that were durably committed before a crash. */
+export function replayInspirationEvents(messages: InspirationChatMessage[], events: ConversationEventRecord[]): InspirationChatMessage[] {
+  let result = [...messages]
+  const lastViewSequence = Math.max(0, ...messages.map((message) => message.sequence ?? 0))
+  for (const record of events.filter((event) => event.kind === 'output' && event.sequence > lastViewSequence).sort((left, right) => left.sequence - right.sequence)) {
+    if (!record.payload || typeof record.payload !== 'object') continue
+    const event = record.payload as AiOutputEvent
+    const turnId = event.turnId ?? record.turnId
+    let index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
+    if (event.kind === 'delta' || event.kind === 'response') {
+      if (index < 0) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
+      else {
+        const message = result[index]
+        result[index] = { ...message, content: event.kind === 'delta' ? mergeOutputText(message.content, event.content) : event.content || message.content, sequence: record.sequence }
+      }
+      continue
+    }
+    if (event.kind === 'answer') {
+      const completed: InspirationChatMessage = { role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence }
+      if (index < 0) result.push(completed)
+      else result[index] = completed
+      continue
+    }
+    if ((event.kind === 'error' || event.kind === 'warning') && (event.terminal !== undefined || event.recoverable !== undefined)) {
+      const status = event.kind === 'warning' ? 'cancelled' as const : 'error' as const
+      const failed: InspirationChatMessage = {
+        ...(index >= 0 ? result[index] : { role: 'assistant' as const, id: `${turnId}:assistant`, turnId }),
+        content: event.content, status, isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence
+      }
+      if (index < 0) result.push(failed)
+      else {
+        const provisional = result[index]
+        const progress = provisional.content.trim() && provisional.content.trim() !== event.content.trim()
+          ? { ...provisional, kind: 'tool' as const, id: `${record.eventId}:partial`, status: 'completed' as const, isFinal: false, sequence: record.sequence }
+          : null
+        result.splice(index, 1, ...(progress ? [progress] : []), failed)
+      }
+      continue
+    }
+    if (!event.content.trim()) continue
+    const step: InspirationChatMessage = { role: 'assistant', kind: 'tool', id: record.eventId, turnId, content: event.content, time: event.time, status: event.kind === 'error' || event.kind === 'warning' ? 'error' : 'completed', isFinal: false, sessionId: event.sessionId, sequence: record.sequence }
+    if (!result.some((message) => message.id === step.id)) {
+      index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
+      if (index < 0) result.push(step)
+      else result.splice(index, 0, step)
+    }
+  }
+  return result
 }
 
 export function deleteInspirationTimelineItem(messages: InspirationChatMessage[], messageIndex: number): InspirationChatMessage[] {
@@ -64,17 +121,13 @@ export function finalInspirationReply(result: Pick<CodingResult, 'finalResponse'
   return isUsableAiAnswer(result.finalResponse) ? result.finalResponse.trim() : ''
 }
 
-const INSPIRATION_SESSION_TURN_LIMIT = 8
-
 export function shouldResumeInspirationSession(messages: InspirationChatMessage[]): boolean {
-  const completedTurns = messages.filter((message) => message.role === 'user').length
-  return completedTurns > 0 && completedTurns % INSPIRATION_SESSION_TURN_LIMIT !== 0
+  return messages.some((message) => message.role === 'user')
 }
 
-export function inspirationConversationHandoff(messages: InspirationChatMessage[], maxChars = 8_000): string {
+export function inspirationConversationHandoff(messages: InspirationChatMessage[], maxChars = 120_000): string {
   const transcript = messages
     .filter((message) => message.kind !== 'tool' && (message.role === 'user' || message.isFinal))
-    .slice(-12)
     .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.role === 'user' ? replayUserText(message.content, message.replay) : message.content.trim()}`)
     .filter((line) => !line.endsWith(':'))
     .join('\n\n')
@@ -96,6 +149,8 @@ export function settleInspirationReply(
     return [
       ...(progress ? [progress] : []),
       {
+        id: message.id,
+        turnId: message.turnId,
         role: 'assistant' as const,
         content: valid ? reply.trim() : invalidMessage,
         status: valid ? 'completed' as const : 'error' as const,

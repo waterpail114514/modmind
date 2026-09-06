@@ -40,6 +40,8 @@
     "ftbq-nbt": "^1.4.1",
     "fzstd": "^0.1.1",
     "json5": "^2.2.3",
+    "proper-lockfile": "^4.1.2",
+    "react-virtuoso": "^4.18.13",
     "sharp": "^0.33.5",
     "smol-toml": "^1.8.0",
     "undici": "7.2.3"
@@ -47,6 +49,7 @@
   "devDependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@types/node": "^22.10.2",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",

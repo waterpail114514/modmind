@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { gzip, gunzip } from 'node:zlib'
+import * as lockfile from 'proper-lockfile'
 import type { WorkbenchDataReadResult, WorkbenchDataWriteResult } from '../shared/types'
 import { isMissingFileError, retryTransientFileLock } from './fileLockRetry'
 
@@ -9,7 +10,8 @@ const STORE_SCHEMA_VERSION = 1
 const MAX_CONTENT_BYTES = 256 * 1024 * 1024
 const MAX_SNAPSHOT_BYTES = MAX_CONTENT_BYTES + 64 * 1024
 const RETAINED_REVISIONS = 8
-const WORKBENCH_DATA_PATH = /^\.modmind\/(?:workbench-conversations|workbench-timeline(?:-[\w-]+)?)\.json$/u
+const WORKBENCH_DATA_PATH = /^\.modmind\/(?:workbench-conversations|workbench-timeline(?:-[\w-]+)?|conversations-v2\/(?:index|[a-z0-9][\w-]*))\.json$/iu
+const WORKBENCH_JOURNAL_PATH = /^\.modmind\/conversations-v3\/[a-z0-9][\w-]{0,127}\.jsonl$/iu
 
 type ReplicaName = 'project' | 'mirror'
 
@@ -71,6 +73,12 @@ function normalizeWorkbenchKey(relativePath: string): string {
   return normalized
 }
 
+function normalizeJournalKey(relativePath: string): string {
+  const normalized = relativePath.trim().replaceAll('\\', '/').replace(/^\.\//u, '')
+  if (!WORKBENCH_JOURNAL_PATH.test(normalized)) throw new Error(`Invalid conversation journal path: ${relativePath}`)
+  return normalized
+}
+
 function normalizedProjectIdentity(projectPath: string): string {
   const resolved = path.resolve(projectPath).replaceAll('\\', '/')
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
@@ -105,7 +113,12 @@ function validateContent(key: string, content: string): { bytes: number; checksu
   } catch (error) {
     throw new Error('工作台对话数据不是有效 JSON', { cause: error })
   }
-  if (!Array.isArray(parsed)) throw new Error(`工作台数据文件 ${path.posix.basename(key)} 必须是数组`)
+  const isConversationDocument = key.startsWith('.modmind/conversations-v2/') && !key.endsWith('/index.json')
+  if (isConversationDocument) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`对话数据文件 ${path.posix.basename(key)} 必须是对象`)
+  } else if (!Array.isArray(parsed)) {
+    throw new Error(`工作台数据文件 ${path.posix.basename(key)} 必须是数组`)
+  }
   return { bytes, checksum: sha256(Buffer.from(content, 'utf8')) }
 }
 
@@ -137,6 +150,28 @@ async function syncDirectory(directory: string): Promise<void> {
   } finally {
     await handle.close().catch(() => undefined)
   }
+}
+
+const JOURNAL_LOCK_OPTIONS = { stale: 31_000, update: 10_000, realpath: false, retries: { retries: 5, factor: 2, minTimeout: 100, maxTimeout: 1_000 } } as const
+
+async function withJournalLock<T>(target: string, operation: () => Promise<T>): Promise<T> {
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  const release = await lockfile.lock(target, JOURNAL_LOCK_OPTIONS)
+  try { return await operation() } finally { await release().catch(() => undefined) }
+}
+
+async function appendDurable(target: string, content: string): Promise<void> {
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await withJournalLock(target, async () => {
+    const handle = await fs.open(target, 'a', 0o600)
+    try {
+      await handle.writeFile(content, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+  })
+  await syncDirectory(path.dirname(target))
 }
 
 async function durableReplace(target: string, content: string | Buffer, keepPrevious = true): Promise<void> {
@@ -210,11 +245,91 @@ async function readJsonFile<T>(target: string): Promise<T | null> {
 export class WorkbenchDataStore {
   private readonly lanes = new Map<string, WriteLane>()
   private readonly revisions = new Map<string, number>()
+  private readonly journalLanes = new Map<string, Promise<unknown>>()
 
   constructor(
     private readonly userDataPath: string,
     private readonly diagnostic: WorkbenchStoreDiagnostic = () => undefined
   ) {}
+
+  private journalRoots(projectPath: string, relativePath: string): { project: string; mirror: string; compatibility: string } {
+    const projectIdentity = sha256(normalizedProjectIdentity(projectPath)).slice(0, 24)
+    const label = path.posix.basename(relativePath, '.jsonl')
+    return {
+      project: path.join(projectPath, '.modmind', 'workbench-journal', label),
+      mirror: path.join(this.userDataPath, 'workbench-journal', projectIdentity, label),
+      compatibility: path.join(projectPath, ...relativePath.split('/'))
+    }
+  }
+
+  appendJournal(projectPath: string, relativePath: string, line: string): Promise<{ durability: 'redundant' | 'degraded'; copies: { project: boolean; mirror: boolean; compatibility: boolean } }> {
+    const key = normalizeJournalKey(relativePath)
+    if (!line.endsWith('\n')) throw new Error('Conversation journal records must end with a newline')
+    if (Buffer.byteLength(line, 'utf8') > 8 * 1024 * 1024) throw new Error('Conversation journal record exceeds 8 MB')
+    const laneKey = `${this.laneKey(projectPath, key)}\njournal`
+    const previous = this.journalLanes.get(laneKey) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(async () => {
+      const roots = this.journalRoots(path.resolve(projectPath), key)
+      const copies = { project: false, mirror: false, compatibility: false }
+      const results = await Promise.allSettled([
+        appendDurable(path.join(roots.project, 'events.jsonl'), line).then(() => 'project' as const),
+        appendDurable(path.join(roots.mirror, 'events.jsonl'), line).then(() => 'mirror' as const),
+        appendDurable(roots.compatibility, line).then(() => 'compatibility' as const)
+      ])
+      const errors: unknown[] = []
+      for (const result of results) {
+        if (result.status === 'fulfilled') copies[result.value] = true
+        else errors.push(result.reason)
+      }
+      if (!copies.project && !copies.mirror && !copies.compatibility) throw new AggregateError(errors, 'Conversation journal could not be appended')
+      return { durability: copies.project && copies.mirror ? 'redundant' as const : 'degraded' as const, copies }
+    })
+    const tracked = current.then(() => undefined, () => undefined).finally(() => {
+      if (this.journalLanes.get(laneKey) === tracked) this.journalLanes.delete(laneKey)
+    })
+    this.journalLanes.set(laneKey, tracked)
+    return current
+  }
+
+  async readJournal(projectPath: string, relativePath: string): Promise<string[]> {
+    const key = normalizeJournalKey(relativePath)
+    const laneKey = `${this.laneKey(projectPath, key)}\njournal`
+    const pending = this.journalLanes.get(laneKey)
+    if (pending) await pending
+    const roots = this.journalRoots(path.resolve(projectPath), key)
+    const targets = [path.join(roots.project, 'events.jsonl'), path.join(roots.mirror, 'events.jsonl'), roots.compatibility]
+    const unique = new Set<string>()
+    const failures: unknown[] = []
+    for (const target of targets) {
+      const content = await withJournalLock(target, () => retryTransientFileLock(() => fs.readFile(target, 'utf8'))).catch((error) => {
+        if (isMissingFileError(error)) return ''
+        failures.push(error)
+        return ''
+      })
+      for (const line of content.split(/\r?\n/u)) if (line.trim()) unique.add(`${line}\n`)
+    }
+    if (!unique.size && failures.length) throw new AggregateError(failures, 'Conversation journal replicas could not be read')
+    return [...unique]
+  }
+
+  async deleteJournal(projectPath: string, relativePath: string): Promise<void> {
+    const key = normalizeJournalKey(relativePath)
+    const laneKey = `${this.laneKey(projectPath, key)}\njournal`
+    const previous = this.journalLanes.get(laneKey) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(async () => {
+      const roots = this.journalRoots(path.resolve(projectPath), key)
+      await Promise.allSettled([
+        withJournalLock(path.join(roots.project, 'events.jsonl'), () => fs.rm(roots.project, { recursive: true, force: true })),
+        withJournalLock(path.join(roots.mirror, 'events.jsonl'), () => fs.rm(roots.mirror, { recursive: true, force: true })),
+        withJournalLock(roots.compatibility, () => fs.rm(roots.compatibility, { force: true }))
+      ])
+    })
+    const tracked = current.then(() => undefined, () => undefined).finally(() => {
+      if (this.journalLanes.get(laneKey) === tracked) this.journalLanes.delete(laneKey)
+    })
+    this.journalLanes.set(laneKey, tracked)
+    await current
+  }
 
   async read(projectPath: string, relativePath: string): Promise<WorkbenchDataReadResult> {
     const key = normalizeWorkbenchKey(relativePath)
@@ -234,8 +349,11 @@ export class WorkbenchDataStore {
   }
 
   async flush(): Promise<void> {
-    while (this.lanes.size) {
-      const drains = [...this.lanes.values()].map((lane) => lane.drain).filter((value): value is Promise<void> => Boolean(value))
+    while (this.lanes.size || this.journalLanes.size) {
+      const drains = [
+        ...[...this.lanes.values()].map((lane) => lane.drain).filter((value): value is Promise<void> => Boolean(value)),
+        ...this.journalLanes.values()
+      ]
       if (!drains.length) break
       await Promise.allSettled(drains)
     }

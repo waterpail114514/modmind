@@ -24,6 +24,8 @@ interface StorageWriter {
   setItem: (key: string, value: string) => void
 }
 
+// localStorage is a compatibility fallback only. The ConversationStore is the
+// authoritative local journal; these caps protect the legacy browser fallback.
 const MAX_CONVERSATIONS = 12
 const MAX_MESSAGES_PER_CONVERSATION = 100
 const MAX_MESSAGE_CONTENT_CHARS = 32 * 1024

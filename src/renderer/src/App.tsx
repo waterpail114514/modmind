@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ReactNode, SetStateAction } from 'react'
+import { memo } from 'react'
 import { marked } from 'marked'
+import { Virtuoso } from 'react-virtuoso'
 import {
   Archive,
   ArrowRightLeft,
@@ -140,7 +142,7 @@ import { PluginPanelHost } from './components/PluginPanelHost'
 import { PluginsManager } from './components/PluginsManager'
 import { PluginOverlayLayer } from './components/PluginOverlayLayer'
 import type { PluginSnapshot } from '../../shared/plugins'
-import { appendUserTurn, normalizeStoredWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, settleWorkbenchActivity, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
+import { appendUserTurn, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEvents, settleWorkbenchActivity, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
 import {
   createWorkbenchConversation,
   isLegacyWorkbenchConversation,
@@ -154,9 +156,9 @@ import {
   workbenchSessionScope,
   type WorkbenchConversation
 } from './workbenchConversations'
-import { boundInspirationMessages, normalizeStoredInspirationMessages, persistInspirationHistory, type InspirationConversation } from './inspirationStorage'
+import { normalizeStoredInspirationMessages, persistInspirationHistory, type InspirationConversation } from './inspirationStorage'
 import { isAiOperationalStatusText, isUsableAiAnswer } from '../../shared/aiOutput'
-import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
+import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
 import appLogo from './assets/logo.png'
 
 const MonacoCodeEditor = lazy(() => import('./components/MonacoCodeEditor'))
@@ -212,7 +214,7 @@ function readSidebarDragPayload(dataTransfer: DataTransfer): SidebarDragPayload 
 }
 
 function InspirationStepGroup({ items }: { items: InspirationChatMessage[] }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(items.some((item) => item.status === 'streaming'))
+  const [expanded, setExpanded] = useState(false)
   useEffect(() => { if (items.some((item) => item.status === 'streaming')) setExpanded(true) }, [items])
   return <section className="agent-tool-group">
     <button type="button" className="agent-disclosure-header" onClick={() => setExpanded((value) => !value)}>
@@ -324,25 +326,29 @@ export function parseStoredWorkbenchTimeline(value: unknown): AiTimelineItem[] {
   let history = value
   .filter((item): item is AiTimelineItem => Boolean(item && typeof item === 'object' && typeof (item as AiTimelineItem).id === 'string' && typeof (item as AiTimelineItem).content === 'string' && typeof (item as AiTimelineItem).kind === 'string' && typeof (item as AiTimelineItem).time === 'string'))
   .map(normalizeStoredTimelineItem)
-  history = history.filter((item) => item.kind !== 'history' || item.content.length <= 200)
-  return settleWorkbenchActivity(history)
+  // Persisted sequence is authoritative. Never discard long history records;
+  // truncating here made a crash-recovered timeline silently incomplete.
+  return settleWorkbenchActivity(normalizeWorkbenchTimeline(history.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content)))))
 }
 
 marked.setOptions({ gfm: true, breaks: true })
 
-function MarkdownMessage({ content }: { content: string }): React.JSX.Element {
-  const renderer = new marked.Renderer()
-  renderer.html = ({ text }) => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-  renderer.link = ({ href, text }) => {
-    const safeText = text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-    if (!/^https?:\/\//i.test(href)) return safeText
-    const safeHref = href.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-    return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeText}</a>`
+const appMarkdownRenderer = new marked.Renderer()
+const escapeMarkdownHtml = (text: string): string => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
+appMarkdownRenderer.html = ({ text }) => escapeMarkdownHtml(text)
+appMarkdownRenderer.link = ({ href, text }) => /^https?:\/\//i.test(href) ? `<a href="${escapeMarkdownHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeMarkdownHtml(text)}</a>` : escapeMarkdownHtml(text)
+appMarkdownRenderer.image = ({ text }) => escapeMarkdownHtml(text)
+const appMarkdownCache = new Map<string, string>()
+
+const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }): React.JSX.Element {
+  let html = appMarkdownCache.get(content)
+  if (html === undefined) {
+    html = marked.parse(content, { async: false, renderer: appMarkdownRenderer })
+    appMarkdownCache.set(content, html)
+    if (appMarkdownCache.size > 500) appMarkdownCache.delete(appMarkdownCache.keys().next().value ?? '')
   }
-  renderer.image = ({ text }) => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-  const html = marked.parse(content, { async: false, renderer })
   return <div className="markdown-message" dangerouslySetInnerHTML={{ __html: html }} />
-}
+})
 
 const MAX_AUTO_REPAIR_ROUNDS = 3
 
@@ -1017,13 +1023,13 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
   const inspirationAttachmentRestoreTokenRef = useRef(0)
   const activeInspirationConversationIdRef = useRef('')
   const sessionResetConversationIdsRef = useRef(new Set<string>())
+  const conversationGenerationRef = useRef(new Map<string, number>())
   const inspirationSessionRef = useRef('')
   const inspirationConversationRef = useRef('')
   const finalAnswerSessionRef = useRef('')
   const ignoredInspirationSessionRef = useRef('')
   const thinkingStartedAtRef = useRef<number | null>(null)
   const cancellingInspirationRef = useRef(false)
-  const endRef = useRef<HTMLDivElement | null>(null)
   const quickPrompts = [
     '分析当前项目结构，指出已经实现的内容、缺口和最值得优先处理的风险',
     '结合现有代码，给我三个能融入当前模组的 Boss 设计，并说明战斗阶段和实现难点',
@@ -1033,6 +1039,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
   const storageKey = `modmind-inspiration:${project.path}`
   const messages = conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? []
   const inspirationRows = buildInspirationRows(messages)
+  const visibleInspirationRows = inspirationRows
 
   useEffect(() => {
     activeInspirationConversationIdRef.current = activeConversationId
@@ -1041,7 +1048,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
   const updateConversationMessages = (conversationId: string, updater: (messages: InspirationChatMessage[]) => InspirationChatMessage[]): void => {
     if (!conversationId) return
     setConversations((current) => current.map((conversation) => conversation.id === conversationId
-      ? { ...conversation, messages: boundInspirationMessages(updater(conversation.messages)), updatedAt: new Date().toISOString() }
+      ? { ...conversation, messages: updater(conversation.messages), updatedAt: new Date().toISOString() }
       : conversation))
   }
 
@@ -1051,7 +1058,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
 
   const [pendingEditTarget, setPendingEditTarget] = useState<{ conversationId: string; messageIndex: number } | null>(null)
   const editInspirationMessage = async (messageIndex: number, content: string): Promise<void> => {
-    const conversationId = activeConversationId
+    let conversationId = activeConversationId
     const restoreToken = ++inspirationAttachmentRestoreTokenRef.current
     const replay = messages[messageIndex]?.replay
     setDraft(replay?.prompt ?? content)
@@ -1081,9 +1088,18 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
       tone: 'danger',
       actionIcon: 'delete'
     })) return
+    const nextMessages = deleteInspirationTimelineItem(messages, messageIndex)
+    try {
+      const selected = messages[messageIndex]
+      const fork = await window.modmind.conversations.fork(project.path, { sourceConversationId: activeConversationId, ...(selected?.turnId ? { beforeTurnId: selected.turnId } : { throughSequence: Math.max(0, messageIndex - 1) }), view: { messages: nextMessages } })
+      setConversations((current) => [...current, { id: fork.id, title: fork.title, updatedAt: fork.updatedAt, messages: nextMessages }])
+      setActiveConversationId(fork.id)
+      sessionResetConversationIdsRef.current.add(fork.id)
+    } catch {
+      sessionResetConversationIdsRef.current.add(activeConversationId)
+      updateActiveMessages(() => nextMessages)
+    }
     setPendingEditTarget(null)
-    sessionResetConversationIdsRef.current.add(activeConversationId)
-    updateActiveMessages((current) => deleteInspirationTimelineItem(current, messageIndex))
   }
   const rewindInspirationTo = async (messageIndex: number): Promise<void> => {
     const selected = messages[messageIndex]
@@ -1095,21 +1111,31 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
       tone: 'danger',
       actionIcon: 'restore'
     })) return
+    const nextMessages = rewindInspirationTimelineTo(messages, messageIndex)
+    try {
+      const fork = await window.modmind.conversations.fork(project.path, { sourceConversationId: activeConversationId, ...(selected.turnId ? selected.role === 'user' ? { beforeTurnId: selected.turnId } : { throughTurnId: selected.turnId } : { throughSequence: messageIndex }), view: { messages: nextMessages }, backend: codingBackend === 'quota' ? 'codex' : codingBackend })
+      setConversations((current) => [...current, { id: fork.id, title: fork.title, updatedAt: fork.updatedAt, messages: nextMessages }])
+      setActiveConversationId(fork.id)
+      if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
+    } catch {
+      sessionResetConversationIdsRef.current.add(activeConversationId)
+      updateActiveMessages(() => nextMessages)
+    }
     setPendingEditTarget(null)
-    sessionResetConversationIdsRef.current.add(activeConversationId)
-    updateActiveMessages((current) => rewindInspirationTimelineTo(current, messageIndex))
   }
 
   useEffect(() => {
     return window.modmind.ai.onOutput((event) => {
       if (event.projectPath && normalizeProjectPath(event.projectPath) !== normalizeProjectPath(project.path)) return
-      if (event.sessionId !== inspirationSessionRef.current || !event.content.trim()) return
+      if (event.sessionId !== inspirationSessionRef.current || (event.kind !== 'delta' && !event.content.trim())) return
+      const expectedGeneration = conversationGenerationRef.current.get(activeInspirationConversationIdRef.current)
+      if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
       if (event.sessionId === ignoredInspirationSessionRef.current) return
       const conversationId = inspirationConversationRef.current
       const sessionId = event.sessionId
       const step = (content: string, status: 'completed' | 'error' = 'completed'): InspirationChatMessage => ({
-        role: 'assistant', kind: 'tool', id: `inspiration-step-${Date.now()}-${crypto.randomUUID()}`,
-        content, time: new Date().toISOString(), status, isFinal: false, sessionId
+        role: 'assistant', kind: 'tool', id: event.eventId ?? `inspiration-step-${Date.now()}-${crypto.randomUUID()}`,
+        turnId: event.turnId, sequence: event.sequence, content, time: event.time, status, isFinal: false, sessionId
       })
       const appendUniqueStep = (items: InspirationChatMessage[], item: InspirationChatMessage): InspirationChatMessage[] => {
         const previous = items.at(-1)
@@ -1136,7 +1162,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
         updateConversationMessages(conversationId, (current) => {
           if (current.some((message) => message.role === 'assistant' && message.sessionId === sessionId && message.isFinal && message.content.trim() === event.content.trim())) return current
           const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
-          const completed: InspirationChatMessage = { role: 'assistant', content: event.content, status: 'completed', isFinal: true, sessionId, time: event.time }
+          const completed: InspirationChatMessage = { role: 'assistant', id: `turn-${sessionId}:assistant`, turnId: event.turnId ?? `turn-${sessionId}`, sequence: event.sequence, content: event.content, status: 'completed', isFinal: true, sessionId, time: event.time }
           if (reverseIndex < 0) return [...current, completed]
           const target = current.length - 1 - reverseIndex
           return current.map((message, index) => index === target ? completed : message)
@@ -1156,7 +1182,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
           if (streaming.content === event.content) return current
           let before = current.slice(0, target)
           if (streaming.content.trim()) before = appendUniqueStep(before, step(streaming.content))
-          return [...before, { ...streaming, content: event.content }, ...current.slice(target + 1)]
+          return [...before, { ...streaming, content: event.content, sequence: event.sequence }, ...current.slice(target + 1)]
         })
         return
       }
@@ -1166,7 +1192,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
           const content = !message.content || event.content.startsWith(message.content)
             ? event.content
             : message.content.endsWith(event.content) ? message.content : `${message.content}${event.content}`
-          return { ...message, content }
+          return { ...message, content, sequence: event.sequence }
         }))
         return
       }
@@ -1179,33 +1205,62 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
   useEffect(() => {
     setPendingEditTarget(null)
     sessionResetConversationIdsRef.current.clear()
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as { activeId?: string; conversations?: InspirationConversation[] } | null
-      const valid = Array.isArray(saved?.conversations) ? saved.conversations
-        .filter((entry) => entry && typeof entry.id === 'string' && Array.isArray(entry.messages))
-        .map((entry) => ({ ...entry, messages: dedupeInspirationMessages(normalizeStoredInspirationMessages(entry.messages)) })) : []
-      const fallback: InspirationConversation = { id: `${Date.now()}`, title: '新对话', updatedAt: new Date().toISOString(), messages: [] }
-      const list = valid.length ? valid : [fallback]
-      const active = list.find((entry) => entry.id === saved?.activeId) ?? list[0]
-      setConversations(list)
-      setActiveConversationId(active.id)
-    } catch {
-      const fallback: InspirationConversation = { id: `${Date.now()}`, title: '新对话', updatedAt: new Date().toISOString(), messages: [] }
-      setConversations([fallback])
-      setActiveConversationId(fallback.id)
+    setHydrated(false)
+    let cancelled = false
+    const load = async (): Promise<void> => {
+      try {
+        const summaries = await window.modmind.conversations.list(project.path, 'inspiration')
+        const documents = await Promise.all(summaries.map((summary) => window.modmind.conversations.read(project.path, summary.id)))
+        const durable = documents.filter((document) => Boolean(document)).map((document) => {
+          conversationGenerationRef.current.set(document!.id, document!.generation)
+          const view = dedupeInspirationMessages(normalizeStoredInspirationMessages(document!.view.messages ?? []))
+          return { id: document!.id, title: document!.title, updatedAt: document!.updatedAt, messages: replayInspirationEvents(view, document!.events) }
+        })
+        if (durable.length) {
+          if (!cancelled) { setConversations(durable); setActiveConversationId(durable[0].id); setHydrated(true) }
+          return
+        }
+        const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as { activeId?: string; conversations?: InspirationConversation[] } | null
+        const valid = Array.isArray(saved?.conversations) ? saved.conversations
+          .filter((entry) => entry && typeof entry.id === 'string' && Array.isArray(entry.messages))
+          .map((entry) => ({ ...entry, messages: dedupeInspirationMessages(normalizeStoredInspirationMessages(entry.messages)) })) : []
+        const fallback: InspirationConversation = { id: `idea-${Date.now()}`, title: '新对话', updatedAt: new Date().toISOString(), messages: [] }
+        const list = valid.length ? valid : [fallback]
+        for (const entry of list) {
+          const document = await window.modmind.conversations.create(project.path, { id: entry.id, surface: 'inspiration', title: entry.title, view: { messages: entry.messages } })
+          conversationGenerationRef.current.set(entry.id, document.generation)
+        }
+        const active = list.find((entry) => entry.id === saved?.activeId) ?? list[0]
+        if (!cancelled) { setConversations(list); setActiveConversationId(active.id); setHydrated(true) }
+      } catch {
+        const fallback: InspirationConversation = { id: `idea-${Date.now()}`, title: '新对话', updatedAt: new Date().toISOString(), messages: [] }
+        if (!cancelled) { setConversations([fallback]); setActiveConversationId(fallback.id); setHydrated(true) }
+      }
     }
-    setHydrated(true)
+    void load()
+    return () => { cancelled = true }
   }, [storageKey])
 
   useEffect(() => {
     if (!hydrated || !activeConversationId) return
-    const result = persistInspirationHistory(window.localStorage, storageKey, { activeId: activeConversationId, conversations })
-    setPersistenceWarning(result.status === 'unavailable' ? '灵感历史暂时无法保存；当前对话仍可继续使用' : '')
+    const timer = window.setTimeout(() => {
+      const result = persistInspirationHistory(window.localStorage, storageKey, { activeId: activeConversationId, conversations })
+      setPersistenceWarning(result.status === 'unavailable' ? '灵感历史暂时无法保存；当前对话仍可继续使用' : '')
+    }, 500)
+    return () => window.clearTimeout(timer)
   }, [conversations, activeConversationId, hydrated, storageKey])
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, busy])
+    if (!hydrated || !activeConversationId) return
+    const generation = conversationGenerationRef.current.get(activeConversationId)
+    if (generation === undefined) return
+    const timer = window.setTimeout(() => {
+      const current = conversations.find((entry) => entry.id === activeConversationId)
+      if (!current) return
+      void window.modmind.conversations.saveView(project.path, activeConversationId, generation, { messages: current.messages }, current.title).catch(() => undefined)
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [conversations, activeConversationId, hydrated, project.path])
 
   useEffect(() => {
     if (!busy || thinkingStartedAtRef.current === null) return
@@ -1228,7 +1283,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
       return
     }
     inspirationAttachmentRestoreTokenRef.current += 1
-    const conversationId = activeConversationId
+    let conversationId = activeConversationId
     const editIndex = pendingEditTarget?.conversationId === conversationId
       && pendingEditTarget.messageIndex >= 0
       && pendingEditTarget.messageIndex < messages.length
@@ -1244,30 +1299,41 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
     const handoff = needsReset
       ? inspirationConversationHandoff(baseMessages)
       : (!resumeSession && messages.length ? inspirationConversationHandoff(messages) : '')
-    const inspirationPrompt = `Answer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
+    const fallbackHandoff = inspirationConversationHandoff(baseMessages)
+    let inspirationPrompt = `Answer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
+    const fallbackInspirationPrompt = `The native session is unavailable. Continue from this complete visible conversation history without repeating completed work. Answer in Simplified Chinese and do not modify files.\n\n${fallbackHandoff ? `VISIBLE CONVERSATION HISTORY\n${fallbackHandoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
     const attachmentKeys = attachments.map((attachment) => `${attachment.path}:${attachment.size}`)
     const dedupeKey = aiPromptFingerprint(content, attachmentKeys)
+    if (editIndex !== null) {
+      const selected = messages[editIndex]
+      try {
+        const fork = await window.modmind.conversations.fork(project.path, { sourceConversationId: conversationId, ...(selected?.turnId ? { beforeTurnId: selected.turnId } : { throughSequence: Math.max(0, editIndex - 1) }), view: { messages: baseMessages }, backend: selectedBackend === 'quota' ? 'codex' : selectedBackend })
+        conversationId = fork.id
+        setConversations((current) => [...current, { id: fork.id, title: fork.title, updatedAt: fork.updatedAt, messages: baseMessages }])
+        setActiveConversationId(fork.id)
+        if (fork.parent?.nativeMode === 'native') inspirationPrompt = `Answer the user's latest inspiration question in Simplified Chinese. Do not modify files.\n\nLATEST QUESTION\n${content}${attachmentContext}`
+      } catch (error) {
+        setPersistenceWarning(`无法安全创建编辑分支，消息未发送：${errorMessage(error)}`)
+        return
+      }
+    }
     const sendToken = ++sendTokenRef.current
     const sessionId = `inspiration-${conversationId}-${Date.now()}-${sendToken}-${crypto.randomUUID()}`
     inspirationConversationRef.current = conversationId
     inspirationSessionRef.current = sessionId
     finalAnswerSessionRef.current = ''
     ignoredInspirationSessionRef.current = ''
-    updateActiveMessages((current) => {
-      const base = needsReset
-        ? (editIndex !== null ? current.slice(0, editIndex) : current)
-        : current
-      return [...base,
-        {
-          role: 'user',
-          content: `${content}${attachments.length ? `\n\n已附 ${attachments.length} 个文件` : ''}`,
-          status: 'completed',
-          replay: { prompt: content, ...(attachments.length ? { attachments: attachments.map((attachment) => ({ ...attachment })) } : {}) }
-        },
-        { role: 'assistant', content: '', status: 'streaming', isFinal: false, sessionId }
-      ]
-    })
-    updateConversationMessages(conversationId, (current) => current.map((message, index) => index === current.length - 2 ? { ...message, dedupeKey } : message))
+    const pendingMessages: InspirationChatMessage[] = [
+      ...baseMessages,
+      {
+        role: 'user', id: `turn-${sessionId}:user`, turnId: `turn-${sessionId}`,
+        content: `${content}${attachments.length ? `\n\n已附 ${attachments.length} 个文件` : ''}`,
+        status: 'completed', dedupeKey,
+        replay: { prompt: content, ...(attachments.length ? { attachments: attachments.map((attachment) => ({ ...attachment })) } : {}) }
+      },
+      { role: 'assistant', id: `turn-${sessionId}:assistant`, turnId: `turn-${sessionId}`, content: '', status: 'streaming', isFinal: false, sessionId }
+    ]
+    updateConversationMessages(conversationId, () => pendingMessages)
     setDraft('')
     thinkingStartedAtRef.current = Date.now()
     setThinkingSeconds(0)
@@ -1277,12 +1343,21 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
       if (usesQuota && deviceState.keyStatus === 'FROZEN') {
         throw new Error('当前账号暂不可用，请前往网站查看账号状态后再继续')
       }
+      let conversationGeneration: number | undefined
+      try {
+        const conversationDocument = await window.modmind.conversations.create(project.path, { id: conversationId, surface: 'inspiration', title: conversations.find((entry) => entry.id === conversationId)?.title, view: { messages: pendingMessages } })
+        conversationGeneration = conversationDocument.generation
+        conversationGenerationRef.current.set(conversationId, conversationGeneration)
+        await window.modmind.conversations.saveView(project.path, conversationId, conversationGeneration, { messages: pendingMessages })
+      } catch (error) {
+        setPersistenceWarning(`统一对话存储暂不可用，将保留本地兼容历史：${errorMessage(error)}`)
+      }
       const result = await window.modmind.ai.createCode(
         inspirationPrompt,
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { surface: 'inspiration', sessionScope: `inspiration/${conversationId}`, resumeSession, inspirationQuestion: content, projectPath: project.path, fallbackPrompt: inspirationPrompt }
+        { surface: 'inspiration', sessionScope: `inspiration/${conversationId}`, resumeSession, inspirationQuestion: content, projectPath: project.path, fallbackPrompt: fallbackInspirationPrompt, conversationId, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
       )
       if (sendToken !== sendTokenRef.current) return
       const reply = finalInspirationReply(result)
@@ -1372,12 +1447,10 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
           <div className="inspiration-project"><span className="project-launcher-icon project"><Box size={18} /></span><div><strong>{project.name}</strong><small>{platformLabel(project.loader)} · {project.minecraftVersion}</small></div></div>
           <dl><div><dt>命名空间</dt><dd>{project.namespace}</dd></div><div><dt>项目位置</dt><dd title={project.path}>{project.path}</dd></div></dl>
            <div className="inspiration-quick"><span>快速提问</span>{quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => void send(prompt)}>{prompt}<ChevronRight size={14} /></button>)}</div>
-           <div className="inspiration-history"><span>历史对话</span>{conversations.slice(0, 8).map((conversation) => <button key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''} type="button" onClick={() => selectConversation(conversation)}>{conversation.title}<small>{conversation.messages.length} 条消息</small></button>)}</div>
+           <div className="inspiration-history"><span>历史对话</span>{conversations.map((conversation) => <button key={conversation.id} className={conversation.id === activeConversationId ? 'active' : ''} type="button" onClick={() => selectConversation(conversation)}>{conversation.title}<small>{conversation.messages.length} 条消息</small></button>)}</div>
         </aside>
         <section className="inspiration-chat">
-          <div className="inspiration-messages">
-            {!messages.length ? <div className="inspiration-empty"><Lightbulb size={30} /><h2>从项目本身开始思考</h2><p>询问现有实现、技术风险、API 用法或玩法灵感</p></div> : null}
-            {inspirationRows.map((row) => {
+          <Virtuoso key={activeConversationId} className="inspiration-messages" data={visibleInspirationRows} computeItemKey={(_index, row) => row.id} initialTopMostItemIndex={Math.max(0, visibleInspirationRows.length - 1)} followOutput={busy ? 'auto' : 'smooth'} increaseViewportBy={400} components={{ EmptyPlaceholder: () => <div className="inspiration-empty"><Lightbulb size={30} /><h2>从项目本身开始思考</h2><p>询问现有实现、技术风险、API 用法或玩法灵感</p></div>, Footer: () => busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null }} itemContent={(_virtualIndex, row) => {
               if (row.kind === 'tool-group') return <InspirationStepGroup items={row.items} key={row.id} />
               const { message } = row
               const retryPrompt = message.role === 'assistant' && (message.status === 'error' || message.status === 'cancelled')
@@ -1387,10 +1460,7 @@ function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBac
                 <span>{message.role === 'assistant' ? <Bot size={16} /> : <UserRound size={16} />}</span>
                 <div><strong>{message.role === 'assistant' ? '灵感台' : '你'}</strong>{message.role === 'assistant' ? <><MarkdownMessage content={message.content} />{message.isFinal && message.status === 'completed' && !busy ? <button className="message-action" type="button" onClick={() => onSendToCoding(message.content)}><Code2 size={13} />交给工作台</button> : null}{message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}</> : <p>{message.content}</p>}{!busy ? <div className="inspiration-message-actions">{message.role === 'user' ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => void editInspirationMessage(row.index, message.content)}><Pencil size={12} /></button> : null}<button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => void deleteInspirationMessage(row.index)}><Trash2 size={12} /></button><button type="button" title={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} aria-label={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} onClick={() => void rewindInspirationTo(row.index)}><Undo2 size={12} /></button></div> : null}</div>
               </div>
-            })}
-            {busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null}
-            <div ref={endRef} />
-          </div>
+            }} />
           <div className="inspiration-composer">
             <textarea value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} placeholder="询问项目结构、API 用法或玩法灵感" />
              <div className="inspiration-composer-actions"><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy} onError={(error) => { if (uiMode !== 'advanced') updateActiveMessages((current) => [...current, { role: 'assistant', content: `无法添加附件：${errorMessage(error)}`, status: 'error' }]) }} />{busy ? <button className="secondary-button compact" type="button" onClick={cancelInspiration}><X size={14} />暂停任务</button> : null}<button className="send-button" title="发送" disabled={busy || (!draft.trim() && !attachments.length)} onClick={() => void send()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button></div>
@@ -1702,9 +1772,25 @@ export default function App(): React.JSX.Element {
       tone: 'danger',
       actionIcon: 'delete'
     })) return
-    setAiTimeline((current) => workbenchDeleteTimelineItem(current, id))
+    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    try {
+      const fork = await window.modmind.conversations.fork(projectPathRef.current, {
+        sourceConversationId: conversationId,
+        ...(selected?.turnId ? { beforeTurnId: selected.turnId } : { throughSequence: selected ? Math.max(0, aiTimelineRef.current.findIndex((item) => item.id === id) - 1) : undefined }),
+        view: { timeline: selected ? workbenchDeleteTimelineItem(aiTimelineRef.current, id) : aiTimelineRef.current },
+        backend: undefined
+      })
+      setWorkbenchConversations((current) => [...current, { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id) }])
+      setActiveWorkbenchConversationId(fork.id)
+      sessionResetConversationIdsRef.current.add(fork.id)
+      setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? [])
+      setNotice('已创建删除后的对话分支；原对话仍保留，可随时切回')
+    } catch (error) {
+      setAiTimeline((current) => workbenchDeleteTimelineItem(current, id))
+      sessionResetConversationIdsRef.current.add(conversationId)
+      setNotice(`分支保存失败，已暂时更新当前视图：${errorMessage(error)}`)
+    }
     setPendingWorkbenchEdit(null)
-    sessionResetConversationIdsRef.current.add(conversationId)
   }
   const handleRewindTimelineTo = async (id: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
@@ -1718,9 +1804,20 @@ export default function App(): React.JSX.Element {
       tone: 'danger',
       actionIcon: 'restore'
     })) return
-    setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
+    try {
+      const view = workbenchRewindTimelineTo(aiTimelineRef.current, id)
+      const fork = await window.modmind.conversations.fork(projectPathRef.current, { sourceConversationId: conversationId, ...(selected.turnId ? selected.kind === 'user' ? { beforeTurnId: selected.turnId } : { throughTurnId: selected.turnId } : { throughSequence: aiTimelineRef.current.findIndex((item) => item.id === id) }), view: { timeline: view }, backend: settingsRef.current.codingBackend })
+      setWorkbenchConversations((current) => [...current, { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id) }])
+      setActiveWorkbenchConversationId(fork.id)
+      if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
+      setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? view)
+      setNotice('已从此处创建新的对话分支；原对话仍保留')
+    } catch (error) {
+      setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
+      sessionResetConversationIdsRef.current.add(conversationId)
+      setNotice(`分支保存失败，已暂时截断当前视图：${errorMessage(error)}`)
+    }
     setPendingWorkbenchEdit(null)
-    sessionResetConversationIdsRef.current.add(conversationId)
   }
   const [events, setEvents] = useState<PipelineEvent[]>([])
   const [buildResult, setBuildResult] = useState<PreflightResult | null>(null)
@@ -2078,6 +2175,7 @@ export default function App(): React.JSX.Element {
       }, 0)
     }
     if (projectPath) {
+      await window.modmind.conversations.delete(projectPath, conversationId).catch((error) => setNotice(`原生会话清理未完全成功：${errorMessage(error)}`))
       void window.modmind.project.deleteWorkbenchData(`.modmind/workbench-timeline-${conversationId}.json`, projectPath).catch(() => undefined)
       if (isLegacyWorkbenchConversation(target)) {
         // The original conversation keeps the pre-beta 'workspace' scope: its
@@ -2138,6 +2236,7 @@ export default function App(): React.JSX.Element {
   const [aiHistoryLoadedKey, setAiHistoryLoadedKey] = useState('')
   const [workbenchPersistenceState, setWorkbenchPersistenceState] = useState<WorkbenchPersistenceState>('loading')
   const [workbenchPersistenceMessage, setWorkbenchPersistenceMessage] = useState('正在读取对话')
+  const conversationGenerationRef = useRef(new Map<string, number>())
   const aiOutputHistoryPath = project && activeWorkbenchConversationId ? `.modmind/workbench-timeline-${activeWorkbenchConversationId}.json` : ''
   // One conversation has one timeline across all execution backends.
   const aiOutputHistoryKey = project && activeWorkbenchConversationId ? `${project.path}:${activeWorkbenchConversationId}` : ''
@@ -2259,6 +2358,9 @@ export default function App(): React.JSX.Element {
           conversations = normalizeWorkbenchConversations(parsed)
           if (parsed.length > 0 && conversations.length === 0) throw new Error('对话索引中没有可安全恢复的条目')
         }
+        const durable = await window.modmind.conversations.list(projectPath, 'workspace').catch(() => [])
+        const durableConversations: WorkbenchConversation[] = durable.map((entry) => ({ id: entry.id, title: entry.title, createdAt: entry.createdAt, updatedAt: entry.updatedAt, sessionScope: workbenchSessionScope(entry.id) }))
+        conversations = [...durableConversations, ...conversations.filter((entry) => !durableConversations.some((durableEntry) => durableEntry.id === entry.id))]
         const indexPersistenceKey = `${projectPath}\n${workbenchConversationsFile}`
         if (stored.status === 'ok') persistedWorkbenchIndexRef.current.set(indexPersistenceKey, JSON.stringify(conversations))
         else persistedWorkbenchIndexRef.current.delete(indexPersistenceKey)
@@ -2507,6 +2609,17 @@ export default function App(): React.JSX.Element {
     setWorkbenchPersistenceMessage('正在校验对话历史')
     const loadHistory = async (): Promise<void> => {
       try {
+        const unified = await window.modmind.conversations.read(historyProjectPath, historyConversationId).catch(() => null)
+        if (unified) {
+          conversationGenerationRef.current.set(historyConversationId, unified.generation)
+          const history = replayWorkbenchEvents(parseStoredWorkbenchTimeline(unified.view.timeline), unified.events, humanizeActivity, humanizeOutput)
+          if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
+          setAiTimeline(history)
+          setAiHistoryLoadedKey(aiOutputHistoryKey)
+          setWorkbenchPersistenceState('ready')
+          setWorkbenchPersistenceMessage('统一对话历史已校验')
+          return
+        }
         let stored = await window.modmind.project.readWorkbenchData(aiOutputHistoryPath, historyProjectPath)
         if (stored.status === 'unavailable') throw new Error(stored.message ?? '对话历史无法通过完整性校验')
         let migratedFromLegacy = false
@@ -2530,6 +2643,8 @@ export default function App(): React.JSX.Element {
           if (!Array.isArray(parsed)) throw new Error('对话历史格式无效')
           history = parseStoredWorkbenchTimeline(parsed)
         }
+        const migrated = await window.modmind.conversations.create(historyProjectPath, { id: historyConversationId, surface: 'workspace', title: workbenchConversations.find((entry) => entry.id === historyConversationId)?.title, view: { timeline: history } })
+        conversationGenerationRef.current.set(historyConversationId, migrated.generation)
         if (cancelled || normalizeProjectPath(projectPathRef.current) !== normalizeProjectPath(historyProjectPath) || activeWorkbenchConversationIdRef.current !== historyConversationId) return
         const persistenceKey = `${historyProjectPath}\n${aiOutputHistoryKey}`
         const needsMigration = migratedFromLegacy || Boolean(localFallback)
@@ -2557,17 +2672,30 @@ export default function App(): React.JSX.Element {
     const content = JSON.stringify(aiTimeline)
     const persistenceKey = `${project.path}\n${aiOutputHistoryKey}`
     if (persistedWorkbenchTimelineRef.current.get(persistenceKey) === content || requestedWorkbenchTimelineRef.current.get(persistenceKey) === content) return
-    void persistWorkbenchTimelineNow(project.path, aiOutputHistoryPath, aiOutputHistoryKey, aiTimeline).then(async () => {
-      if (activeWorkbenchConversationId === WORKBENCH_LEGACY_SCOPE) {
-        await window.modmind.project.deleteWorkbenchData(legacyWorkbenchTimelineFile, project.path).catch(() => undefined)
-      }
-      try {
-        localStorage.removeItem(aiOutputHistoryKey)
-        localStorage.removeItem(`${project.path}:${settings.codingBackend}:${activeWorkbenchConversationId}`)
-        localStorage.removeItem(`${project.path}:${settings.codingBackend}`)
-      } catch { /* legacy browser storage is no longer authoritative */ }
-    }).catch(() => undefined)
+    const timer = window.setTimeout(() => {
+      void persistWorkbenchTimelineNow(project.path, aiOutputHistoryPath, aiOutputHistoryKey, aiTimeline).then(async () => {
+        if (activeWorkbenchConversationId === WORKBENCH_LEGACY_SCOPE) {
+          await window.modmind.project.deleteWorkbenchData(legacyWorkbenchTimelineFile, project.path).catch(() => undefined)
+        }
+        try {
+          localStorage.removeItem(aiOutputHistoryKey)
+          localStorage.removeItem(`${project.path}:${settings.codingBackend}:${activeWorkbenchConversationId}`)
+          localStorage.removeItem(`${project.path}:${settings.codingBackend}`)
+        } catch { /* legacy browser storage is no longer authoritative */ }
+      }).catch(() => undefined)
+    }, 250)
+    return () => window.clearTimeout(timer)
   }, [aiTimeline, aiHistoryLoadedKey, aiOutputHistoryKey])
+
+  useEffect(() => {
+    if (!project?.path || !activeWorkbenchConversationId || !aiHistoryLoadedKey) return
+    const generation = conversationGenerationRef.current.get(activeWorkbenchConversationId)
+    if (generation === undefined) return
+    const timer = window.setTimeout(() => {
+      void window.modmind.conversations.saveView(project.path, activeWorkbenchConversationId, generation, { timeline: aiTimeline }).catch(() => undefined)
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [aiTimeline, activeWorkbenchConversationId, aiHistoryLoadedKey, project?.path])
 
   useEffect(() => {
     if (settings.codingBackend === 'quota') return
@@ -2713,9 +2841,14 @@ export default function App(): React.JSX.Element {
       const backgroundKey = backgroundProjectPath(event.projectPath)
       if (event.sessionId?.startsWith('inspiration-')) return
       if (backgroundKey) {
+        const cachedConversation = projectWorkbenchCacheRef.current.get(backgroundKey)?.activeConversationId
+        if (event.conversationId && cachedConversation && event.conversationId !== cachedConversation) return
         storeBackgroundProgress(event, backgroundKey)
         return
       }
+      if (event.conversationId && event.conversationId !== activeWorkbenchConversationIdRef.current) return
+      const expectedGeneration = conversationGenerationRef.current.get(activeWorkbenchConversationIdRef.current)
+      if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
       if (switchingBackendRef.current && event.backend && event.backend !== switchingBackendRef.current) return
       if (event.backend) setRunningBackend(event.backend)
       setEvents((current) => [event, ...current])
@@ -2737,9 +2870,14 @@ export default function App(): React.JSX.Element {
       const backgroundKey = backgroundProjectPath(event.projectPath)
       if (event.sessionId?.startsWith('inspiration-')) return
       if (backgroundKey) {
+        const cachedConversation = projectWorkbenchCacheRef.current.get(backgroundKey)?.activeConversationId
+        if (event.conversationId && cachedConversation && event.conversationId !== cachedConversation) return
         storeBackgroundOutput(event, backgroundKey)
         return
       }
+      if (event.conversationId && event.conversationId !== activeWorkbenchConversationIdRef.current) return
+      const expectedGeneration = conversationGenerationRef.current.get(activeWorkbenchConversationIdRef.current)
+      if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
       if (switchingBackendRef.current && event.backend && event.backend !== switchingBackendRef.current) return
       if (event.backend) setRunningBackend(event.backend)
       setAiTimeline((current) => {
@@ -2948,7 +3086,7 @@ export default function App(): React.JSX.Element {
   }
 
   const removeRecentProject = async (recent: ProjectInfo): Promise<void> => {
-    if (!await requestConfirm({ title: `删除项目“${recent.name}”？`, message: '这会永久删除项目目录及其中的源代码、构建产物和快照，不能撤销', confirmLabel: '删除项目', tone: 'danger' })) return
+    if (!await requestConfirm({ title: `删除项目“${recent.name}”？`, message: '这会将项目目录及其中的源代码、构建产物和快照移入系统回收站', confirmLabel: '删除项目', tone: 'danger' })) return
     try {
       const remaining = await window.modmind.project.deleteProject(recent.path)
       setRecentProjects(remaining)
@@ -3278,7 +3416,7 @@ export default function App(): React.JSX.Element {
     }
     const idea = prompt.trim() || '请分析并使用我上传的附件'
     const requestPrompt = `${idea}${formatAiAttachmentContext(aiAttachments)}`
-    const promptHistoryKey = workbenchPromptHistoryStorageKey(taskProjectPath, activeConversation)
+    let promptHistoryKey = workbenchPromptHistoryStorageKey(taskProjectPath, activeConversation)
     let taskPromptHistory = workspacePromptHistoryRef.current.get(promptHistoryKey) ?? []
     try {
       const saved = JSON.parse(localStorage.getItem(promptHistoryKey) ?? '[]') as unknown
@@ -3291,10 +3429,32 @@ export default function App(): React.JSX.Element {
     const baseTimeline = editIndex >= 0 ? aiTimelineRef.current.slice(0, editIndex) : aiTimelineRef.current
     const isRewind = needsReset
     const dialogueContext = isRewind ? workbenchDialogueToText(workbenchFinalDialogue(baseTimeline)) : ''
+    const fallbackDialogueContext = workbenchDialogueToText(workbenchFinalDialogue(baseTimeline))
     const repeated = isRepeatedAiPrompt(requestPrompt, taskPromptHistory)
-    const promptForAgent = isRewind
+    let promptForAgent = isRewind
       ? `用户已重置对话上下文。项目文件保持当前状态，并且是判断现状的唯一依据。${dialogueContext ? `\n\n保留的最近对话：\n${dialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
       : repeated ? AI_CONTINUATION_PROMPT : requestPrompt
+    const fallbackPromptForAgent = `原生会话已不可用。请基于以下完整可见对话继续，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n完整可见对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
+    if (editIndex >= 0) {
+      const source = activeConversation
+      const selected = aiTimelineRef.current[editIndex]
+      try {
+        const fork = await window.modmind.conversations.fork(taskProjectPath, {
+          sourceConversationId: source.id,
+          ...(selected?.turnId ? { beforeTurnId: selected.turnId } : { throughSequence: Math.max(0, editIndex - 1) }),
+          view: { timeline: baseTimeline },
+          backend: selectedBackend
+        })
+        activeConversation = { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id) }
+        nextConversations = [...nextConversations, activeConversation]
+        promptHistoryKey = workbenchPromptHistoryStorageKey(taskProjectPath, activeConversation)
+        if (fork.parent?.nativeMode === 'native') promptForAgent = requestPrompt
+        setPendingWorkbenchEdit(null)
+      } catch (error) {
+        setNotice(`无法安全创建编辑分支，消息未发送：${errorMessage(error)}`)
+        return
+      }
+    }
     const sessionId = `coding-${Date.now()}`
     nextConversations = touchWorkbenchConversation(
       nextConversations,
@@ -3310,6 +3470,20 @@ export default function App(): React.JSX.Element {
     })
     const nextHistoryPath = `.modmind/workbench-timeline-${activeConversation.id}.json`
     const nextHistoryKey = `${taskProjectPath}:${activeConversation.id}`
+    let conversationGeneration: number | undefined
+    try {
+      const conversationDocument = await window.modmind.conversations.create(taskProjectPath, {
+        id: activeConversation.id,
+        surface: 'workspace',
+        title: nextConversations.find((item) => item.id === activeConversation!.id)?.title,
+        view: { timeline: nextTimeline }
+      })
+      conversationGeneration = conversationDocument.generation
+      conversationGenerationRef.current.set(activeConversation.id, conversationGeneration)
+      await window.modmind.conversations.saveView(taskProjectPath, activeConversation.id, conversationGeneration, { timeline: nextTimeline }, activeConversation.title)
+    } catch (error) {
+      setWorkbenchPersistenceMessage(`统一对话存储暂不可用，将保留兼容历史：${errorMessage(error)}`)
+    }
     try {
       await Promise.all([
         requireRedundantWorkbenchWrite(() => persistWorkbenchIndexNow(taskProjectPath, nextConversations), '对话索引'),
@@ -3406,7 +3580,7 @@ export default function App(): React.JSX.Element {
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { surface: 'workspace', sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: promptForAgent }
+        { surface: 'workspace', sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: fallbackPromptForAgent, conversationId: activeConversation.id, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
       )
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       storeProjectPlan(taskProjectPath, plan)

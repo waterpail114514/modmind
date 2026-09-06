@@ -166,7 +166,7 @@ export interface FtbQuestTaskDocument {
   id: string
   type: string
   title?: string
-  item?: string
+  /** 所有类型专属字段（item、count、entity、value…）都保存在 raw 中并原样读写。 */
   raw: Record<string, unknown>
 }
 
@@ -174,10 +174,7 @@ export interface FtbQuestRewardDocument {
   id: string
   type: string
   title?: string
-  item?: string
-  count?: number
-  xp?: number
-  command?: string
+  /** 所有类型专属字段（item、count、xp、command…）都保存在 raw 中并原样读写。 */
   raw: Record<string, unknown>
 }
 
@@ -193,6 +190,10 @@ export interface FtbQuestDocumentQuest {
   x: number
   y: number
   dependencies: string[]
+  /** 完成依赖任务的最少数量；未设置时表示需要全部完成。 */
+  minRequiredTasks?: number
+  /** 隐藏依赖连线（游戏中只显示依赖图标）。 */
+  hideDependencyLines?: boolean
   tasks: FtbQuestTaskDocument[]
   rewards: FtbQuestRewardDocument[]
   raw: Record<string, unknown>
@@ -214,7 +215,35 @@ export interface FtbQuestBook {
   format: FtbQuestBookFormat
   root: string
   chapters: FtbQuestDocumentChapter[]
+  /** 奖励表（reward_tables/ 目录，每表一个文件）。 */
+  rewardTables: FtbQuestRewardTable[]
   diagnostics: FtbQuestDiagnostic[]
+}
+
+/** 奖励表中的单个条目：一个奖励 + 抽取权重。 */
+export interface FtbQuestRewardTableEntry {
+  id: string
+  type: string
+  title?: string
+  /** 抽取权重（游戏默认 1.0）。 */
+  weight: number
+  /** 类型专属字段（item、count、xp…）原样读写。 */
+  raw: Record<string, unknown>
+}
+
+/** FTB Quests 奖励表，存储于 reward_tables/{filename}.snbt/json5。 */
+export interface FtbQuestRewardTable {
+  id: string
+  filename: string
+  source: string
+  title: string
+  useTitle: boolean
+  hideTooltip: boolean
+  emptyWeight: number
+  lootSize: number
+  lootCrate: { stringId: string; itemName: string; color: number; glow: boolean; passive: number; monster: number; boss: number } | null
+  rewards: FtbQuestRewardTableEntry[]
+  raw: Record<string, unknown>
 }
 
 export interface FtbQuestSaveResult {
@@ -526,6 +555,23 @@ export interface AiAttachment {
   isDirectory?: boolean
 }
 
+/** 从整合包 mod jar 提取出的物品图标。动画贴图为纵向精灵图，渲染端按帧裁剪并播放。 */
+export interface FtbQuestIconResult {
+  url: string
+  frameWidth: number
+  frameHeight: number
+  frameCount: number
+  frametimeMs: number
+  animated: boolean
+}
+
+/** 任务节点形状的三层贴图。 */
+export interface FtbQuestShapeSet {
+  shape: string
+  background: string
+  outline: string
+}
+
 /** Structured user-turn data retained for edit, resend, and context rebuilds. */
 export interface AiTurnReplay {
   prompt: string
@@ -546,6 +592,11 @@ export interface PipelineEvent {
   sessionId?: string
   projectPath?: string
   runId?: string
+  conversationId?: string
+  generation?: number
+  turnId?: string
+  sequence?: number
+  eventId?: string
   /** Backend that actually produced this event. */
   backend?: CodingBackend
   stage: PipelineStage
@@ -835,6 +886,17 @@ export interface AiOutputEvent {
   sessionId?: string
   projectPath?: string
   runId?: string
+  /** Durable conversation routing. Events without these fields are legacy-only. */
+  conversationId?: string
+  generation?: number
+  turnId?: string
+  /** Monotonic within one conversation generation; used for replay and dedupe. */
+  sequence?: number
+  eventId?: string
+  /** Stable provider item identity. Deltas for one item may update its projection. */
+  itemId?: string
+  /** Stable stream identity used to merge only the active streaming item. */
+  streamId?: string
   /** Backend that actually produced this event. */
   backend?: CodingBackend
   /** Latest CLI-reported token usage; lets the workbench show context occupancy. */
@@ -850,6 +912,8 @@ export interface InspirationChatMessage {
   id?: string
   time?: string
   sessionId?: string
+  turnId?: string
+  sequence?: number
   content: string
   status?: 'streaming' | 'completed' | 'error' | 'cancelled'
   dedupeKey?: string
@@ -859,6 +923,91 @@ export interface InspirationChatMessage {
 }
 
 export type AiSurface = 'workspace' | 'inspiration'
+
+export type ConversationEventKind = 'user' | 'progress' | 'output' | 'system'
+
+export interface ConversationEventRecord {
+  eventId: string
+  conversationId: string
+  generation: number
+  turnId: string
+  runId?: string
+  sequence: number
+  kind: ConversationEventKind
+  time: string
+  payload: unknown
+}
+
+export interface ConversationNativeState {
+  sessionId: string
+  sessionHome?: string
+  lastModmindTurnId?: string
+  /** Native turn corresponding to the latest completed ModMind turn. */
+  lastTurnId?: string
+  updatedAt: string
+}
+
+export interface ConversationBranchPoint {
+  conversationId: string
+  generation: number
+  turnId?: string
+  nativeTurnId?: string
+  boundary?: 'before' | 'through'
+  sequence?: number
+  /** Claude cannot fork at an arbitrary historical turn and uses this fallback. */
+  nativeMode: 'native' | 'visible-history-rebuild'
+}
+
+export interface ConversationSummary {
+  id: string
+  surface: AiSurface
+  title: string
+  createdAt: string
+  updatedAt: string
+  generation: number
+  archived?: boolean
+  parent?: ConversationBranchPoint
+}
+
+export interface ConversationDocument extends ConversationSummary {
+  schemaVersion: 2
+  lastSequence: number
+  checkpointSequence: number
+  events: ConversationEventRecord[]
+  /** Renderer-owned projection. Durable events remain the recovery authority. */
+  view: { timeline?: unknown[]; messages?: InspirationChatMessage[] }
+  native: Partial<Record<CodingBackend, ConversationNativeState>>
+  nativeTurns: Record<string, Partial<Record<CodingBackend, string>>>
+  /** A native fork is consumed once by the first turn on this branch. */
+  nativeForkPending?: boolean
+}
+
+export interface ConversationCreateInput {
+  id?: string
+  surface: AiSurface
+  title?: string
+  view?: ConversationDocument['view']
+}
+
+export interface ConversationForkInput {
+  sourceConversationId: string
+  id?: string
+  title?: string
+  beforeTurnId?: string
+  throughTurnId?: string
+  throughSequence?: number
+  view: ConversationDocument['view']
+  /** Backend selected for the first turn on the branch. */
+  backend?: CodingBackend
+}
+
+export interface ConversationEventsPage {
+  conversationId: string
+  generation: number
+  checkpointSequence: number
+  events: ConversationEventRecord[]
+  nextSequence: number | null
+}
 
 export interface AiCreateCodeOptions {
   surface?: AiSurface
@@ -872,6 +1021,12 @@ export interface AiCreateCodeOptions {
   fallbackPrompt?: string
   /** Internal identity shared by all retry attempts of one AI run. */
   runId?: string
+  /** Required by current renderers; optional only for legacy IPC callers. */
+  conversationId?: string
+  generation?: number
+  turnId?: string
+  /** Pending native branch operation created by edit/rewind. */
+  forkFrom?: { sessionId: string; lastTurnId?: string; beforeTurnId?: string; nativeMode: 'native' | 'visible-history-rebuild' }
 }
 
 export interface AiProjectTaskState {
@@ -1116,6 +1271,11 @@ export interface ModMindApi {
     plan: (concept: unknown) => Promise<unknown>
     applyPlan: (plan: unknown) => Promise<unknown>
     readFtbQuestBook: () => Promise<FtbQuestBook>
+    ftbQuestIcon: (itemId: string) => Promise<FtbQuestIconResult | null>
+    /** 批量解析模组物品/流体显示名（zh_cn 优先，en_us 兜底）；原版命名空间由渲染端 CDN 处理。 */
+    ftbQuestItemNames: (itemIds: string[]) => Promise<Record<string, string>>
+    ftbDependencyTexture: () => Promise<string | null>
+    ftbQuestShapes: () => Promise<Record<string, FtbQuestShapeSet>>
     saveFtbQuestBook: (book: FtbQuestBook) => Promise<FtbQuestSaveResult>
     writeFtbQuest: (input: unknown) => Promise<string>
     writePatchouliBook: (input: unknown) => Promise<string[]>
@@ -1199,6 +1359,17 @@ export interface ModMindApi {
     restoreRecovery: () => Promise<SnapshotInfo | null>
     onProgress: (listener: (event: PipelineEvent) => void) => () => void
     onOutput: (listener: (event: AiOutputEvent) => void) => () => void
+  }
+  conversations: {
+    list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => Promise<ConversationSummary[]>
+    read: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
+    create: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
+    saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
+    eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => Promise<ConversationEventsPage>
+    fork: (projectPath: string, input: ConversationForkInput) => Promise<ConversationDocument>
+    archive: (projectPath: string, conversationId: string, archived: boolean) => Promise<ConversationDocument>
+    delete: (projectPath: string, conversationId: string) => Promise<void>
+    flush: () => Promise<void>
   }
   beginnerCodex: {
     prepare: (projectPath?: string) => Promise<BeginnerCodexPreparationResult>

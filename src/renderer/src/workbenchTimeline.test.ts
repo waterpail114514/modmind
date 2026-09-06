@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { appendUserTurn, normalizeStoredWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, workbenchContextUsageState, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
+import { appendUserTurn, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEvents, workbenchContextUsageState, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
+import type { ConversationEventRecord } from '../../shared/types'
 
 describe('workbench timeline adapter', () => {
   it('merges streaming deltas into one assistant message', () => {
@@ -57,6 +58,33 @@ describe('workbench timeline adapter', () => {
     expect(appendUserTurn([], '制作矿石', 'r1')[0]).toMatchObject({ kind: 'user', content: '制作矿石' })
   })
 
+  it('restores mixed legacy and sequenced records by event time', () => {
+    const mixed: WorkbenchTimelineItem[] = [
+      { id: 'new-answer', kind: 'answer', content: '完成', time: '2026-09-05T15:43:48.758Z', sequence: 1252 },
+      { id: 'old-user', kind: 'user', content: '制作整合包', time: '2026-09-05T15:28:06.359Z' },
+      { id: 'old-tool', kind: 'tool', content: '读取文件', time: '2026-09-05T15:28:16.903Z' },
+      { id: 'new-complete', kind: 'tool', content: '任务完成', time: '2026-09-05T15:43:48.758Z', sequence: 1253 }
+    ]
+    expect(normalizeWorkbenchTimeline(mixed).map((item) => item.id)).toEqual(['old-user', 'old-tool', 'new-answer', 'new-complete'])
+  })
+
+  it('does not expose internal workflow prompts as user history', () => {
+    const internal = 'SYSTEM WORKFLOW INSTRUCTIONS:\nMANAGED DOWNLOAD POLICY.'
+    expect(isWorkbenchInternalPrompt(internal)).toBe(true)
+    expect(normalizeWorkbenchTimeline([
+      { id: 'system', kind: 'user', content: internal, time: '2026-08-26T06:28:46.223Z' },
+      { id: 'visible', kind: 'user', content: '制作整合包', time: '2026-08-26T06:29:00.000Z' }
+    ]).map((item) => item.id)).toEqual(['visible'])
+  })
+
+  it('groups durable event ids by turn instead of splitting every delta', () => {
+    const first = reduceWorkbenchOutput([], { kind: 'delta', content: '你', time: 'T1', turnId: 'turn-1', eventId: 'event-1', sequence: 1 })
+    const second = reduceWorkbenchOutput(first, { kind: 'delta', content: '好', time: 'T2', turnId: 'turn-1', eventId: 'event-2', sequence: 2 })
+    const completed = reduceWorkbenchOutput(second, { kind: 'response', content: '你好', time: 'T3', turnId: 'turn-1', eventId: 'event-3', sequence: 3 })
+    expect(completed).toHaveLength(1)
+    expect(completed[0]).toMatchObject({ id: 'turn-1:assistant', content: '你好', sequence: 3 })
+  })
+
   it('prefers structured replay data while legacy text remains a fallback', () => {
     const item = appendUserTurn([], '制作矿石\n\n附件：设计.png', 'r1', 'T01', {
       prompt: '制作矿石',
@@ -71,6 +99,34 @@ describe('workbench timeline adapter', () => {
     expect(workbenchContextUsageState(undefined)).toEqual({ kind: 'waiting' })
     expect(workbenchContextUsageState({ inputTokens: 24_763, outputTokens: 122 })).toEqual({ kind: 'tokens' })
     expect(workbenchContextUsageState({ inputTokens: 80_000, contextWindow: 100_000 })).toEqual({ kind: 'capacity', ratio: 0.8, percent: 80 })
+  })
+
+  it('keeps the final answer after retries and tools even when response arrived first', () => {
+    let items = reduceWorkbenchOutput([], { kind: 'response', content: '先说明进度', time: 'T1', runId: 'r1', turnId: 'turn-1', sequence: 2 })
+    items = reduceWorkbenchOutput(items, { kind: 'retry', content: '上游暂时不可用', time: 'T2', runId: 'r1', turnId: 'turn-1', sequence: 3 })
+    items = reduceWorkbenchOutput(items, { kind: 'tool', content: '读取文件', time: 'T3', runId: 'r1', turnId: 'turn-1', sequence: 4 })
+    items = reduceWorkbenchOutput(items, { kind: 'answer', content: '最终答案', time: 'T4', runId: 'r1', turnId: 'turn-1', sequence: 5 })
+    expect(items.map((item) => item.kind)).toEqual(['response', 'retry', 'tool', 'answer'])
+    expect(items.at(-1)).toMatchObject({ kind: 'answer', content: '最终答案', sequence: 5 })
+  })
+
+  it('preserves repeated stages as separate historical items', () => {
+    let items = reduceWorkbenchProgress([], { id: 'p1', runId: 'r1', turnId: 'turn-1', stage: 'planning', title: '规划 1', detail: '', status: 'success', time: 'T1', sequence: 1 })
+    items = reduceWorkbenchProgress(items, { id: 'p2', runId: 'r1', turnId: 'turn-1', stage: 'planning', title: '规划 2', detail: '', status: 'success', time: 'T2', sequence: 2 })
+    expect(items).toHaveLength(2)
+    expect(items.map((item) => item.content.split('\n')[0])).toEqual(['规划 1', '规划 2'])
+  })
+
+  it('replays the complete durable journal without dropping tool history', () => {
+    const events: ConversationEventRecord[] = [
+      { eventId: 'u1', conversationId: 'ws-1', generation: 0, turnId: 'turn-1', sequence: 1, kind: 'user', time: 'T1', payload: { prompt: '做一个整合包' } },
+      { eventId: 'p1', conversationId: 'ws-1', generation: 0, turnId: 'turn-1', sequence: 2, kind: 'progress', time: 'T2', payload: { id: 'p1', runId: 'r1', turnId: 'turn-1', stage: 'planning', title: '规划', detail: '', status: 'success', time: 'T2' } },
+      { eventId: 't1', conversationId: 'ws-1', generation: 0, turnId: 'turn-1', sequence: 3, kind: 'output', time: 'T3', payload: { kind: 'tool', content: '读取文件', time: 'T3', runId: 'r1', turnId: 'turn-1' } },
+      { eventId: 'a1', conversationId: 'ws-1', generation: 0, turnId: 'turn-1', sequence: 4, kind: 'output', time: 'T4', payload: { kind: 'answer', content: '完成', time: 'T4', runId: 'r1', turnId: 'turn-1' } }
+    ]
+    const replayed = replayWorkbenchEvents([], events)
+    expect(replayed.map((item) => item.kind)).toEqual(['user', 'tool', 'tool', 'answer'])
+    expect(replayed.map((item) => item.sequence)).toEqual([1, 2, 3, 4])
   })
 
   it('preserves recoverable errors as step metadata instead of terminal failures', () => {

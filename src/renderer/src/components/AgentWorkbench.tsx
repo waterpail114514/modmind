@@ -6,8 +6,9 @@
  * ConversationPlanBar and SendBox. ModMind-specific project actions and event
  * adapters remain local.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
+import { Virtuoso } from 'react-virtuoso'
 import {
   Archive,
   ArrowUp,
@@ -117,18 +118,23 @@ type AgentWorkbenchProps = {
   onRewindTimelineTo?: (id: string) => void
 }
 
-function MarkdownMessage({ content }: { content: string }): React.JSX.Element {
-  const renderer = new marked.Renderer()
-  renderer.html = ({ text }) => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-  renderer.link = ({ href, text }) => {
-    const safeText = text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-    if (!/^https?:\/\//i.test(href)) return safeText
-    const safeHref = href.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-    return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeText}</a>`
+const markdownRenderer = new marked.Renderer()
+const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
+markdownRenderer.html = ({ text }) => escapeHtml(text)
+markdownRenderer.link = ({ href, text }) => /^https?:\/\//i.test(href)
+  ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`
+  : escapeHtml(text)
+const markdownCache = new Map<string, string>()
+
+export const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }): React.JSX.Element {
+  let html = markdownCache.get(content)
+  if (html === undefined) {
+    html = marked.parse(content, { async: false, gfm: true, breaks: true, renderer: markdownRenderer })
+    markdownCache.set(content, html)
+    if (markdownCache.size > 500) markdownCache.delete(markdownCache.keys().next().value ?? '')
   }
-  const html = marked.parse(content, { async: false, gfm: true, breaks: true, renderer })
   return <div className="agent-markdown" dangerouslySetInnerHTML={{ __html: html }} />
-}
+})
 
 function backendLabel(backend: AgentSettings['codingBackend']): string {
   return backend === 'quota' ? '智能引擎' : backend === 'codex' ? 'Codex' : 'Claude Code'
@@ -216,7 +222,10 @@ function ThinkingItem({ item, content }: { item: AgentWorkbenchTimelineItem; con
 
 function ToolGroup({ items, humanizeActivity }: { items: AgentWorkbenchTimelineItem[]; humanizeActivity: (value: string) => string }): React.JSX.Element {
   const running = items.some((item) => item.status === 'running')
-  const [expanded, setExpanded] = useState(running)
+  // Keep every historical step visible by default. Users may still collapse a
+  // group manually, but the compact header must not be the only representation
+  // of a completed run.
+  const [expanded, setExpanded] = useState(false)
   useEffect(() => { if (running) setExpanded(true) }, [running])
   return <section className="agent-tool-group">
     <button type="button" className="agent-disclosure-header" onClick={() => setExpanded((value) => !value)}>
@@ -304,8 +313,8 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
       if (confirmed) props.onDeleteConversation(conversation.id)
     })
   }
-  const [followBottom, setFollowBottom] = useState(true)
-  const timelineRef = useRef<HTMLDivElement | null>(null)
+  // Keep the complete persisted projection. Disclosure groups are presentation
+  // only and must never remove historical items from the model.
   const displayedTimeline = useMemo(() => aiTimeline, [aiTimeline])
   const timelineRows = useMemo(() => groupTimeline(displayedTimeline), [displayedTimeline])
   const hasLiveThinking = displayedTimeline.some((item) => item.kind === 'thinking' && item.status === 'running')
@@ -370,17 +379,6 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
     document.addEventListener('pointerdown', closeOnOutsidePointer)
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
   }, [conversationPickerOpen])
-  useEffect(() => {
-    const element = timelineRef.current
-    if (!element || !followBottom) return
-    element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' })
-  }, [timelineRows, followBottom])
-  const handleScroll = (): void => {
-    const element = timelineRef.current
-    if (!element) return
-    setFollowBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 36)
-  }
-
   return <div className="agent-workbench">
     <header className="agent-workbench-header">
       <div className="agent-workbench-title"><span className="agent-title-icon">{backendIcon(effectiveBackend, 17)}</span><h1>{project.name}</h1><button type="button" className="agent-title-edit" title="重命名项目" aria-label="重命名项目" onClick={props.onRename}><Pencil size={13} /></button></div>
@@ -410,10 +408,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
 
     {props.aiRecovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{props.aiRecovery.backend ? `，将使用 ${backendLabel(props.aiRecovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
 
-    <div ref={timelineRef} className="agent-conversation" onScroll={handleScroll}><div className="agent-conversation-surface">
-      {timelineRows.length ? timelineRows.map((row) => row.kind === 'tool-group' ? <ToolGroup key={row.id} items={row.items} humanizeActivity={props.humanizeActivity} /> : <TimelineItem key={row.id} item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />) : <div className="agent-empty"><span className="agent-empty-avatar">{backendIcon(effectiveBackend, 24)}</span><strong>{backendLabel(effectiveBackend)}</strong><span>有什么我可以帮助你的？</span></div>}
-      {taskState === 'success' && aiPlan ? <div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />进入游戏测试</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div> : null}
-    </div></div>
+    {timelineRows.length ? <Virtuoso className="agent-conversation" data={timelineRows} computeItemKey={(_index, row) => row.id} initialTopMostItemIndex={timelineRows.length - 1} followOutput={planning ? 'auto' : 'smooth'} increaseViewportBy={400} itemContent={(_index, row) => <div className="agent-conversation-row">{row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />}</div>} components={{ Footer: () => taskState === 'success' && aiPlan ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />进入游戏测试</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null }} /> : <div className="agent-conversation"><div className="agent-conversation-surface"><div className="agent-empty"><span className="agent-empty-avatar">{backendIcon(effectiveBackend, 24)}</span><strong>{backendLabel(effectiveBackend)}</strong><span>有什么我可以帮助你的？</span></div></div></div>}
 
     <div className="agent-composer-stack">
       {planning ? <PlanBar todo={aiTodo} /> : null}
