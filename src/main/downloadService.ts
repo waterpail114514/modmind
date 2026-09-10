@@ -160,7 +160,25 @@ async function streamDownload(
 }
 
 export class DownloadManager {
-  async download(request: DownloadRequest): Promise<DownloadResult> {
+  private readonly shutdownController = new AbortController()
+  private readonly pending = new Set<Promise<DownloadResult>>()
+  beginShutdown(): void { this.shutdownController.abort() }
+  async shutdown(): Promise<void> {
+    this.beginShutdown()
+    await Promise.allSettled([...this.pending])
+  }
+
+  download(request: DownloadRequest): Promise<DownloadResult> {
+    const operation = this.performDownload(request)
+    this.pending.add(operation)
+    void operation.finally(() => this.pending.delete(operation)).catch(() => undefined)
+    return operation
+  }
+
+  private async performDownload(request: DownloadRequest): Promise<DownloadResult> {
+    if (this.shutdownController.signal.aborted) throw new Error('应用正在退出，不能开始下载')
+    request = { ...request, signal: AbortSignal.any([this.shutdownController.signal, ...(request.signal ? [request.signal] : [])]) }
+
     const sources = normalizeSources(request.sources)
     if (!sources.length) throw new Error('no valid HTTPS download sources were provided')
     const maxBytes = request.maxBytes ?? DEFAULT_MAX_BYTES

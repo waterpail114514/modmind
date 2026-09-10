@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ThreadSearchOccurrencesResponse",
+  "type": "object",
+  "required": [
+    "data"
+  ],
+  "properties": {
+    "data": {
+      "description": "Occurrences in chronological message order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ThreadSearchOccurrence"
+      }
+    },
+    "nextCursor": {
+      "description": "Opaque cursor to continue after the last returned occurrence.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "definitions": {
+    "ThreadSearchOccurrence": {
+      "description": "One visible message occurrence returned by [`ThreadSearchOccurrencesResponse`].",
+      "type": "object",
+      "required": [
+        "itemId",
+        "snippet",
+        "snippetMatchRange",
+        "turnCursor",
+        "turnId"
+      ],
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string"
+        },
+        "snippetMatchRange": {
+          "description": "Match range within `snippet`, in UTF-16 code units.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ThreadSearchTextRange"
+            }
+          ]
+        },
+        "turnCursor": {
+          "description": "Opaque inclusive cursor accepted by `thread/turns/list` for this turn.",
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadSearchTextRange": {
+      "description": "UTF-16 code-unit range within `snippet`.",
+      "type": "object",
+      "required": [
+        "end",
+        "start"
+      ],
+      "properties": {
+        "end": {
+          "description": "Exclusive UTF-16 code-unit offset.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "start": {
+          "description": "Inclusive UTF-16 code-unit offset.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    }
+  }
+}

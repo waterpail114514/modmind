@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import ffmpegPath from 'ffmpeg-static'
+import { spawnManaged } from './processTree'
 import type {
   AudioImportInput,
   ContentCreateInput,
@@ -152,9 +152,9 @@ async function mergeJsonObject(target: string, values: Record<string, unknown>):
 
 async function runFfmpeg(source: string, destination: string): Promise<void> {
   if (!ffmpegPath) throw new Error('当前安装不包含 FFmpeg，无法转换音频')
-  const executable = ffmpegPath
+  const executable = ffmpegPath.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(executable, ['-y', '-i', source, '-vn', '-c:a', 'libvorbis', '-q:a', '5', destination], {
+    const child = spawnManaged(executable, ['-y', '-i', source, '-vn', '-c:a', 'libvorbis', '-q:a', '5', destination], {
       windowsHide: true,
       stdio: ['ignore', 'ignore', 'pipe']
     })

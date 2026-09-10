@@ -33,10 +33,12 @@
 .mc-test-main { min-width: 0; min-height: 0; padding: 22px 28px 32px; overflow: auto; }
 .mc-crash-panel { margin: -22px -28px 22px; padding: 16px 28px 18px; border-bottom: 1px solid #e2c5c2; background: #fff6f5; }
 .mc-crash-heading { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 9px; }
+.mc-crash-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .mc-crash-heading > span { width: 28px; height: 28px; display: grid; place-items: center; color: #a72f27; }
 .mc-crash-heading h2 { margin: 0; color: #8e2822; font-size: 12px; }
 .mc-crash-heading p { margin: 4px 0 0; max-width: 640px; overflow: hidden; color: #8b6562; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .mc-crash-panel pre { max-height: 150px; margin: 12px 0 0; padding: 10px 12px; overflow: auto; border: 1px solid #ead1ce; background: #fff; color: #5f3c39; font: 9px/1.55 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; }
+@media (max-width: 720px) { .mc-crash-heading { grid-template-columns: 28px minmax(0,1fr); } .mc-crash-actions { grid-column: 1 / -1; justify-content: flex-start; } }
 .mc-mods-section { border-bottom: 1px solid #dfdfe2; padding-bottom: 22px; }
 .mc-section-heading { min-height: 34px; display: flex; align-items: flex-start; justify-content: space-between; }
 .mc-section-heading h2 { display: flex; align-items: center; gap: 6px; }

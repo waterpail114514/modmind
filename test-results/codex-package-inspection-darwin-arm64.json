@@ -1,0 +1,22 @@
+{
+  "version": "0.146.0",
+  "inspectedAt": "2026-09-09T15:58:09.493Z",
+  "targets": [
+    {
+      "id": "darwin-arm64",
+      "archiveName": "codex-0.146.0-darwin-arm64.tgz",
+      "executableRelativePath": "package/vendor/aarch64-apple-darwin/bin/codex",
+      "integrity": "sha512-nb61yX4r5L6Z0dlC4o3u0GAK1YCd4TUvjaB382bajDoh84V+uv2hTBIVZ++fgXWV9yoeuNrNnNcn7GoTGOe2Tg==",
+      "sha512": "9dbeb5c97e2be4be99d1d942e28deed0600ad5809de1352f8da077f366da8c3a21f3857ebafda14c121567ef9f817595f72a1eb8dacd9cd727ec6a1318e7b64e",
+      "files": [
+        "package/vendor/aarch64-apple-darwin/bin/codex",
+        "package/vendor/aarch64-apple-darwin/bin/codex-code-mode-host",
+        "package/vendor/aarch64-apple-darwin/codex-path/rg",
+        "package/vendor/aarch64-apple-darwin/codex-resources/zsh/bin/zsh",
+        "package/vendor/aarch64-apple-darwin/codex-package.json",
+        "package/package.json",
+        "package/README.md"
+      ]
+    }
+  ]
+}

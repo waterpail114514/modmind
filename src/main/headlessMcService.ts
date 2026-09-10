@@ -1,12 +1,13 @@
+import { spawnManaged, stopProcessTree } from './processTree'
 import { createHash } from 'node:crypto'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { JavaLoaderKind, ProjectInfo } from '../shared/types'
 import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from '../shared/minecraft'
 import { verifiedDownload } from './downloadService'
 import { downloadActivities } from './downloadActivityService'
-import { windowsCmdInvocation } from './windowsCommand'
+import { openInteractiveTerminal } from './nativeTerminal'
 
 export const HEADLESS_MC_VERSION = '2.10.0'
 export const HEADLESS_MC_LAUNCHER_URL = `https://github.com/headlesshq/headlessmc/releases/download/${HEADLESS_MC_VERSION}/headlessmc-launcher-${HEADLESS_MC_VERSION}.jar`
@@ -63,19 +64,9 @@ export class HeadlessMcService {
   isRunning(): boolean { return Boolean(this.child && this.child.exitCode === null && !this.child.killed) }
 
   async openLoginConsole(javaPath: string): Promise<void> {
-    if (process.platform !== 'win32') throw new Error('请在终端中启动 HeadlessMC 并执行 login 完成账号配置')
     if (!await isFile(javaPath)) throw new Error('HeadlessMC 找不到可用于登录的 Java 运行时')
     const launcherPath = await this.ensureLauncher()
-    const invocation = windowsCmdInvocation(javaPath, ['-jar', launcherPath], '/k')
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: this.root,
-      detached: true,
-      windowsHide: false,
-      shell: false,
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-      stdio: 'ignore'
-    })
-    child.unref()
+    await openInteractiveTerminal({ executable: javaPath, args: ['-jar', launcherPath], cwd: this.root }, path.join(this.options.userDataDirectory, 'terminal-sessions'))
   }
 
   async stop(): Promise<void> {
@@ -83,7 +74,7 @@ export class HeadlessMcService {
     const child = this.child
     if (!child) return
     try { child.stdin.write('exit\n') } catch { /* The child may have already closed stdin. */ }
-    this.killProcessTree(child)
+    await this.killProcessTree(child)
     await this.waitForExit(child, 5_000)
     if (this.child === child) this.child = null
   }
@@ -121,7 +112,7 @@ export class HeadlessMcService {
     ]
     this.emit('headless-testing', `启动 HeadlessMC ${HEADLESS_MC_VERSION}`)
     this.emit('headless-testing', `无头命令：${command}`)
-    const child = spawn(input.javaPath, [
+    const child = spawnManaged(input.javaPath, [
       ...launcherArguments,
       '-jar',
       launcherPath
@@ -280,18 +271,12 @@ export class HeadlessMcService {
     return `HeadlessMC 已退出，代码 ${code ?? '未知'}${detail ? `\n${detail}` : ''}`
   }
 
-  private killProcessTree(child: ChildProcessWithoutNullStreams): void {
-    if (!child.pid) return
-    if (process.platform === 'win32') {
-      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, shell: false })
-      killer.unref()
-    } else {
-      child.kill('SIGTERM')
-    }
+  private killProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
+    return stopProcessTree(child)
   }
 
   private async waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<void> {
-    if (child.exitCode !== null) return
+    if (child.exitCode !== null || child.signalCode !== null) return
     await Promise.race([
       new Promise<void>((resolve) => child.once('exit', () => resolve())),
       delay(timeoutMs)

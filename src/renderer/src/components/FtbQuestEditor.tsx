@@ -1,12 +1,62 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, Background, BaseEdge, Controls, Handle, MiniMap, Position, ReactFlow, useEdgesState, useNodesState, useStore, type Connection, type Edge, type EdgeMouseHandler, type EdgeProps, type Node, type NodeChange, type NodeMouseHandler, type ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { AlertTriangle, BookOpen, ChevronLeft, ChevronRight, CirclePlus, ClipboardCheck, FileCode2, FilePlus2, FolderTree, Gift, LoaderCircle, PackageOpen, Plus, Redo2, RotateCw, Save, Settings2, Trash2, Undo2, Unlink, X } from 'lucide-react'
-import type { FtbQuestBook, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestIconResult, FtbQuestRewardDocument, FtbQuestRewardTable, FtbQuestShapeSet, FtbQuestTaskDocument, ProjectInfo } from '../../../shared/types'
+import type { FtbQuestBook, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestIconInspection, FtbQuestRewardDocument, FtbQuestRewardTable, FtbQuestShapeSet, FtbQuestTaskDocument, ProjectInfo } from '../../../shared/types'
+import { ftbIconDescriptor, ftbIconKey, type FtbIconDescriptor } from '../../../shared/ftbIcon'
+import { requestFtbIcon } from '../lib/ftbIconClient'
+import { ftbObjectIds, rewriteFtbQuestReferences } from '../../../shared/ftbQuestReferences'
+import { validateFtbQuestBook } from '../../../shared/ftbQuestValidation'
 import { useConfirmDialog } from './InteractionDialogs'
 
-type QuestNodeData = { title: string; subtitle: string; icon: string; iconFallback: string[]; shape: string; tasks: number; rewards: number; mcVersion: string }
+function dependencyIndex(book: FtbQuestBook | null): Map<string, { title: string; owner: string; questId?: string }> {
+  const index = new Map<string, { title: string; owner: string; questId?: string }>()
+  for (const chapter of book?.chapters ?? []) {
+    index.set(chapter.id, { title: chapter.title, owner: '章节' })
+    for (const quest of chapter.quests) {
+      index.set(quest.id, { title: quest.title, owner: chapter.title, questId: quest.id })
+      for (const [kind, entries] of [['条件', quest.tasks], ['奖励', quest.rewards]] as const) {
+        for (const entry of entries) index.set(entry.id, { title: entry.title || entry.type, owner: `${chapter.title} / ${quest.title} / ${kind}`, questId: quest.id })
+      }
+    }
+  }
+  for (const table of book?.rewardTables ?? []) {
+    index.set(table.id, { title: table.title, owner: '奖励表' })
+    for (const entry of table.rewards) index.set(entry.id, { title: entry.title || entry.type, owner: `${table.title} / 奖励表条目` })
+  }
+  return index
+}
+
+function useModalAccessibility(open: boolean, onClose: () => void): React.RefObject<HTMLDivElement> {
+  const ref = useRef<HTMLDivElement>(null)
+  const close = useRef(onClose)
+  close.current = onClose
+  const previousFocus = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!open) return
+    previousFocus.current = document.activeElement as HTMLElement | null
+    const frame = requestAnimationFrame(() => {
+      const first = Array.from(ref.current?.querySelectorAll<HTMLElement>('input, textarea, select, button, [tabindex]:not([tabindex="-1"])') ?? []).find(item => !item.hasAttribute('disabled') && item.getClientRects().length > 0)
+      first?.focus()
+    })
+    const keydown = (event: KeyboardEvent): void => {
+      if (document.querySelector('[role="alertdialog"]')) return
+      if (event.key === 'Escape') { event.preventDefault(); close.current(); return }
+      if (event.key !== 'Tab' || !ref.current) return
+      const focusable = Array.from(ref.current.querySelectorAll<HTMLElement>('input, textarea, select, button, [tabindex]:not([tabindex="-1"])')).filter((item) => !item.hasAttribute('disabled') && item.getClientRects().length > 0)
+      if (!focusable.length) return
+      const index = focusable.indexOf(document.activeElement as HTMLElement)
+      const next = event.shiftKey ? (index <= 0 ? focusable.length - 1 : index - 1) : (index === focusable.length - 1 ? 0 : index + 1)
+      event.preventDefault(); focusable[next].focus()
+    }
+    document.addEventListener('keydown', keydown)
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('keydown', keydown); previousFocus.current?.focus() }
+  }, [open])
+  return ref
+}
+
+type QuestNodeData = { title: string; subtitle: string; icon: string; descriptor: FtbIconDescriptor | null; iconFallback: FtbIconDescriptor[]; shape: string; tasks: number; rewards: number; mcVersion: string; projectPath: string }
 type QuestNode = Node<QuestNodeData>
 type QuestEdge = Edge<{ lane?: number; animated?: boolean }>
 
@@ -23,96 +73,35 @@ const QUEST_EDGE_END = 'rgba(153, 122, 122, 0.71)'
 // 原版 renderConnection 贴图平铺周期 = 2×半宽（线宽），游戏中线宽 ≈ 按钮宽 / 5.9。
 // 编辑器按钮 64px，对应贴图单元 = 64 / 5.9 ≈ 11px。
 const QUEST_EDGE_TILE = 11
-// 任务节点形状（取自 ftbquests 模组 jar textures/shapes/{id}/）的全局加载态。
-const ftbShapesState: { map: Record<string, FtbQuestShapeSet> | null; started: boolean; listeners: Set<(map: Record<string, FtbQuestShapeSet> | null) => void> } = { map: null, started: false, listeners: new Set() }
+const FtbResources = createContext({ projectPath: '', scope: '' })
+const shapeRequests = new Map<string, Promise<Record<string, FtbQuestShapeSet>>>()
+const dependencyRequests = new Map<string, Promise<string | null>>()
 function useFtbShapes(): Record<string, FtbQuestShapeSet> | null {
+  const { projectPath, scope } = useContext(FtbResources)
   const [map, setMap] = useState<Record<string, FtbQuestShapeSet> | null>(null)
   useEffect(() => {
-    if (ftbShapesState.started) { setMap(ftbShapesState.map); return }
-    ftbShapesState.started = true
-    const handler = (next: Record<string, FtbQuestShapeSet> | null): void => setMap(next)
-    ftbShapesState.listeners.add(handler)
-    window.modmind.modpack.ftbQuestShapes().then((next) => {
-      ftbShapesState.map = next
-      ftbShapesState.listeners.forEach((listener) => listener(next))
-    }).catch(() => {
-      ftbShapesState.map = null
-      ftbShapesState.listeners.forEach((listener) => listener(null))
-    })
-    return () => { ftbShapesState.listeners.delete(handler) }
-  }, [])
+    let alive = true
+    setMap(null)
+    let request = shapeRequests.get(scope)
+    if (!request) { request = window.modmind.modpack.ftbQuestShapes(projectPath); shapeRequests.set(scope, request); if (shapeRequests.size > 8) shapeRequests.delete(shapeRequests.keys().next().value!) }
+    request.then(value => { if (alive) setMap(value) }).catch(() => {})
+    return () => { alive = false }
+  }, [scope, projectPath])
   return map
 }
-// 主进程从 mod jar 解析出的物品图标缓存（targetId → 图标结果 | null）。
-const ftbQuestIconCache = new Map<string, FtbQuestIconResult>()
-const ftbQuestIconInFlight = new Map<string, Promise<FtbQuestIconResult | null>>()
-const ftbQuestIconMissUntil = new Map<string, number>()
-const ftbQuestIconQueue: Array<() => void> = []
-let ftbQuestIconActive = 0
-const FTB_ICON_CONCURRENCY = 3
-const ftbQuestIconVisibility = new WeakMap<Element, (visible: boolean) => void>()
-let ftbQuestIconObserver: IntersectionObserver | null = null
-function observeFtbQuestIcon(element: Element, onVisible: (visible: boolean) => void): () => void {
-  if (!ftbQuestIconObserver) {
-    ftbQuestIconObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) ftbQuestIconVisibility.get(entry.target)?.(entry.isIntersecting)
-    }, { rootMargin: '160px' })
-  }
-  ftbQuestIconVisibility.set(element, onVisible)
-  ftbQuestIconObserver.observe(element)
-  return () => { ftbQuestIconObserver?.unobserve(element); ftbQuestIconVisibility.delete(element) }
-}
-function queuedFtbQuestIcon(itemId: string): Promise<FtbQuestIconResult | null> {
-  const cached = ftbQuestIconCache.get(itemId)
-  if (cached) return Promise.resolve(cached)
-  const missUntil = ftbQuestIconMissUntil.get(itemId) ?? 0
-  if (missUntil > Date.now()) return Promise.resolve(null)
-  ftbQuestIconMissUntil.delete(itemId)
-  const inflight = ftbQuestIconInFlight.get(itemId)
-  if (inflight) return inflight
-  const task = new Promise<FtbQuestIconResult | null>((resolve, reject) => {
-    const run = (): void => {
-      ftbQuestIconActive += 1
-      window.modmind.modpack.ftbQuestIcon(itemId).then((result) => {
-        if (result) ftbQuestIconCache.set(itemId, result)
-        else ftbQuestIconMissUntil.set(itemId, Date.now() + 60_000)
-        resolve(result)
-      }, (error) => {
-        ftbQuestIconMissUntil.set(itemId, Date.now() + 10_000)
-        reject(error)
-      }).finally(() => {
-        ftbQuestIconActive -= 1
-        ftbQuestIconInFlight.delete(itemId)
-        ftbQuestIconQueue.shift()?.()
-      })
-    }
-    if (ftbQuestIconActive < FTB_ICON_CONCURRENCY) run()
-    else ftbQuestIconQueue.push(run)
-  })
-  ftbQuestIconInFlight.set(itemId, task)
-  return task
-}
-// 依赖连线贴图 dependency.png（白色箭头，渲染端用主题色做遮罩染色）的全局加载态。
-const ftbDepTextureState: { url: string | null; started: boolean; listeners: Set<(url: string | null) => void> } = { url: null, started: false, listeners: new Set() }
 function useFtbDependencyTexture(): string | null {
+  const { projectPath, scope } = useContext(FtbResources)
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
-    if (ftbDepTextureState.started) { setUrl(ftbDepTextureState.url); return }
-    ftbDepTextureState.started = true
-    const handler = (next: string | null): void => setUrl(next)
-    ftbDepTextureState.listeners.add(handler)
-    window.modmind.modpack.ftbDependencyTexture().then((next) => {
-      ftbDepTextureState.url = next
-      ftbDepTextureState.listeners.forEach((listener) => listener(next))
-    }).catch(() => {
-      ftbDepTextureState.url = null
-      ftbDepTextureState.listeners.forEach((listener) => listener(null))
-    })
-    return () => { ftbDepTextureState.listeners.delete(handler) }
-  }, [])
+    let alive = true
+    setUrl(null)
+    let request = dependencyRequests.get(scope)
+    if (!request) { request = window.modmind.modpack.ftbDependencyTexture(projectPath); dependencyRequests.set(scope, request); if (dependencyRequests.size > 8) dependencyRequests.delete(dependencyRequests.keys().next().value!) }
+    request.then(value => { if (alive) setUrl(value) }).catch(() => {})
+    return () => { alive = false }
+  }, [scope, projectPath])
   return url
 }
-
 function newId(): string { return crypto.randomUUID().replaceAll('-', '').toUpperCase() }
 function newTableId(): string { return newId().slice(0, 16) }
 // 物品显示名缓存：模组物品走主进程（mod jar 语言文件），原版物品走 CDN 语言文件（zh_cn 优先）。
@@ -140,22 +129,24 @@ function cleanItemId(rawId: string): string {
 
 /** 解析物品/流体 ID（自动剥离 NBT）的显示名；未知返回 null。 */
 function useFtbItemName(itemId: string, mcVersion: string, enabled = true): string | null {
+  const { projectPath, scope } = useContext(FtbResources)
   const clean = cleanItemId(itemId)
+  const cacheKey = `${scope}\u0000${clean}`
   const [name, setName] = useState<string | null>(null)
   useEffect(() => {
     if (!enabled || !clean) { setName(null); return }
-    const cached = ftbItemNameCache.get(clean)
+    const cached = ftbItemNameCache.get(cacheKey)
     if (cached !== undefined) { setName(cached); return }
     const [namespace = 'minecraft', ...rest] = clean.split(':')
     const shortName = rest.join(':')
     const resolve = namespace === 'minecraft'
       ? vanillaLang(mcVersion).then((lang) => lang[`item.minecraft.${shortName}`] ?? lang[`block.minecraft.${shortName}`] ?? null)
-      : window.modmind.modpack.ftbQuestItemNames([clean]).then((map) => map[clean] ?? null)
+      : window.modmind.modpack.ftbQuestItemNames([clean], projectPath).then((map) => map[clean] ?? null)
     let alive = true
-    resolve.then((value) => { ftbItemNameCache.set(clean, value); if (alive) setName(value) })
-      .catch(() => { ftbItemNameCache.set(clean, null); if (alive) setName(null) })
+    resolve.then((value) => { ftbItemNameCache.set(cacheKey, value); if (alive) setName(value) })
+      .catch(() => { ftbItemNameCache.set(cacheKey, null); if (alive) setName(null) })
     return () => { alive = false }
-  }, [clean, mcVersion, enabled])
+  }, [clean, mcVersion, enabled, scope, projectPath])
   return name
 }
 /** Minecraft 颜色代码 &0-&f 的实际颜色（§ 变体同样支持）。 */
@@ -395,112 +386,46 @@ function hydrateQuest(rawInput: Record<string, unknown>): FtbQuestDocumentQuest 
 }
 
 function QuestFlowNode({ data }: { data: QuestNodeData }): React.JSX.Element {
-  // 与游戏内一致：任务节点中央显示真实物品贴图（icon 为空时回退到提交物品任务的图标，取首个物品）。
-  // 原版物品走 mcmeta 贴图（item → block 两级回退），模组物品由主进程从整合包 mod jar 中提取。
-  // targetId 统一剥离 NBT（mod:item{...} → mod:item）：图标与名称解析都用基础 ID。
-  const iconCandidates = useMemo(() => [...new Set([data.icon, ...data.iconFallback, 'minecraft:book'].map(cleanItemId).filter(Boolean))], [data.icon, data.iconFallback])
-  const [iconCandidateIndex, setIconCandidateIndex] = useState(0)
-  useEffect(() => { setIconCandidateIndex(0) }, [iconCandidates.join('|')])
-  const targetId = iconCandidates[Math.min(iconCandidateIndex, iconCandidates.length - 1)] ?? 'minecraft:book'
-  const glyph = targetId.split(':').pop()?.replace(/_/g, ' ').trim() ?? ''
-  const nodeRef = useRef<HTMLDivElement | null>(null)
-  const [isNearViewport, setIsNearViewport] = useState(false)
-  const [isIconHovered, setIsIconHovered] = useState(false)
-  const zoom = useStore((store) => store.transform[2])
-  useEffect(() => nodeRef.current ? observeFtbQuestIcon(nodeRef.current, setIsNearViewport) : undefined, [])
-  // At overview zoom the icons are not legible anyway. Defer requests until
-  // the user zooms into a visible area, while hover always requests at once.
-  const shouldLoadIcon = isIconHovered || (isNearViewport && zoom >= .42)
+  const { scope } = useContext(FtbResources)
+  // A quest without an explicit icon or item/fluid task still needs a visual
+  // identity. This is render-only and never mutates the serialized quest.
+  const descriptor = data.descriptor ?? data.iconFallback[0] ?? ftbIconDescriptor('minecraft:book')!
+  const descriptorKey = ftbIconKey(descriptor)
+  const targetId = descriptor?.id ?? ''
+  // React Flow already mounts only visible nodes. A second zoom/observer gate
+  // left icon requests permanently disabled after fitView on large chapters.
+  const shouldLoadIcon = true
   const itemName = useFtbItemName(targetId, data.mcVersion, shouldLoadIcon)
-  // 同一任务含多个不同物品时，在图标右下角显示数量角标（与游戏内任务节点叠堆风格一致）。
   const itemCount = data.iconFallback.length
-  const modPart = useMemo(() => {
-    const clean = targetId.split(/[[()]/)[0] ?? targetId
-    const [namespace = 'minecraft', name = ''] = clean.split(':')
-    return { namespace: namespace.trim().toLowerCase(), name: name.trim().toLowerCase() }
-  }, [targetId])
-  const sources = useMemo(() => {
-    if (!modPart.name || modPart.namespace !== 'minecraft') return []
-    // 与 vanillaLang 相同：mcmeta 版本标签需带 -assets 后缀（如 1.20.1-assets）。
-    const base = `https://cdn.jsdelivr.net/gh/misode/mcmeta@${data.mcVersion}-assets/assets/minecraft/textures`
-    return [`${base}/item/${modPart.name}.png`, `${base}/block/${modPart.name}.png`]
-  }, [modPart, data.mcVersion])
-  const [imageIndex, setImageIndex] = useState(0)
-  useEffect(() => { setImageIndex(0) }, [sources[0]])
-  const [modIcon, setModIcon] = useState<FtbQuestIconResult | null>(null)
+  const [inspection, setInspection] = useState<FtbQuestIconInspection | null>(null)
+  const [fallbackIcon, setFallbackIcon] = useState<FtbQuestIconInspection['icon']>(null)
   useEffect(() => {
     let alive = true
-    if (!shouldLoadIcon || !modPart.name || modPart.namespace === 'minecraft') { setModIcon(ftbQuestIconCache.get(targetId) ?? null); return }
-    const cached = ftbQuestIconCache.get(targetId)
-    if (cached) { setModIcon(cached); return }
-    setModIcon(null)
-    queuedFtbQuestIcon(targetId).then((result) => {
-      if (alive) {
-        setModIcon(result)
-        if (!result) setIconCandidateIndex((current) => Math.min(current + 1, iconCandidates.length - 1))
-      }
-    }).catch(() => {
-      if (alive) { setModIcon(null); setIconCandidateIndex((current) => Math.min(current + 1, iconCandidates.length - 1)) }
-    })
+    setInspection(null)
+    setFallbackIcon(null)
+    if (shouldLoadIcon && descriptor) requestFtbIcon(data.projectPath, scope, descriptor).then(result => {
+      if (alive) setInspection(result)
+    }).catch(error => { if (alive) setInspection({ icon: null, reason: String(error), sources: [], generation: 0 }) })
     return () => { alive = false }
-  }, [targetId, modPart.namespace, modPart.name, iconCandidates.length, shouldLoadIcon])
-  // 动画贴图渲染元数据：以整张精灵图做背景，每次 steps() 恰好前进一帧高，避免百分比下每步偏移不足一帧导致的滑动。
-interface SpriteMeta { url: string; frameWidth: number; frameHeight: number; frameCount: number; frametimeMs: number }
-function spriteTileStyle(meta: SpriteMeta): CSSProperties {
-  const scale = Math.min(42 / meta.frameWidth, 42 / meta.frameHeight)
-  const frameW = meta.frameWidth * scale
-  const frameH = meta.frameHeight * scale
-  // Move by the full sheet height in N equal steps. Using (N - 1) frames
-  // with steps(N) lands between frame boundaries and looks like scrolling.
-  const shift = meta.frameCount * frameH
-  const style: Record<string, string | number> = {
-    width: frameW, height: frameH,
-    backgroundImage: `url(${meta.url})`,
-    backgroundSize: `${frameW}px ${frameH * meta.frameCount}px`,
+  }, [descriptorKey, data.projectPath, scope, shouldLoadIcon])
+  useEffect(() => {
+    if (!shouldLoadIcon || !inspection || inspection.icon) return
+    let alive = true
+    requestFtbIcon(data.projectPath, scope, 'minecraft:book').then(result => { if (alive) setFallbackIcon(result.icon) }).catch(() => undefined)
+    return () => { alive = false }
+  }, [inspection, data.projectPath, scope, shouldLoadIcon])
+  const icon = inspection?.icon
+  const renderedIcon = icon ?? fallbackIcon
+  const imageSrc = shouldLoadIcon ? renderedIcon?.url : null
+  const animatedStyle: CSSProperties | null = renderedIcon?.animated ? {
+    width: renderedIcon.frameWidth * Math.min(42 / renderedIcon.frameWidth, 42 / renderedIcon.frameHeight),
+    height: renderedIcon.frameHeight * Math.min(42 / renderedIcon.frameWidth, 42 / renderedIcon.frameHeight),
+    backgroundImage: `url(${renderedIcon.url})`,
+    backgroundSize: `100% ${renderedIcon.frameCount * 100}%`,
     backgroundRepeat: 'no-repeat',
-    '--fqi-shift': `-${shift}px`,
-    animation: `ftb-quest-icon-flow ${meta.frametimeMs * meta.frameCount}ms steps(${meta.frameCount}) infinite`
-  }
-  return style as CSSProperties
-}
-/** 解析动画 mcmeta（与主进程规则一致：frames 缺省时帧数 = 高/宽）。 */
-function parseSpriteMeta(raw: unknown, naturalWidth: number, naturalHeight: number): { frameCount: number; frametimeMs: number } | null {
-  const animation = (raw && typeof raw === 'object' && 'animation' in raw ? (raw as { animation?: unknown }).animation : null)
-  if (!animation || typeof animation !== 'object') return null
-  const anim = animation as { frametime?: unknown; frames?: unknown }
-  const frames = anim.frames
-  const estimated = naturalWidth > 0 ? Math.floor(naturalHeight / naturalWidth) : 0
-  const explicit = Array.isArray(frames) && frames.length > 1 ? frames.length : null
-  // The physical sheet determines frame height. A custom frames array may
-  // repeat/skip indices, so its length must not be used to crop the sheet.
-  const frameCount = estimated > 1 ? estimated : (explicit ?? 1)
-  if (frameCount < 2 || naturalHeight % frameCount !== 0) return null
-  const frametime = typeof anim.frametime === 'number' && Number.isFinite(anim.frametime) && anim.frametime > 0 ? anim.frametime : 1
-  return { frameCount, frametimeMs: frametime * 50 }
-}
-
-  const imageSrc = shouldLoadIcon ? (modPart.namespace !== 'minecraft' ? modIcon?.url ?? null : sources[imageIndex]) : null
-  // 原版物品的动画：拉取贴图同名 .mcmeta，img 加载后按自然尺寸推算帧数并切换为精灵图播放。
-  const [vanillaMeta, setVanillaMeta] = useState<unknown>(null)
-  const [vanillaSprite, setVanillaSprite] = useState<SpriteMeta | null>(null)
-  useEffect(() => {
-    let alive = true
-    setVanillaSprite(null)
-    if (!shouldLoadIcon || modPart.namespace !== 'minecraft' || imageIndex >= sources.length) { setVanillaMeta(null); return }
-    const metaUrl = `${sources[imageIndex]}.mcmeta`
-    fetch(metaUrl, { mode: 'cors' }).then((response) => response.ok ? response.json() : null).then((json) => { if (alive) setVanillaMeta(json) }).catch(() => { if (alive) setVanillaMeta(null) })
-    return () => { alive = false }
-  }, [modPart.namespace, sources, imageIndex, shouldLoadIcon])
-  const animatedSprite: SpriteMeta | null = useMemo<SpriteMeta | null>(() => {
-    if (modPart.namespace !== 'minecraft') {
-      if (!modIcon?.animated || modIcon.frameCount < 2 || modIcon.frameHeight <= 0) return null
-      return { url: modIcon.url, frameWidth: modIcon.frameWidth, frameHeight: modIcon.frameHeight, frameCount: modIcon.frameCount, frametimeMs: modIcon.frametimeMs }
-    }
-    return vanillaSprite
-  }, [modPart.namespace, modIcon, vanillaSprite])
-  // 模组图标走主进程数据；原版动画需在 img onLoad 拿到自然尺寸后推算。
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const animatedStyle = useMemo<CSSProperties | null>(() => (animatedSprite ? spriteTileStyle(animatedSprite) : null), [animatedSprite])
+    '--fqi-shift': `-${renderedIcon.frameCount * renderedIcon.frameHeight * Math.min(42 / renderedIcon.frameWidth, 42 / renderedIcon.frameHeight)}px`,
+    animation: `ftb-quest-icon-flow ${renderedIcon.frameCount * renderedIcon.frametimeMs}ms steps(${renderedIcon.frameCount}) infinite`
+  } as CSSProperties : null
   // 与游戏 QuestButton#draw 一致：形状用三层贴图叠加（shape 深灰底 + background 白色高光 + outline 状态色描边），
   // 每层都是白色剪影，渲染端用 CSS mask 按层颜色着色（等价于游戏里剪影×颜色的乘法着色）。
   const shapes = useFtbShapes()
@@ -513,7 +438,7 @@ function parseSpriteMeta(raw: unknown, naturalWidth: number, naturalHeight: numb
       <span className="ftb-quest-shape-layer" style={{ background: 'rgba(255,255,255,0.59)', maskImage: `url(${shapeSet.outline})`, WebkitMaskImage: `url(${shapeSet.outline})` }} />
     </>
     : <span className="ftb-quest-shape-fallback" />
-  return <div ref={nodeRef} className={`ftb-quest-node shape-${shapeId}`} onPointerEnter={() => setIsIconHovered(true)} onPointerLeave={() => setIsIconHovered(false)}>
+  return <div className={`ftb-quest-node shape-${shapeId}`}>
     <Handle id="target-top" className="ftb-quest-handle target top" type="target" position={Position.Top} />
     <Handle id="source-top" className="ftb-quest-handle source top" type="source" position={Position.Top} />
     <Handle id="target-right" className="ftb-quest-handle target right" type="target" position={Position.Right} />
@@ -523,8 +448,8 @@ function parseSpriteMeta(raw: unknown, naturalWidth: number, naturalHeight: numb
     <Handle id="target-left" className="ftb-quest-handle target left" type="target" position={Position.Left} />
     <Handle id="source-left" className="ftb-quest-handle source left" type="source" position={Position.Left} />
     {shapeLayers}
-    <div className="ftb-quest-tile">{imageSrc ? (animatedStyle ? <div className="ftb-quest-tile-img animated" style={animatedStyle} /> : <img className="ftb-quest-tile-img" src={imageSrc} alt="" draggable={false} onLoad={(event) => { if (modPart.namespace === 'minecraft' && vanillaMeta) { const meta = parseSpriteMeta(vanillaMeta, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight); setVanillaSprite(meta ? { url: event.currentTarget.src, frameWidth: event.currentTarget.naturalWidth, frameHeight: event.currentTarget.naturalHeight / meta.frameCount, ...meta } : null) } }} onError={() => { if (modPart.namespace !== 'minecraft') { ftbQuestIconCache.delete(targetId); ftbQuestIconMissUntil.set(targetId, Date.now() + 60_000); setModIcon(null); setIconCandidateIndex((current) => Math.min(current + 1, iconCandidates.length - 1)) } else { setVanillaSprite(null); setVanillaMeta(null); setImageIndex((current) => { if (current + 1 < sources.length) return current + 1; setIconCandidateIndex((candidate) => Math.min(candidate + 1, iconCandidates.length - 1)); return sources.length }) } }} />) : <span title={targetId}>{itemName ? renderColoredText(itemName) : glyph ? glyph.slice(0, 2).toUpperCase() : <ClipboardCheck size={20} />}</span>}{itemCount > 1 ? <span className="ftb-quest-tile-count">{itemCount > 99 ? '99+' : itemCount}</span> : null}</div>
-    <div className="ftb-quest-node-tooltip"><strong>{renderColoredText(data.title)}</strong>{data.subtitle ? <small>{renderColoredText(data.subtitle)}</small> : null}{data.tasks || data.rewards ? <em>{data.tasks} 个条件 · {data.rewards} 个奖励</em> : null}</div>
+    <div className="ftb-quest-tile" title={inspection ? `${targetId}: ${inspection.reason}` : targetId}>{imageSrc ? (animatedStyle ? <div className="ftb-quest-tile-img animated" style={animatedStyle} /> : <img className="ftb-quest-tile-img" src={imageSrc} alt={icon ? targetId : 'minecraft:book'} draggable={false} onError={() => setFallbackIcon(null)} />) : <span>{inspection ? <AlertTriangle size={20} /> : <LoaderCircle className="spin" size={20} />}</span>}{itemCount > 1 ? <span className="ftb-quest-tile-count">{itemCount > 99 ? '99+' : itemCount}</span> : null}</div>
+    <div className="ftb-quest-node-tooltip"><strong>{renderColoredText(data.title)}</strong>{itemName ? <small>{itemName}</small> : null}{icon?.quality === 'approximate' ? <small>近似预览</small> : null}{data.subtitle ? <small>{renderColoredText(data.subtitle)}</small> : null}{data.tasks || data.rewards ? <em>{data.tasks} 个条件 · {data.rewards} 个奖励</em> : null}</div>
   </div>
 }
 
@@ -594,19 +519,15 @@ function RoutedQuestEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, ma
 
 // 游戏内行为：任务未显式设置 icon 时，自动使用提交物品/流体任务对应的物品图标。
 // 一个任务（quest）可包含多个 item/fluid 条件，全部收集：首个作为节点主图标，其余以数量角标提示。
-function questIconFallback(quest: FtbQuestDocumentQuest): string[] {
-  const icons: string[] = []
-  for (const task of quest.tasks) {
-    const raw = asRecord(task.raw)
-    // 带 NBT 的物品 ID（mod:item{...}）只取 { 前的基础 ID 用于图标与名称解析。
-    if (task.type === 'item') { const item = cleanItemId(resourceId(raw.item)); if (item) icons.push(item) }
-    if (task.type === 'fluid') { const fluid = cleanItemId(resourceId(raw.fluid)); if (fluid) icons.push(fluid) }
-  }
-  return icons
+function questIconFallback(quest: FtbQuestDocumentQuest): FtbIconDescriptor[] {
+  return quest.tasks.flatMap(task => {
+    const descriptor = ftbIconDescriptor(task.raw.icon ?? (task.type === 'item' ? task.raw.item : task.type === 'fluid' ? task.raw.fluid : null))
+    return descriptor ? [descriptor] : []
+  })
 }
 
-function questNodes(chapter: FtbQuestDocumentChapter | undefined, mcVersion: string): QuestNode[] {
-  return (chapter?.quests ?? []).map((quest) => ({ id: quest.id, type: 'quest', position: { x: quest.x * QUEST_GRID_X, y: quest.y * QUEST_GRID_Y }, data: { title: quest.title, subtitle: quest.subtitle, icon: quest.icon, iconFallback: questIconFallback(quest), shape: quest.shape, tasks: quest.tasks.length, rewards: quest.rewards.length, mcVersion } }))
+function questNodes(chapter: FtbQuestDocumentChapter | undefined, mcVersion: string, projectPath: string): QuestNode[] {
+  return (chapter?.quests ?? []).map((quest) => ({ id: quest.id, type: 'quest', position: { x: quest.x * QUEST_GRID_X, y: quest.y * QUEST_GRID_Y }, data: { title: quest.title, subtitle: quest.subtitle, icon: quest.icon, descriptor: ftbIconDescriptor(quest.raw.icon)?.id === quest.icon ? ftbIconDescriptor(quest.raw.icon) : ftbIconDescriptor(quest.icon), iconFallback: questIconFallback(quest), shape: quest.shape, tasks: quest.tasks.length, rewards: quest.rewards.length, mcVersion, projectPath } }))
 }
 
 function questEdges(chapter: FtbQuestDocumentChapter | undefined): QuestEdge[] {
@@ -618,6 +539,12 @@ function questEdges(chapter: FtbQuestDocumentChapter | undefined): QuestEdge[] {
 }
 
 export default function FtbQuestEditor({ project }: { project: ProjectInfo }): React.JSX.Element {
+  const resourceRevision = 0
+  const [backups, setBackups] = useState<Array<{ id: string; createdAt: string; files: number }> | null>(null)
+  const savedBook = useRef<FtbQuestBook | null>(null)
+  const textEdit = useRef({ key: '', time: 0 })
+  const requestGeneration = useRef(0)
+  const loadedProject = useRef<string | null>(null)
   const { confirm, dialog } = useConfirmDialog()
   const [book, setBook] = useState<FtbQuestBook | null>(null)
   const [selectedChapterId, setSelectedChapterId] = useState('')
@@ -661,26 +588,42 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
   const [nodes, setNodes, onNodesChange] = useNodesState<QuestNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<QuestEdge>([])
   const flowRef = useRef<ReactFlowInstance<QuestNode, QuestEdge> | null>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!canvasRef.current) return
+    const observer = new ResizeObserver(() => { void flowRef.current?.fitView({ padding: .18, maxZoom: 1.15 }) })
+    observer.observe(canvasRef.current)
+    return () => observer.disconnect()
+  }, [])
   const undoStack = useRef<FtbQuestBook[]>([])
   const redoStack = useRef<FtbQuestBook[]>([])
   const [, setHistoryVersion] = useState(0)
 
   const chapter = book?.chapters.find((item) => item.id === selectedChapterId) ?? book?.chapters[0]
-  const selectedQuest = chapter?.quests.find((item) => item.id === selectedQuestId) ?? chapter?.quests[0]
-  const diagnostics = book?.diagnostics ?? []
+  const selectedQuest = chapter?.quests.find((item) => item.id === selectedQuestId)
+  const diagnostics = useMemo(() => book ? [...book.diagnostics.filter(item => ['parse-failed', 'mixed-format'].includes(item.code)), ...validateFtbQuestBook(book)] : [], [book])
   const errors = diagnostics.filter((item) => item.severity === 'error')
   const onQuestNodesChange = useCallback((changes: NodeChange<QuestNode>[]): void => onNodesChange(changes.filter((change) => change.type !== 'remove')), [onNodesChange])
 
   const syncCanvas = useCallback((nextChapter: FtbQuestDocumentChapter | undefined): void => {
-    setNodes(questNodes(nextChapter, project.minecraftVersion)); setEdges(questEdges(nextChapter)); setSelectedEdgeId('')
+    setNodes(questNodes(nextChapter, project.minecraftVersion, project.path)); setEdges(questEdges(nextChapter)); setSelectedEdgeId('')
     window.requestAnimationFrame(() => flowRef.current?.fitView({ duration: 180, padding: 0.18, maxZoom: 1.15 }))
-  }, [project.minecraftVersion, setEdges, setNodes])
+  }, [project.minecraftVersion, project.path, setEdges, setNodes])
 
   const load = useCallback(async (): Promise<void> => {
+    const generation = ++requestGeneration.current
+    loadedProject.current = null
+    setBook(null)
+    setNodes([]); setEdges([])
+    setSelectedQuestId(''); setSelectedEdgeId('')
+    undoStack.current = []; redoStack.current = []
     setBusy('load')
     try {
-      const next = await window.modmind.modpack.readFtbQuestBook()
+      const next = await window.modmind.modpack.readFtbQuestBook(project.path)
+      if (generation !== requestGeneration.current) return
+      loadedProject.current = project.path
       setBook(next)
+      savedBook.current = next
       undoStack.current = []; redoStack.current = []; setHistoryVersion((current) => current + 1)
       const nextChapter = next.chapters.find((item) => item.id === selectedChapterIdRef.current) ?? next.chapters[0]
       selectedChapterIdRef.current = nextChapter?.id ?? ''
@@ -688,43 +631,63 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
       setSelectedQuestId('')
       syncCanvas(nextChapter)
       setMessage(next.chapters.length ? `已载入 ${next.chapters.length} 个章节` : '未发现任务章节，可以从这里创建第一章')
-    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
-    finally { setBusy('') }
-  }, [syncCanvas])
+    } catch (error) { if (generation === requestGeneration.current) setMessage(error instanceof Error ? error.message : String(error)) }
+    finally { if (generation === requestGeneration.current) setBusy('') }
+  }, [syncCanvas, project.path, setNodes, setEdges])
 
-  useEffect(() => { void load() }, [load, project.path])
+  useEffect(() => { void load(); return () => { requestGeneration.current += 1; loadedProject.current = null } }, [load, project.path])
   useEffect(() => { if (selectedQuest) setRawValue(formatRaw(selectedQuest.raw)) }, [selectedQuest?.id])
-  useEffect(() => { setNodes(questNodes(chapter, project.minecraftVersion)); setEdges(questEdges(chapter)) }, [chapter, project.minecraftVersion, setEdges, setNodes])
+  useEffect(() => {
+    const same = (a: unknown, b: unknown): boolean => formatRaw(a) === formatRaw(b)
+    setNodes(current => questNodes(chapter, project.minecraftVersion, project.path).map(node => {
+      const existing = current.find(item => item.id === node.id)
+      return existing && same(existing.data, node.data) && same(existing.position, node.position) ? existing : { ...existing, ...node }
+    }))
+    setEdges(current => questEdges(chapter).map(edge => current.find(item => item.id === edge.id && same(item, edge)) ?? edge))
+  }, [chapter, project.minecraftVersion, project.path, setEdges, setNodes])
 
-  const updateBook = (recipe: (current: FtbQuestBook) => FtbQuestBook): void => {
+  const updateBook = (recipe: (current: FtbQuestBook) => FtbQuestBook, mergeKey = ''): void => {
     if (!book) return
-    const next = recipe(book)
-    undoStack.current = [...undoStack.current, book].slice(-80)
+    let next = recipe(book)
+    const remaining = ftbObjectIds(next)
+    const removed = [...ftbObjectIds(book)].filter(id => !remaining.has(id))
+    if (removed.length) next = rewriteFtbQuestReferences(next, new Map(removed.map(id => [id, null])))
+    const now = Date.now()
+    if (!mergeKey || textEdit.current.key !== mergeKey || now - textEdit.current.time > 700) undoStack.current = [...undoStack.current, book].slice(-80)
+    textEdit.current = { key: mergeKey, time: now }
     redoStack.current = []
     setHistoryVersion((current) => current + 1)
     setBook(next)
   }
   const undo = (): void => {
     if (!book) return
+    textEdit.current = { key: '', time: 0 }
     const previous = undoStack.current.pop()
     if (!previous) return
     redoStack.current.push(book); setBook(previous); setHistoryVersion((current) => current + 1); setMessage('已撤销上一步编辑')
   }
   const redo = (): void => {
     if (!book) return
+    textEdit.current = { key: '', time: 0 }
     const next = redoStack.current.pop()
     if (!next) return
     undoStack.current.push(book); setBook(next); setHistoryVersion((current) => current + 1); setMessage('已重做编辑')
   }
   const updateChapter = (id: string, patch: Partial<FtbQuestDocumentChapter>): void => updateBook((current) => ({ ...current, chapters: current.chapters.map((item) => item.id === id ? { ...item, ...patch } : item) }))
-  const updateQuest = (questId: string, patch: Partial<FtbQuestDocumentQuest>): void => updateBook((current) => ({ ...current, chapters: current.chapters.map((item) => item.id !== chapter?.id ? item : { ...item, quests: item.quests.map((quest) => quest.id === questId ? { ...quest, ...patch } : quest) }) }))
+  const updateQuest = (questId: string, patch: Partial<FtbQuestDocumentQuest>): void => updateBook((current) => ({ ...current, chapters: current.chapters.map((item) => item.id !== chapter?.id ? item : { ...item, quests: item.quests.map((quest) => quest.id === questId ? { ...quest, ...patch } : quest) }) }), Object.keys(patch).length === 1 && ['title', 'subtitle', 'description'].includes(Object.keys(patch)[0]) ? `${questId}:${Object.keys(patch)[0]}` : '')
 
   const chooseChapter = (id: string): void => {
     const next = book?.chapters.find((item) => item.id === id)
     selectedChapterIdRef.current = id
     setSelectedChapterId(id); setSelectedQuestId(''); syncCanvas(next)
   }
-  const chooseQuest = (id: string): void => { setSelectedQuestId(id); setSelectedEdgeId('') }
+  const chooseQuest = (id: string): void => {
+    const owner = book?.chapters.find((item) => item.quests.some((quest) => quest.id === id))
+    if (!owner) return
+    if (owner.id !== chapter?.id) chooseChapter(owner.id)
+    setExpandedTaskId(''); setExpandedRewardId('')
+    setSelectedQuestId(id); setSelectedEdgeId('')
+  }
 
   const createChapter = (): void => {
     if (!book) return
@@ -771,7 +734,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
   const deleteQuestById = async (questId: string): Promise<void> => {
     const quest = chapter?.quests.find((item) => item.id === questId)
     if (!chapter || !quest || !await confirm({ title: `删除任务“${quest.title}”？`, message: '引用该任务的前置关系也会一并移除。更改将在保存任务书时写入文件。', confirmLabel: '删除任务', cancelLabel: '保留任务', tone: 'danger', actionIcon: 'delete' })) return
-    const quests = chapter.quests.filter((item) => item.id !== questId).map((item) => ({ ...item, dependencies: item.dependencies.filter((dependency) => dependency !== questId) }))
+    const quests = chapter.quests.filter((item) => item.id !== questId)
     updateChapter(chapter.id, { quests }); setSelectedQuestId(''); syncCanvas({ ...chapter, quests })
   }
   const deleteQuest = async (): Promise<void> => { await deleteQuestById(selectedQuestId) }
@@ -817,14 +780,15 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
     updateQuest(target.id, { dependencies: next.dependencies }); setEdges((current) => addEdge({ ...connection, id: `${connection.source}:${connection.target}`, type: 'questRoute', style: { stroke: QUEST_EDGE_COLOR, strokeWidth: 2 }, ...directionalHandles({ x: source.x * QUEST_GRID_X, y: source.y * QUEST_GRID_Y }, { x: target.x * QUEST_GRID_X, y: target.y * QUEST_GRID_Y }) }, current)); setMessage('已添加前置任务')
   }, [chapter, setEdges])
   const onEdgesDelete = useCallback((deleted: QuestEdge[]): void => {
-    for (const edge of deleted) if (edge.source && edge.target) {
-      const target = chapter?.quests.find((item) => item.id === edge.target)
-      if (target) updateQuest(target.id, { dependencies: target.dependencies.filter((dependency) => dependency !== edge.source) })
-    }
+    if (!chapter || !deleted.length) return
+    updateChapter(chapter.id, { quests: chapter.quests.map((quest) => ({
+      ...quest,
+      dependencies: quest.dependencies.filter((dependency) => !deleted.some((edge) => edge.target === quest.id && edge.source === dependency))
+    })) })
   }, [chapter])
   // 与游戏一致：拖动后吸附到整数网格。
   const onNodeDragStop = useCallback((_event: MouseEvent | TouchEvent, node: QuestNode): void => updateQuest(node.id, { x: Math.round(node.position.x / QUEST_GRID_X), y: Math.round(node.position.y / QUEST_GRID_Y) }), [chapter])
-  const onNodeClick: NodeMouseHandler<QuestNode> = useCallback((_event, node) => chooseQuest(node.id), [])
+  const onNodeClick: NodeMouseHandler<QuestNode> = (_event, node) => chooseQuest(node.id)
   // 与游戏一致：悬停任务时，与其相连的前置/后续连线上的箭头流开始流动；移开则恢复静止。
   const setHoveredEdges = useCallback((nodeId: string, animated: boolean): void => {
     setEdges((current) => current.map((item) => {
@@ -878,27 +842,62 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
   }
   const applyRaw = (): void => {
     if (!selectedQuest) return
-    try { const next = hydrateQuest(asRecord(JSON.parse(rawValue))); updateQuest(selectedQuest.id, next); setMessage('已应用高级字段') } catch (error) { setMessage(`高级字段无效：${error instanceof Error ? error.message : String(error)}`) }
+    try {
+      const next = hydrateQuest(asRecord(JSON.parse(rawValue)))
+      if (next.id !== selectedQuest.id && ftbObjectIds(book!).has(next.id)) throw new Error('对象 ID 已存在')
+      updateBook(current => rewriteFtbQuestReferences({ ...current, chapters: current.chapters.map(item => ({ ...item, quests: item.quests.map(quest => quest.id === selectedQuest.id ? next : quest) })) }, new Map([[selectedQuest.id, next.id]])))
+      setSelectedQuestId(next.id)
+      setMessage('已应用高级字段')
+    } catch (error) { setMessage(`高级字段无效：${error instanceof Error ? error.message : String(error)}`) }
   }
   const save = async (): Promise<void> => {
-    if (!book) return
+    if (!book || busy || loadedProject.current !== project.path || errors.length) return
+    const generation = requestGeneration.current
     setBusy('save')
     try {
-      const result = await window.modmind.modpack.saveFtbQuestBook(book)
+      const result = await window.modmind.modpack.saveFtbQuestBook(book, project.path)
+      if (generation !== requestGeneration.current) return
+      const saved = { ...book, baseline: result.baseline }
+      savedBook.current = saved
+      setBook(current => current === book ? saved : current ? { ...current, baseline: result.baseline } : current)
+      undoStack.current = undoStack.current.map(snapshot => ({ ...snapshot, baseline: result.baseline }))
+      redoStack.current = redoStack.current.map(snapshot => ({ ...snapshot, baseline: result.baseline }))
       setMessage(`已保存 ${result.written.length} 个文件${result.removed.length ? `，移除 ${result.removed.length} 个章节文件` : ''}`)
-      await load()
-    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
-    finally { setBusy('') }
+    } catch (error) { if (generation === requestGeneration.current) setMessage(error instanceof Error ? error.message : String(error)) }
+    finally { if (generation === requestGeneration.current) setBusy('') }
   }
 
-  const sourceOptions = useMemo(() => chapter?.quests.filter((item) => item.id !== selectedQuest?.id) ?? [], [chapter?.quests, selectedQuest?.id])
-  // 书页头部与游戏内 ViewQuestPanel 一致的前置/后续箭头：在本章节内找到第一个前置任务 / 依赖当前任务的任务
-  const bookDependencyQuest = useMemo(() => chapter?.quests.find((item) => selectedQuest?.dependencies.includes(item.id)), [chapter, selectedQuest])
-  const bookDependantQuest = useMemo(() => chapter?.quests.find((item) => item.dependencies.includes(selectedQuest?.id ?? '')), [chapter, selectedQuest])
+  const allQuests = useMemo(() => book?.chapters.flatMap((item) => item.quests) ?? [], [book])
+  const dependencyObjects = useMemo(() => dependencyIndex(book), [book])
+  const bookDependencyQuest = allQuests.find((item) => selectedQuest?.dependencies.includes(item.id))
+  const bookDependantQuest = allQuests.find((item) => item.dependencies.includes(selectedQuest?.id ?? ''))
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId)
+  const questDialog = useModalAccessibility(Boolean(selectedQuestId || selectedEdge) && !showRewardTables, () => { setSelectedQuestId(''); setSelectedEdgeId('') })
+  const tableDialog = useModalAccessibility(showRewardTables, () => setShowRewardTables(false))
+  const restoreBackup = async (id: string): Promise<void> => {
+    if (!book?.baseline || !await confirm({ title: '恢复任务书备份', message: '恢复此备份并替换当前任务书？当前磁盘内容会另存为新备份。', confirmLabel: '恢复', actionIcon: 'restore' })) return
+    const generation = requestGeneration.current
+    setBusy('save')
+    try {
+      const next = await window.modmind.modpack.restoreFtbQuestBackup(project.path, id, book.baseline)
+      if (generation !== requestGeneration.current) return
+      savedBook.current = next; setBook(next)
+      undoStack.current = []; redoStack.current = []
+      setBackups(null)
+      const first = next.chapters[0]
+      selectedChapterIdRef.current = first?.id ?? ''; setSelectedChapterId(first?.id ?? '')
+      setSelectedQuestId(''); syncCanvas(first); setMessage('已恢复任务书备份')
+    } catch (error) { if (generation === requestGeneration.current) setMessage(String(error)) }
+    finally { if (generation === requestGeneration.current) setBusy('') }
+  }
+  const reload = async (): Promise<void> => {
+    if (book !== savedBook.current && !await confirm({ title: '重新加载任务书', message: '放弃未保存的修改并重新加载？', confirmLabel: '放弃并加载' })) return
+    await load()
+  }
 
-  return <div className="ftb-quest-editor">
-    <header className="ftb-quest-toolbar content-toolbar"><div><h1>FTB 任务书</h1><p>章节、前置依赖、任务条件和奖励在同一张画布中编辑</p></div><div className="ftb-quest-toolbar-actions"><span className={`ftb-quest-health ${errors.length ? 'error' : ''}`}>{errors.length ? <AlertTriangle size={14} /> : <PackageOpen size={14} />}{errors.length ? `${errors.length} 个问题` : `${book?.chapters.length ?? 0} 个章节`}</span><button className="icon-button" title="撤销" aria-label="撤销" disabled={!undoStack.current.length || Boolean(busy)} onClick={undo}><Undo2 size={15} /></button><button className="icon-button" title="重做" aria-label="重做" disabled={!redoStack.current.length || Boolean(busy)} onClick={redo}><Redo2 size={15} /></button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => { setShowRewardTables(true); setEditingRewardTableId('') }}><Gift size={15} />奖励表{rewardTables.length ? `（${rewardTables.length}）` : ''}</button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void load()}>{busy === 'load' ? <LoaderCircle className="spin" size={15} /> : <RotateCw size={15} />}重新加载</button><button className="primary-button" disabled={!book || Boolean(busy) || errors.length > 0} onClick={() => void save()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}保存任务书</button></div></header>
+  return <FtbResources.Provider value={{ projectPath: project.path, scope: `${project.path}:${project.minecraftVersion}:${resourceRevision}` }}><div className="ftb-quest-editor">
+    <header className="ftb-quest-toolbar content-toolbar"><div><h1>FTB 任务书</h1><p>章节、前置依赖、任务条件和奖励在同一张画布中编辑</p></div><div className="ftb-quest-toolbar-actions"><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.listFtbQuestBackups(project.path).then(setBackups).catch(error => setMessage(String(error)))}>备份恢复</button><span className={`ftb-quest-health ${errors.length ? 'error' : ''}`}>{errors.length ? <AlertTriangle size={14} /> : <PackageOpen size={14} />}{errors.length ? `${errors.length} 个问题` : `${book?.chapters.length ?? 0} 个章节`}</span><button className="icon-button" title="撤销" aria-label="撤销" disabled={!undoStack.current.length || Boolean(busy)} onClick={undo}><Undo2 size={15} /></button><button className="icon-button" title="重做" aria-label="重做" disabled={!redoStack.current.length || Boolean(busy)} onClick={redo}><Redo2 size={15} /></button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => { setShowRewardTables(true); setEditingRewardTableId('') }}><Gift size={15} />奖励表{rewardTables.length ? `（${rewardTables.length}）` : ''}</button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void reload()}>{busy === 'load' ? <LoaderCircle className="spin" size={15} /> : <RotateCw size={15} />}重新加载</button><button className="primary-button" disabled={!book || Boolean(busy) || errors.length > 0} onClick={() => void save()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}保存任务书</button></div></header>
+    {backups ? <section aria-label="任务书备份"><div className="ftb-quest-panel-title"><strong>任务书备份</strong><button className="icon-button" title="关闭备份列表" onClick={() => setBackups(null)}><X size={16} /></button></div>{backups.length ? backups.map(backup => <div key={backup.id}><time>{new Date(backup.createdAt).toLocaleString()}</time> · {backup.files} 个文件 <button className="secondary-button compact" disabled={Boolean(busy)} onClick={() => void restoreBackup(backup.id)}>恢复</button></div>) : <p>暂无备份</p>}</section> : null}
     <div className="ftb-quest-layout">
       <aside className="ftb-quest-chapters"><div className="ftb-quest-panel-title"><span><FolderTree size={16} />章节</span><button className="icon-button" title="新建章节" onClick={createChapter} disabled={!book || Boolean(busy)}><FilePlus2 size={15} /></button></div><div className="ftb-quest-book-meta"><BookOpen size={14} /><span>{book?.format === 'json5' ? 'JSON5 任务书' : 'SNBT 任务书'}</span></div><div className="ftb-quest-chapter-list">{book?.chapters.map((item) => <button key={item.id} className={chapter?.id === item.id ? 'selected' : ''} onClick={() => chooseChapter(item.id)}><BookOpen size={15} /><span><strong>{renderColoredText(item.title)}</strong><small>{item.quests.length} 个任务</small></span><ChevronRight size={14} /></button>)}</div><button className="secondary-button compact ftb-quest-add-chapter" onClick={createChapter} disabled={!book}><Plus size={14} />新建章节</button></aside>
       <section className="ftb-quest-canvas-panel">
@@ -906,7 +905,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
           <div>{chapter ? <><input aria-label="章节标题" value={chapter.title} onChange={(event) => updateChapter(chapter.id, { title: event.target.value })} /><span>{chapter.quests.length} 个任务</span></> : <span>选择或创建章节</span>}</div>
           <div><button className="icon-button" title="添加任务" disabled={!chapter} onClick={createQuest}><CirclePlus size={16} /></button><button className="icon-button" title="删除当前章节" disabled={!chapter} onClick={deleteChapter}><Trash2 size={15} /></button></div>
         </div>
-        <div className="ftb-quest-canvas">
+        <div ref={canvasRef} className="ftb-quest-canvas">
           <ReactFlow nodes={nodes} edges={edges} nodeTypes={{ quest: QuestFlowNode }} edgeTypes={{ questRoute: RoutedQuestEdge }} onNodesChange={onQuestNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onNodeDragStop={onNodeDragStop} onNodeClick={onNodeClick} onNodeMouseEnter={onNodeMouseEnter} onNodeMouseLeave={onNodeMouseLeave} onEdgeClick={onEdgeClick} onConnect={onConnect} onPaneClick={() => { setSelectedEdgeId(''); setCtxMenu(null); setEdges((current) => current.map((item) => ({ ...item, selected: false }))) }} onNodeContextMenu={(event, node) => { event.preventDefault(); setCtxMenu({ kind: 'quest', x: event.clientX, y: event.clientY, questId: node.id }) }} onPaneContextMenu={(event) => { event.preventDefault(); setCtxMenu({ kind: 'pane', x: event.clientX, y: event.clientY }) }} onInit={(instance) => { flowRef.current = instance; syncCanvas(chapter) }} deleteKeyCode={['Backspace', 'Delete']} onlyRenderVisibleElements fitView><MiniMap pannable zoomable /><Controls /><Background gap={26} size={1.3} color="#3a3b42" /></ReactFlow>
           {!chapter?.quests.length ? <div className="ftb-quest-empty"><ClipboardCheck size={20} /><strong>此章节还没有任务</strong><button className="primary-button compact" onClick={createQuest}><Plus size={14} />添加第一个任务</button></div> : null}
         </div>
@@ -916,9 +915,9 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
     {selectedQuestId || selectedEdge ? (
           <div className="modal-backdrop ftb-quest-book-overlay" role="presentation" onMouseDown={() => { setSelectedQuestId(''); setSelectedEdgeId(''); setExpandedTaskId(''); setExpandedRewardId('') }}>
             {selectedQuest ? (
-              <div className="dialog ftb-quest-book" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+              <div ref={questDialog} className="dialog ftb-quest-book" role="dialog" aria-label="任务详情" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
                 <div className="ftb-quest-book-head">
-                  <div className="ftb-quest-book-nav"><button className="icon-button" title="查看前置任务" disabled={!bookDependencyQuest} onClick={() => { if (bookDependencyQuest) setSelectedQuestId(bookDependencyQuest.id) }}><ChevronLeft size={15} /></button><button className="icon-button" title="查看后续任务" disabled={!bookDependantQuest} onClick={() => { if (bookDependantQuest) setSelectedQuestId(bookDependantQuest.id) }}><ChevronRight size={15} /></button></div>
+                  <div className="ftb-quest-book-nav"><button className="icon-button" title="查看前置任务" disabled={!bookDependencyQuest} onClick={() => { if (bookDependencyQuest) chooseQuest(bookDependencyQuest.id) }}><ChevronLeft size={15} /></button><button className="icon-button" title="查看后续任务" disabled={!bookDependantQuest} onClick={() => { if (bookDependantQuest) chooseQuest(bookDependantQuest.id) }}><ChevronRight size={15} /></button></div>
                   <div className="ftb-quest-book-actions"><button className="icon-button" title="复制任务" onClick={duplicateQuest}><FileCode2 size={15} /></button>
                     <button className="icon-button" title="删除任务" onClick={() => void deleteQuest()}><Trash2 size={15} /></button>
                     <button className="icon-button" title="关闭" onClick={() => { setSelectedQuestId(''); setExpandedTaskId(''); setExpandedRewardId('') }}><X size={16} /></button>
@@ -938,11 +937,11 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
                 </div>
                 <div className="ftb-quest-book-rule" />
                 <div className="ftb-quest-book-footer"><input className="ftb-quest-book-subtitle" aria-label="任务副标题" value={selectedQuest.subtitle} placeholder="副标题" onChange={(event) => updateQuest(selectedQuest.id, { subtitle: event.target.value })} /><textarea className="ftb-quest-book-desc" aria-label="任务描述" value={selectedQuest.description} placeholder="输入任务描述…" onChange={(event) => updateQuest(selectedQuest.id, { description: event.target.value })} /></div>
-                <details className="ftb-quest-advanced"><summary><Settings2 size={14} />任务设置（图标 / 形状 / 前置 / 解锁）</summary><div className="ftb-quest-settings-body"><label className="field-label">图标<input value={selectedQuest.icon} placeholder="minecraft:book" onChange={(event) => updateQuest(selectedQuest.id, { icon: event.target.value })} /></label><label className="field-label">形状<select value={selectedQuest.shape} onChange={(event) => updateQuest(selectedQuest.id, { shape: event.target.value })}><option value="circle">圆形</option><option value="square">方形</option><option value="rsquare">圆角方形</option><option value="diamond">菱形</option><option value="octagon">八边形</option><option value="hexagon">六边形</option><option value="pentagon">五边形</option><option value="heart">心形</option><option value="gear">齿轮</option><option value="none">无</option>{!['circle', 'square', 'rsquare', 'diamond', 'octagon', 'hexagon', 'pentagon', 'heart', 'gear', 'none'].includes(selectedQuest.shape) ? <option value={selectedQuest.shape}>{selectedQuest.shape}</option> : null}</select></label><div className="ftb-quest-section-title"><span>前置任务</span></div><div className="ftb-quest-dependencies">{selectedQuest.dependencies.map((dependency) => <button key={dependency} title="移除前置任务" onClick={() => updateQuest(selectedQuest.id, { dependencies: selectedQuest.dependencies.filter((item) => item !== dependency) })}>{chapter?.quests.find((item) => item.id === dependency)?.title ?? dependency}<Unlink size={12} /></button>)}<select value="" aria-label="添加前置任务" onChange={(event) => { if (event.target.value) updateQuest(selectedQuest.id, { dependencies: [...selectedQuest.dependencies, event.target.value] }); event.target.value = '' }}><option value="">添加前置任务…</option>{sourceOptions.filter((item) => !selectedQuest.dependencies.includes(item.id)).map((item) => <option value={item.id} key={item.id}>{item.title}</option>)}</select></div><label className="field-label">最少完成前置数<small>留空表示需要完成全部前置任务</small><input type="number" min={0} value={selectedQuest.minRequiredTasks ?? ''} placeholder="全部" onChange={(event) => updateQuest(selectedQuest.id, { minRequiredTasks: event.target.value === '' ? undefined : Math.max(0, Math.trunc(Number(event.target.value) || 0)) })} /></label><label className="field-label ftb-quest-checkbox"><input type="checkbox" checked={Boolean(selectedQuest.hideDependencyLines)} onChange={(event) => updateQuest(selectedQuest.id, { hideDependencyLines: event.target.checked })} />隐藏依赖连线（游戏中以图标显示依赖）</label></div></details>
+                <details className="ftb-quest-advanced"><summary><Settings2 size={14} />任务设置（图标 / 形状 / 前置 / 解锁）</summary><div className="ftb-quest-settings-body"><label className="field-label">图标<input value={selectedQuest.icon} placeholder="minecraft:book" onChange={(event) => updateQuest(selectedQuest.id, { icon: event.target.value })} /></label><label className="field-label">形状<select value={selectedQuest.shape} onChange={(event) => updateQuest(selectedQuest.id, { shape: event.target.value })}><option value="circle">圆形</option><option value="square">方形</option><option value="rsquare">圆角方形</option><option value="diamond">菱形</option><option value="octagon">八边形</option><option value="hexagon">六边形</option><option value="pentagon">五边形</option><option value="heart">心形</option><option value="gear">齿轮</option><option value="none">无</option>{!['circle', 'square', 'rsquare', 'diamond', 'octagon', 'hexagon', 'pentagon', 'heart', 'gear', 'none'].includes(selectedQuest.shape) ? <option value={selectedQuest.shape}>{selectedQuest.shape}</option> : null}</select></label><div className="ftb-quest-section-title"><span>前置任务</span></div><div className="ftb-quest-dependencies">{selectedQuest.dependencies.map((dependency) => { const object = dependencyObjects.get(dependency); return <span key={dependency}><button title="定位前置对象" onClick={() => { if (object?.questId) chooseQuest(object.questId) }}>{object ? `${object.title}（${object.owner}）` : `未知对象：${dependency}`}</button><button className="icon-button" title="移除前置任务" onClick={() => updateQuest(selectedQuest.id, { dependencies: selectedQuest.dependencies.filter((item) => item !== dependency) })}><Unlink size={12} /></button></span> })}<select value="" aria-label="添加前置任务" onChange={(event) => { if (event.target.value) updateQuest(selectedQuest.id, { dependencies: [...selectedQuest.dependencies, event.target.value] }); event.target.value = '' }}><option value="">添加前置任务…</option>{book?.chapters.map((item) => <optgroup label={item.title} key={item.id}>{item.quests.filter((quest) => quest.id !== selectedQuest.id && !selectedQuest.dependencies.includes(quest.id)).map((quest) => <option value={quest.id} key={quest.id}>{quest.title}</option>)}</optgroup>)}</select></div><label className="field-label">最少完成前置数<small>留空表示需要完成全部前置任务</small><input type="number" min={0} value={selectedQuest.minRequiredTasks ?? ''} placeholder="全部" onChange={(event) => updateQuest(selectedQuest.id, { minRequiredTasks: event.target.value === '' ? undefined : Math.max(0, Math.trunc(Number(event.target.value) || 0)) })} /></label><label className="field-label ftb-quest-checkbox"><input type="checkbox" checked={Boolean(selectedQuest.hideDependencyLines)} onChange={(event) => updateQuest(selectedQuest.id, { hideDependencyLines: event.target.checked })} />隐藏依赖连线（游戏中以图标显示依赖）</label></div></details>
                 <details className="ftb-quest-advanced"><summary><Settings2 size={14} />高级字段（JSON）</summary><textarea value={rawValue} onChange={(event) => setRawValue(event.target.value)} /><button className="secondary-button compact" onClick={applyRaw}>应用 JSON 字段</button></details>
               </div>
             ) : (
-              <div className="dialog ftb-quest-book" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+              <div ref={questDialog} className="dialog ftb-quest-book" role="dialog" aria-label="任务详情" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
                 <div className="ftb-quest-book-head">
                   <div className="ftb-quest-book-actions"><button className="icon-button" title="关闭" onClick={() => { setSelectedQuestId(''); setSelectedEdgeId('') }}><X size={16} /></button></div>
                   <div className="ftb-quest-book-edge-title">前置关系</div>
@@ -956,7 +955,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
     {/* 奖励表管理弹层：列表（游戏 RewardTablesScreen）→ 编辑（游戏 EditRewardTableScreen）。 */}
     {showRewardTables ? (
       <div className="modal-backdrop ftb-quest-book-overlay" role="presentation" onMouseDown={() => { setShowRewardTables(false); setEditingRewardTableId('') }}>
-        <div className="dialog ftb-quest-book ftb-reward-tables" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <div ref={tableDialog} className="dialog ftb-quest-book ftb-reward-tables" role="dialog" aria-label="奖励表" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
           <div className="ftb-quest-book-head">
             <div className="ftb-quest-book-nav">{editingRewardTable ? <button className="icon-button" title="返回列表" onClick={() => setEditingRewardTableId('')}><ChevronLeft size={15} /></button> : null}</div>
             <div className="ftb-quest-book-actions">
@@ -1038,5 +1037,5 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
     </>, document.body) : null}
     <footer className={`ftb-quest-message ${errors.length ? 'error' : ''}`}>{errors.length ? <AlertTriangle size={14} /> : <PackageOpen size={14} />}<span>{errors.length ? errors.map((item) => item.message).join('；') : message}</span></footer>
     {dialog}
-  </div>
+  </div></FtbResources.Provider>
 }

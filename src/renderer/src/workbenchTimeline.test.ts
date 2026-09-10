@@ -1,8 +1,113 @@
 import { describe, expect, it } from 'vitest'
 import { appendUserTurn, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEvents, workbenchContextUsageState, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
-import type { ConversationEventRecord } from '../../shared/types'
+import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 
 describe('workbench timeline adapter', () => {
+  const output = (kind: AiOutputEvent['kind'], content: string, sequence: number, extra: Partial<AiOutputEvent> = {}): AiOutputEvent => ({
+    kind, content, sequence, eventId: `event-${sequence}`, time: `2026-09-10T12:30:${String(sequence).padStart(2, '0')}Z`,
+    runId: 'run-1', turnId: 'turn-1', ...extra
+  })
+  const projectOutputs = (events: AiOutputEvent[]): WorkbenchTimelineItem[] => events.reduce((items, event) => reduceWorkbenchOutput(items, event), [] as WorkbenchTimelineItem[])
+
+  it.each([{}, { itemId: 'reply', streamId: 'native-turn:reply' }])('ends a message before the next response starts (%j)', (identity) => {
+    const nextIdentity = identity.itemId ? { itemId: 'reply-2', streamId: 'native-turn:reply-2' } : {}
+    const items = projectOutputs([
+      output('delta', 'First message', 1, identity), output('response', 'First message', 2, identity),
+      output('tool', 'Read file', 3),
+      output('delta', 'Second message', 4, nextIdentity), output('response', 'Second message', 5, nextIdentity)
+    ])
+    expect(items.filter(item => item.kind === 'response').map(item => item.content)).toEqual(['First message', 'Second message'])
+    expect(items.every(item => item.status === 'done')).toBe(true)
+    expect(new Set(items.map(item => item.id)).size).toBe(items.length)
+  })
+
+  it('replaces partial stream text with the authoritative completed response', () => {
+    const items = projectOutputs([output('delta', 'Part', 1), output('response', 'Complete response', 2)])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ content: 'Complete response', status: 'done' })
+  })
+
+  it('finishes a stream when the final answer arrives without a response event', () => {
+    const items = projectOutputs([output('delta', 'Part', 1), output('answer', 'Complete answer', 2)])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: 'answer', content: 'Complete answer', status: 'done' })
+  })
+
+  it('keeps identical but distinct provider messages and isolates interleaved streams', () => {
+    const items = projectOutputs([
+      output('delta', 'Same', 1, { itemId: 'a' }), output('delta', 'Same', 2, { itemId: 'b' }),
+      output('response', 'Same', 3, { itemId: 'b' }), output('response', 'Same', 4, { itemId: 'a' })
+    ])
+    expect(items.map(item => item.content)).toEqual(['Same', 'Same'])
+    expect(new Set(items.map(item => item.id)).size).toBe(2)
+  })
+
+  it('does not reopen completed provider messages on repeated completion or late deltas', () => {
+    const items = projectOutputs([
+      output('delta', 'Hello', 1, { itemId: 'a' }), output('response', 'Hello', 2, { itemId: 'a' }),
+      output('response', 'Hello', 3, { itemId: 'a' }), output('delta', 'Hello', 4, { itemId: 'a' })
+    ])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ content: 'Hello', status: 'done' })
+  })
+
+  it('allocates unique rows after retrying an anonymous stream in the same turn', () => {
+    const items = projectOutputs([
+      output('delta', 'Interrupted', 1), output('retry', 'Retrying', 2),
+      output('delta', 'Resumed', 3), output('response', 'Resumed', 4)
+    ])
+    expect(items.filter(item => item.kind === 'response').map(item => item.content)).toEqual(['Interrupted', 'Resumed'])
+    expect(new Set(items.map(item => item.id)).size).toBe(items.length)
+  })
+
+  it('scopes reused provider ids to their user turn', () => {
+    const items = projectOutputs([
+      output('response', 'Hello', 1, { itemId: 'a' }),
+      output('delta', 'Hello', 2, { itemId: 'a', turnId: 'turn-2', runId: 'run-2' }),
+      output('response', 'Hello', 3, { itemId: 'a', turnId: 'turn-2', runId: 'run-2' })
+    ])
+    expect(items.map(item => item.content)).toEqual(['Hello', 'Hello'])
+    expect(new Set(items.map(item => item.id)).size).toBe(2)
+  })
+
+  it('ignores duplicate delivery by event identity without dropping distinct equal text', () => {
+    const response = output('response', 'Same', 1)
+    const items = projectOutputs([response, response, output('response', 'Same', 2)])
+    expect(items.map(item => item.content)).toEqual(['Same', 'Same'])
+  })
+
+  it('does not recreate anonymous streams from old deltas after completion', () => {
+    const delta = output('delta', 'Hello', 1)
+    const items = projectOutputs([delta, output('response', 'Hello', 2), delta])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ content: 'Hello', status: 'done' })
+  })
+
+  it('does not demote a final answer when the provider repeats its completed message', () => {
+    const items = projectOutputs([
+      output('delta', 'Hello', 1, { itemId: 'a' }), output('answer', 'Hello', 2, { itemId: 'a' }),
+      output('response', 'Hello', 3, { itemId: 'a' })
+    ])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: 'answer', content: 'Hello', status: 'done' })
+  })
+
+  it('rebuilds corrupted saved messages from the journal and preserves view-only older turns', () => {
+    const outputs = [output('delta', 'First', 1), output('response', 'First', 2), output('delta', 'Second', 3), output('response', 'Second', 4)]
+    const events: ConversationEventRecord[] = outputs.map(event => ({
+      eventId: event.eventId!, conversationId: 'ws-1', generation: 0, turnId: event.turnId!, runId: event.runId,
+      sequence: event.sequence!, kind: 'output', time: event.time, payload: event
+    }))
+    const view: WorkbenchTimelineItem[] = [
+      { id: 'older', kind: 'answer', content: 'Previous answer', time: '2026-09-09T00:00:00Z', turnId: 'turn-0' },
+      { id: 'broken', kind: 'response', content: 'FirstSecond', time: outputs[0].time, turnId: 'turn-1' },
+      { id: 'duplicate', kind: 'response', content: 'Second', time: outputs[2].time, turnId: 'turn-1' }
+    ]
+    const replayed = replayWorkbenchEvents(view, [...events, events[0]])
+    expect(replayed.map(item => item.content)).toEqual(['Previous answer', 'First', 'Second'])
+    expect(replayWorkbenchEvents(replayed, events)).toEqual(replayed)
+  })
+
   it('merges streaming deltas into one assistant message', () => {
     const started = reduceWorkbenchOutput([], { kind: 'stream-start', content: '', time: '2026-01-01T00:00:00Z', runId: 'r1' })
     const first = reduceWorkbenchOutput(started, { kind: 'delta', content: '你好', time: '2026-01-01T00:00:01Z', runId: 'r1' })
@@ -33,7 +138,7 @@ describe('workbench timeline adapter', () => {
       runId: 'r1'
     })
     expect(items).toHaveLength(1)
-    expect(items[0]).toMatchObject({ kind: 'response', status: 'running', content: '我先检查当前项目状态。' })
+    expect(items[0]).toMatchObject({ kind: 'response', status: 'done', content: '我先检查当前项目状态。' })
   })
 
   it('parses code diff payloads into structured timeline items', () => {
@@ -82,7 +187,7 @@ describe('workbench timeline adapter', () => {
     const second = reduceWorkbenchOutput(first, { kind: 'delta', content: '好', time: 'T2', turnId: 'turn-1', eventId: 'event-2', sequence: 2 })
     const completed = reduceWorkbenchOutput(second, { kind: 'response', content: '你好', time: 'T3', turnId: 'turn-1', eventId: 'event-3', sequence: 3 })
     expect(completed).toHaveLength(1)
-    expect(completed[0]).toMatchObject({ id: 'turn-1:assistant', content: '你好', sequence: 3 })
+    expect(completed[0]).toMatchObject({ id: first[0].id, content: '你好', sequence: 3, status: 'done' })
   })
 
   it('prefers structured replay data while legacy text remains a fallback', () => {

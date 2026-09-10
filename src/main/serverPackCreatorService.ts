@@ -1,3 +1,4 @@
+import { spawnManaged, stopProcessTree } from './processTree'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
@@ -101,7 +102,7 @@ export function serverPackCreatorCommand(jarPath: string, configPath: string, de
 
 async function runCreator(javaPath: string, jarPath: string, configPath: string, workingDirectory: string, destination: string, home: string, logPath: string, signal?: AbortSignal, onOutput?: (output: string) => void): Promise<string> {
   await fs.mkdir(path.dirname(logPath), { recursive: true })
-  const child = spawn(javaPath, serverPackCreatorCommand(jarPath, configPath, destination, home), {
+  const child = spawnManaged(javaPath, serverPackCreatorCommand(jarPath, configPath, destination, home), {
     cwd: workingDirectory,
     windowsHide: true,
     shell: false,
@@ -118,8 +119,7 @@ async function runCreator(javaPath: string, jarPath: string, configPath: string,
   child.stderr.on('data', append)
   const abort = (): void => {
     if (!child.pid) return
-    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true }).unref()
-    else child.kill('SIGTERM')
+    void stopProcessTree(child)
   }
   signal?.addEventListener('abort', abort, { once: true })
   const exitCode = await new Promise<number>((resolve, reject) => {

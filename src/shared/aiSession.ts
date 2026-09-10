@@ -3,6 +3,10 @@ export interface AiRecoverySessionIdentity {
   sessionScope?: string
 }
 
+export function recoveryBelongsToConversation(recovery: { pending: boolean; conversationId?: string } | null | undefined, conversationId: string): boolean {
+  return Boolean(recovery?.pending && conversationId && (recovery.conversationId || 'workspace') === conversationId)
+}
+
 export function normalizeAiSessionScope(value?: string): string {
   return value?.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/gu, '') || 'workspace'
 }

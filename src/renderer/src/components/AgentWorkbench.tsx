@@ -8,7 +8,13 @@
  */
 import { memo, useEffect, useMemo, useState } from 'react'
 import { marked } from 'marked'
-import { Virtuoso } from 'react-virtuoso'
+import WorkbenchConversation from './WorkbenchConversation'
+import ChatWelcome, { ChatRecommendations } from './ChatWelcome'
+import QuotaPreferenceControls from './QuotaPreferenceControls'
+import DiscussionChoiceCards from './DiscussionChoiceCards'
+import { splitDiscussionChoices, type DiscussionChoice } from '../../../shared/discussionChoices'
+import '../minimal-workbench.css'
+import { recoveryBelongsToConversation } from '../../../shared/aiSession'
 import {
   Archive,
   ArrowUp,
@@ -51,7 +57,7 @@ import type {
 import AiAttachmentPicker from './AiAttachmentPicker'
 import { useConfirmDialog } from './InteractionDialogs'
 import { latestWorkbenchUsage, workbenchContextUsageState, type WorkbenchTimelineItem } from '../workbenchTimeline'
-import { formatConversationTime, isLegacyWorkbenchConversation, type WorkbenchConversation } from '../workbenchConversations'
+import { formatConversationTime, isLegacyWorkbenchConversation, type WorkbenchConversation as WorkbenchConversationInfo } from '../workbenchConversations'
 import { workbenchElapsedSeconds } from '../workbenchElapsed'
 
 export type AgentWorkbenchTimelineItem = WorkbenchTimelineItem
@@ -59,9 +65,11 @@ export type AgentWorkbenchTimelineItem = WorkbenchTimelineItem
 type TodoItem = { id: string; title: string; status: 'pending' | 'in_progress' | 'completed' }
 type TimelineRow = AgentWorkbenchTimelineItem | { id: string; kind: 'tool-group'; items: AgentWorkbenchTimelineItem[] }
 
-type AgentWorkbenchProps = {
+export type AgentWorkbenchProps = {
   project: ProjectInfo
   uiMode: 'beginner' | 'advanced'
+  presentation?: 'minimal' | 'full'
+  onUiModeChange?: (mode: 'beginner' | 'advanced') => void
   modpack: boolean
   prompt: string
   setPrompt: (value: string) => void
@@ -69,13 +77,13 @@ type AgentWorkbenchProps = {
   setAttachments: (attachments: AiAttachment[]) => void
   planning: boolean
   taskState: BeginnerTaskState
-  aiPlan: AiPlan | null
+  aiPlan: (AiPlan & { intent?: 'engineering' | 'informational' }) | null
   aiTodo: TodoItem[]
   aiTimeline: AgentWorkbenchTimelineItem[]
   processingStartedAt?: string
   aiOutputStatus: 'idle' | 'running' | 'success' | 'error'
   aiRecovery: AiRecoveryInfo | null
-  conversations: WorkbenchConversation[]
+  conversations: WorkbenchConversationInfo[]
   activeConversationId: string
   onSelectConversation: (conversationId: string) => void
   onNewConversation: () => void
@@ -87,6 +95,7 @@ type AgentWorkbenchProps = {
   switchingBackend?: CodingBackend | null
   onBackendChange: (backend: AgentSettings['codingBackend']) => void
   onStart: () => void
+  onDiscussionChoice?: (choice: DiscussionChoice) => void
   onCancel: () => void
   onResume: () => void
   onDismissRecovery: () => void
@@ -246,7 +255,7 @@ function ToolGroup({ items, humanizeActivity }: { items: AgentWorkbenchTimelineI
 
 function TimelineItem({ item, humanizeActivity, onEdit, onDelete, onRewind }: { item: AgentWorkbenchTimelineItem; humanizeActivity: (value: string) => string; onEdit?: (id: string, content: string) => void; onDelete?: (id: string) => void; onRewind?: (id: string) => void }): React.JSX.Element | null {
   const [expanded, setExpanded] = useState(item.kind === 'error')
-  const content = humanizeActivity(item.content)
+  const content = humanizeActivity(item.kind === 'answer' || item.kind === 'response' ? splitDiscussionChoices(item.content).content : item.content)
   if (item.kind === 'user') return <article className="agent-message-row user"><div className="agent-message agent-message-user"><p>{content}</p></div>{(onEdit || onDelete || onRewind) ? <div className="agent-message-actions">{onEdit ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => onEdit(item.id, item.content)}><Pencil size={12} /></button> : null}{onDelete ? <button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => onDelete(item.id)}><Trash2 size={12} /></button> : null}{onRewind ? <button type="button" title="从这条提问重新开始" aria-label="从这条提问重新开始" onClick={() => onRewind(item.id)}><Undo2 size={12} /></button> : null}</div> : null}<time>{formatTime(item.time)}</time></article>
   if (item.kind === 'thinking') return <ThinkingItem item={item} content={content} />
   if (item.kind === 'start' || item.kind === 'retry' || item.kind === 'history') return <div className="agent-event-muted"><Clock3 size={13} /><span>{content}</span></div>
@@ -293,7 +302,9 @@ function SettingsPopover({ props }: { props: AgentWorkbenchProps }): React.JSX.E
 
 export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.Element {
   const { project, modpack, planning, taskState, aiTimeline, aiTodo, aiPlan } = props
+  const recovery = recoveryBelongsToConversation(props.aiRecovery, props.activeConversationId) ? props.aiRecovery : null
   const effectiveBackend: AgentSettings['codingBackend'] = props.uiMode === 'beginner' ? 'quota' : (props.runningBackend ?? props.backend)
+  const minimal = props.presentation === 'minimal'
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [contextSettingsOpen, setContextSettingsOpen] = useState(false)
   const [manualContextWindow, setManualContextWindow] = useState<number | undefined>()
@@ -302,7 +313,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [conversationPickerOpen, setConversationPickerOpen] = useState(false)
   const { confirm: confirmConversationDelete, dialog: conversationDeleteDialog } = useConfirmDialog()
-  const requestConversationDelete = (conversation: WorkbenchConversation): void => {
+  const requestConversationDelete = (conversation: WorkbenchConversationInfo): void => {
     if (conversationPickerOpen) setConversationPickerOpen(false)
     void confirmConversationDelete({
       title: `删除对话「${conversation.title}」？`,
@@ -317,6 +328,9 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
   // only and must never remove historical items from the model.
   const displayedTimeline = useMemo(() => aiTimeline, [aiTimeline])
   const timelineRows = useMemo(() => groupTimeline(displayedTimeline), [displayedTimeline])
+  const latestReply = [...displayedTimeline].reverse().find(item => item.kind === 'answer' || item.kind === 'user')
+  const choiceAnswer = latestReply?.kind === 'answer' ? latestReply : undefined
+  const choiceDisabled = planning || props.aiOutputStatus !== 'success' || Boolean(props.savingAiPreferences) || Boolean(props.prompt.trim()) || props.attachments.length > 0
   const hasLiveThinking = displayedTimeline.some((item) => item.kind === 'thinking' && item.status === 'running')
   const canExport = props.canExportArtifact && !planning && !props.building
   const latestUsage = latestWorkbenchUsage(aiTimeline)
@@ -379,10 +393,11 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
     document.addEventListener('pointerdown', closeOnOutsidePointer)
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
   }, [conversationPickerOpen])
-  return <div className="agent-workbench">
+  return <div className={`agent-workbench${minimal ? ` agent-minimal${timelineRows.length ? '' : ' agent-minimal-empty'}` : ''}`}>
     <header className="agent-workbench-header">
       <div className="agent-workbench-title"><span className="agent-title-icon">{backendIcon(effectiveBackend, 17)}</span><h1>{project.name}</h1><button type="button" className="agent-title-edit" title="重命名项目" aria-label="重命名项目" onClick={props.onRename}><Pencil size={13} /></button></div>
       <div className="agent-workbench-actions">
+        {props.onUiModeChange ? <label className="agent-presentation-toggle"><span>专业模式</span><input aria-label="专业模式" type="checkbox" checked={props.uiMode === 'advanced'} onChange={event => props.onUiModeChange?.(event.target.checked ? 'advanced' : 'beginner')} /></label> : null}
         <span className={`agent-persistence-status ${props.persistenceState ?? 'ready'}`} title={props.persistenceMessage}>{props.persistenceState === 'saving' ? <LoaderCircle className="spin" size={12} /> : props.persistenceState === 'error' ? <CircleAlert size={12} /> : <Check size={12} />}<span>{props.persistenceMessage ?? '已保存'}</span></span>
         <div className="agent-conversation-picker">
           <button type="button" className="agent-picker-trigger" aria-expanded={conversationPickerOpen} title={props.planning ? '任务运行中不能切换对话' : '多对话（Beta）：切换、新建或删除对话'} disabled={props.planning} onClick={() => setConversationPickerOpen((value) => !value)}><MessagesSquare size={14} /><span>{props.conversations.find((item) => item.id === props.activeConversationId)?.title ?? '选择对话'}</span><em className="agent-beta-tag">Beta</em>{props.conversations.length > 1 ? <small>{props.conversations.length}</small> : null}<ChevronDown size={12} /></button>
@@ -391,7 +406,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
             {props.conversations.map((conversation) => {
               const original = isLegacyWorkbenchConversation(conversation)
               return <div key={conversation.id} className={`agent-conversation-item ${conversation.id === props.activeConversationId ? 'active' : ''}`}>
-                <button type="button" className="agent-conversation-select" onClick={() => { props.onSelectConversation(conversation.id); setConversationPickerOpen(false) }}><span>{conversation.title}</span>{original ? <em title="升级前的对话，与旧版本完全一致">原始</em> : null}<small className="agent-conversation-time">{formatConversationTime(conversation.updatedAt)}</small></button>
+                <button type="button" className="agent-conversation-select" title={conversation.title} onClick={() => { props.onSelectConversation(conversation.id); setConversationPickerOpen(false) }}><span>{conversation.title}</span>{original ? <em title="升级前的对话，与旧版本完全一致">原始</em> : null}<small className="agent-conversation-time">{formatConversationTime(conversation.updatedAt)}</small></button>
                 {props.conversations.length > 1 ? <button type="button" className="agent-conversation-delete" title="删除对话" aria-label={`删除对话 ${conversation.title}`} onClick={() => requestConversationDelete(conversation)}><Trash2 size={13} /></button> : null}
               </div>
             })}
@@ -406,18 +421,19 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
       </div>
     </header>
 
-    {props.aiRecovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{props.aiRecovery.backend ? `，将使用 ${backendLabel(props.aiRecovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
+    {recovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{recovery.backend ? `，将使用 ${backendLabel(recovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
 
-    {timelineRows.length ? <Virtuoso className="agent-conversation" data={timelineRows} computeItemKey={(_index, row) => row.id} initialTopMostItemIndex={timelineRows.length - 1} followOutput={planning ? 'auto' : 'smooth'} increaseViewportBy={400} itemContent={(_index, row) => <div className="agent-conversation-row">{row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />}</div>} components={{ Footer: () => taskState === 'success' && aiPlan ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />进入游戏测试</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null }} /> : <div className="agent-conversation"><div className="agent-conversation-surface"><div className="agent-empty"><span className="agent-empty-avatar">{backendIcon(effectiveBackend, 24)}</span><strong>{backendLabel(effectiveBackend)}</strong><span>有什么我可以帮助你的？</span></div></div></div>}
+    {timelineRows.length ? <WorkbenchConversation key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} renderRow={(row) => row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <><TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />进入游戏测试</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" modpack={modpack} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); document.querySelector<HTMLTextAreaElement>('.agent-composer textarea')?.focus() }} />}
 
     <div className="agent-composer-stack">
       {planning ? <PlanBar todo={aiTodo} /> : null}
       {planning && !hasLiveThinking ? <ProcessingBar label="正在处理" startedAt={props.processingStartedAt} /> : null}
       {settingsOpen ? <SettingsPopover props={props} /> : null}
       <footer className="agent-composer">
-        <textarea value={props.prompt} onChange={(event) => props.setPrompt(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.ctrlKey || event.metaKey) { if (event.key === 'Enter' && !planning) { event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart; const end = textarea.selectionEnd; props.setPrompt(`${props.prompt.slice(0, start)}\n${props.prompt.slice(end)}`); window.requestAnimationFrame(() => textarea.setSelectionRange(start + 1, start + 1)) } return } if (event.key === 'Enter' && !planning && (props.prompt.trim() || props.attachments.length)) { event.preventDefault(); props.onStart() } }} placeholder={props.placeholder} disabled={planning} rows={2} />
-        <div className="agent-composer-toolbar"><div className="agent-composer-tools"><AiAttachmentPicker attachments={props.attachments} onChange={props.setAttachments} disabled={planning} onError={props.onAttachmentError} /></div><div className="agent-composer-actions">{props.uiMode === 'beginner' ? <button type="button" className="agent-mode-pill" onClick={() => setSettingsOpen((value) => !value)}><Settings size={14} /><span>制作设置</span><ChevronDown size={12} /></button> : null}<div className={`agent-context-control ${contextSettingsOpen ? 'open' : ''}`}><ContextBadge usage={displayedUsage} manual={manualContextWindow !== undefined} onClick={() => setContextSettingsOpen((value) => !value)} /><form className="agent-context-popover" onSubmit={(event) => { event.preventDefault(); saveContextWindow() }}><strong>{contextSummary}</strong><label htmlFor="agent-context-window">上下文窗口 Token</label><input id="agent-context-window" type="text" inputMode="numeric" value={contextWindowDraft} placeholder={latestUsage?.contextWindow ? String(latestUsage.contextWindow) : '例如 128000'} onChange={(event) => { setContextWindowDraft(event.target.value); setContextWindowError('') }} /><div><button type="button" className="agent-text-button" onClick={clearContextWindow}>自动</button><button type="submit" className="agent-primary-button">应用</button></div>{contextWindowError ? <small>{contextWindowError}</small> : manualContextWindow ? <small>当前使用手动窗口 {manualContextWindow.toLocaleString('zh-CN')}</small> : latestUsage?.contextWindow ? <small>CLI 返回 {latestUsage.contextWindow.toLocaleString('zh-CN')}</small> : <small>CLI 未返回窗口大小</small>}</form></div>{planning ? <button type="button" className="agent-send-button stop" title="停止任务" aria-label="停止任务" onClick={props.onCancel}><Square size={14} fill="currentColor" /></button> : <button type="button" className="agent-send-button" title="发送" aria-label="发送" disabled={!props.prompt.trim() && !props.attachments.length} onClick={props.onStart}><ArrowUp size={17} strokeWidth={2.7} /></button>}</div></div>
+        <textarea value={props.prompt} onChange={(event) => props.setPrompt(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (props.savingAiPreferences && event.key === 'Enter' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); return } if (event.ctrlKey || event.metaKey) { if (event.key === 'Enter' && !planning) { event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart; const end = textarea.selectionEnd; props.setPrompt(`${props.prompt.slice(0, start)}\n${props.prompt.slice(end)}`); window.requestAnimationFrame(() => textarea.setSelectionRange(start + 1, start + 1)) } return } if (event.key === 'Enter' && !planning && (props.prompt.trim() || props.attachments.length)) { event.preventDefault(); props.onStart() } }} placeholder={props.placeholder} disabled={planning} rows={2} />
+        <div className="agent-composer-toolbar"><div className="agent-composer-tools"><AiAttachmentPicker attachments={props.attachments} onChange={props.setAttachments} disabled={planning} onError={props.onAttachmentError} />{minimal && effectiveBackend === 'quota' && props.beginnerAiPreferences ? <QuotaPreferenceControls preferences={props.beginnerAiPreferences} models={props.beginnerAvailableModels ?? []} disabled={planning || Boolean(props.savingAiPreferences)} onModelChange={props.onModelChange} onReasoningLevelChange={props.onReasoningLevelChange} /> : null}</div><div className="agent-composer-actions">{props.uiMode === 'beginner' ? <button type="button" className="agent-mode-pill" onClick={() => setSettingsOpen((value) => !value)}><Settings size={14} /><span>制作设置</span><ChevronDown size={12} /></button> : null}<div className={`agent-context-control ${contextSettingsOpen ? 'open' : ''}`}><ContextBadge usage={displayedUsage} manual={manualContextWindow !== undefined} onClick={() => setContextSettingsOpen((value) => !value)} /><form className="agent-context-popover" onSubmit={(event) => { event.preventDefault(); saveContextWindow() }}><strong>{contextSummary}</strong><label htmlFor="agent-context-window">上下文窗口 Token</label><input id="agent-context-window" type="text" inputMode="numeric" value={contextWindowDraft} placeholder={latestUsage?.contextWindow ? String(latestUsage.contextWindow) : '例如 128000'} onChange={(event) => { setContextWindowDraft(event.target.value); setContextWindowError('') }} /><div><button type="button" className="agent-text-button" onClick={clearContextWindow}>自动</button><button type="submit" className="agent-primary-button">应用</button></div>{contextWindowError ? <small>{contextWindowError}</small> : manualContextWindow ? <small>当前使用手动窗口 {manualContextWindow.toLocaleString('zh-CN')}</small> : latestUsage?.contextWindow ? <small>CLI 返回 {latestUsage.contextWindow.toLocaleString('zh-CN')}</small> : <small>CLI 未返回窗口大小</small>}</form></div>{planning ? <button type="button" className="agent-send-button stop" title="停止任务" aria-label="停止任务" onClick={props.onCancel}><Square size={14} fill="currentColor" /></button> : <button type="button" className="agent-send-button" title="发送" aria-label="发送" disabled={Boolean(props.savingAiPreferences) || (!props.prompt.trim() && !props.attachments.length)} onClick={props.onStart}><ArrowUp size={17} strokeWidth={2.7} /></button>}</div></div>
       </footer>
+      {minimal && !timelineRows.length ? <div className="chat-welcome minimal-recommendations"><ChatRecommendations mode="workbench" modpack={modpack} disabled={planning} onSelect={value => { props.setPrompt(value); document.querySelector<HTMLTextAreaElement>('.agent-composer textarea')?.focus() }} /></div> : null}
       {props.aiOutputStatus === 'error' && !planning ? <div className="agent-error-footer"><CircleAlert size={14} /><span>任务没有完成，详细信息已保留</span><button type="button" className="agent-text-button" onClick={props.onExportLogs}>导出诊断</button></div> : null}
     </div>
 

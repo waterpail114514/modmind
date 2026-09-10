@@ -15,8 +15,8 @@ export function describeAiFailureForUser(error: unknown): string {
     const duration = message.match(/(?:连续|等待)\s*([0-9]+\s*(?:分钟|秒))/i)?.[1]
     return `上游模型${duration ? `在 ${duration} 内` : ''}没有返回任何内容。你的问题没有被判定为有误；请稍后重试，或切换模型/线路。`
   }
-  if (/ResumedPromptRejection|会话.*(?:拒绝|失效|不存在)|session.*(?:reject|invalid|not found)|(?:rollout|thread|history).*(?:invalid|not found)/i.test(message)) {
-    return '上游不接受之前保存的会话，该会话已失效。ModMind 会改用新会话重试；若仍失败，请切换线路或模型。'
+  if (/ResumedPromptRejection|会话.*(?:拒绝|失效|不存在)|session.*(?:reject|invalid|not found)|(?:rollout|thread|history).*(?:invalid|not found)|\bno\s+(?:rollout|thread|session|history)\s+found\b/i.test(message)) {
+    return '之前保存的会话记录已丢失或被拒绝，该会话已失效。ModMind 会保留项目进度并尝试用新会话继续；若仍失败，请重新发送任务或导出诊断日志。'
   }
   if (statusIn(message, 500) || statusIn(message, 502) || statusIn(message, 503) || statusIn(message, 504)) {
     const status = message.match(/(?:^|\D)(50[0-4])(?:\D|$)/)?.[1]

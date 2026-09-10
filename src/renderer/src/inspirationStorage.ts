@@ -1,12 +1,20 @@
 import type { InspirationChatMessage } from '../../shared/types'
 import { normalizeAiTurnReplay } from '../../shared/aiReplay'
 import { isAiOperationalStatusText } from '../../shared/aiOutput'
+import { titleFromUserText } from './workbenchConversations'
 
 export interface InspirationConversation {
   id: string
   title: string
   updatedAt: string
   messages: InspirationChatMessage[]
+}
+
+export function inspirationConversationTitle(title: string | undefined, messages: InspirationChatMessage[]): string {
+  const existing = title?.trim() ?? ''
+  if (existing && !/^(?:新对话|新的对话|新想法(?:\s*\d+)?|未命名灵感)$/.test(existing)) return existing
+  const firstQuestion = messages.find(message => message.role === 'user')
+  return firstQuestion ? titleFromUserText(firstQuestion.replay?.prompt || firstQuestion.content) : existing || '新想法'
 }
 
 export interface InspirationStoragePayload {

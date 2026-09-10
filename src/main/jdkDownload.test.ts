@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { adoptiumMetadataUrl, jdkDownloadSources } from './jdkDownload'
 
 describe('managed build JDK downloads', () => {
+  it('selects both native Mac architectures and rejects unsupported targets', () => {
+    expect(adoptiumMetadataUrl(21, 'darwin', 'arm64')).toContain('architecture=aarch64')
+    expect(adoptiumMetadataUrl(21, 'darwin', 'x64')).toContain('os=mac')
+    expect(() => adoptiumMetadataUrl(21, 'darwin', 'ia32')).toThrow(/架构/)
+    expect(() => adoptiumMetadataUrl(21, 'freebsd', 'x64')).toThrow(/平台/)
+  })
   it('selects a full JDK and domestic mirror before the official source', () => {
     expect(adoptiumMetadataUrl(8, 'win32', 'x64')).toContain('/latest/8/hotspot?')
     expect(adoptiumMetadataUrl(8, 'win32', 'x64')).toContain('image_type=jdk')

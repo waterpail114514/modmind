@@ -1,8 +1,10 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CODEX_RUNTIME_VERSION, clearPreparedCodexCredentials, getPreparedCodexEnvironment, getPreparedCodexExecutable, isManagedCodexVersion, managedCodexExecutablePath, managedCodexRuntimePath, prepareCodex, type CodexServerConfig } from './codexSetup'
+
+vi.mock('./codexExecutable', async (importOriginal) => ({ ...await importOriginal<typeof import('./codexExecutable')>(), probeCodexExecutable: vi.fn(async () => '0.146.0') }))
 
 const settings = {
   apiKey: 'test-key',
@@ -27,9 +29,9 @@ describe('Codex beginner preparation', () => {
 
   it('uses one deterministic runtime location for settings and quota workflows', () => {
     const root = path.join('C:', 'ModMindData')
-    const runtime = managedCodexRuntimePath(root)
+    const runtime = managedCodexRuntimePath(root, 'win32', 'x64')
     expect(runtime).toBe(path.join(root, 'codex-runtime', `${CODEX_RUNTIME_VERSION}-win32-x64`))
-    expect(managedCodexExecutablePath(root)).toBe(path.join(runtime, 'package', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe'))
+    expect(managedCodexExecutablePath(root, 'win32', 'x64')).toBe(path.join(runtime, 'package', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe'))
   })
 
   it('writes an isolated config and skips the second identical write', async () => {

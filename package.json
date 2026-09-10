@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -12,7 +12,7 @@
     "prebuild": "node scripts/clean-build-output.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "test": "vitest run src && npm run test:mcp",
+    "test": "vitest run src && npm run test:mcp && npm run test:mac-policy",
     "test:mcp": "npm --prefix modmind-mcp-open-source test",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.web.json --pretty false",
     "assets:installer": "node scripts/generate-installer-assets.mjs",
@@ -20,8 +20,15 @@
     "dist:win": "npm run build && electron-builder --win --config.forceCodeSigning=true && node scripts/verify-release.mjs && node scripts/prepare-update-artifacts.mjs",
     "dist:win:unsigned": "set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm run build && electron-builder --win && node scripts/verify-release.mjs --allow-unsigned && node scripts/prepare-update-artifacts.mjs",
     "dist:linux": "npm run build && electron-builder --linux AppImage zip",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip",
-    "verify:release": "node scripts/verify-release.mjs"
+    "dist:mac": "npm run dist:mac:release",
+    "dist:mac:unsigned": "npm run build && node scripts/build-macos.mjs --allow-unsigned",
+    "verify:release": "node scripts/verify-release.mjs",
+    "dist:mac:arm64": "npm run build && node scripts/build-macos.mjs --arch arm64",
+    "dist:mac:x64": "npm run build && node scripts/build-macos.mjs --arch x64",
+    "dist:mac:release": "npm run build && node scripts/build-macos.mjs",
+    "assets:mac": "node scripts/generate-macos-assets.mjs",
+    "verify:mac": "node scripts/verify-macos-release.mjs",
+    "test:mac-policy": "node --test scripts/macos-release-policy.test.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -44,7 +51,9 @@
     "react-virtuoso": "^4.18.13",
     "sharp": "^0.33.5",
     "smol-toml": "^1.8.0",
-    "undici": "7.2.3"
+    "three": "^0.180.0",
+    "undici": "7.2.3",
+    "yauzl": "^2.10.0"
   },
   "devDependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -52,6 +61,8 @@
     "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/three": "^0.180.0",
+    "@types/yauzl": "^2.10.3",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
@@ -174,6 +185,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/trayTemplate.png",
+        "to": "trayTemplate.png"
+      },
+      {
+        "from": "resources/trayTemplate@2x.png",
+        "to": "trayTemplate@2x.png"
       }
     ],
     "win": {
@@ -196,8 +215,13 @@
         "dmg",
         "zip"
       ],
-      "icon": "resources/icon.png",
-      "category": "public.app-category.developer-tools"
+      "icon": "resources/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "linux": {
       "target": [

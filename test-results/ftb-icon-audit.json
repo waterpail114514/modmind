@@ -1,0 +1,1063 @@
+{
+  "startedAt": "2026-09-08T13:35:46.122Z",
+  "projectPath": "E:/waterpail/下载/「莱特兰：魂影与恶域」牢包版 0.1.1",
+  "readMs": 47.22199999999998,
+  "status": "complete",
+  "methodology": {
+    "deduplication": "Exact nonempty normalized document.icon from explicit raw.icon only; no task/reward fallback",
+    "cold": "First sequential sample batch in fresh Vitest module/process: first call builds index, later calls reuse it. OS disk cache is not flushed.",
+    "warm": "Same 20 IDs repeated sequentially in same process",
+    "success": "resolveFtbQuestIcon returns non-null (not visual or semantic correctness)",
+    "full": "Sequential unique IDs; reuse first-pass sample rows and resolve remaining IDs with warm index",
+    "budgetMs": 600000
+  },
+  "chapters": 38,
+  "quests": 1279,
+  "diagnostics": [
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“宝石合成入门”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "1DFF89CF096BDDD9"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“重铸台青春版”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "60C70B7E44567B8C"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“最高可刷橙色品质词条装备，需搭配神铸珍珠食用”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "62A575C8AF2DEC69"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“需求很大”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "632F238B6EF25CCF"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“摘除你已镶嵌在装备上的宝石”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "038695A9D2E1CE10"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“需求同样很大”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "6C6F408262B89A35"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“给武器开孔，具体操作参考镶嵌宝石”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "28BA430BE240CFBA"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“去除武器的前缀名”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "6EFE91C356E82BCC"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“用来刷新或者强化你的副词条”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "759310F1BE54F4A5"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“发现”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "05A8EF31EF8AA7BA"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“15个书架已经不够用了”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "20DBE0992A847264"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 2D8DC6F7”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "2D8DC6F77F6AE7FF"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 2341E3B4”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "2341E3B40705E22C"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 62C4625A”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "62C4625AE3B67BB4"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 1EFB9F82”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "1EFB9F826783B15E"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 40F651BC”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "40F651BC4210AF75"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 15D5446D”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "15D5446DDE3944B4"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“我知道你想说什么但是先别急）”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "3BC44B8616C7F246"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 3EE0C640”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "3EE0C640A2EF2045"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 4F5B3C3B”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "4F5B3C3BF26CEA22"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 6EC45C81”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "6EC45C814BC40984"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“任务 7ABC94A7”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "7ABC94A7A1075B6A"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“快结束了，加油罢”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "7C2D74B0A0AC7EED"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“一步之遥，冲，冲刺，冲”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "3B15B1C46B66595A"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“OHHHHHHHHHH”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "53BF87568AE4E606"
+    },
+    {
+      "severity": "error",
+      "code": "reward-table-id-missing",
+      "message": "奖励“OHHHHHHHHHH”缺少奖励表引用",
+      "chapterId": "20514857F7D118A6",
+      "questId": "53BF87568AE4E606"
+    }
+  ],
+  "explicitOccurrences": 48,
+  "chapterOccurrences": 7,
+  "questOccurrences": 41,
+  "emptyExplicit": [],
+  "uniqueIds": 47,
+  "uniqueModIds": 40,
+  "uniqueMinecraftIds": 7,
+  "occurrences": [
+    {
+      "kind": "chapter",
+      "chapterId": "01EFA9856B911FD2",
+      "icon": "ramesses_curse:seal_of_kadesh"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "01EFA9856B911FD2",
+      "questId": "7AE77466C3CC8E72",
+      "icon": "ramesses_curse:seal_of_kadesh"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "06EDCA1F473BAD6F",
+      "questId": "0EE9354645CED86A",
+      "icon": "goety:dark_altar"
+    },
+    {
+      "kind": "chapter",
+      "chapterId": "2217BB9DFF4422B0",
+      "icon": "ring_of_the_hundred_curses:ring_of_the_hundred_curses"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "24B82252D0D26A08",
+      "questId": "3A7C73890A6EB6DB",
+      "icon": "minecraft:command_block"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "33A9B85424BEB72B",
+      "questId": "4FCBA528EED4856E",
+      "icon": "touhou_little_maid:hakurei_gohei"
+    },
+    {
+      "kind": "chapter",
+      "chapterId": "3989E5A974236F8E",
+      "icon": "flame_chase_artifacts:hatred_inundate"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "3357075512DDF93E",
+      "icon": "flame_chase_artifacts:time_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "06DD3A698C7A2660",
+      "icon": "flame_chase_artifacts:ocean_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "7B12BF5F7FF19F2B",
+      "icon": "flame_chase_artifacts:earth_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "002962ACA9CADBBC",
+      "icon": "flame_chase_artifacts:worldbearing_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "78CFE9A2F66E2E83",
+      "icon": "flame_chase_artifacts:passage_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "403B3B3B8C7338A8",
+      "icon": "flame_chase_artifacts:death_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "6A7CCBB74CDA7C33",
+      "icon": "flame_chase_artifacts:strife_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "04EE059F231332F2",
+      "icon": "flame_chase_artifacts:trickery_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "0AD438EAC2FC9E61",
+      "icon": "flame_chase_artifacts:romance_curios"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "3989E5A974236F8E",
+      "questId": "1AFCE4E3ACF6CFA2",
+      "icon": "flame_chase_artifacts:sky_curios"
+    },
+    {
+      "kind": "chapter",
+      "chapterId": "3AA631EF3509344A",
+      "icon": "pandora:pandora_necklace"
+    },
+    {
+      "kind": "chapter",
+      "chapterId": "3F185BB7025E90CB",
+      "icon": "celestial_artifacts:catastrophe_scroll"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "41D267F7E338EB9F",
+      "questId": "1A4C4804D09C781F",
+      "icon": "twilightforest:twilight_portal_miniature_structure"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "41D267F7E338EB9F",
+      "questId": "478CC9665F5BEC2C",
+      "icon": "twilightforest:naga_trophy"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "41D267F7E338EB9F",
+      "questId": "58C06E4BA122B3CE",
+      "icon": "twilightforest:lich_trophy"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "41D267F7E338EB9F",
+      "questId": "1A4D7F0924893CD5",
+      "icon": "twilightforest:knight_phantom_trophy"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "690832F1CAE67442",
+      "questId": "6026CB483C5EE5E5",
+      "icon": "minecraft:netherite_upgrade_smithing_template"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "690832F1CAE67442",
+      "questId": "2ABBD916AEBFB345",
+      "icon": "minecraft:heart_of_the_sea"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "690832F1CAE67442",
+      "questId": "5FA6825E0730F761",
+      "icon": "enigmaticaddons:antique_bag"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "690832F1CAE67442",
+      "questId": "5719F4BC11647DAE",
+      "icon": "minecraft:wither_skeleton_skull"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "690832F1CAE67442",
+      "questId": "56CAFA4E69E6F03B",
+      "icon": "tarotcards:death"
+    },
+    {
+      "kind": "chapter",
+      "chapterId": "6C7C50EC550870F1",
+      "icon": "minecraft:oak_log"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "6C7C50EC550870F1",
+      "questId": "6A65F5D745EAADEC",
+      "icon": "explorerscompass:explorerscompass"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "6C7C50EC550870F1",
+      "questId": "1A700F35E83AFE74",
+      "icon": "avaritia:neutron_ingot"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "0EBF642707B61A7A",
+      "icon": "terra_entity:king_slime_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "41F7197AB26A8FA4",
+      "icon": "terra_entity:cthulhu_eye_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "7920471B6E6FD131",
+      "icon": "terra_entity:eater_of_world_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "5A77BBA0FAAA6F80",
+      "icon": "terra_entity:brain_of_cthulhu_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "58BA1BEB2679D718",
+      "icon": "terra_entity:queen_bee_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "0AA650B746F42EED",
+      "icon": "terra_entity:skeletron_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "279B08FAD007A2DD",
+      "questId": "269A31749BCA770B",
+      "icon": "terra_entity:wall_of_flesh_spawn_egg"
+    },
+    {
+      "kind": "chapter",
+      "chapterId": "20514857F7D118A6",
+      "icon": "apotheosis:augmenting_table"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "20514857F7D118A6",
+      "questId": "2DD5ECF77106468C",
+      "icon": "apotheosis:ender_library"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "20514857F7D118A6",
+      "questId": "20DBE0992A847264",
+      "icon": "minecraft:enchanting_table"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "20514857F7D118A6",
+      "questId": "6FAEED67186805C8",
+      "icon": "minecraft:bookshelf"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "0B96E7065D52FBEB",
+      "questId": "4A1B4CA02243407F",
+      "icon": "refinedstorage:creative_controller"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "0B96E7065D52FBEB",
+      "questId": "06B6FC0544CD8AE2",
+      "icon": "beyonddimensions:net_creater"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "209FDA8D15205E27",
+      "questId": "725C1329EEDA47AD",
+      "icon": "terramity:trial_guardian_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "209FDA8D15205E27",
+      "questId": "18B291E464991700",
+      "icon": "terramity:gob_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "209FDA8D15205E27",
+      "questId": "7D4EEDE98C734FD8",
+      "icon": "terramity:super_sniffer_spawn_egg"
+    },
+    {
+      "kind": "quest",
+      "chapterId": "209FDA8D15205E27",
+      "questId": "2DE2F0D49151DEA0",
+      "icon": "terramity:ultra_sniffer_spawn_egg"
+    }
+  ],
+  "coldSample": [
+    {
+      "id": "ramesses_curse:seal_of_kadesh",
+      "success": false,
+      "ms": 14876.378499999999
+    },
+    {
+      "id": "goety:dark_altar",
+      "success": true,
+      "ms": 216.53119999999944
+    },
+    {
+      "id": "ring_of_the_hundred_curses:ring_of_the_hundred_curses",
+      "success": true,
+      "ms": 141.39120000000003
+    },
+    {
+      "id": "touhou_little_maid:hakurei_gohei",
+      "success": true,
+      "ms": 156.77909999999974
+    },
+    {
+      "id": "flame_chase_artifacts:hatred_inundate",
+      "success": true,
+      "ms": 153.38529999999992
+    },
+    {
+      "id": "flame_chase_artifacts:time_curios",
+      "success": true,
+      "ms": 150.80409999999938
+    },
+    {
+      "id": "flame_chase_artifacts:ocean_curios",
+      "success": true,
+      "ms": 135.60659999999916
+    },
+    {
+      "id": "flame_chase_artifacts:earth_curios",
+      "success": true,
+      "ms": 148.34289999999964
+    },
+    {
+      "id": "flame_chase_artifacts:worldbearing_curios",
+      "success": true,
+      "ms": 143.21220000000176
+    },
+    {
+      "id": "flame_chase_artifacts:passage_curios",
+      "success": true,
+      "ms": 135.65699999999924
+    },
+    {
+      "id": "flame_chase_artifacts:death_curios",
+      "success": true,
+      "ms": 154.64589999999953
+    },
+    {
+      "id": "flame_chase_artifacts:strife_curios",
+      "success": true,
+      "ms": 145.52499999999782
+    },
+    {
+      "id": "flame_chase_artifacts:trickery_curios",
+      "success": true,
+      "ms": 161.67689999999857
+    },
+    {
+      "id": "flame_chase_artifacts:romance_curios",
+      "success": true,
+      "ms": 145.88650000000052
+    },
+    {
+      "id": "flame_chase_artifacts:sky_curios",
+      "success": true,
+      "ms": 135.8715000000011
+    },
+    {
+      "id": "pandora:pandora_necklace",
+      "success": false,
+      "ms": 51.231700000000274
+    },
+    {
+      "id": "celestial_artifacts:catastrophe_scroll",
+      "success": true,
+      "ms": 182.0633999999991
+    },
+    {
+      "id": "twilightforest:twilight_portal_miniature_structure",
+      "success": false,
+      "ms": 174.18089999999938
+    },
+    {
+      "id": "twilightforest:naga_trophy",
+      "success": true,
+      "ms": 158.52609999999913
+    },
+    {
+      "id": "twilightforest:lich_trophy",
+      "success": true,
+      "ms": 176.48139999999694
+    }
+  ],
+  "warmSample": [
+    {
+      "id": "ramesses_curse:seal_of_kadesh",
+      "success": false,
+      "ms": 173.28299999999945
+    },
+    {
+      "id": "goety:dark_altar",
+      "success": true,
+      "ms": 236.9271000000008
+    },
+    {
+      "id": "ring_of_the_hundred_curses:ring_of_the_hundred_curses",
+      "success": true,
+      "ms": 144.9877000000015
+    },
+    {
+      "id": "touhou_little_maid:hakurei_gohei",
+      "success": true,
+      "ms": 163.9350000000013
+    },
+    {
+      "id": "flame_chase_artifacts:hatred_inundate",
+      "success": true,
+      "ms": 135.0747999999985
+    },
+    {
+      "id": "flame_chase_artifacts:time_curios",
+      "success": true,
+      "ms": 156.08100000000195
+    },
+    {
+      "id": "flame_chase_artifacts:ocean_curios",
+      "success": true,
+      "ms": 139.69119999999748
+    },
+    {
+      "id": "flame_chase_artifacts:earth_curios",
+      "success": true,
+      "ms": 136.85080000000016
+    },
+    {
+      "id": "flame_chase_artifacts:worldbearing_curios",
+      "success": true,
+      "ms": 135.5047999999988
+    },
+    {
+      "id": "flame_chase_artifacts:passage_curios",
+      "success": true,
+      "ms": 136.51740000000063
+    },
+    {
+      "id": "flame_chase_artifacts:death_curios",
+      "success": true,
+      "ms": 142.90140000000247
+    },
+    {
+      "id": "flame_chase_artifacts:strife_curios",
+      "success": true,
+      "ms": 133.67829999999958
+    },
+    {
+      "id": "flame_chase_artifacts:trickery_curios",
+      "success": true,
+      "ms": 145.66330000000016
+    },
+    {
+      "id": "flame_chase_artifacts:romance_curios",
+      "success": true,
+      "ms": 134.3729999999996
+    },
+    {
+      "id": "flame_chase_artifacts:sky_curios",
+      "success": true,
+      "ms": 136.73229999999967
+    },
+    {
+      "id": "pandora:pandora_necklace",
+      "success": false,
+      "ms": 45.937699999998586
+    },
+    {
+      "id": "celestial_artifacts:catastrophe_scroll",
+      "success": true,
+      "ms": 178.92640000000029
+    },
+    {
+      "id": "twilightforest:twilight_portal_miniature_structure",
+      "success": false,
+      "ms": 170.28600000000006
+    },
+    {
+      "id": "twilightforest:naga_trophy",
+      "success": true,
+      "ms": 164.22650000000067
+    },
+    {
+      "id": "twilightforest:lich_trophy",
+      "success": true,
+      "ms": 166.0124999999971
+    }
+  ],
+  "results": [
+    {
+      "id": "ramesses_curse:seal_of_kadesh",
+      "success": false,
+      "ms": 14876.378499999999
+    },
+    {
+      "id": "goety:dark_altar",
+      "success": true,
+      "ms": 216.53119999999944
+    },
+    {
+      "id": "ring_of_the_hundred_curses:ring_of_the_hundred_curses",
+      "success": true,
+      "ms": 141.39120000000003
+    },
+    {
+      "id": "touhou_little_maid:hakurei_gohei",
+      "success": true,
+      "ms": 156.77909999999974
+    },
+    {
+      "id": "flame_chase_artifacts:hatred_inundate",
+      "success": true,
+      "ms": 153.38529999999992
+    },
+    {
+      "id": "flame_chase_artifacts:time_curios",
+      "success": true,
+      "ms": 150.80409999999938
+    },
+    {
+      "id": "flame_chase_artifacts:ocean_curios",
+      "success": true,
+      "ms": 135.60659999999916
+    },
+    {
+      "id": "flame_chase_artifacts:earth_curios",
+      "success": true,
+      "ms": 148.34289999999964
+    },
+    {
+      "id": "flame_chase_artifacts:worldbearing_curios",
+      "success": true,
+      "ms": 143.21220000000176
+    },
+    {
+      "id": "flame_chase_artifacts:passage_curios",
+      "success": true,
+      "ms": 135.65699999999924
+    },
+    {
+      "id": "flame_chase_artifacts:death_curios",
+      "success": true,
+      "ms": 154.64589999999953
+    },
+    {
+      "id": "flame_chase_artifacts:strife_curios",
+      "success": true,
+      "ms": 145.52499999999782
+    },
+    {
+      "id": "flame_chase_artifacts:trickery_curios",
+      "success": true,
+      "ms": 161.67689999999857
+    },
+    {
+      "id": "flame_chase_artifacts:romance_curios",
+      "success": true,
+      "ms": 145.88650000000052
+    },
+    {
+      "id": "flame_chase_artifacts:sky_curios",
+      "success": true,
+      "ms": 135.8715000000011
+    },
+    {
+      "id": "pandora:pandora_necklace",
+      "success": false,
+      "ms": 51.231700000000274
+    },
+    {
+      "id": "celestial_artifacts:catastrophe_scroll",
+      "success": true,
+      "ms": 182.0633999999991
+    },
+    {
+      "id": "twilightforest:twilight_portal_miniature_structure",
+      "success": false,
+      "ms": 174.18089999999938
+    },
+    {
+      "id": "twilightforest:naga_trophy",
+      "success": true,
+      "ms": 158.52609999999913
+    },
+    {
+      "id": "twilightforest:lich_trophy",
+      "success": true,
+      "ms": 176.48139999999694
+    },
+    {
+      "id": "minecraft:command_block",
+      "success": false,
+      "ms": 49.456099999999424
+    },
+    {
+      "id": "twilightforest:knight_phantom_trophy",
+      "success": false,
+      "ms": 166.09619999999995
+    },
+    {
+      "id": "minecraft:netherite_upgrade_smithing_template",
+      "success": false,
+      "ms": 50.97780000000057
+    },
+    {
+      "id": "minecraft:heart_of_the_sea",
+      "success": false,
+      "ms": 48.028699999998935
+    },
+    {
+      "id": "enigmaticaddons:antique_bag",
+      "success": true,
+      "ms": 136.20420000000013
+    },
+    {
+      "id": "minecraft:wither_skeleton_skull",
+      "success": false,
+      "ms": 50.91979999999967
+    },
+    {
+      "id": "tarotcards:death",
+      "success": true,
+      "ms": 214.54040000000168
+    },
+    {
+      "id": "minecraft:oak_log",
+      "success": false,
+      "ms": 48.039700000001176
+    },
+    {
+      "id": "explorerscompass:explorerscompass",
+      "success": true,
+      "ms": 1525.6090000000004
+    },
+    {
+      "id": "avaritia:neutron_ingot",
+      "success": true,
+      "ms": 188.99319999999716
+    },
+    {
+      "id": "terra_entity:king_slime_spawn_egg",
+      "success": true,
+      "ms": 202.27930000000197
+    },
+    {
+      "id": "terra_entity:cthulhu_eye_spawn_egg",
+      "success": true,
+      "ms": 200.8230999999978
+    },
+    {
+      "id": "terra_entity:eater_of_world_spawn_egg",
+      "success": true,
+      "ms": 215.10789999999906
+    },
+    {
+      "id": "terra_entity:brain_of_cthulhu_spawn_egg",
+      "success": true,
+      "ms": 207.76469999999972
+    },
+    {
+      "id": "terra_entity:queen_bee_spawn_egg",
+      "success": true,
+      "ms": 208.67929999999978
+    },
+    {
+      "id": "terra_entity:skeletron_spawn_egg",
+      "success": true,
+      "ms": 201.00990000000093
+    },
+    {
+      "id": "terra_entity:wall_of_flesh_spawn_egg",
+      "success": true,
+      "ms": 209.0643999999993
+    },
+    {
+      "id": "apotheosis:augmenting_table",
+      "success": true,
+      "ms": 276.73969999999827
+    },
+    {
+      "id": "apotheosis:ender_library",
+      "success": true,
+      "ms": 274.3483000000015
+    },
+    {
+      "id": "minecraft:enchanting_table",
+      "success": true,
+      "ms": 156.4517999999989
+    },
+    {
+      "id": "minecraft:bookshelf",
+      "success": false,
+      "ms": 46.66200000000026
+    },
+    {
+      "id": "refinedstorage:creative_controller",
+      "success": true,
+      "ms": 571.0335999999988
+    },
+    {
+      "id": "beyonddimensions:net_creater",
+      "success": true,
+      "ms": 154.7572
+    },
+    {
+      "id": "terramity:trial_guardian_spawn_egg",
+      "success": false,
+      "ms": 144.02400000000125
+    },
+    {
+      "id": "terramity:gob_spawn_egg",
+      "success": false,
+      "ms": 144.55069999999978
+    },
+    {
+      "id": "terramity:super_sniffer_spawn_egg",
+      "success": false,
+      "ms": 114.17649999999776
+    },
+    {
+      "id": "terramity:ultra_sniffer_spawn_egg",
+      "success": false,
+      "ms": 131.40410000000338
+    }
+  ],
+  "elapsedMs": 26765.592399999998,
+  "coldSummary": {
+    "count": 20,
+    "success": 17,
+    "failure": 3,
+    "totalMs": 17744.17739999999,
+    "failedIds": [
+      "ramesses_curse:seal_of_kadesh",
+      "pandora:pandora_necklace",
+      "twilightforest:twilight_portal_miniature_structure"
+    ]
+  },
+  "warmSummary": {
+    "count": 20,
+    "success": 17,
+    "failure": 3,
+    "totalMs": 2977.5901999999987,
+    "failedIds": [
+      "ramesses_curse:seal_of_kadesh",
+      "pandora:pandora_necklace",
+      "twilightforest:twilight_portal_miniature_structure"
+    ]
+  },
+  "estimatedFullRemainingMs": 4019.746769999998,
+  "fullRemainingWallMs": 5939.598099999999,
+  "summary": {
+    "count": 47,
+    "success": 33,
+    "failure": 14,
+    "totalMs": 23681.918999999987,
+    "failedIds": [
+      "ramesses_curse:seal_of_kadesh",
+      "pandora:pandora_necklace",
+      "twilightforest:twilight_portal_miniature_structure",
+      "minecraft:command_block",
+      "twilightforest:knight_phantom_trophy",
+      "minecraft:netherite_upgrade_smithing_template",
+      "minecraft:heart_of_the_sea",
+      "minecraft:wither_skeleton_skull",
+      "minecraft:oak_log",
+      "minecraft:bookshelf",
+      "terramity:trial_guardian_spawn_egg",
+      "terramity:gob_spawn_egg",
+      "terramity:super_sniffer_spawn_egg",
+      "terramity:ultra_sniffer_spawn_egg"
+    ]
+  },
+  "failedIds": [
+    "ramesses_curse:seal_of_kadesh",
+    "pandora:pandora_necklace",
+    "twilightforest:twilight_portal_miniature_structure",
+    "minecraft:command_block",
+    "twilightforest:knight_phantom_trophy",
+    "minecraft:netherite_upgrade_smithing_template",
+    "minecraft:heart_of_the_sea",
+    "minecraft:wither_skeleton_skull",
+    "minecraft:oak_log",
+    "minecraft:bookshelf",
+    "terramity:trial_guardian_spawn_egg",
+    "terramity:gob_spawn_egg",
+    "terramity:super_sniffer_spawn_egg",
+    "terramity:ultra_sniffer_spawn_egg"
+  ],
+  "untestedIds": [],
+  "byKind": {
+    "chapter": {
+      "unique": 7,
+      "count": 7,
+      "success": 4,
+      "failure": 3,
+      "totalMs": 15729.229499999998,
+      "failedIds": [
+        "ramesses_curse:seal_of_kadesh",
+        "pandora:pandora_necklace",
+        "minecraft:oak_log"
+      ]
+    },
+    "quest": {
+      "unique": 41,
+      "count": 41,
+      "success": 29,
+      "failure": 12,
+      "totalMs": 22829.06799999999,
+      "failedIds": [
+        "ramesses_curse:seal_of_kadesh",
+        "twilightforest:twilight_portal_miniature_structure",
+        "minecraft:command_block",
+        "twilightforest:knight_phantom_trophy",
+        "minecraft:netherite_upgrade_smithing_template",
+        "minecraft:heart_of_the_sea",
+        "minecraft:wither_skeleton_skull",
+        "minecraft:bookshelf",
+        "terramity:trial_guardian_spawn_egg",
+        "terramity:gob_spawn_egg",
+        "terramity:super_sniffer_spawn_egg",
+        "terramity:ultra_sniffer_spawn_egg"
+      ]
+    }
+  },
+  "byNamespaceClass": {
+    "minecraft": {
+      "count": 7,
+      "success": 1,
+      "failure": 6,
+      "totalMs": 450.53589999999895,
+      "failedIds": [
+        "minecraft:command_block",
+        "minecraft:netherite_upgrade_smithing_template",
+        "minecraft:heart_of_the_sea",
+        "minecraft:wither_skeleton_skull",
+        "minecraft:oak_log",
+        "minecraft:bookshelf"
+      ]
+    },
+    "mod": {
+      "count": 40,
+      "success": 32,
+      "failure": 8,
+      "totalMs": 23231.38309999999,
+      "failedIds": [
+        "ramesses_curse:seal_of_kadesh",
+        "pandora:pandora_necklace",
+        "twilightforest:twilight_portal_miniature_structure",
+        "twilightforest:knight_phantom_trophy",
+        "terramity:trial_guardian_spawn_egg",
+        "terramity:gob_spawn_egg",
+        "terramity:super_sniffer_spawn_egg",
+        "terramity:ultra_sniffer_spawn_egg"
+      ]
+    }
+  },
+  "finishedAt": "2026-09-08T13:36:12.838Z"
+}

@@ -1,0 +1,106 @@
+name: Release macOS
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release:
+    environment: macos-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, arch: arm64, machine: arm64 }
+          - { runner: macos-15-intel, arch: x64, machine: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the pinned MCP test suite
+        uses: actions/checkout@v4
+        with:
+          repository: waterpail114514/ModMind-MCP
+          ref: f21d65950f255243e941554d1463729ad1056b41
+          path: modmind-mcp-open-source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify native architecture and clean source
+        run: |
+          node -p "process.platform + '-' + process.arch"
+          uname -m
+          sw_vers
+          test "$(node -p process.arch)" = "${{ matrix.arch }}"
+          test "$(uname -m)" = "${{ matrix.machine }}"
+          test -z "$(git status --porcelain)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"; fi
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Create temporary App Store Connect key
+        env:
+          APPLE_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          umask 077
+          printenv APPLE_KEY_CONTENT > "$RUNNER_TEMP/notary-key.p8"
+      - name: Sign and notarize app, then create archives
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ runner.temp }}/notary-key.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/build-macos.mjs --arch ${{ matrix.arch }}
+      - name: Notarize and staple DMG
+        env:
+          APPLE_API_KEY: ${{ runner.temp }}/notary-key.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/notarize-macos-dmg.mjs
+      - name: Smoke test signed app
+        run: node scripts/smoke-macos-app.mjs
+      - name: Validate signed archives
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run verify:mac -- --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-verified-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS.txt
+            test-results/macos-*-smoke.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary credentials
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/notary-key.p8"
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: macos-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-verified-*
+          path: verified
+      - name: Require both architectures and combine checksums
+        run: |
+          test -d verified/macos-verified-arm64
+          test -d verified/macos-verified-x64
+          cat verified/*/SHA256SUMS.txt | sort > verified/SHA256SUMS.txt
+      - name: Upload complete release set
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes "Verified macOS arm64 and x64 artifacts."
+          gh release upload "$GITHUB_REF_NAME" verified/*/*.dmg verified/*/*.zip verified/SHA256SUMS.txt

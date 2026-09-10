@@ -1,0 +1,82 @@
+const { _electron: electron } = require('playwright')
+const { mkdtemp, writeFile } = require('node:fs/promises')
+const os = require('node:os')
+const path = require('node:path')
+const assert = require('node:assert/strict')
+
+;(async () => {
+  const profile = await mkdtemp(path.join(os.tmpdir(), 'modmind-settings-layout-'))
+  const env = { ...process.env, ELECTRON_RENDERER_URL: 'http://localhost:5173' }
+  delete env.ELECTRON_RUN_AS_NODE
+  const launch = () => electron.launch({ args: ['.', `--user-data-dir=${profile}`], env })
+  let app
+  try {
+    app = await launch()
+    let page = await app.firstWindow()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await page.locator('#settings-ai').waitFor()
+    const order = await page.locator('.settings-page > section').evaluateAll(nodes => nodes.map(n => n.id))
+    const links = await page.locator('.settings-index a').evaluateAll(nodes => nodes.map(n => n.hash.slice(1)))
+    assert.deepEqual(order, links)
+    assert.deepEqual(order.slice(0, 6), ['settings-ai', 'settings-appearance', 'settings-approval', 'settings-image', 'settings-network', 'settings-notifications'])
+    for (const id of ['settings-agents', 'settings-java', 'settings-mcp', 'settings-remote', 'settings-legal']) {
+      await page.setViewportSize({ width: 640, height: 900 })
+      await page.locator(`.settings-index a[href="#${id}"]`).click()
+      const section = page.locator(`#${id}`)
+      const bounds = await section.boundingBox()
+      assert.ok(bounds.y >= 45 && bounds.y < 900, `${id} anchor not visible`)
+      await page.screenshot({ path: `test-results/${id}-compact.png` })
+    }
+    for (const width of [1440, 1000, 800, 640]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.locator('.main-content').evaluate(el => el.scrollTop = 0)
+      const overflow = await page.locator('.main-content').evaluate(el => ({ width: el.clientWidth, scroll: el.scrollWidth }))
+      assert.ok(overflow.scroll <= overflow.width + 1, `overflow at ${width}: ${JSON.stringify(overflow)}`)
+      await page.screenshot({ path: `test-results/settings-${width}.png` })
+    }
+    await page.getByLabel('Codex 审批模式').selectOption('yolo')
+    await page.waitForFunction(async () => (await window.modmind.settings.getAgent()).codexApprovalMode === 'yolo')
+    await page.locator('#settings-appearance').getByRole('switch').click()
+    await page.waitForSelector('.app-shell.dark-mode')
+    await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+    await page.locator('.sidebar.collapsed').waitFor()
+    const navButtons = page.locator('.sidebar-nav-item')
+    for (const button of await navButtons.all()) {
+      const bounds = await button.boundingBox()
+      assert.equal(bounds.width, 40)
+      assert.equal(bounds.height, 40)
+      assert.ok(await button.getAttribute('title'))
+    }
+    await page.locator('.sidebar-footer').getByRole('button', { name: '新建项目', exact: true }).click()
+    await page.getByRole('dialog').waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
+    await page.getByRole('dialog').waitFor({ state: 'hidden' })
+    await page.setViewportSize({ width: 1000, height: 800 })
+    await page.screenshot({ path: 'test-results/sidebar-collapsed-dark.png' })
+    await app.close()
+    app = await launch()
+    page = await app.firstWindow()
+    await page.locator('.sidebar.collapsed').waitFor()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await page.locator('.expert-mode-toggle').click()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    assert.equal(await page.locator('.sidebar .nav-caption:visible').count(), 0)
+    assert.equal(await page.locator('.sidebar .sidebar-beta-badge:visible').count(), 0)
+    const projectPath = await mkdtemp(path.join(os.tmpdir(), 'modmind-sidebar-project-'))
+    const project = { name: 'LongProjectName_用于验证侧栏项目名称显示和切换', path: projectPath, kind: 'mod', loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'sidebar_test', projectVersion: '1.1.3', createdAt: new Date().toISOString() }
+    await writeFile(path.join(projectPath, 'modmind.project.json'), JSON.stringify(project))
+    await page.evaluate(projectPath => window.modmind.project.openRecent(projectPath), projectPath)
+    await page.reload()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await page.locator('.sidebar-footer .project-switcher').waitFor()
+    assert.equal(await page.locator('.sidebar-footer .project-switcher').getAttribute('title'), `切换项目：${project.name}`)
+    await page.locator('.main-content').evaluate(el => el.scrollTop = 0)
+    await page.screenshot({ path: 'test-results/sidebar-collapsed-advanced.png' })
+    await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
+    await page.locator('.sidebar:not(.collapsed)').waitFor()
+    await page.screenshot({ path: 'test-results/sidebar-expanded-project.png' })
+    console.log('PASS: section order, no horizontal overflow at four sizes, approval save, dark mode, collapsed controls, persistence, expand')
+  } finally {
+    if (app) await app.close()
+  }
+})().catch(error => { console.error(error); process.exitCode = 1 })

@@ -30,11 +30,14 @@ export interface ManagedJdkProgress {
 function platformName(platform: NodeJS.Platform): 'windows' | 'linux' | 'mac' {
   if (platform === 'win32') return 'windows'
   if (platform === 'darwin') return 'mac'
-  return 'linux'
+  if (platform === 'linux') return 'linux'
+  throw new Error(`不支持的 JDK 平台：${platform}`)
 }
 
 function architectureName(architecture: string): 'x64' | 'aarch64' {
-  return architecture === 'arm64' ? 'aarch64' : 'x64'
+  if (architecture === 'arm64') return 'aarch64'
+  if (architecture === 'x64') return 'x64'
+  throw new Error(`不支持的 JDK 架构：${architecture}`)
 }
 
 export function adoptiumMetadataUrl(major: number, platform = process.platform, architecture = process.arch): string {
@@ -131,7 +134,7 @@ export async function ensureManagedJdk(
   onProgress?: (progress: ManagedJdkProgress) => void
 ): Promise<ManagedJdkResult> {
   await fs.mkdir(cacheRoot, { recursive: true })
-  const destination = path.join(cacheRoot, `temurin-${major}-${architectureName(process.arch)}`)
+  const destination = path.join(cacheRoot, `temurin-${major}-${platformName(process.platform)}-${architectureName(process.arch)}`)
   const installed = await findJdkHome(destination).catch(() => null)
   if (installed) return { home: installed, major, source: 'ModMind JDK 缓存' }
 
@@ -147,6 +150,9 @@ export async function ensureManagedJdk(
     else throw new Error(`不支持的 JDK 归档格式：${asset.name}`)
     const home = await findJdkHome(extracted)
     if (!home) throw new Error('JDK 归档中没有找到 javac')
+    if (process.platform !== 'win32') {
+      for (const tool of ['java', 'javac', 'javap']) await fs.chmod(path.join(home, 'bin', tool), 0o755)
+    }
     await fs.rm(destination, { recursive: true, force: true })
     await fs.mkdir(path.dirname(destination), { recursive: true })
     await fs.rename(home, destination)

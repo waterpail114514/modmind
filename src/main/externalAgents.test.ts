@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -6,6 +6,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { auditExternalAgentCompletion, agentStreamFailureMessage, buildWindowsExternalAgentLaunch, classifyAgentStreamFailure, clearExternalAgentFailureCircuits, decodeExternalProcessOutput, detectExternalAgent, externalAgentAttemptPrompt, externalAgentContextText, externalAgentDocsUrl, externalAgentLabel, externalAgentRetryPrompt, extractClaudeTokenUsage, installExternalAgent, isExternalAgentCompletionEvent, isForcefulProcessTerminationCommand, isNativeGradleBuildCommand, isReadOnlyActionDenied, isResumedPromptRejection, managedNativeDownloadAction, MCP_SERVER_SOURCE, ModMindBridge, nativePermissionArgs, parseExternalAgentOutputLine, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentBridgeHandlers } from './externalAgents'
 import type { ProjectInfo } from '../shared/types'
 import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
+import { LiveConfiguration } from './liveConfiguration'
+import { WORKBENCH_SKILL_POLICY } from './workbenchSkillPolicy'
 
 const temporaryRoots: string[] = []
 const bridges: ModMindBridge[] = []
@@ -392,8 +394,10 @@ describe('ModMind external agent MCP bridge', () => {
     const runner = path.join(root, 'fake-app-server.mjs')
     const log = path.join(root, 'app-server-requests.jsonl')
     await fs.writeFile(runner, [
-      "import { appendFileSync } from 'node:fs'",
+      "import { appendFileSync, readFileSync } from 'node:fs'",
+      "import { spawn } from 'node:child_process'",
       "const log = process.env.FAKE_APP_SERVER_LOG",
+      "if (log) appendFileSync(log + '.args.jsonl', JSON.stringify(process.argv.slice(2)) + '\\n')",
       "let buffer = ''",
       "const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')",
       "process.stdin.on('data', (chunk) => {",
@@ -402,6 +406,8 @@ describe('ModMind external agent MCP bridge', () => {
       "  for (const line of lines) {",
       "    if (!line.trim()) continue",
       "    const request = JSON.parse(line); if (log) appendFileSync(log, JSON.stringify(request) + '\\n')",
+      "    if (request.method === process.env.FAKE_REJECT_METHOD && request.params.threadId === 'broken-thread' && (!request.params.path || process.env.FAKE_REJECT_PATH)) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_REJECT_MESSAGE}}); continue }",
+      "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
       "    else if (request.method === 'initialized') {}",
       "    else if (request.method === 'thread/start') send({id:request.id,result:{thread:{id:'thread-new'}}})",
@@ -409,12 +415,15 @@ describe('ModMind external agent MCP bridge', () => {
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
       "    else if (request.method === 'turn/start') {",
       "      send({id:request.id,result:{turn:{id:'native-turn-new'}}}); send({method:'turn/started',params:{threadId:request.params.threadId,turn:{id:'native-turn-new'}}})",
+      "      if (Number(process.env.FAKE_APPROVAL_FAILURES) >= readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length) send({method:'item/completed',params:{item:{type:'commandExecution',id:'failed-review',aggregatedOutput:'This action was rejected due to unacceptable risk.\\nReason: Automatic approval review failed: stream disconnected before completion'}}})",
+      "      if (process.env.FAKE_TOOL_BRIDGE && request.params.model === 'A') { const cfg=JSON.parse(readFileSync(process.env.FAKE_TOOL_BRIDGE,'utf8')); void fetch('http://127.0.0.1:'+cfg.port+'/tool',{method:'POST',headers:{'x-modmind-token':cfg.token},body:JSON.stringify({action:'apply_edits',input:{edits:[]}})}).then(r=>r.text()).catch(()=>{}); }",
+      "      if (process.env.FAKE_WAIT_MODEL && request.params.model === process.env.FAKE_WAIT_MODEL) continue",
       waitForInterrupt
         ? "    } else if (request.method === 'turn/interrupt') { send({id:request.id,result:{}}); send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:request.params.turnId,status:'interrupted',error:null}}}) }"
         : "      send({method:'item/agentMessage/delta',params:{threadId:request.params.threadId,turnId:'native-turn-new',itemId:'answer',delta:'完成'}}); send({method:'item/completed',params:{threadId:request.params.threadId,turnId:'native-turn-new',item:{type:'agentMessage',id:'answer',text:'完成'}}}); send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:'native-turn-new',status:'completed',error:null}}}) }",
       "  }",
       "})",
-      "process.stdin.on('end', () => process.exit(0))"
+      "process.stdin.on('end', () => { if (process.env.FAKE_KEEP_STDIO) spawn(process.execPath,['-e','setTimeout(()=>{},4000)'],{stdio:'inherit'}).unref(); process.exit(0) })"
     ].join('\n'), 'utf8')
     const executable = process.platform === 'win32' ? path.join(root, 'fake-app-server.cmd') : runner
     if (process.platform === 'win32') await fs.writeFile(executable, `@echo off\r\nnode "%~dp0fake-app-server.mjs" %*\r\n`, 'utf8')
@@ -427,16 +436,276 @@ describe('ModMind external agent MCP bridge', () => {
     temporaryRoots.push(root)
     const project: ProjectInfo = { name: 'App Server', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'app_server', createdAt: new Date().toISOString() }
     const fake = await fakeAppServer(root)
+    const onOutput = vi.fn()
     const result = await runExternalAgent({
       kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
       env: { FAKE_APP_SERVER_LOG: fake.log }, signal: new AbortController().signal,
-      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+      onOutput, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
     })
     expect(result).toMatchObject({ summary: '完成', sessionId: 'thread-new', nativeTurnId: 'native-turn-new' })
+    const identity = { itemId: 'answer', streamId: 'thread-new:native-turn-new:answer' }
+    expect(onOutput).toHaveBeenCalledWith('delta', '完成', identity)
+    expect(onOutput).toHaveBeenCalledWith('response', '完成', identity)
     const requests = await fs.readFile(fake.log, 'utf8')
     expect(requests).toContain('"method":"thread/start"')
     expect(requests).toContain('"approvalsReviewer":"auto_review"')
+    const turn = requests.trim().split('\n').map(line => JSON.parse(line)).find(request => request.method === 'turn/start')
+    expect(turn.params.input[0].text).toContain(WORKBENCH_SKILL_POLICY)
   })
+
+  it('overrides the model on a resumed native thread and on the actual turn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-model-override-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Override', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'override', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue',
+      sessionId: 'old-astra-thread', model: 'gpt-5.6-terra', modelProvider: 'thirdparty', reasoningEffort: 'high',
+      providerConfig: { 'model_providers.thirdparty.base_url': 'http://127.0.0.1:1234/v1' },
+      env: { FAKE_APP_SERVER_LOG: fake.log }, signal: new AbortController().signal,
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.find(r => r.method === 'thread/resume').params).toMatchObject({ threadId: 'old-astra-thread', model: 'gpt-5.6-terra', modelProvider: 'thirdparty' })
+    expect(requests.find(r => r.method === 'turn/start').params).toMatchObject({ model: 'gpt-5.6-terra', effort: 'high' })
+    expect(requests.find(r => r.method === 'turn/start').params.input[0].text).toContain(WORKBENCH_SKILL_POLICY)
+  })
+
+  it.each([
+    ['thread/resume', 'no rollout found for thread id broken-thread'],
+    ['thread/resume', 'session not found'],
+    ['thread/resume', 'Invalid Responses API request'],
+    ['thread/fork', 'no rollout found for thread id broken-thread'],
+    ['turn/start', 'no rollout found for thread id broken-thread']
+  ])('recovers a rejected native %s with the original task (%s)', async (method, message) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-native-missing-rollout-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Recovery', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'recovery', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const sessionFile = path.join(root, '.modmind', 'external-agents', 'session-codex.json')
+    await fs.mkdir(path.dirname(sessionFile), { recursive: true })
+    await fs.writeFile(sessionFile, JSON.stringify({ kind: 'codex', sessionId: 'broken-thread', projectPath: root }))
+    const audits: string[] = []
+    const sessions: string[] = []
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project,
+      prompt: 'continue', fallbackPrompt: 'Original task: implement the new block; preserve completed changes.',
+      resumeSession: true, retryDelayMs: 0, maxAttempts: 2,
+      ...(method === 'thread/fork' ? { forkFrom: { sessionId: 'broken-thread', nativeMode: 'native' as const } } : {}),
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_REJECT_METHOD: method, FAKE_REJECT_MESSAGE: message },
+      signal: new AbortController().signal, onSessionId: id => sessions.push(id),
+      onAttemptAudit: audit => audits.push(audit.outcome),
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    expect(result).toMatchObject({ summary: '完成', sessionId: 'thread-new' })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === method && r.params.threadId === 'broken-thread')).toHaveLength(1)
+    expect(requests.filter(r => r.method === 'thread/start')).toHaveLength(1)
+    const turn = requests.find(r => r.method === 'turn/start' && r.params.threadId === 'thread-new')
+    expect(turn.params.input[0].text).toContain('Original task: implement the new block')
+    expect(sessions.at(-1)).toBe('thread-new')
+    expect(audits).toEqual(['retry', 'complete'])
+    expect(JSON.parse(await fs.readFile(sessionFile, 'utf8')).sessionId).toBe('thread-new')
+  })
+
+  it.each(['missing', 'unrelated'])('handles a %s native resume failure without reusing or deleting the wrong session', async (failure) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-native-recovery-failure-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Recovery Failure', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'recovery_failure', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const sessionFile = path.join(root, '.modmind', 'external-agents', 'session-codex.json')
+    await fs.mkdir(path.dirname(sessionFile), { recursive: true })
+    await fs.writeFile(sessionFile, JSON.stringify({ kind: 'codex', sessionId: 'broken-thread', projectPath: root }))
+    const message = failure === 'missing' ? 'no rollout found for thread id broken-thread' : 'permission denied while reading project'
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'original task',
+      resumeSession: true, retryDelayMs: 0, maxAttempts: 3,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_REJECT_METHOD: 'thread/resume', FAKE_REJECT_MESSAGE: message, FAKE_START_ERROR: 'permission denied while reading project' },
+      signal: new AbortController().signal, onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })).rejects.toThrow('permission denied while reading project')
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'thread/resume')).toHaveLength(1)
+    expect(requests.filter(r => r.method === 'thread/start')).toHaveLength(failure === 'missing' ? 1 : 0)
+    if (failure === 'missing') await expect(fs.stat(sessionFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    else expect(JSON.parse(await fs.readFile(sessionFile, 'utf8')).sessionId).toBe('broken-thread')
+  })
+
+  it.each(['thread/resume', 'thread/fork'])('recovers original history by path after a missing %s index in a moved project', async (method) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-rollout-path-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Moved', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'moved', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const data = path.join(root, '.modmind', 'external-agents')
+    const rollout = path.join(data, 'codex-homes', 'old-scope', 'old-provider', 'sessions', '2026', '09', '02', 'rollout-2026-09-02-broken-thread.jsonl')
+    const history = `${JSON.stringify({ type: 'session_meta', payload: { id: 'broken-thread' } })}\n${JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: 'Original conversation' } })}\n`
+    await fs.mkdir(path.dirname(rollout), { recursive: true })
+    await fs.writeFile(rollout, history)
+    const sessionFile = path.join(data, 'session-codex.json')
+    await fs.writeFile(sessionFile, JSON.stringify({ kind: 'codex', sessionId: 'broken-thread', projectPath: path.join(root, 'old-project-location') }))
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue',
+      resumeSession: true, maxAttempts: 1, sessionHome: path.join(data, 'codex-homes', 'new-scope', 'quota'),
+      ...(method === 'thread/fork' ? { forkFrom: { sessionId: 'broken-thread', lastTurnId: 'boundary-turn', nativeMode: 'native' as const } } : {}),
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_REJECT_METHOD: method, FAKE_REJECT_MESSAGE: 'failed to resolve rollout path: file does not exist (code -32600)' },
+      signal: new AbortController().signal, onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    expect(result.sessionId).toBe(method === 'thread/fork' ? 'thread-fork' : 'broken-thread')
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'thread/start')).toHaveLength(0)
+    const restores = requests.filter(r => r.method === method)
+    expect(restores).toHaveLength(2)
+    expect(restores[1].params).toMatchObject({ threadId: 'broken-thread', path: rollout, cwd: root, ...(method === 'thread/fork' ? { lastTurnId: 'boundary-turn' } : {}) })
+    expect(await fs.readFile(rollout, 'utf8')).toBe(history)
+    expect(JSON.parse(await fs.readFile(sessionFile, 'utf8'))).toMatchObject({ sessionId: result.sessionId, projectPath: root })
+  })
+
+  it.each(['start', 'resume', 'fork', 'read-only'] as const)('applies the selected policy to app-server %s and its launch arguments', async (mode) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-approval-mode-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Approval', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'approval', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue', approvalMode: 'yolo',
+      readOnly: mode === 'read-only',
+      ...(mode === 'resume' ? { sessionId: 'existing-thread' } : {}),
+      ...(mode === 'fork' ? { forkFrom: { sessionId: 'existing-thread', nativeMode: 'native' as const } } : {}),
+      env: { FAKE_APP_SERVER_LOG: fake.log }, signal: new AbortController().signal,
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    const method = mode === 'resume' ? 'thread/resume' : mode === 'fork' ? 'thread/fork' : 'thread/start'
+    const sandbox = mode === 'read-only' ? 'read-only' : 'danger-full-access'
+    expect(requests.find(r => r.method === method).params).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox })
+    const args = JSON.parse((await fs.readFile(fake.log + '.args.jsonl', 'utf8')).trim())
+    expect(args.slice(0, 6)).toEqual(['-s', sandbox, '-a', 'never', '-c', 'approvals_reviewer="user"'])
+  })
+
+  it.each([1, 3])('bounds approval retries even with persistent retry enabled (%s failures)', async (failures) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-approval-retry-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Approval Retry', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'approval_retry', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const run = runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue', persistentRetry: true, retryDelayMs: 0,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_APPROVAL_FAILURES: String(failures) }, signal: new AbortController().signal,
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    if (failures === 1) await expect(run).resolves.toMatchObject({ summary: '完成' })
+    else await expect(run).rejects.toMatchObject({ name: 'AutomaticApprovalUnavailableError', message: expect.stringContaining('YOLO') })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(failures === 1 ? 2 : 3)
+    expect(requests.filter(r => r.method === 'thread/resume').every(r => r.params.approvalsReviewer === 'auto_review' && r.params.threadId === 'thread-new')).toBe(true)
+  }, 15_000)
+
+  it('finishes after CLI exit even when a descendant retains its output pipes', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-cli-pipes-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Pipes', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'pipes', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const started = Date.now()
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_KEEP_STDIO: '1' }, signal: new AbortController().signal,
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    expect(result.summary).toBe('完成')
+    expect(Date.now() - started).toBeLessThan(3000)
+  }, 6000)
+
+  it('automatically resumes the same task using the latest model without a continue action', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-live-switch-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Switch', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'switch', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const live = new LiveConfiguration()
+    let model = 'A'
+    let started!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    const output: string[] = []
+    const run = runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'remember marker HS-47',
+      liveConfiguration: live,
+      refreshConfiguration: async () => ({ model, env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_WAIT_MODEL: 'A' } }),
+      signal: new AbortController().signal, onStarted: started,
+      onOutput: (kind, text) => output.push(`${kind}:${text}`), onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    await ready
+    const b = live.begin()
+    model = 'B'
+    const c = live.begin()
+    model = 'C'
+    live.finish(b)
+    live.finish(c)
+    expect((await run).summary).toBe('完成')
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start').map(r => r.params.model)).toEqual(['A', 'C'])
+    expect(requests.find(r => r.method === 'thread/resume').params.threadId).toBe('thread-new')
+    expect(requests.filter(r => r.method === 'turn/start')[1].params.input[0].text).toContain('HS-47')
+    expect(output.some(line => line.startsWith('error:'))).toBe(false)
+  }, 15_000)
+
+  it('does not restart a live task after the user cancels during a configuration change', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-live-cancel-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Cancel', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'cancel', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root, true)
+    const live = new LiveConfiguration()
+    const controller = new AbortController()
+    let started!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    const run = runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+      liveConfiguration: live, refreshConfiguration: async () => ({ model: 'A', env: { FAKE_APP_SERVER_LOG: fake.log } }),
+      signal: controller.signal, onStarted: started,
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    const rejected = expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    await ready
+    const next = live.begin()
+    controller.abort()
+    live.finish(next)
+    await rejected
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(1)
+  }, 15_000)
+
+  it('waits for an in-flight tool and carries its receipt into the automatic continuation', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-live-tool-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Tool Switch', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'tool_switch', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const live = new LiveConfiguration()
+    let model = 'A'
+    let toolStarted!: () => void
+    const started = new Promise<void>(resolve => { toolStarted = resolve })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let writes = 0
+    let configurations = 0
+    const run = runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, runId: 'tool-test', prompt: 'Write once',
+      liveConfiguration: live,
+      refreshConfiguration: async () => {
+        configurations++
+        return { model, env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_WAIT_MODEL: 'A', FAKE_TOOL_BRIDGE: path.join(root, '.modmind', 'external-agents', 'runs', 'tool-test', 'bridge.json') } }
+      },
+      signal: new AbortController().signal,
+      onOutput: () => undefined, onProgress: () => undefined,
+      bridge: { ...stubBridgeHandlers(project), applyEdits: async () => { toolStarted(); await gate; writes++; return { receipt: 'written-once-47' } } }
+    })
+    await started
+    const revision = live.begin()
+    model = 'B'
+    live.finish(revision)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(configurations).toBe(1)
+    expect(writes).toBe(0)
+    release()
+    await run
+    expect(writes).toBe(1)
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start')[1].params.input[0].text).toContain('written-once-47')
+  }, 15_000)
 
   it('forks before the mapped native turn and interrupts without waiting for process death', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-app-server-interrupt-'))
@@ -491,6 +760,63 @@ describe('ModMind external agent MCP bridge', () => {
     expect(args).toContain('model_reasoning_effort="low"')
   }, 20_000)
 
+  it.each([
+    {kind: 'codex' as const, mode: 'new'},
+    {kind: 'codex' as const, mode: 'resumed'},
+    {kind: 'codex' as const, mode: 'read-only'},
+    {kind: 'claude' as const, mode: 'new'},
+    {kind: 'claude' as const, mode: 'resumed'},
+    {kind: 'claude' as const, mode: 'read-only'}
+  ])('delivers skill routing to $kind $mode workspace turns without embedding skill bodies', async ({kind, mode}) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-skill-routing-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = {name: 'Skill Routing', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'skill_routing', createdAt: new Date().toISOString()}
+    const receivedFile = path.join(root, 'received.json')
+    const skillsDirectory = path.join(root, '.modmind', 'external-agents', 'runs', 'routing-test', 'skills')
+    const skillSource = path.join(root, 'bundled-skills')
+    await fs.mkdir(path.join(skillSource, 'minecraft-build-repair'), {recursive: true})
+    await fs.writeFile(path.join(skillSource, 'minecraft-build-repair', 'SKILL.md'), 'SKILL_BODY_MUST_STAY_ON_DISK', 'utf8')
+    const runner = path.join(root, 'fake-agent.mjs')
+    await fs.writeFile(runner, [
+      "import fs from 'node:fs';",
+      "const claude = process.argv.includes('--input-format');",
+      "let input = ''; let done = false;",
+      "function finish() { if (done) return; done = true;",
+      "const prompt = claude ? JSON.parse(input.trim()).message.content : input;",
+      `const skillBody = fs.readFileSync(${JSON.stringify(path.join(skillsDirectory, 'minecraft-build-repair', 'SKILL.md'))}, 'utf8');`,
+      `fs.writeFileSync(${JSON.stringify(receivedFile)}, JSON.stringify({prompt, skillBody, args: process.argv.slice(2)}));`,
+      "console.log(JSON.stringify(claude ? {type:'result',subtype:'success',is_error:false,result:'完成'} : {type:'item.completed',item:{type:'agent_message',text:'完成'}}));",
+      "if (!claude) console.log(JSON.stringify({type:'turn.completed'}));",
+      "process.exit(0); }",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', chunk => { input += chunk; if (claude && input.includes('\\n')) finish(); });",
+      "process.stdin.on('end', finish);"
+    ].join('\n'), 'utf8')
+    const executable = process.platform === 'win32' ? path.join(root, 'fake-agent.cmd') : path.join(root, 'fake-agent.sh')
+    await fs.writeFile(executable, process.platform === 'win32'
+      ? '@echo off\r\nnode "%~dp0fake-agent.mjs" %*\r\n'
+      : '#!/bin/sh\nnode "$(dirname "$0")/fake-agent.mjs" "$@"\n', 'utf8')
+    if (process.platform !== 'win32') await fs.chmod(executable, 0o755)
+    await runExternalAgent({
+      kind, executable, project, prompt: '谢谢', runId: 'routing-test', workflowSourceDirectory: skillSource,
+      ...(mode === 'resumed' ? {sessionId: 'existing-native-thread'} : {}),
+      readOnly: mode === 'read-only',
+      signal: new AbortController().signal, onOutput: () => undefined, onProgress: () => undefined,
+      bridge: stubBridgeHandlers(project)
+    })
+    const received = JSON.parse(await fs.readFile(receivedFile, 'utf8')) as {prompt: string; skillBody: string; args: string[]}
+    expect(received.prompt).toContain('谢谢')
+    expect(received.prompt).not.toContain('SKILL_BODY_MUST_STAY_ON_DISK')
+    expect(received.skillBody).toBe('SKILL_BODY_MUST_STAY_ON_DISK')
+    if (mode === 'read-only') {
+      expect(received.prompt).not.toContain(WORKBENCH_SKILL_POLICY)
+    } else {
+      expect(received.prompt.split(WORKBENCH_SKILL_POLICY)).toHaveLength(2)
+      expect(received.prompt).toContain(skillsDirectory.replaceAll('\\', '/'))
+    }
+    if (mode === 'resumed') expect(received.args).toContain('existing-native-thread')
+  }, 20_000)
+
   it('keeps retry prompts to the single continuation instruction', () => {
     expect(externalAgentRetryPrompt()).toBe('继续')
     expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 1)).toEqual({prompt: '继续', retryOnly: true})
@@ -517,6 +843,8 @@ describe('ModMind external agent MCP bridge', () => {
     expect(isResumedPromptRejection({error: {code: 'invalid_prompt', message: 'Invalid Responses API request'}})).toBe(true)
     expect(isResumedPromptRejection({error: {message: 'Invalid Responses API request'}})).toBe(true)
     expect(isResumedPromptRejection({type: 'error', message: 'session not found'})).toBe(true)
+    expect(isResumedPromptRejection({error: {message: 'no rollout found for thread id 01a08abe-5b20-7490-9a92-5ce3bacdd48f'}})).toBe(true)
+    expect(isResumedPromptRejection({error: {message: 'local file not found'}})).toBe(false)
     expect(isResumedPromptRejection({type: 'error', message: '会话已过期'})).toBe(true)
     expect(isResumedPromptRejection({
       type: 'item.completed',
@@ -540,7 +868,7 @@ describe('ModMind external agent MCP bridge', () => {
   it('uses each CLI\'s managed permission mode', () => {
     expect(nativePermissionArgs('codex')).toEqual(['-s', 'workspace-write', '-a', 'on-request', '-c', 'approvals_reviewer="auto_review"'])
     expect(nativePermissionArgs('claude')).toEqual(['--permission-mode', 'auto'])
-    expect(nativePermissionArgs('codex', true)).toEqual(['-s', 'read-only'])
+    expect(nativePermissionArgs('codex', true)).toEqual(['-s', 'read-only', '-a', 'never', '-c', 'approvals_reviewer="user"'])
     expect(nativePermissionArgs('claude', true)).toEqual(['--permission-mode', 'plan', '--tools', 'Read', 'Glob', 'Grep'])
     expect(isReadOnlyActionDenied('apply_edits')).toBe(true)
     expect(isReadOnlyActionDenied('maven_dependency_install')).toBe(true)
@@ -1067,7 +1395,7 @@ describe('ModMind external agent MCP bridge', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('drops a server-rejected resumed Codex thread and restarts fresh with the original request', async () => {
+  it.each(['stream error: Invalid Responses API request', 'no rollout found for thread id broken-thread'])('drops a rejected resumed Codex thread and restarts fresh (%s)', async (message) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-invalid-resume-'))
     temporaryRoots.push(root)
     const project: ProjectInfo = {name: 'Invalid Resume', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'invalid_resume', createdAt: new Date().toISOString()}
@@ -1093,7 +1421,7 @@ describe('ModMind external agent MCP bridge', () => {
       "  fs.appendFileSync(attempts, JSON.stringify([...args, '--PROMPT--', stdin]) + '\\n');",
       "  if (args.includes('resume')) {",
       "    console.log(JSON.stringify({type:'thread.started', thread_id:'broken-thread'}));",
-      "    console.log(JSON.stringify({type:'item.completed', item:{id:'item_0', type:'error', message:'stream error: Invalid Responses API request'}}));",
+      `    console.log(JSON.stringify({type:'item.completed', item:{id:'item_0', type:'error', message:${JSON.stringify(message)}}}));`,
       "    process.exit(1);",
       "  }",
       "  console.log(JSON.stringify({type:'thread.started', thread_id:'fresh-thread'}));",

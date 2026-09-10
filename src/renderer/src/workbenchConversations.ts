@@ -8,7 +8,7 @@ import type { WorkbenchTimelineItem } from './workbenchTimeline'
  */
 export interface WorkbenchConversation {
   id: string
-  /** The user's first message; the switcher fades any overflow. */
+  /** The user's first message; the switcher truncates its display only. */
   title: string
   createdAt: string
   updatedAt: string

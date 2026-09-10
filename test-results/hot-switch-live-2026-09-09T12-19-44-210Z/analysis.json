@@ -1,0 +1,817 @@
+{
+  "directory": "hot-switch-live-2026-09-09T12-19-44-210Z",
+  "rows": 670,
+  "counts": {
+    "persisted-state": 7,
+    "application-journal": 136,
+    "capture-started": 1,
+    "renderer-event": 333,
+    "fetch-request": 36,
+    "undici:request:create": 36,
+    "undici:request:headers": 36,
+    "undici:request:trailers": 36,
+    "fetch-response": 36,
+    "fetch-response-body": 10,
+    "deep-link": 2,
+    "capture-stopped": 1
+  },
+  "states": [
+    {
+      "time": "2026-09-09T12:19:44.211Z",
+      "baseUrl": "https://wawapii.com",
+      "keyTag": "credential:49e994de8288",
+      "connectedAt": "2026-09-09T12:09:17.802Z",
+      "model": "gpt-6-astra",
+      "keyStatus": "ACTIVE"
+    },
+    {
+      "time": "2026-09-09T12:21:23.070Z",
+      "baseUrl": "https://wawapii.com",
+      "keyTag": "credential:49e994de8288",
+      "connectedAt": "2026-09-09T12:09:17.802Z",
+      "model": "gpt-5.6-terra",
+      "keyStatus": "ACTIVE"
+    },
+    {
+      "time": "2026-09-09T12:22:43.179Z",
+      "baseUrl": "https://hk.ai.soulecho.cc/v1",
+      "keyTag": "credential:0c4824211372",
+      "connectedAt": "2026-09-09T12:22:43.071Z",
+      "model": "gpt-5.6-terra"
+    },
+    {
+      "time": "2026-09-09T12:22:44.097Z",
+      "baseUrl": "https://hk.ai.soulecho.cc/v1",
+      "keyTag": "credential:0c4824211372",
+      "connectedAt": "2026-09-09T12:22:43.071Z",
+      "model": "gpt-5.6-terra"
+    },
+    {
+      "time": "2026-09-09T12:22:54.630Z",
+      "baseUrl": "https://hk.ai.soulecho.cc/v1",
+      "keyTag": "credential:0c4824211372",
+      "connectedAt": "2026-09-09T12:22:43.071Z",
+      "model": "gpt-5.6-terra",
+      "keyStatus": "ACTIVE"
+    },
+    {
+      "time": "2026-09-09T12:24:07.021Z",
+      "baseUrl": "https://ether-studio.top/api/trial/v1",
+      "keyTag": "credential:3982c1b007ac",
+      "connectedAt": "2026-09-09T12:24:06.807Z",
+      "model": "qwen3.8-flash"
+    },
+    {
+      "time": "2026-09-09T12:24:14.783Z",
+      "baseUrl": "https://ether-studio.top/api/trial/v1",
+      "keyTag": "credential:3982c1b007ac",
+      "connectedAt": "2026-09-09T12:24:06.807Z",
+      "model": "qwen3.8-flash",
+      "keyStatus": "ACTIVE"
+    }
+  ],
+  "rounds": [
+    {
+      "index": 1,
+      "requestedLabel": "supplier-1",
+      "deepLinkAt": "2026-09-09T12:22:40.934Z",
+      "connectedAt": "2026-09-09T12:22:44.007Z",
+      "deepLinkToConnectedMs": 3073,
+      "baseUrl": "https://hk.ai.soulecho.cc/v1",
+      "keyTag": "credential:0c4824211372",
+      "pollFields": [
+        "status",
+        "baseUrl",
+        "apiKey",
+        "balanceCents",
+        "username",
+        "model"
+      ],
+      "finalModel": "gpt-5.6-terra",
+      "availableModelCount": 6,
+      "availableModels": [
+        "gpt-5.5",
+        "gpt-5.4",
+        "codex-auto-review",
+        "gpt-5.3-codex-spark",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra"
+      ],
+      "preferenceEvents": [
+        {
+          "phase": "saved",
+          "message": "已保存当前 Key 的模型偏好 gpt-5.6-terra",
+          "data": {
+            "model": "gpt-5.6-terra",
+            "availableModels": [
+              "codex-auto-review",
+              "gpt-5.3-codex-spark",
+              "gpt-5.4",
+              "gpt-5.5",
+              "gpt-5.6-sol",
+              "gpt-5.6-terra"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 gpt-5.6-terra",
+          "data": {
+            "model": "gpt-5.6-terra",
+            "availableModels": [
+              "codex-auto-review",
+              "gpt-5.3-codex-spark",
+              "gpt-5.4",
+              "gpt-5.5",
+              "gpt-5.6-sol",
+              "gpt-5.6-terra"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 gpt-5.6-terra",
+          "data": {
+            "model": "gpt-5.6-terra",
+            "availableModels": [
+              "codex-auto-review",
+              "gpt-5.3-codex-spark",
+              "gpt-5.4",
+              "gpt-5.5",
+              "gpt-5.6-sol",
+              "gpt-5.6-terra"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 gpt-5.6-terra",
+          "data": {
+            "model": "gpt-5.6-terra",
+            "availableModels": [
+              "codex-auto-review",
+              "gpt-5.3-codex-spark",
+              "gpt-5.4",
+              "gpt-5.5",
+              "gpt-5.6-sol",
+              "gpt-5.6-terra"
+            ]
+          }
+        }
+      ],
+      "evidenceEventIds": [
+        326,
+        327,
+        328,
+        329,
+        330,
+        331,
+        333,
+        334,
+        335,
+        336,
+        337,
+        338,
+        339,
+        340,
+        341,
+        342,
+        343,
+        344,
+        345,
+        346,
+        347,
+        348,
+        349,
+        350,
+        351,
+        352,
+        353,
+        354,
+        355,
+        356,
+        357,
+        358,
+        359,
+        360,
+        361,
+        362,
+        363,
+        364,
+        365,
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372,
+        373,
+        374,
+        375,
+        376,
+        377,
+        378,
+        379,
+        380,
+        381,
+        382,
+        383,
+        384,
+        385,
+        386,
+        387,
+        388,
+        389,
+        390,
+        391,
+        392,
+        393,
+        394,
+        395,
+        401,
+        402,
+        403,
+        404,
+        405,
+        406,
+        407,
+        408,
+        409,
+        410,
+        411,
+        414,
+        415,
+        416,
+        422,
+        426,
+        427,
+        428,
+        433,
+        436,
+        439,
+        444,
+        452,
+        453,
+        454,
+        455,
+        456,
+        463,
+        464,
+        465,
+        468,
+        469,
+        497,
+        498,
+        501,
+        505,
+        506,
+        534,
+        535,
+        536,
+        538,
+        539,
+        567,
+        568,
+        572,
+        575,
+        576,
+        579
+      ]
+    },
+    {
+      "index": 2,
+      "requestedLabel": "free-1",
+      "deepLinkAt": "2026-09-09T12:24:04.659Z",
+      "connectedAt": "2026-09-09T12:24:06.920Z",
+      "deepLinkToConnectedMs": 2261,
+      "baseUrl": "https://ether-studio.top/api/trial/v1",
+      "keyTag": "credential:3982c1b007ac",
+      "pollFields": [
+        "status",
+        "baseUrl",
+        "apiKey",
+        "balanceCents",
+        "username",
+        "model"
+      ],
+      "finalModel": "qwen3.8-flash",
+      "availableModelCount": 1,
+      "availableModels": [
+        "qwen3.8-flash"
+      ],
+      "preferenceEvents": [
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 qwen3.8-flash",
+          "data": {
+            "model": "qwen3.8-flash",
+            "availableModels": [
+              "qwen3.8-flash"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 qwen3.8-flash",
+          "data": {
+            "model": "qwen3.8-flash",
+            "availableModels": [
+              "qwen3.8-flash"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 qwen3.8-flash",
+          "data": {
+            "model": "qwen3.8-flash",
+            "availableModels": [
+              "qwen3.8-flash"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 qwen3.8-flash",
+          "data": {
+            "model": "qwen3.8-flash",
+            "availableModels": [
+              "qwen3.8-flash"
+            ]
+          }
+        },
+        {
+          "phase": "restored",
+          "message": "已恢复当前 Key 的模型偏好 qwen3.8-flash",
+          "data": {
+            "model": "qwen3.8-flash",
+            "availableModels": [
+              "qwen3.8-flash"
+            ]
+          }
+        }
+      ],
+      "evidenceEventIds": [
+        580,
+        590,
+        598,
+        602,
+        603,
+        604,
+        608,
+        616,
+        617,
+        618,
+        619,
+        620,
+        628,
+        629,
+        630,
+        634,
+        635,
+        641,
+        644,
+        645,
+        646,
+        647,
+        648,
+        654,
+        655,
+        656,
+        660,
+        661,
+        667
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "time": "2026-09-09T12:21:05.173Z",
+      "id": "fetch-1",
+      "method": "GET",
+      "url": "https://wawapii.com/v1/model",
+      "credentialTag": "credential:49e994de8288",
+      "status": 404,
+      "elapsedMs": 624
+    },
+    {
+      "time": "2026-09-09T12:21:05.797Z",
+      "id": "fetch-3",
+      "method": "GET",
+      "url": "https://wawapii.com/v1/models",
+      "credentialTag": "credential:49e994de8288",
+      "status": 200,
+      "elapsedMs": 504
+    },
+    {
+      "time": "2026-09-09T12:21:07.467Z",
+      "id": "fetch-5",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "gpt-6-astra",
+      "status": 200,
+      "elapsedMs": 13775
+    },
+    {
+      "time": "2026-09-09T12:21:27.597Z",
+      "id": "fetch-7",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "gpt-6-astra",
+      "status": 200,
+      "elapsedMs": 15234
+    },
+    {
+      "time": "2026-09-09T12:21:46.331Z",
+      "id": "fetch-9",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "codex-auto-review",
+      "status": 200,
+      "elapsedMs": 4492
+    },
+    {
+      "time": "2026-09-09T12:21:55.600Z",
+      "id": "fetch-11",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "gpt-6-astra",
+      "status": 200,
+      "elapsedMs": 10053
+    },
+    {
+      "time": "2026-09-09T12:22:11.267Z",
+      "id": "fetch-13",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "gpt-6-astra",
+      "status": 200,
+      "elapsedMs": 12331
+    },
+    {
+      "time": "2026-09-09T12:22:30.060Z",
+      "id": "fetch-15",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "codex-auto-review",
+      "status": 200,
+      "elapsedMs": 2130
+    },
+    {
+      "time": "2026-09-09T12:22:36.476Z",
+      "id": "fetch-17",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "gpt-6-astra",
+      "status": 200,
+      "elapsedMs": 4149
+    },
+    {
+      "time": "2026-09-09T12:22:42.947Z",
+      "id": "fetch-19",
+      "method": "POST",
+      "url": "https://ether-studio.top/api/device/poll",
+      "status": 200,
+      "elapsedMs": 122,
+      "pollStatus": "ok",
+      "pollBaseUrl": "https://hk.ai.soulecho.cc/v1",
+      "pollCredentialTag": "credential:0c4824211372"
+    },
+    {
+      "time": "2026-09-09T12:22:43.075Z",
+      "id": "fetch-21",
+      "method": "GET",
+      "url": "https://hk.ai.soulecho.cc/v1/model",
+      "credentialTag": "credential:0c4824211372",
+      "status": 404,
+      "elapsedMs": 634,
+      "error": "Invalid URL (GET /v1/model)"
+    },
+    {
+      "time": "2026-09-09T12:22:43.710Z",
+      "id": "fetch-23",
+      "method": "GET",
+      "url": "https://hk.ai.soulecho.cc/v1/models",
+      "credentialTag": "credential:0c4824211372",
+      "status": 200,
+      "elapsedMs": 291
+    },
+    {
+      "time": "2026-09-09T12:22:45.478Z",
+      "id": "fetch-25",
+      "method": "POST",
+      "url": "https://wawapii.com/v1/responses",
+      "credentialTag": "credential:49e994de8288",
+      "model": "gpt-6-astra",
+      "status": 401,
+      "elapsedMs": 216
+    },
+    {
+      "time": "2026-09-09T12:22:53.422Z",
+      "id": "fetch-27",
+      "method": "GET",
+      "url": "https://ether-studio.top/api/device/usage",
+      "credentialTag": "credential:0c4824211372",
+      "status": 200,
+      "elapsedMs": 1013,
+      "keyStatus": "ACTIVE"
+    },
+    {
+      "time": "2026-09-09T12:22:55.431Z",
+      "id": "fetch-29",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 1195
+    },
+    {
+      "time": "2026-09-09T12:22:56.854Z",
+      "id": "fetch-31",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 357
+    },
+    {
+      "time": "2026-09-09T12:22:57.675Z",
+      "id": "fetch-33",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 621
+    },
+    {
+      "time": "2026-09-09T12:22:59.036Z",
+      "id": "fetch-35",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 470
+    },
+    {
+      "time": "2026-09-09T12:23:01.163Z",
+      "id": "fetch-37",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 632
+    },
+    {
+      "time": "2026-09-09T12:23:10.641Z",
+      "id": "fetch-39",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 1076
+    },
+    {
+      "time": "2026-09-09T12:23:11.932Z",
+      "id": "fetch-41",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 365
+    },
+    {
+      "time": "2026-09-09T12:23:12.682Z",
+      "id": "fetch-43",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 373
+    },
+    {
+      "time": "2026-09-09T12:23:13.942Z",
+      "id": "fetch-45",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 515
+    },
+    {
+      "time": "2026-09-09T12:23:15.922Z",
+      "id": "fetch-47",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 646
+    },
+    {
+      "time": "2026-09-09T12:23:33.406Z",
+      "id": "fetch-49",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 1067
+    },
+    {
+      "time": "2026-09-09T12:23:34.681Z",
+      "id": "fetch-51",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 364
+    },
+    {
+      "time": "2026-09-09T12:23:35.440Z",
+      "id": "fetch-53",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 352
+    },
+    {
+      "time": "2026-09-09T12:23:36.590Z",
+      "id": "fetch-55",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 395
+    },
+    {
+      "time": "2026-09-09T12:23:38.748Z",
+      "id": "fetch-57",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 503,
+      "elapsedMs": 663
+    },
+    {
+      "time": "2026-09-09T12:24:04.423Z",
+      "id": "fetch-59",
+      "method": "POST",
+      "url": "https://hk.ai.soulecho.cc/v1/responses",
+      "credentialTag": "credential:0c4824211372",
+      "model": "gpt-6-astra",
+      "status": 401,
+      "elapsedMs": 1090
+    },
+    {
+      "time": "2026-09-09T12:24:06.667Z",
+      "id": "fetch-61",
+      "method": "POST",
+      "url": "https://ether-studio.top/api/device/poll",
+      "status": 200,
+      "elapsedMs": 139,
+      "pollStatus": "ok",
+      "pollBaseUrl": "https://ether-studio.top/api/trial/v1",
+      "pollCredentialTag": "credential:3982c1b007ac"
+    },
+    {
+      "time": "2026-09-09T12:24:06.810Z",
+      "id": "fetch-63",
+      "method": "GET",
+      "url": "https://ether-studio.top/api/trial/v1/model",
+      "credentialTag": "credential:3982c1b007ac",
+      "status": 404,
+      "elapsedMs": 36,
+      "error": "免费试用仅支持文本模型请求"
+    },
+    {
+      "time": "2026-09-09T12:24:06.847Z",
+      "id": "fetch-65",
+      "method": "GET",
+      "url": "https://ether-studio.top/api/trial/v1/models",
+      "credentialTag": "credential:3982c1b007ac",
+      "status": 200,
+      "elapsedMs": 69
+    },
+    {
+      "time": "2026-09-09T12:24:14.495Z",
+      "id": "fetch-67",
+      "method": "GET",
+      "url": "https://ether-studio.top/api/device/usage",
+      "credentialTag": "credential:3982c1b007ac",
+      "status": 200,
+      "elapsedMs": 106,
+      "keyStatus": "ACTIVE"
+    },
+    {
+      "time": "2026-09-09T12:24:15.884Z",
+      "id": "fetch-69",
+      "method": "POST",
+      "url": "https://ether-studio.top/api/trial/v1/responses",
+      "credentialTag": "credential:3982c1b007ac",
+      "model": "gpt-6-astra",
+      "status": 400,
+      "elapsedMs": 450
+    },
+    {
+      "time": "2026-09-09T12:24:33.949Z",
+      "id": "fetch-71",
+      "method": "POST",
+      "url": "https://ether-studio.top/api/trial/v1/responses",
+      "credentialTag": "credential:3982c1b007ac",
+      "model": "gpt-6-astra",
+      "status": 400,
+      "elapsedMs": 565
+    }
+  ],
+  "terminalErrors": [
+    {
+      "event": 641,
+      "time": "2026-09-09T12:24:17.711Z",
+      "kind": "error",
+      "content": "{\"error\":{\"message\":\"{\\\"request_id\\\":\\\"ff1bc292-2b42-47bf-b4cc-55bdccbe991e\\\",\\\"error\\\":{\\\"type\\\":\\\"InvalidParameter\\\",\\\"message\\\":\\\"Invalid 'id': message id must be a string starting with 'msg_', got 'item_b8c7bbeb897f63dfbf6e9c41'.\\\"}}\",\"codexErrorInfo\":\"other\",\"additionalDetails\":null},\"willRetry\":false,\"threadId\":\"01a0861d-5efe-7c71-95da-49d12d47ba40\",\"turnId\":\"01a08620-3fe5-7971-9f07-0688032585df\"}",
+      "sessionId": "01a0861d-5efe-7c71-95da-49d12d47ba40",
+      "projectPath": "E:\\waterpail\\桌面\\新建文件夹\\modminds\\testmod",
+      "runId": "1:d017fa920eaf0d7d:01a0861d-5efe-7c71-95da-49d12d47ba40",
+      "backend": "quota",
+      "conversationId": "workspace",
+      "generation": 0,
+      "turnId": "turn-d91c4338-4ab6-45a0-84b9-6bdfb829fb91",
+      "terminal": true,
+      "recoverable": false,
+      "sequence": 311,
+      "eventId": "e9bc4aa8-9c0a-4ffe-8ba0-40611449d375"
+    },
+    {
+      "event": 667,
+      "time": "2026-09-09T12:24:34.784Z",
+      "kind": "error",
+      "content": "{\"request_id\":\"b9994129-b30b-408e-84cd-67fd8f3fd79c\",\"error\":{\"type\":\"InvalidParameter\",\"message\":\"Invalid 'id': message id must be a string starting with 'msg_', got 'item_b8c7bbeb897f63dfbf6e9c41'.\"}}",
+      "sessionId": "coding-1788956672813",
+      "projectPath": "E:\\waterpail\\桌面\\新建文件夹\\modminds\\testmod",
+      "runId": "1:d017fa920eaf0d7d:coding-1788956672813",
+      "backend": "quota",
+      "conversationId": "workspace",
+      "generation": 0,
+      "turnId": "turn-coding-1788956672813",
+      "terminal": true,
+      "recoverable": false,
+      "sequence": 320,
+      "eventId": "387033ba-b508-4701-a97a-0d0a0ad9984e"
+    }
+  ],
+  "recentEvents": [
+    {
+      "n": 326,
+      "time": "2026-09-09T12:22:40.934Z",
+      "elapsedMs": 176724,
+      "pid": 30684,
+      "type": "deep-link",
+      "data": {
+        "links": [
+          "mcdev://sync/?site=https%3A%2F%2Fether-studio.top%2F&code=[REDACTED]"
+        ]
+      }
+    },
+    {
+      "n": 580,
+      "time": "2026-09-09T12:24:04.659Z",
+      "elapsedMs": 260449,
+      "pid": 30684,
+      "type": "deep-link",
+      "data": {
+        "links": [
+          "mcdev://sync/?site=https%3A%2F%2Fether-studio.top%2F&code=[REDACTED]"
+        ]
+      }
+    }
+  ],
+  "outputChannels": [
+    "beginner-codex:progress",
+    "ai:progress",
+    "ai:output",
+    "device:state"
+  ],
+  "lastEventAt": "2026-09-09T12:25:20.634Z"
+}

@@ -3,6 +3,12 @@ import { createReadStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+const platformIndex = process.argv.indexOf('--platform')
+if (process.platform === 'darwin' || (platformIndex >= 0 && process.argv[platformIndex + 1] === 'mac')) {
+  await import('./verify-macos-release.mjs')
+  process.exit(0)
+}
+
 const root = path.resolve(import.meta.dirname, '..')
 const packageJson = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'))
 const version = packageJson.version

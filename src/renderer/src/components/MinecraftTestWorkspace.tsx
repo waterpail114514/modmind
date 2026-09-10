@@ -55,6 +55,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
   const [progressClock, setProgressClock] = useState(() => Date.now())
   const [repairOutput, setRepairOutput] = useState('')
   const repairSessionRef = useRef('')
+  const repairCancelledRef = useRef(false)
 
   const applyProjectState = (next: MinecraftRuntimeState): void => {
     if (!next.projectPath || sameProject(next.projectPath, projectPath)) setState(next)
@@ -65,6 +66,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
     setEvents([])
     setRepairOutput('')
     repairSessionRef.current = ''
+    repairCancelledRef.current = false
     void window.modmind.minecraft.getState().then(applyProjectState).catch((error: unknown) => setNotice(String(error)))
     const removeState = window.modmind.minecraft.onState(applyProjectState)
     const removeEvent = window.modmind.minecraft.onEvent((event) => {
@@ -114,7 +116,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
       applyProjectState(await window.modmind.minecraft.getState())
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      if (!/Minecraft.*(?:取消|cancel)/i.test(message)) setNotice(message)
+      if (!/(?:Minecraft|Agent|AI).*(?:取消|停止|cancel)/i.test(message)) setNotice(message)
     } finally {
       setBusy((current) => current === name ? '' : current)
     }
@@ -151,6 +153,20 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
     })
   }
 
+  const exportCrashLogs = (): void => {
+    void run('export-crash-logs', async () => {
+      const target = await window.modmind.diagnostics.exportLogs()
+      if (target) setNotice(`崩溃日志已导出：${target}`)
+    })
+  }
+
+  const stopRepair = (): void => {
+    repairCancelledRef.current = true
+    const sessionId = repairSessionRef.current
+    if (sessionId) void window.modmind.ai.cancelCode(sessionId, projectPath)
+    void window.modmind.minecraft.stop().catch(() => undefined)
+  }
+
   const repairCrash = (): void => {
     const crash = state.lastCrash
     if (!crash) return
@@ -158,7 +174,9 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
       let failure = crash.summary
       const sessionId = `runtime-repair-${Date.now()}`
       repairSessionRef.current = sessionId
+      repairCancelledRef.current = false
       for (let round = 1; round <= 3; round += 1) {
+        if (repairCancelledRef.current) return
         setRepairOutput(beginner ? 'Codex 正在持续修复并验收运行期问题…' : `正在进行运行期修复 ${round}/3…`)
         if (beginner) await window.modmind.beginnerCodex.prepare(projectPath)
         const result = await window.modmind.ai.createCode(
@@ -168,6 +186,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
           beginner ? 'beginner-unlimited' : 'standard',
           {surface: 'workspace', projectPath}
         )
+        if (repairCancelledRef.current) return
         if (beginner) {
           applyProjectState(await window.modmind.minecraft.getState())
           setRepairOutput(`Codex 已完成运行期修复、构建和验收。\n\n${result.summary}`)
@@ -181,8 +200,10 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
           setRepairOutput((current) => `${current}\n\n构建仍失败，错误已转交下一轮 AI 修复`)
           continue
         }
+        if (repairCancelledRef.current) return
         setRepairOutput((current) => `${current}\n\n构建通过，正在启动 Minecraft 并观察 20 秒…`)
         const test = await window.modmind.minecraft.testLaunch({ username, maxMemoryMb: memory, width: 1280, height: 720 })
+        if (repairCancelledRef.current) return
         applyProjectState(test.state)
         if (test.success) {
           setRepairOutput((current) => `${current}\n\nMinecraft 已稳定运行 20 秒，运行期修复通过`)
@@ -192,6 +213,9 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
         setRepairOutput((current) => `${current}\n\nMinecraft 再次崩溃，新的根因已转交下一轮 AI 修复。\n${failure}`)
       }
       throw new Error('已完成 3 轮运行期修复，但 Minecraft 仍未通过 20 秒启动验证。最后一次崩溃已保留')
+    }).finally(() => {
+      repairSessionRef.current = ''
+      repairCancelledRef.current = false
     })
   }
 
@@ -285,9 +309,18 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
               <div className="mc-crash-heading">
                 <span><CircleAlert size={17} /></span>
                 <div><h2>检测到 Mod 运行期崩溃</h2><p>退出代码 {state.lastCrash.exitCode ?? '-'} · {state.lastCrash.reportPath || '未生成崩溃报告'}</p></div>
-                <button className="primary-button" disabled={Boolean(busy)} onClick={repairCrash}>
-                  {busy === 'repair-crash' ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}AI 修复并重启
-                </button>
+                <div className="mc-crash-actions">
+                  <button className="secondary-button" disabled={Boolean(busy)} onClick={exportCrashLogs}>
+                    <Download size={15} />导出崩溃日志
+                  </button>
+                  {busy === 'repair-crash' ? (
+                    <button className="danger-button" onClick={stopRepair}><Square size={15} />停止 AI 诊断</button>
+                  ) : (
+                    <button className="primary-button" onClick={repairCrash}>
+                      <Sparkles size={15} />AI 诊断
+                    </button>
+                  )}
+                </div>
               </div>
               <pre>{repairOutput || state.lastCrash.summary}</pre>
             </section>

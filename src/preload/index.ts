@@ -8,6 +8,9 @@ import type { LocalServerEvent, LocalServerState, MinecraftLaunchOptions, Minecr
 import type { AddonImportSelection, AddonPlatformInstallInput, AddonPrepareInput, AddonRelationshipRole, AddonSearchProvider, AudioImportInput, ContentCreateInput, DependencyInstallInput, GitCommitInput, MavenDependencyInput, ReleasePublishInput, ReleaseSettings, TestTarget } from '../shared/production'
 import { isExpectedCancellation } from '../shared/diagnostics'
 
+const platformInfo = Object.freeze(ipcRenderer.sendSync('app:platformInfo')) as Readonly<import('../shared/platform').RuntimePlatformInfo>
+window.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.platform = platformInfo.os }, { once: true })
+
 const rawInvoke = ipcRenderer.invoke.bind(ipcRenderer)
 
 function rendererError(error: unknown): { name: string; message: string; stack?: string } {
@@ -44,6 +47,7 @@ window.addEventListener('unhandledrejection', (event) => {
 
 const api: ModMindApi = {
   app: {
+    getPlatformInfo: () => platformInfo,
     getVersion: () => invoke('app:version'),
     checkForUpdates: () => invoke('app:checkForUpdates'),
     getUpdateState: () => invoke('app:getUpdateState'),
@@ -92,12 +96,16 @@ const api: ModMindApi = {
   project: {
     listLoaderVersions: (refresh?: boolean) => invoke('project:listLoaderVersions', refresh),
     create: (input: ProjectCreateInput) => invoke('project:create', input),
+    createDraft: (message: string) => invoke('project:createDraft', message),
+    recordDraftMessage: (message: string, projectPath: string) => invoke('project:recordDraftMessage', message, projectPath),
+    initializeDraft: (projectPath: string) => invoke('project:initializeDraft', projectPath),
     rename: (input: ProjectRenameInput) => invoke('project:rename', input),
     open: () => invoke('project:open'),
     openRecent: (projectPath: string) => invoke('project:openRecent', projectPath),
     listRecent: () => invoke('project:listRecent'),
     removeRecent: (projectPath: string) => invoke('project:removeRecent', projectPath),
     deleteProject: (projectPath: string) => invoke('project:delete', projectPath),
+    deleteProjectPermanent: (projectPath: string) => invoke('project:deletePermanent', projectPath),
     inspectExisting: (sourceType?: 'folder' | 'zip') => invoke('project:inspectExisting', sourceType),
     adoptExisting: (input: ExistingProjectAdoptInput) => invoke('project:adoptExisting', input),
     current: () => invoke('project:current'),
@@ -112,6 +120,7 @@ const api: ModMindApi = {
     createDirectory: (relativePath: string, projectPath?: string) => invoke('project:createDirectory', relativePath, projectPath),
     renamePath: (from: string, to: string, projectPath?: string) => invoke('project:renamePath', from, to, projectPath),
     deletePath: (relativePath: string, projectPath?: string) => invoke('project:deletePath', relativePath, projectPath),
+    deletePathPermanent: (relativePath: string, projectPath?: string) => invoke('project:deletePathPermanent', relativePath, projectPath),
     deleteWorkbenchData: (relativePath: string, projectPath?: string) => invoke('project:deleteWorkbenchData', relativePath, projectPath),
     reveal: (relativePath?: string, projectPath?: string) => invoke('project:reveal', relativePath, projectPath),
     hasExportArtifact: (projectPath?: string) => invoke('project:hasExportArtifact', projectPath),
@@ -165,12 +174,16 @@ const api: ModMindApi = {
     },
     plan: (concept: unknown) => invoke('modpack:plan', concept),
     applyPlan: (plan: unknown) => invoke('modpack:applyPlan', plan),
-    readFtbQuestBook: () => invoke('modpack:readFtbQuestBook'),
-    ftbQuestIcon: (itemId: string) => invoke('modpack:ftbQuestIcon', itemId),
-    ftbQuestItemNames: (itemIds: string[]) => invoke('modpack:ftbQuestItemNames', itemIds),
-    ftbDependencyTexture: () => invoke('modpack:ftbQuestDependencyTexture'),
-    ftbQuestShapes: () => invoke('modpack:ftbQuestShapes'),
-    saveFtbQuestBook: (book) => invoke('modpack:saveFtbQuestBook', book),
+    readFtbQuestBook: (projectPath) => invoke('modpack:readFtbQuestBook', projectPath),
+    listFtbQuestBackups: (projectPath) => invoke('modpack:listFtbQuestBackups', projectPath),
+    restoreFtbQuestBackup: (projectPath, id, baseline) => invoke('modpack:restoreFtbQuestBackup', projectPath, id, baseline),
+    ftbQuestIcon: (itemId, projectPath) => invoke('modpack:ftbQuestIcon', itemId, projectPath),
+    inspectFtbQuestIcon: (input, projectPath, remote) => invoke('modpack:inspectFtbQuestIcon', input, projectPath, remote),
+    refreshFtbQuestResources: (projectPath, input) => invoke('modpack:refreshFtbQuestResources', projectPath, input),
+    ftbQuestItemNames: (itemIds, projectPath) => invoke('modpack:ftbQuestItemNames', itemIds, projectPath),
+    ftbDependencyTexture: (projectPath) => invoke('modpack:ftbQuestDependencyTexture', projectPath),
+    ftbQuestShapes: (projectPath) => invoke('modpack:ftbQuestShapes', projectPath),
+    saveFtbQuestBook: (book, projectPath) => invoke('modpack:saveFtbQuestBook', book, projectPath),
     writeFtbQuest: (input: unknown) => invoke('modpack:writeFtbQuest', input),
     writePatchouliBook: (input: unknown) => invoke('modpack:writePatchouliBook', input),
     applyKeybindPreset: (input: unknown, allowConflicts?: boolean) => invoke('modpack:applyKeybindPreset', input, allowConflicts),
@@ -271,7 +284,7 @@ const api: ModMindApi = {
     clearQuotaCredentials: () => invoke('ai:clearQuotaCredentials'),
     getRecovery: (projectPath?: string) => invoke('ai:getRecovery', projectPath),
     getProjectTaskState: (projectPath?: string) => invoke('ai:getProjectTaskState', projectPath),
-    resumeRecovery: (projectPath?: string) => invoke('ai:resumeRecovery', projectPath),
+    resumeRecovery: (projectPath?: string, conversationId?: string) => invoke('ai:resumeRecovery', projectPath, conversationId),
     switchBackend: (backend: AgentSettings['codingBackend'], projectPath?: string, sessionScope?: string, switchId?: number) => invoke('ai:switchBackend', backend, projectPath, sessionScope, switchId),
     onBackendReady: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(value)

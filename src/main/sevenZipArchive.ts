@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { promises as fs } from 'node:fs'
+import { chmodSync, constants, accessSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { path7za } from '7zip-bin'
@@ -14,7 +14,11 @@ const NESTED_ARCHIVE_EXTENSIONS = new Set([
 
 function executablePath(): string {
   // electron-builder places native binaries under app.asar.unpacked.
-  return path7za.includes('app.asar') ? path7za.replace('app.asar', 'app.asar.unpacked') : path7za
+  const executable = path7za.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+  if (process.platform !== 'win32') {
+    try { accessSync(executable, constants.X_OK) } catch { chmodSync(executable, 0o755) }
+  }
+  return executable
 }
 
 function safeArchivePath(value: string): string {

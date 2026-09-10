@@ -47,6 +47,10 @@ export function quotaPreferenceKey(baseUrl: string, apiKey: string): string {
   return createHash('sha256').update(`${baseUrl.trim()}\n${apiKey.trim()}`).digest('hex').slice(0, 24)
 }
 
+export function quotaProfileKey(siteUrl: string, username: string, baseUrl: string): string {
+  return createHash('sha256').update(JSON.stringify([siteUrl, username, baseUrl])).digest('hex').slice(0, 24)
+}
+
 export function activeQuotaModelPreferences(store: StoredQuotaModelPreferences, preferenceKey?: string): BeginnerAiPreferences {
   return preferenceKey && store.profiles[preferenceKey] ? store.profiles[preferenceKey] : store.current
 }
@@ -58,11 +62,13 @@ export function resolveQuotaModelPreferences(
 ): { store: StoredQuotaModelPreferences; preferences: BeginnerAiPreferences; modelChanged: boolean; restored: boolean } {
   const restored = Boolean(store.profiles[preferenceKey])
   const preferred = activeQuotaModelPreferences(store, preferenceKey)
-  const ids = models.map((model) => model.id)
-  const model = ids.length && !ids.includes(preferred.model) ? ids.at(-1)! : preferred.model
+  const ids = models.map((model) => model.id).filter(id => !/auto[-_]?review/i.test(id))
+  if (models.length && !ids.length) throw new Error('当前线路没有可用于任务的模型')
+  const defaultModel = ['gpt-5.6-terra', 'gpt-5.6-sol'].find(id => ids.includes(id)) ?? ids[0]
+  const model = ids.length && !ids.includes(preferred.model) ? defaultModel! : preferred.model
   const preferences = { ...preferred, model }
   return {
-    store: { version: 2, current: preferences, profiles: { ...store.profiles, [preferenceKey]: preferences } },
+    store: { version: 2, current: preferences, profiles: { ...store.profiles, [preferenceKey]: preferred } },
     preferences,
     modelChanged: model !== preferred.model,
     restored

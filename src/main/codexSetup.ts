@@ -4,15 +4,10 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { verifiedDownload } from './downloadService'
 
-export const CODEX_RUNTIME_VERSION = '0.146.0'
+import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
+import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
+export { CODEX_RUNTIME_VERSION } from './runtimeTarget'
 const CODEX_ENV_KEY = 'MODMIND_THIRD_PARTY_API_KEY'
-const WINDOWS_X64_SHA512 = 'b3lxMYeR0+IhstNo4JjX1P9cPc1xwVcCVkPd1lD1wpWPJ0SBhpIkPczwbu3ZRkJcdyl342+rgyf4DUrbZLdrGA=='
-const WINDOWS_X64_URLS = [
-  `https://repo.huaweicloud.com/repository/npm/@openai/codex/-/codex-${CODEX_RUNTIME_VERSION}-win32-x64.tgz`,
-  `https://registry.npmmirror.com/@openai/codex/-/codex-${CODEX_RUNTIME_VERSION}-win32-x64.tgz`,
-  `https://mirrors.cloud.tencent.com/npm/@openai/codex/-/codex-${CODEX_RUNTIME_VERSION}-win32-x64.tgz`,
-  `https://registry.npmjs.org/@openai/codex/-/codex-${CODEX_RUNTIME_VERSION}-win32-x64.tgz`
-]
 const DOWNLOAD_ATTEMPTS_PER_SOURCE = 2
 
 export type CodexSetupStage = 'checking' | 'downloading' | 'verifying' | 'configuring' | 'ready' | 'error'
@@ -79,12 +74,17 @@ function progress(options: Pick<PrepareCodexOptions, 'onProgress'>, value: Codex
   options.onProgress?.(value)
 }
 
-export function managedCodexRuntimePath(rootDir: string): string {
-  return path.join(rootDir, 'codex-runtime', `${CODEX_RUNTIME_VERSION}-win32-x64`)
+export function managedCodexRuntimePath(rootDir: string, platform: string = process.platform, arch: string = process.arch): string {
+  return path.join(rootDir, 'codex-runtime', `${CODEX_RUNTIME_VERSION}-${requireCodexRuntimeTarget(platform, arch).id}`)
 }
 
-export function managedCodexExecutablePath(rootDir: string): string {
-  return path.join(managedCodexRuntimePath(rootDir), 'package', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe')
+export function managedCodexExecutablePath(rootDir: string, platform: string = process.platform, arch: string = process.arch): string {
+  return path.join(managedCodexRuntimePath(rootDir, platform, arch), requireCodexRuntimeTarget(platform, arch).executableRelativePath)
+}
+
+async function usableManagedCodex(root: string, executable: string): Promise<boolean> {
+  try { await validateCodexFile(root, executable); return await probeCodexExecutable(executable) === CODEX_RUNTIME_VERSION }
+  catch { return false }
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -158,34 +158,39 @@ async function runTar(args: string[]): Promise<void> {
 }
 
 async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions): Promise<string> {
-  if (process.platform !== 'win32' || process.arch !== 'x64') {
-    throw new Error('当前自动下载暂支持 Windows x64；请先安装对应平台的 Codex CLI')
-  }
+  const descriptor = requireCodexRuntimeTarget()
+  const urls = ['https://registry.npmjs.org', 'https://registry.npmmirror.com'].map((origin) => `${origin}/@openai/codex/-/${descriptor.archiveName}`)
   const runtimePath = managedCodexRuntimePath(rootDir)
   const executable = managedCodexExecutablePath(rootDir)
-  if (await fs.access(executable).then(() => true).catch(() => false)) return executable
+  if (await usableManagedCodex(runtimePath, executable)) return executable
 
   const staging = `${runtimePath}.staging-${randomUUID()}`
   const archive = path.join(staging, 'codex.tgz')
   await fs.mkdir(staging, {recursive: true})
-  progress(options, {stage: 'downloading', title: '正在准备开发工具', detail: `正在连接 ${WINDOWS_X64_URLS.length} 个可用下载源`, status: 'running'})
+  progress(options, {stage: 'downloading', title: '正在准备开发工具', detail: `正在连接 ${urls.length} 个可用下载源`, status: 'running'})
   try {
     await verifiedDownload.download({
-      sources: WINDOWS_X64_URLS.map((url, index) => ({ id: `codex-${index + 1}`, label: `Codex 下载源 ${index + 1}`, url })),
+      sources: urls.map((url, index) => ({ id: `codex-${index + 1}`, label: `Codex 下载源 ${index + 1}`, url })),
       destination: archive,
-      expectedHash: { algorithm: 'sha512', value: Buffer.from(WINDOWS_X64_SHA512, 'base64').toString('hex') },
       maxBytes: 256 * 1024 * 1024,
       timeoutMs: 120_000,
       retriesPerSource: DOWNLOAD_ATTEMPTS_PER_SOURCE,
-      activityLabel: `Codex ${CODEX_RUNTIME_VERSION}`
+      activityLabel: `Codex ${CODEX_RUNTIME_VERSION}`,
+      expectedHash: { algorithm: 'sha512', value: descriptor.sha512 }
     })
     progress(options, {stage: 'verifying', title: '正在验证开发工具', detail: '下载完整性已通过，正在解压', status: 'running'})
     await runTar(['-xzf', archive, '-C', staging])
-    if (!await fs.access(path.join(staging, 'package', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe')).then(() => true).catch(() => false)) {
-      throw new Error('下载包中没有找到 Codex 执行文件')
-    }
-    await fs.rm(runtimePath, {recursive: true, force: true})
-    await fs.rename(staging, runtimePath)
+    const stagedExecutable = path.join(staging, descriptor.executableRelativePath)
+    await validateCodexFile(staging, stagedExecutable)
+    if (process.platform !== 'win32') await fs.chmod(stagedExecutable, 0o755)
+    if (await probeCodexExecutable(stagedExecutable) !== CODEX_RUNTIME_VERSION) throw new Error('Codex 版本探测不匹配')
+    await fs.rm(archive, { force: true })
+    const backup = `${runtimePath}.previous-${randomUUID()}`
+    const hasPrevious = await fs.stat(runtimePath).then(() => true).catch(() => false)
+    if (hasPrevious) await fs.rename(runtimePath, backup)
+    try { await fs.rename(staging, runtimePath) }
+    catch (error) { if (hasPrevious) await fs.rename(backup, runtimePath); throw error }
+    if (hasPrevious) await fs.rm(backup, { recursive: true, force: true }).catch(() => undefined)
     return executable
   } finally {
     await fs.rm(staging, {recursive: true, force: true}).catch(() => undefined)
@@ -195,7 +200,7 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
 export async function ensureManagedCodexRuntime(options: EnsureManagedCodexOptions): Promise<string> {
   const runtimePath = managedCodexRuntimePath(options.rootDir)
   const executable = managedCodexExecutablePath(options.rootDir)
-  if (await fs.access(executable).then(() => true).catch(() => false)) return executable
+  if (await usableManagedCodex(runtimePath, executable)) return executable
 
   const key = process.platform === 'win32' ? runtimePath.toLowerCase() : runtimePath
   const active = managedRuntimePreparations.get(key)
@@ -213,6 +218,7 @@ export async function ensureManagedCodexRuntime(options: EnsureManagedCodexOptio
 export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexSetupResult> {
   progress(options, {stage: 'checking', title: '正在检查开发工具', detail: '正在检测本机 Codex', status: 'running'})
   const executable = options.existingExecutable || await ensureManagedCodexRuntime(options)
+  const version = await probeCodexExecutable(executable)
   const runtimePath = options.existingExecutable ? path.dirname(options.existingExecutable) : managedCodexRuntimePath(options.rootDir)
   const home = options.homeDir ? path.resolve(options.homeDir) : path.join(options.rootDir, 'codex-home')
   const configPath = path.join(home, 'config.toml')
@@ -237,7 +243,7 @@ export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexS
   progress(options, {stage: 'ready', title: '开发工具已准备好', detail: configChanged ? '配置已更新，可以开始制作' : '配置没有变化，可以开始制作', status: 'success'})
   return {
     executable,
-    version: CODEX_RUNTIME_VERSION,
+    version,
     configPath,
     runtimePath,
     home,

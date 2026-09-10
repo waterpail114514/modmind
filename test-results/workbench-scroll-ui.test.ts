@@ -1,0 +1,77 @@
+import { test, expect } from 'vitest'
+import { chromium } from 'playwright'
+import { createServer } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'node:path'
+
+test('workbench scroll and long conversation titles remain usable on desktop and mobile', async () => {
+  const server = await createServer({ configFile: false, root: process.cwd(), plugins: [react()], optimizeDeps: { entries: ['test-results/workbench-scroll-ui.html'] }, server: { host: '127.0.0.1', port: 5198, strictPort: false } })
+  await server.listen()
+  const browser = await chromium.launch({ headless: true })
+  try {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+      const page = await browser.newPage({ viewport })
+      const errors: string[] = []
+      page.on('pageerror', error => errors.push(error.message))
+      await page.goto(`${server.resolvedUrls!.local[0]}test-results/workbench-scroll-ui.html`)
+      const scroller = page.locator('.agent-conversation[data-virtuoso-scroller]')
+      await scroller.waitFor()
+      const gap = () => scroller.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
+      await expect.poll(gap).toBeLessThan(5)
+      const spacerRatio = await page.locator('.agent-conversation-bottom-space').evaluate(element => element.getBoundingClientRect().height / element.closest('[data-virtuoso-scroller]')!.clientHeight)
+      expect(spacerRatio).toBeCloseTo(.5, 2)
+      const beforeGrowth = await scroller.evaluate(element => element.scrollHeight)
+      await page.evaluate(() => (window as any).growOutput())
+      await expect.poll(() => scroller.evaluate(element => element.scrollHeight)).toBeGreaterThan(beforeGrowth)
+      await expect.poll(gap).toBeLessThan(5)
+      const beforeAppend = await scroller.evaluate(element => element.scrollHeight)
+      await page.evaluate(() => (window as any).appendOutput())
+      await expect.poll(() => scroller.evaluate(element => element.scrollHeight)).toBeGreaterThan(beforeAppend)
+      await expect.poll(gap).toBeLessThan(5)
+      await scroller.hover()
+      await page.mouse.wheel(0, -600)
+      await page.getByRole('button', { name: '回到最新内容' }).waitFor()
+      await page.waitForTimeout(150)
+      const position = await scroller.evaluate(element => element.scrollTop)
+      await page.evaluate(() => { (window as any).growOutput(); (window as any).appendOutput() })
+      await page.waitForTimeout(350)
+      expect(Math.abs(await scroller.evaluate(element => element.scrollTop) - position)).toBeLessThan(5)
+      await page.getByRole('button', { name: '回到最新内容' }).click()
+      await expect.poll(gap).toBeLessThan(5)
+      await page.setViewportSize({ width: viewport.width, height: viewport.height - 150 })
+      await expect.poll(gap).toBeLessThan(5)
+      expect(await page.locator('.agent-conversation-bottom-space').evaluate(element => element.getBoundingClientRect().height / element.closest('[data-virtuoso-scroller]')!.clientHeight)).toBeCloseTo(.5, 2)
+      await page.screenshot({ path: path.resolve(`test-results/workbench-scroll-${viewport.width}.png`), fullPage: true })
+      await page.evaluate(() => (window as any).switchConversation())
+      await expect.poll(gap).toBeLessThan(5)
+      await page.evaluate(() => (window as any).showLongConversations())
+      await page.locator('.agent-conversation-picker > button').click()
+      const menu = page.locator('.agent-conversation-menu')
+      await menu.waitFor()
+      const bounds = await menu.boundingBox()
+      expect(bounds!.width).toBeLessThanOrEqual(320)
+      expect(bounds!.x).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+      expect(await menu.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThan(2)
+      for (const row of await page.locator('.agent-conversation-item').all()) {
+        expect((await row.boundingBox())!.height).toBeLessThan(45)
+        expect(await row.locator('.agent-conversation-select span').evaluate(element => element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis')).toBe(true)
+        expect((await row.locator('.agent-conversation-delete').boundingBox())!.width).toBe(26)
+      }
+      await page.screenshot({ path: path.resolve(`test-results/workbench-conversation-titles-${viewport.width}.png`), fullPage: true })
+      await page.locator('.agent-conversation-select').nth(1).click()
+      await menu.waitFor({ state: 'hidden' })
+      expect(await page.locator('.agent-conversation-picker > button > span').textContent()).toContain('VeryLongUnbrokenConversationTitle')
+      await page.evaluate(() => (window as any).showRecovery())
+      expect(await page.locator('.agent-recovery-banner').count()).toBe(0)
+      await page.locator('.agent-conversation-picker > button').click()
+      await page.locator('.agent-conversation-select').first().click()
+      await page.locator('.agent-recovery-banner').waitFor()
+      await page.locator('.agent-conversation-picker > button').click()
+      await page.locator('.agent-conversation-select').nth(1).click()
+      await page.locator('.agent-recovery-banner').waitFor({ state: 'hidden' })
+      expect(errors).toEqual([])
+      await page.close()
+    }
+  } finally { await browser.close(); await server.close() }
+}, 60_000)

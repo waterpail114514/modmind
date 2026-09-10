@@ -1,5 +1,5 @@
+import { spawnManaged, stopProcessTree } from './processTree'
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { JavaLoaderKind, ProjectInfo, ServerPackManifest } from '../shared/types'
@@ -239,12 +239,12 @@ async function copyFileChecked(source: string, target: string): Promise<{ size: 
 }
 
 async function runJava(javaPath: string, args: string[], cwd: string, signal?: AbortSignal): Promise<void> {
-  const child = spawn(javaPath, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: process.env })
+  const child = spawnManaged(javaPath, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: process.env })
   let output = ''
   const append = (chunk: Buffer): void => { output = `${output}${chunk.toString('utf8')}`.slice(-80_000) }
   child.stdout.on('data', append)
   child.stderr.on('data', append)
-  const abort = (): void => { if (child.pid) process.platform === 'win32' ? spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true }).unref() : child.kill('SIGTERM') }
+  const abort = (): void => { if (child.pid) void stopProcessTree(child) }
   signal?.addEventListener('abort', abort, { once: true })
   const exitCode = await new Promise<number>((resolve, reject) => {
     child.once('error', reject)

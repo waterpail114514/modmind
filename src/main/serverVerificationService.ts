@@ -1,7 +1,8 @@
+import { spawnManaged, stopProcessTree } from './processTree'
 import { createWriteStream, promises as fs } from 'node:fs'
 import type { WriteStream } from 'node:fs'
 import net from 'node:net'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
 import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from '../shared/minecraft'
@@ -126,7 +127,7 @@ export class ServerProcess {
     const log = createWriteStream(this.logPath, { flags: 'w' })
     this.log = log
     const [executable, ...args] = options.runtime.launchCommand
-    const child = spawn(executable, args, {
+    const child = spawnManaged(executable, args, {
       cwd: options.pack.root,
       windowsHide: true,
       shell: false,
@@ -196,11 +197,8 @@ export class ServerProcess {
   async stop(): Promise<void> {
     const child = this.child
     if (!child) return
-    if (child.exitCode === null && child.pid) {
-      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true }).unref()
-      else child.kill('SIGTERM')
-    }
-    if (child.exitCode === null) await Promise.race([new Promise<void>((resolve) => child.once('exit', () => resolve())), new Promise<void>((resolve) => setTimeout(resolve, 5_000))])
+    await stopProcessTree(child)
+    if (child.exitCode === null && child.signalCode === null) await Promise.race([new Promise<void>((resolve) => child.once('exit', () => resolve())), new Promise<void>((resolve) => setTimeout(resolve, 5_000))])
     if (this.log) await new Promise<void>((resolve) => this.log?.end(resolve))
     this.log = null
     this.child = null

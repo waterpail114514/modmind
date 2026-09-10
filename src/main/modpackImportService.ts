@@ -206,7 +206,22 @@ function parseModrinthFiles(value: unknown): Array<{ path: string; downloads: st
     if (!sha1 && !sha512) throw new Error(`Modrinth 文件 ${relative} 缺少 sha1 或 sha512 校验值`)
     if (sha1 && !/^[a-f0-9]{40}$/i.test(sha1)) throw new Error(`Modrinth 文件 ${relative} 的 sha1 无效`)
     if (sha512 && !/^[a-f0-9]{128}$/i.test(sha512)) throw new Error(`Modrinth 文件 ${relative} 的 sha512 无效`)
-    files.push({ path: relative, downloads, hashes: Object.fromEntries(Object.entries(hashes).filter(([algorithm]) => algorithm === 'sha1' || algorithm === 'sha512')) })
+    // 国内网络经常无法直连 Modrinth CDN。保留官方地址作为首选，追加可用的
+    // 代理镜像；镜像通过环境变量可替换，便于发行版按地区配置稳定节点。
+    const mirror = (process.env.MODMIND_MODRINTH_MIRROR ?? '').trim().replace(/\/+$/, '')
+    const fallbackMirrors = mirror ? [mirror] : ['https://ghproxy.net/https://cdn.modrinth.com']
+    const expandedDownloads = [...downloads]
+    for (const url of downloads) {
+      for (const base of fallbackMirrors) {
+        if (!base || url.startsWith(base)) continue
+        try {
+          const parsed = new URL(url)
+          const mirrored = base.includes('ghproxy.net/https://') ? `${base}${parsed.pathname}${parsed.search}` : `${base}${parsed.pathname}${parsed.search}`
+          if (!expandedDownloads.includes(mirrored)) expandedDownloads.push(mirrored)
+        } catch { /* validated HTTPS URL above */ }
+      }
+    }
+    files.push({ path: relative, downloads: expandedDownloads, hashes: Object.fromEntries(Object.entries(hashes).filter(([algorithm]) => algorithm === 'sha1' || algorithm === 'sha512')) })
   }
   return files
 }

@@ -26,6 +26,8 @@ export interface LoaderVersionOption {
 }
 
 export interface ProjectInfo {
+  /** Conversation-only project; loader/version fields are not build targets until initialized. */
+  draft?: { target: Partial<ProjectCreateInput> }
   kind?: ProjectKind
   name: string
   path: string
@@ -212,6 +214,8 @@ export interface FtbQuestDocumentChapter {
 }
 
 export interface FtbQuestBook {
+  /** Content revision returned by read; optional for legacy callers. */
+  baseline?: string
   format: FtbQuestBookFormat
   root: string
   chapters: FtbQuestDocumentChapter[]
@@ -247,6 +251,7 @@ export interface FtbQuestRewardTable {
 }
 
 export interface FtbQuestSaveResult {
+  baseline?: string
   written: string[]
   removed: string[]
   diagnostics: FtbQuestDiagnostic[]
@@ -557,12 +562,23 @@ export interface AiAttachment {
 
 /** 从整合包 mod jar 提取出的物品图标。动画贴图为纵向精灵图，渲染端按帧裁剪并播放。 */
 export interface FtbQuestIconResult {
+  modelPreview?: { elements: unknown[]; display: Record<string, unknown>; textures: Record<string, string> }
+  quality?: 'resolved' | 'approximate'
+  reason?: string
+  sources?: string[]
   url: string
   frameWidth: number
   frameHeight: number
   frameCount: number
   frametimeMs: number
   animated: boolean
+}
+
+export interface FtbQuestIconInspection {
+  icon: FtbQuestIconResult | null
+  reason: string
+  sources: string[]
+  generation: number
 }
 
 /** 任务节点形状的三层贴图。 */
@@ -780,6 +796,7 @@ export interface JavaPreferences {
 
 export interface AgentSettings {
   codingBackend: CodingBackend
+  codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
   allowBuildScriptChanges: boolean
   preferLocalGradle: boolean
@@ -1011,6 +1028,8 @@ export interface ConversationEventsPage {
 
 export interface AiCreateCodeOptions {
   surface?: AiSurface
+  /** Read-only inspiration policy inside the existing workspace conversation. */
+  workbenchPhase?: 'discussion'
   sessionScope?: string
   resumeSession?: boolean
   /** Unwrapped inspiration question used for per-turn latency policy. */
@@ -1174,6 +1193,7 @@ export interface DownloadActivitySnapshot {
 
 export interface ModMindApi {
   app: {
+    getPlatformInfo: () => Readonly<import('./platform').RuntimePlatformInfo>
     getVersion: () => Promise<string>
     checkForUpdates: () => Promise<AppVersionCheckResult | null>
     getUpdateState: () => Promise<AppUpdateState>
@@ -1202,12 +1222,16 @@ export interface ModMindApi {
   project: {
     listLoaderVersions: (refresh?: boolean) => Promise<LoaderVersionOption[]>
     create: (input: ProjectCreateInput) => Promise<ProjectInfo | null>
+    createDraft: (message: string) => Promise<ProjectInfo>
+    recordDraftMessage: (message: string, projectPath: string) => Promise<ProjectInfo>
+    initializeDraft: (projectPath: string) => Promise<ProjectInfo>
     rename: (input: ProjectRenameInput) => Promise<ProjectInfo>
     open: () => Promise<ProjectInfo | null>
     openRecent: (projectPath: string) => Promise<ProjectInfo>
     listRecent: () => Promise<ProjectInfo[]>
     removeRecent: (projectPath: string) => Promise<ProjectInfo[]>
     deleteProject: (projectPath: string) => Promise<ProjectInfo[]>
+    deleteProjectPermanent: (projectPath: string) => Promise<ProjectInfo[]>
     inspectExisting: (sourceType?: 'folder' | 'zip') => Promise<ExistingProjectAnalysis | null>
     adoptExisting: (input: ExistingProjectAdoptInput) => Promise<ProjectInfo | null>
     current: () => Promise<ProjectInfo | null>
@@ -1224,6 +1248,7 @@ export interface ModMindApi {
     createDirectory: (relativePath: string, projectPath?: string) => Promise<ProjectFileMutationResult>
     renamePath: (from: string, to: string, projectPath?: string) => Promise<ProjectFileMutationResult>
     deletePath: (relativePath: string, projectPath?: string) => Promise<void>
+    deletePathPermanent: (relativePath: string, projectPath?: string) => Promise<void>
     /** Removes only ModMind-owned workbench data files under .modmind. */
     deleteWorkbenchData: (relativePath: string, projectPath?: string) => Promise<void>
     reveal: (relativePath?: string, projectPath?: string) => Promise<void>
@@ -1270,13 +1295,17 @@ export interface ModMindApi {
     onMigrationProgress: (listener: (progress: ModpackMigrationProgress) => void) => () => void
     plan: (concept: unknown) => Promise<unknown>
     applyPlan: (plan: unknown) => Promise<unknown>
-    readFtbQuestBook: () => Promise<FtbQuestBook>
-    ftbQuestIcon: (itemId: string) => Promise<FtbQuestIconResult | null>
+    readFtbQuestBook: (projectPath?: string) => Promise<FtbQuestBook>
+    listFtbQuestBackups: (projectPath: string) => Promise<Array<{ id: string; createdAt: string; files: number }>>
+    restoreFtbQuestBackup: (projectPath: string, id: string, baseline: string) => Promise<FtbQuestBook>
+    ftbQuestIcon: (itemId: string | import('./ftbIcon').FtbIconDescriptor, projectPath?: string) => Promise<FtbQuestIconResult | null>
+    inspectFtbQuestIcon: (input: unknown, projectPath: string, remote?: boolean) => Promise<FtbQuestIconInspection>
+    refreshFtbQuestResources: (projectPath: string, input?: unknown) => Promise<void>
     /** 批量解析模组物品/流体显示名（zh_cn 优先，en_us 兜底）；原版命名空间由渲染端 CDN 处理。 */
-    ftbQuestItemNames: (itemIds: string[]) => Promise<Record<string, string>>
-    ftbDependencyTexture: () => Promise<string | null>
-    ftbQuestShapes: () => Promise<Record<string, FtbQuestShapeSet>>
-    saveFtbQuestBook: (book: FtbQuestBook) => Promise<FtbQuestSaveResult>
+    ftbQuestItemNames: (itemIds: string[], projectPath?: string) => Promise<Record<string, string>>
+    ftbDependencyTexture: (projectPath?: string) => Promise<string | null>
+    ftbQuestShapes: (projectPath?: string) => Promise<Record<string, FtbQuestShapeSet>>
+    saveFtbQuestBook: (book: FtbQuestBook, projectPath?: string) => Promise<FtbQuestSaveResult>
     writeFtbQuest: (input: unknown) => Promise<string>
     writePatchouliBook: (input: unknown) => Promise<string[]>
     applyKeybindPreset: (input: unknown, allowConflicts?: boolean) => Promise<unknown>
@@ -1353,7 +1382,7 @@ export interface ModMindApi {
     clearQuotaCredentials: () => Promise<void>
     getRecovery: (projectPath?: string) => Promise<AiRecoveryInfo>
     getProjectTaskState: (projectPath?: string) => Promise<AiProjectTaskState>
-    resumeRecovery: (projectPath?: string) => Promise<CodingResult>
+    resumeRecovery: (projectPath?: string, conversationId?: string) => Promise<CodingResult>
     switchBackend: (backend: CodingBackend, projectPath?: string, sessionScope?: string, switchId?: number) => Promise<AiBackendSwitchResult>
     onBackendReady: (listener: (event: AiBackendReadyEvent) => void) => () => void
     restoreRecovery: () => Promise<SnapshotInfo | null>

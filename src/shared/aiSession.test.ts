@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { aiConversationIdForSession, aiRecoveryMatchesSessionScope, aiRecoverySessionScope, normalizeAiSessionScope } from './aiSession'
+import { aiConversationIdForSession, aiRecoveryMatchesSessionScope, aiRecoverySessionScope, normalizeAiSessionScope, recoveryBelongsToConversation } from './aiSession'
 
 describe('AI recovery session scope', () => {
+  it('only offers recovery in the owning conversation, including legacy checkpoints', () => {
+    expect(recoveryBelongsToConversation({ pending: true, conversationId: 'ws-a' }, 'ws-a')).toBe(true)
+    expect(recoveryBelongsToConversation({ pending: true, conversationId: 'ws-a' }, 'ws-b')).toBe(false)
+    expect(recoveryBelongsToConversation({ pending: true }, 'ws-a')).toBe(false)
+    expect(recoveryBelongsToConversation({ pending: true }, 'workspace')).toBe(true)
+    expect(recoveryBelongsToConversation({ pending: false, conversationId: 'ws-a' }, 'ws-a')).toBe(false)
+    expect(recoveryBelongsToConversation(null, 'ws-a')).toBe(false)
+  })
   it('normalizes legacy and conversation scopes', () => {
     expect(normalizeAiSessionScope()).toBe('workspace')
     expect(normalizeAiSessionScope('/workspace\\ws-a/')).toBe('workspace/ws-a')

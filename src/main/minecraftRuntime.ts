@@ -1,3 +1,4 @@
+import { spawnManaged, stopProcessTree } from './processTree'
 import { app, net } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
@@ -514,8 +515,7 @@ async function probeJavaHome(home: string, minimumMajor: number, requireJavac: b
       const finish = (code: number): void => resolve({ code, text: text.slice(-8_000) })
       const timer = setTimeout(() => {
         if (child.pid) {
-          if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, shell: false })
-          else child.kill('SIGTERM')
+          void stopProcessTree(child)
         }
         finish(124)
       }, 10_000)
@@ -541,8 +541,7 @@ async function probeJavaHome(home: string, minimumMajor: number, requireJavac: b
       const child = spawn(javacPath, ['-version'], { cwd: normalizedHome, windowsHide: true, shell: false })
       const timer = setTimeout(() => {
         if (child.pid) {
-          if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, shell: false })
-          else child.kill('SIGTERM')
+          void stopProcessTree(child)
         }
         resolve(false)
       }, 10_000)
@@ -591,8 +590,7 @@ async function discoverJavaHomesFromPath(): Promise<string[]> {
     })
     const timer = setTimeout(() => {
       if (child.pid) {
-        if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, shell: false })
-        else child.kill('SIGTERM')
+        void stopProcessTree(child)
       }
       resolve([])
     }, 10_000)
@@ -1003,6 +1001,7 @@ export class MinecraftRuntimeManager {
     let child: ChildProcess
     try {
       child = await launch({
+        spawn: (command, args, options) => spawnManaged(command, [...(args ?? [])], options ?? {}),
         gamePath: instanceRoot,
         resourcePath: this.resourceRoot(),
         version: metadata.loaderVersionId,
@@ -1180,6 +1179,7 @@ export class MinecraftRuntimeManager {
     }
     if (this.buildProcess && !this.buildProcess.killed) this.killProcessTree(this.buildProcess)
     if (this.verificationProcess && !this.verificationProcess.killed) this.killProcessTree(this.verificationProcess)
+    await Promise.all([active, activeBuild, activeVerification].filter((child): child is ChildProcess => Boolean(child)).map(stopProcessTree))
     const deadline = Date.now() + 5_000
     while (Date.now() < deadline) {
       const minecraftStopping = Boolean(active && this.process === active)
@@ -1192,9 +1192,7 @@ export class MinecraftRuntimeManager {
   }
 
   private killProcessTree(child: ChildProcess): void {
-    if (!child.pid) return
-    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, shell: false })
-    else child.kill('SIGTERM')
+    void stopProcessTree(child)
   }
 
   private spawnGradle(
@@ -1217,7 +1215,7 @@ export class MinecraftRuntimeManager {
     const invocation = process.platform === 'win32'
       ? windowsCmdInvocation(runtime.executable, managedArguments)
       : { command: runtime.executable, args: managedArguments, windowsVerbatimArguments: false as const }
-    return spawn(invocation.command, invocation.args, {
+    return spawnManaged(invocation.command, invocation.args, {
       cwd: project.path,
       windowsHide: true,
       shell: false,
@@ -1655,11 +1653,7 @@ export class MinecraftRuntimeManager {
     const abortBuild = (): void => {
       aborted = true
       if (!child.pid) return
-      if (process.platform === 'win32') {
-        spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, shell: false })
-      } else {
-        child.kill('SIGTERM')
-      }
+      void stopProcessTree(child)
     }
     signal?.addEventListener('abort', abortBuild, { once: true })
     const recentLines: string[] = []
@@ -1922,7 +1916,7 @@ export class MinecraftRuntimeManager {
   }
 
   destroy(): void {
-    if (this.process && !this.process.killed) this.process.kill()
+    if (this.process) void stopProcessTree(this.process)
     if (this.buildProcess && !this.buildProcess.killed) this.killProcessTree(this.buildProcess)
     if (this.verificationProcess && !this.verificationProcess.killed) this.killProcessTree(this.verificationProcess)
     this.process = null

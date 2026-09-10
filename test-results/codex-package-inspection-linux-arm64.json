@@ -1,0 +1,23 @@
+{
+  "version": "0.146.0",
+  "inspectedAt": "2026-09-09T15:43:46.889Z",
+  "targets": [
+    {
+      "id": "linux-arm64",
+      "archiveName": "codex-0.146.0-linux-arm64.tgz",
+      "executableRelativePath": "package/vendor/aarch64-unknown-linux-musl/bin/codex",
+      "integrity": "sha512-qiYDxkkEFnXG7joadJW6Q+XcgyDXCpGdpa9nk/c+i0gEomur1j7bHvx12NfWWCF/y8Tqri6ay+FLuC2MjdehtA==",
+      "sha512": "aa2603c649041675c6ee3a1a7495ba43e5dc8320d70a919da5af6793f73e8b4804a26babd63edb1efc75d8d7d658217fcbc4eaae2e9acbe14bb82d8c8dd7a1b4",
+      "files": [
+        "package/vendor/aarch64-unknown-linux-musl/codex-resources/bwrap",
+        "package/vendor/aarch64-unknown-linux-musl/bin/codex",
+        "package/vendor/aarch64-unknown-linux-musl/bin/codex-code-mode-host",
+        "package/vendor/aarch64-unknown-linux-musl/codex-path/rg",
+        "package/vendor/aarch64-unknown-linux-musl/codex-resources/zsh/bin/zsh",
+        "package/vendor/aarch64-unknown-linux-musl/codex-package.json",
+        "package/package.json",
+        "package/README.md"
+      ]
+    }
+  ]
+}

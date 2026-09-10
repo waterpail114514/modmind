@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_INSPIRATION_STORAGE_BYTES,
   boundInspirationMessages,
+  inspirationConversationTitle,
   normalizeStoredInspirationMessages,
   persistInspirationHistory,
   type InspirationConversation,
@@ -17,6 +18,16 @@ function payload(conversations: InspirationConversation[], activeId = conversati
 }
 
 describe('inspiration storage', () => {
+  it('names untitled histories from the first question and preserves explicit titles', () => {
+    const messages: InspirationConversation['messages'] = [
+      { role: 'user', content: '旧展示文字\n\n已附 2 个文件', replay: { prompt: '设计一个\n 森林冒险' }, status: 'completed' },
+      { role: 'user', content: '后续提问', status: 'completed' }
+    ]
+    expect(inspirationConversationTitle('新对话', messages)).toBe('设计一个 森林冒险')
+    expect(inspirationConversationTitle('新想法 2', messages)).toBe('设计一个 森林冒险')
+    expect(inspirationConversationTitle('我的森林主题', messages)).toBe('我的森林主题')
+    expect(inspirationConversationTitle('新想法 3', [])).toBe('新想法 3')
+  })
   it('keeps the active question while bounding a long retry storm', () => {
     const messages: InspirationConversation['messages'] = [
       { role: 'user', content: 'active question', status: 'completed' },

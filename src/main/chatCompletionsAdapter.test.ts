@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, decompressRequest, responsesRequestToChatCompletions, sanitizeTokenBudgets } from './chatCompletionsAdapter'
+import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, decompressRequest, normalizeHistoryMessageIds, responsesRequestToChatCompletions, sanitizeTokenBudgets } from './chatCompletionsAdapter'
 
 const adapters: ChatCompletionsAdapter[] = []
 
@@ -10,6 +10,90 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  it('falls back only the dedicated approval model through both upstream protocols', async () => {
+    const models: string[] = []
+    const upstream = createServer(async (request, response) => {
+      let raw = ''
+      for await (const chunk of request) raw += chunk
+      const body = JSON.parse(raw)
+      models.push(`${request.url}:${body.model}`)
+      response.setHeader('Content-Type', 'application/json')
+      if (request.url === '/responses') {
+        response.writeHead(404)
+        response.end('{"error":{"message":"responses endpoint not found"}}')
+      } else if (body.model === 'codex-auto-review') {
+        response.writeHead(404)
+        response.end('{"error":{"code":"model_not_found"}}')
+      } else {
+        response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"approved":false}' } }] }))
+      }
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = upstream.address()
+      if (!address || typeof address === 'string') throw new Error('missing server address')
+      const adapter = new ChatCompletionsAdapter()
+      adapters.push(adapter)
+      const url = await adapter.baseUrl(`http://127.0.0.1:${address.port}`, 'review', undefined, 'selected-model')
+      const result = await fetch(`${url}/responses`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'codex-auto-review', input: 'Review this operation' })
+      })
+      expect(result.status).toBe(200)
+      expect(await result.text()).toContain('approved')
+      expect(models).toEqual(['/responses:codex-auto-review', '/chat/completions:codex-auto-review', '/chat/completions:selected-model'])
+    } finally {
+      await new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve()))
+    }
+  })
+
+  it('normalizes foreign message ids and references without changing tool call identity or text', () => {
+    const body = Buffer.from(JSON.stringify({ model: 'qwen', input: [
+      { type: 'message', id: 'item_foreign', role: 'assistant', content: [{ type: 'output_text', text: 'item_foreign' }] },
+      { type: 'item_reference', id: 'item_foreign' },
+      { type: 'function_call', id: 'item_tool', call_id: 'call_a', name: 'write', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call_a', output: 'written once' },
+      { type: 'message', id: 'msg_existing', role: 'user', content: 'continue' }
+    ] }))
+    const normalized = normalizeHistoryMessageIds(body)
+    const parsed = JSON.parse(normalized.toString())
+    expect(parsed.input[0].id).toMatch(/^msg_[a-f0-9]{32}$/)
+    expect(parsed.input[1].id).toBe(parsed.input[0].id)
+    expect(parsed.input[0].content[0].text).toBe('item_foreign')
+    expect(parsed.input.slice(2)).toEqual(JSON.parse(body.toString()).input.slice(2))
+    expect(normalizeHistoryMessageIds(normalized)).toEqual(normalized)
+    expect(body.toString()).toContain('"id":"item_foreign"')
+  })
+
+  it('cancels old upstream work and rejects later requests on an invalidated route', async () => {
+    let received!: () => void
+    const started = new Promise<void>(resolve => { received = resolve })
+    let disconnected!: () => void
+    const closed = new Promise<void>(resolve => { disconnected = resolve })
+    let requests = 0
+    const upstream = createServer((request, response) => {
+      requests++
+      request.resume()
+      response.once('close', disconnected)
+      received()
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    const adapter = new ChatCompletionsAdapter()
+    adapters.push(adapter)
+    const controller = new AbortController()
+    try {
+      const address = upstream.address() as { port: number }
+      const base = await adapter.baseUrl(`http://127.0.0.1:${address.port}`, 'A', controller.signal)
+      const pending = fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify({ model: 'A', input: 'test' }) })
+      await started
+      controller.abort()
+      const result = await pending
+      await result.text()
+      await closed
+      expect((await fetch(`${base}/responses`, { method: 'POST', body: '{}' })).status).toBe(409)
+      expect(requests).toBe(1)
+    } finally { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())) }
+  })
   it('drops invalid token budgets instead of forwarding them to the provider', () => {
     // A long Codex thread can compute a negative remaining budget; forwarding
     // it makes providers reject the whole request with invalid_request_error.

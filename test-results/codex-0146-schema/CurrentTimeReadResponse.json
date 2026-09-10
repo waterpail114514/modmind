@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CurrentTimeReadResponse",
+  "type": "object",
+  "required": [
+    "currentTimeAt"
+  ],
+  "properties": {
+    "currentTimeAt": {
+      "description": "Current time as whole Unix seconds.",
+      "type": "integer",
+      "format": "int64"
+    }
+  }
+}

@@ -3,6 +3,7 @@ import { brotliDecompress, gunzip, inflate } from 'node:zlib'
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { promisify } from 'node:util'
 import { Decompress as ZstdDecompress } from 'fzstd'
+import { fetchWithApprovalModelFallback } from './agentApproval'
 
 type JsonRecord = Record<string, unknown>
 type UpstreamProtocol = 'unknown' | 'responses' | 'chat-completions'
@@ -11,6 +12,8 @@ interface AdapterRoute {
   id: string
   upstreamBaseUrl: string
   protocol: UpstreamProtocol
+  signal?: AbortSignal
+  approvalFallbackModel?: string
 }
 
 interface ChatToolDescriptor {
@@ -460,6 +463,23 @@ function sseBody(events: JsonRecord[]): string {
   return `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`
 }
 
+export function normalizeHistoryMessageIds(body: Buffer): Buffer {
+  let payload: unknown
+  try { payload = JSON.parse(body.toString('utf8')) } catch { return body }
+  if (!isRecord(payload) || !Array.isArray(payload.input)) return body
+  const replacements = new Map<string, string>()
+  for (const item of payload.input) {
+    if (isRecord(item) && item.type === 'message' && typeof item.id === 'string' && !item.id.startsWith('msg_')) {
+      replacements.set(item.id, `msg_${createHash('sha256').update(item.id).digest('hex').slice(0, 32)}`)
+    }
+  }
+  if (!replacements.size) return body
+  payload.input = payload.input.map(item => isRecord(item)
+    && (item.type === 'message' || item.type === 'item_reference') && typeof item.id === 'string' && replacements.has(item.id)
+    ? { ...item, id: replacements.get(item.id) } : item)
+  return Buffer.from(JSON.stringify(payload))
+}
+
 export class ChatCompletionsAdapter {
   private server: Server | null = null
   private starting: Promise<number> | null = null
@@ -467,13 +487,13 @@ export class ChatCompletionsAdapter {
   private readonly routesByIdentity = new Map<string, AdapterRoute>()
   private readonly routesById = new Map<string, AdapterRoute>()
 
-  async baseUrl(upstreamBaseUrl: string, providerIdentity = ''): Promise<string> {
+  async baseUrl(upstreamBaseUrl: string, providerIdentity = '', signal?: AbortSignal, approvalFallbackModel?: string): Promise<string> {
     const normalized = normalizedBaseUrl(upstreamBaseUrl)
     const port = await this.ensureListening()
-    const identity = createHash('sha256').update(`${normalized}\n${providerIdentity}`).digest('hex')
+    const identity = createHash('sha256').update(`${normalized}\n${providerIdentity}\n${approvalFallbackModel ?? ''}`).digest('hex')
     let route = this.routesByIdentity.get(identity)
     if (!route) {
-      route = { id: randomUUID().replaceAll('-', ''), upstreamBaseUrl: normalized, protocol: 'unknown' }
+      route = { id: randomUUID().replaceAll('-', ''), upstreamBaseUrl: normalized, protocol: 'unknown', signal, approvalFallbackModel }
       this.routesByIdentity.set(identity, route)
       this.routesById.set(route.id, route)
     }
@@ -518,8 +538,17 @@ export class ChatCompletionsAdapter {
         sendJson(response, 404, { error: { message: 'Adapter route not found', type: 'invalid_request_error' } })
         return
       }
+      if (route.signal?.aborted) {
+        sendJson(response, 409, { error: { message: 'Execution configuration superseded', type: 'configuration_changed' } })
+        return
+      }
+      const disconnected = new AbortController()
+      response.once('close', () => { if (!response.writableEnded) disconnected.abort() })
+      const upstreamSignal = (timeout: number): AbortSignal => AbortSignal.any([
+        disconnected.signal, AbortSignal.timeout(timeout), ...(route.signal ? [route.signal] : [])
+      ])
       if (match[2] === 'models' && request.method === 'GET') {
-        const upstream = await fetch(endpoint(route.upstreamBaseUrl, 'models'), { headers: requestHeaders(request.headers), signal: AbortSignal.timeout(20_000) })
+        const upstream = await fetch(endpoint(route.upstreamBaseUrl, 'models'), { headers: requestHeaders(request.headers), signal: upstreamSignal(20_000) })
         return void await relayResponse(upstream, response)
       }
       if (match[2] !== 'responses' || request.method !== 'POST') {
@@ -532,22 +561,20 @@ export class ChatCompletionsAdapter {
       // Strip invalid token budgets (negative/NaN) on every path — including
       // native Responses passthrough — so one bad field cannot make the
       // provider reject an otherwise valid request.
-      const sanitizedBody = sanitizeTokenBudgets(body)
-      const requestUpstreamResponses = (): Promise<Response> => fetch(endpoint(route.upstreamBaseUrl, 'responses'), {
+      const sanitizedBody = normalizeHistoryMessageIds(sanitizeTokenBudgets(body))
+      const requestUpstreamResponses = (): Promise<Response> => fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'responses'), {
         method: 'POST',
         headers: requestHeaders(request.headers),
-        body: new Uint8Array(sanitizedBody),
-        signal: AbortSignal.timeout(300_000)
-      })
+        signal: upstreamSignal(300_000)
+      }, JSON.parse(sanitizedBody.toString('utf8')) as JsonRecord, route.approvalFallbackModel)
       let translated: ChatCompletionTranslation | undefined
       const requestUpstreamChat = (): Promise<Response> => {
         translated ??= responsesRequestToChatCompletions(JSON.parse(sanitizedBody.toString('utf8')) as unknown)
-        return fetch(endpoint(route.upstreamBaseUrl, 'chat/completions'), {
+        return fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'chat/completions'), {
           method: 'POST',
           headers: requestHeaders(request.headers),
-          body: JSON.stringify(translated.body),
-          signal: AbortSignal.timeout(300_000)
-        })
+          signal: upstreamSignal(300_000)
+        }, translated.body, route.approvalFallbackModel)
       }
 
       // Prefer the last successful protocol, but re-probe the alternative when

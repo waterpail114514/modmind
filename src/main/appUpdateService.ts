@@ -191,7 +191,7 @@ export class AppUpdateService {
   private async performDownload(): Promise<AppUpdateState> {
     const candidate = this.candidate
     if (!candidate?.updateAvailable) throw new Error('当前没有可下载的应用更新')
-    if (!this.supported()) throw new Error('自动更新仅支持已安装的 Windows 版本')
+    if (!this.supported()) throw new Error('自动更新仅支持已安装的桌面版本')
 
     this.activityId = downloadActivities.start({ label: `ModMind ${candidate.latestVersion}`, detail: '正在读取更新清单' })
     this.setState({
@@ -263,9 +263,10 @@ export class AppUpdateService {
       if (!files.length) {
         throw differentialError instanceof Error ? differentialError : new Error('更新器未返回安装包路径')
       }
-      const installerPath = files.find((file) => file.toLowerCase().endsWith('.exe')) ?? files[0]
+      const extension = (this.options.platform ?? process.platform) === 'win32' ? '.exe' : '.zip'
+      const installerPath = files.find((file) => file.toLowerCase().endsWith(extension)) ?? files[0]
       if (!installerPath) throw new Error('更新器没有返回已下载的安装包')
-      const installerInfo = checked.updateInfo.files.find((file) => file.url.toLowerCase().endsWith('.exe')) ?? checked.updateInfo.files[0]
+      const installerInfo = checked.updateInfo.files.find((file) => file.url.toLowerCase().endsWith(extension)) ?? checked.updateInfo.files[0]
       const expectedSha512 = installerInfo?.sha512 ?? checked.updateInfo.sha512
       if (!expectedSha512) throw new Error('更新清单缺少安装包 SHA-512')
 
@@ -308,7 +309,8 @@ export class AppUpdateService {
   }
 
   private supported(): boolean {
-    return this.options.isPackaged && (this.options.platform ?? process.platform) === 'win32'
+    const platform = this.options.platform ?? process.platform
+    return this.options.isPackaged && (platform === 'win32' || platform === 'darwin' || platform === 'linux')
   }
 
   private pendingMarkerPath(): string {
@@ -316,8 +318,9 @@ export class AppUpdateService {
   }
 
   private updateCacheRoot(): string {
-    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
-    return path.join(localAppData, 'modmind-updater', 'pending')
+    const platform = this.options.platform ?? process.platform
+    const base = platform === 'win32' ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local') : path.join(this.options.userDataPath, 'updater-cache')
+    return path.join(base, 'modmind-updater', 'pending')
   }
 
   private async writePendingUpdate(pending: PendingAppUpdate): Promise<void> {
@@ -344,7 +347,8 @@ export class AppUpdateService {
   }
 
   private async validatePendingUpdate(pending: PendingAppUpdate): Promise<boolean> {
-    if (!isPathInside(this.updateCacheRoot(), pending.installerPath) || path.extname(pending.installerPath).toLowerCase() !== '.exe') return false
+    const extension = (this.options.platform ?? process.platform) === 'win32' ? '.exe' : '.zip'
+    if (!isPathInside(this.updateCacheRoot(), pending.installerPath) || path.extname(pending.installerPath).toLowerCase() !== extension) return false
     try {
       const stat = await fs.stat(pending.installerPath)
       if (!stat.isFile() || stat.size < MIN_INSTALLER_BYTES) return false

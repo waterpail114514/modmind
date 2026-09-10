@@ -30,6 +30,7 @@ describe('describeAiFailureForUser', () => {
     expect(describeAiFailureForUser('404 Not Found')).toContain('模型接口或所选模型不存在')
     expect(describeAiFailureForUser('stream disconnected before completion')).toContain('连接中断')
     expect(describeAiFailureForUser('rollout not found')).toContain('会话已失效')
+    expect(describeAiFailureForUser('no rollout found for thread id 01a08abe-5b20-7490-9a92-5ce3bacdd48f')).toContain('会话记录已丢失')
     expect(describeAiFailureForUser('local file not found')).toBe('local file not found')
     expect(describeAiFailureForUser('permission denied while reading project')).toBe('permission denied while reading project')
   })

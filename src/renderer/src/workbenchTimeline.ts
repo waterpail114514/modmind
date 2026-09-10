@@ -12,6 +12,7 @@ export type WorkbenchTimelineItem = {
   turnId?: string
   itemId?: string
   streamId?: string
+  eventId?: string
   stage?: string
   sequence?: number
   status?: 'running' | 'done' | 'warning' | 'error'
@@ -67,6 +68,17 @@ function eventIdentity(event: Pick<AiOutputEvent, 'runId' | 'sessionId' | 'time'
 
 function streamIdentity(event: AiOutputEvent): string {
   return event.streamId || event.itemId || (event.turnId ? `${event.turnId}:assistant` : event.runId || event.sessionId || eventIdentity(event))
+}
+
+function sameOutputTurn(item: WorkbenchTimelineItem, event: AiOutputEvent): boolean {
+  return (item.turnId ?? item.runId) === (event.turnId ?? event.runId ?? event.sessionId)
+}
+
+function uniqueTimelineId(items: WorkbenchTimelineItem[], base: string): string {
+  const ids = new Set(items.map((item) => item.id))
+  let id = base
+  for (let suffix = 2; ids.has(id); suffix += 1) id = `${base}:${suffix}`
+  return id
 }
 
 /** Sequence is authoritative for replay. The index fallback keeps legacy items stable. */
@@ -185,6 +197,10 @@ export function reduceWorkbenchOutput(
   event: AiOutputEvent,
   normalize: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
+  if (items.some((item) => sameOutputTurn(item, event) && (
+    event.eventId && item.eventId === event.eventId
+    || event.sequence !== undefined && item.sequence === event.sequence
+  ))) return items
   const content = normalize(event.content)
   const current = event.kind === 'answer' || (event.kind === 'error' && event.terminal === true)
     ? settleWorkbenchActivity(items)
@@ -192,7 +208,12 @@ export function reduceWorkbenchOutput(
   const identity = eventIdentity(event)
   if (event.kind === 'delta' || event.kind === 'stream-start') {
     const streamId = streamIdentity(event)
-    const index = current.findIndex((item) => item.kind === 'response' && item.status === 'running' && item.streamId === streamId)
+    if (event.sequence !== undefined && current.some((item) => sameOutputTurn(item, event) && item.streamId === streamId
+      && item.sequence !== undefined && item.sequence >= event.sequence!)) return current
+    const index = findLastMatchingIndex(current, (item) => item.kind === 'response' && item.status === 'running' && sameOutputTurn(item, event) && item.streamId === streamId)
+    // Provider item ids identify a completed message even if a delayed delta arrives.
+    if (index < 0 && (event.streamId || event.itemId) && current.some((item) => (item.kind === 'response' || item.kind === 'answer')
+      && item.status === 'done' && sameOutputTurn(item, event) && item.streamId === streamId)) return current
     if (index >= 0) {
       if (event.kind === 'stream-start') return current
       const next = [...current]
@@ -200,14 +221,13 @@ export function reduceWorkbenchOutput(
         ...next[index],
         content: mergeStreamingText(next[index].content, content),
         sequence: event.sequence ?? next[index].sequence,
+        eventId: event.eventId,
         status: 'running'
       }
       return orderTimeline(next)
     }
-    if (event.kind === 'stream-start' && !content) {
-      return orderTimeline([...current, { id: event.turnId && !event.itemId && !event.streamId ? `${event.turnId}:assistant` : `stream:${streamId}`, kind: 'response', content: '', time: event.time, runId: event.runId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, status: 'running' }])
-    }
-    return orderTimeline([...current, { id: event.turnId && !event.itemId && !event.streamId ? `${event.turnId}:assistant` : `stream:${streamId}`, kind: 'response', content, time: event.time, runId: event.runId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, status: 'running' }])
+    const id = uniqueTimelineId(current, `stream:${event.turnId ?? event.runId ?? event.sessionId ?? 'legacy'}:${streamId}:${eventIdentity(event)}`)
+    return orderTimeline([...current, { id, kind: 'response', content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, eventId: event.eventId, status: 'running' }])
   }
   if (content.startsWith('__CODE_DIFF__')) {
     try {
@@ -218,6 +238,19 @@ export function reduceWorkbenchOutput(
     }
   }
   if (event.kind === 'response' || event.kind === 'answer') {
+    const streamId = streamIdentity(event)
+    const streamIndex = findLastMatchingIndex(current, (item, index) => (item.kind === 'response' || item.kind === 'answer')
+      && sameOutputTurn(item, event) && item.streamId === streamId
+      && (event.streamId || event.itemId ? true : item.kind === 'response' && items[index].status === 'running'))
+    if (streamIndex >= 0) {
+      if (current[streamIndex].kind === 'answer' && event.kind === 'response') return current
+      if (event.sequence !== undefined && current[streamIndex].sequence !== undefined && event.sequence < current[streamIndex].sequence!) return current
+      const next = [...current]
+      next[streamIndex] = { ...next[streamIndex], kind: event.kind, content: content || next[streamIndex].content,
+        status: 'done', sequence: event.sequence ?? next[streamIndex].sequence, eventId: event.eventId,
+        ...(event.kind === 'answer' ? { terminal: true } : {}), ...(event.usage ? { usage: event.usage } : {}) }
+      return orderTimeline(next)
+    }
     const answerTurnKey = event.turnId ?? event.runId ?? event.sessionId ?? event.time
     const duplicate = event.kind === 'answer' && current.some((item) => item.kind === 'answer'
       && (item.turnId ?? item.runId ?? item.time) === answerTurnKey
@@ -231,7 +264,7 @@ export function reduceWorkbenchOutput(
         && item.content.trim() === content.trim())
       if (responseIndex >= 0) {
         const next = [...current]
-        next[responseIndex] = { ...next[responseIndex], id: `answer:${identity}`, kind: 'answer', content: content || next[responseIndex].content, time: event.time, sequence: event.sequence ?? next[responseIndex].sequence, status: 'done', terminal: true, ...(event.usage ? { usage: event.usage } : {}) }
+        next[responseIndex] = { ...next[responseIndex], kind: 'answer', content: content || next[responseIndex].content, time: event.time, sequence: event.sequence ?? next[responseIndex].sequence, eventId: event.eventId, status: 'done', terminal: true, ...(event.usage ? { usage: event.usage } : {}) }
         return orderTimeline(next)
       }
       const legacyResponse = findLastMatchingIndex(current, (item) => item.kind === 'response' && item.status === 'running' && !event.turnId && !item.turnId && item.runId === event.runId && item.content.trim() === content.trim())
@@ -241,31 +274,22 @@ export function reduceWorkbenchOutput(
         return orderTimeline(next)
       }
     }
-    // A provider response is its own durable item. It is only reconciled with
-    // the active stream when it carries the same stream identity and content.
-    const streamId = streamIdentity(event)
-    const streamIndex = event.kind === 'response'
-      ? current.findIndex((item) => item.kind === 'response' && item.status === 'running' && item.streamId === streamId && item.content.trim() === content.trim())
-      : -1
-    if (streamIndex >= 0) {
-      const next = [...current]
-      next[streamIndex] = { ...next[streamIndex], sequence: event.sequence ?? next[streamIndex].sequence, time: event.time, ...(event.usage ? { usage: event.usage } : {}) }
-      return orderTimeline(next)
-    }
-    return orderTimeline([...current, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId, turnId: event.turnId, itemId: event.itemId, sequence: event.sequence, status: event.kind === 'answer' ? 'done' : 'running', ...(event.usage ? { usage: event.usage } : {}) }])
+    const id = `${event.kind}:${event.turnId ?? event.runId ?? event.sessionId ?? 'legacy'}:${streamId}:${identity}`
+    if (current.some((item) => item.id === id)) return current
+    return orderTimeline([...current, { id, kind: event.kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, eventId: event.eventId, status: 'done', ...(event.usage ? { usage: event.usage } : {}) }])
   }
   if (event.kind === 'start' || event.kind === 'retry') {
     const settled = event.kind === 'retry'
-      ? current.map((item) => item.kind === 'response' && item.status === 'running' && item.turnId === event.turnId ? { ...item, status: 'done' as const } : item)
+      ? current.map((item) => item.kind === 'response' && item.status === 'running' && sameOutputTurn(item, event) ? { ...item, status: 'done' as const } : item)
       : current
-    return orderTimeline([...settled, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: event.kind === 'retry' ? 'warning' : 'done', ...(event.kind === 'retry' ? { terminal: false, recoverable: true } : {}) }])
+    return orderTimeline([...settled, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, status: event.kind === 'retry' ? 'warning' : 'done', ...(event.kind === 'retry' ? { terminal: false, recoverable: true } : {}) }])
   }
   const kind: WorkbenchTimelineItem['kind'] = event.kind === 'tool' ? 'tool' : event.kind === 'warning' ? 'warning' : event.kind === 'error' ? 'error' : 'status'
   const errorLike = event.kind === 'error' || event.kind === 'warning'
   const terminal = errorLike ? event.terminal === true : event.terminal
   const recoverable = errorLike ? event.recoverable ?? !terminal : event.recoverable
   return orderTimeline([...current, {
-    id: `${kind}:${identity}`, kind, content, time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, stage: event.kind,
+    id: `${kind}:${identity}`, kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, stage: event.kind,
     status: event.kind === 'error' ? 'error' : event.kind === 'warning' ? 'warning' : 'done',
     ...(terminal !== undefined ? { terminal } : {}), ...(recoverable !== undefined ? { recoverable } : {})
   }])
@@ -327,9 +351,15 @@ export function replayWorkbenchEvents(
   normalizeOutput: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
   if (!events.length) return normalizeWorkbenchTimeline(view)
-  const result = view.filter((item) => item.kind === 'user' && !isWorkbenchInternalPrompt(item.content)).map((item) => ({ ...item }))
-  const knownUsers = new Map(result.filter((item) => item.turnId).map((item) => [item.turnId!, item]))
+  const replayedTurns = new Set(events.filter((event) => event.kind === 'output' || event.kind === 'progress').map((event) => event.turnId))
+  // Forks and migrated conversations can have older turns only in the saved view.
+  const result = view.filter((item) => item.kind === 'user' ? !isWorkbenchInternalPrompt(item.content)
+    : !replayedTurns.has(item.turnId ?? `turn-${item.runId}`)).map((item) => ({ ...item }))
+  const knownUsers = new Map(result.filter((item) => item.kind === 'user' && item.turnId).map((item) => [item.turnId!, item]))
+  const seenEvents = new Set<string>()
   for (const record of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    if (seenEvents.has(record.eventId)) continue
+    seenEvents.add(record.eventId)
     if (record.kind === 'user') {
       const payload = record.payload && typeof record.payload === 'object' ? record.payload as { prompt?: unknown } : undefined
       if (typeof payload?.prompt === 'string' && isWorkbenchInternalPrompt(payload.prompt)) continue
