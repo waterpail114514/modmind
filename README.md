@@ -2,15 +2,23 @@
 
 Electron-based workspace for AI-assisted Minecraft mod development.
 
-## ModMind 1.4.4
+## ModMind 1.4.5
 
-- Added conversation rewind, edit, and delete controls.
-- Fixed DeepSeek compatibility based on a contribution from
-  [@ZHANGNIUBI1](https://github.com/ZHANGNIUBI1), with additional ModMind changes.
-- Added 13 built-in skills for Minecraft development, migration, testing, release,
-  content creation, Blockbench modeling, image assets, and plugin development.
-- Improved Java toolchain fallback and runtime selection.
-- Improved automatic-update downloads and general download reliability.
+[Download for Windows](https://github.com/waterpail114514/modmind/releases/download/1.4.5/ModMind-Setup-1.4.5.exe)
+or read the [full release notes](https://github.com/waterpail114514/modmind/releases/tag/1.4.5).
+
+### Highlights
+
+- Added durable conversation storage, crash recovery, conversation switching,
+  branching, and more reliable continuation of interrupted Agent sessions.
+- Refined the workbench, inspiration workflow, welcome screen, and beginner mode
+  with clearer starting points, follow-up actions, and project drafts.
+- Expanded the FTB Quests editor with richer task and reward editing, dependency
+  management, reward tables, icon/model previews, diagnostics, and validation.
+- Improved Codex runtime detection and downloads, automatic-approval fallback,
+  task cancellation, process cleanup, and update/download reliability.
+- Added the macOS build, signing, notarization, CI, menu, window, and native-tool
+  adaptation foundation. This release currently provides a Windows installer only.
 - Removed Herobrine.
 
 The standalone MCP server is maintained in the
@@ -31,8 +39,8 @@ are trademarks and are not granted by the software license; see
 
 ## Versioning
 
-The current product development line is `1.4.4`. Stable patch releases increment
-only the patch component (`1.4.5`, `1.4.6`, and so on).
+The current product development line is `1.4.5`. Stable patch releases increment
+only the patch component (`1.4.6`, `1.4.7`, and so on).
 Run `npm.cmd run version:patch` once for each future change set; it updates both
 `package.json` and `package-lock.json` without creating a Git tag.
 
