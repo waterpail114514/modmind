@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.6-preview0912",
+  "version": "1.4.6-preview0912-2",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -15,6 +15,7 @@
     "test": "vitest run src && npm run test:mcp && npm run test:mac-policy",
     "test:mcp": "npm --prefix modmind-mcp-open-source test",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.web.json --pretty false",
+    "assets:icons": "node scripts/generate-icons.mjs && node scripts/generate-macos-assets.mjs && node scripts/generate-installer-assets.mjs && node android-twa/scripts/generate-icons.mjs",
     "assets:installer": "node scripts/generate-installer-assets.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
     "dist:win": "npm run build && electron-builder --win --config.forceCodeSigning=true && node scripts/verify-release.mjs && node scripts/prepare-update-artifacts.mjs",
@@ -189,7 +190,9 @@
       {
         "from": "resources/server-plugin-starters",
         "to": "server-plugin-starters",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "resources/trayTemplate.png",

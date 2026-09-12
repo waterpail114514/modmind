@@ -327,7 +327,6 @@ let mcpBridgePreferenceEnabled = false
 const chatCompletionsAdapter = new ChatCompletionsAdapter()
 let publicMcpIntent: 'engineering' | 'informational' = 'informational'
 let curseForgeProviderKey = process.env.MODMIND_CURSEFORGE_API_KEY ?? '$2a$10$BB17.sSejQebcTN01XAqmeXbucdfzq/nIKXylaKLpQHtHLrREVPku'
-const IMAGE_DEFAULT_MODEL = 'gpt-image-2'
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 // modmind-plugin:// scheme 特权必须在 app.ready 前注册
 registerPluginProtocolSchemeEarly()
@@ -1506,7 +1505,7 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
       return { success: true, key: action.key, value: result[action.key] }
     }
     case 'get_app_settings': return publicAgentSettings(await readSettings())
-    case 'scan_java_homes': return detectInstalledJavaHomes()
+    case 'scan_java_homes': return scanConfiguredJavaHomes()
     case 'probe_java_home': {
       const home = action.home.trim()
       if (!home) throw new Error('probe_java_home 需要非空的 Java 路径')
@@ -2587,7 +2586,7 @@ function normalizeAgentImageRequest(input: unknown): ImageGenerationRequest {
   }
 }
 
-async function createHostedImageLease(request: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; model: string; jobId: string; reservedCredits: number }> {
+async function createHostedImageLease(request?: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号，或在专业设置中保存图片 API Key')
   const timestamp = new Date().toISOString()
@@ -2602,11 +2601,10 @@ async function createHostedImageLease(request: ImageGenerationRequest): Promise<
   const data = payload?.data ?? payload ?? {}
   const baseUrl = typeof data.baseUrl === 'string' ? normalizeRelayBaseUrl(data.baseUrl) : ''
   const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : ''
-  const model = typeof data.model === 'string' && data.model.trim() ? data.model.trim() : IMAGE_DEFAULT_MODEL
   const jobId = randomUUID()
-  const reservedCredits = Math.max(1, request.count)
+  const reservedCredits = request ? Math.max(1, request.count) : 0
   if (!baseUrl || !apiKey) throw new Error('托管图片授权响应缺少临时 Key 或 Base URL')
-  return { baseUrl, apiKey, model, jobId, reservedCredits }
+  return { baseUrl, apiKey, jobId, reservedCredits }
 }
 
 async function writeProjectTemplate(project: ProjectInfo, includeStarter = true): Promise<void> {
@@ -3185,6 +3183,10 @@ async function latestSnapshotBaseline(project: ProjectInfo): Promise<{ root: str
     }
   }
   return Object.keys(hashes).length ? { root: latest.root, hashes, ...(Object.keys(metadata).length ? { metadata } : {}) } : undefined
+}
+
+async function scanConfiguredJavaHomes(): Promise<Awaited<ReturnType<typeof detectInstalledJavaHomes>>> {
+  return detectInstalledJavaHomes(Object.values((await readSettings()).javaPreferences))
 }
 
 function settingsFile(): string {
@@ -5341,7 +5343,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       return {...captures, review: await reviewAssetCaptures(captures.captures)}
     },
     runtimeState: async () => requireMinecraftRuntime().getState(),
-    javaHomeScan: () => detectInstalledJavaHomes(),
+    javaHomeScan: () => scanConfiguredJavaHomes(),
     javaHomeProbe: (home) => probeJavaHomeInfo(home),
     appSettingsRead: async () => publicAgentSettings(await readSettings()),
     appSettingsWrite: (input) => applyAppSettingWrite(input),
@@ -6637,7 +6639,7 @@ async function runExternalCodingAgent(
           return {...captures, review: await reviewAssetCaptures(captures.captures)}
         },
         runtimeState: async () => runtime.getState(),
-        javaHomeScan: () => detectInstalledJavaHomes(),
+        javaHomeScan: () => scanConfiguredJavaHomes(),
         javaHomeProbe: (home) => probeJavaHomeInfo(home),
         appSettingsRead: async () => publicAgentSettings(await readSettings()),
         appSettingsWrite: (input) => applyAppSettingWrite(input)
@@ -8596,6 +8598,15 @@ function registerIpc(): void {
     return project
   }))
 
+  ipcMain.handle('settings:revealSecret', async (_event, key: string) => {
+    switch (key) {
+      case 'codex': case 'claude': return (await readSettings()).externalAgents?.[key]?.apiKey ?? ''
+      case 'image': return requireImageStudio().revealApiKey()
+      case 'gitee': return (await readGiteeBuildSettings()).token
+      case 'modrinthToken': case 'curseForgeToken': case 'githubToken': return (await readReleaseSecrets())[key]
+      default: throw new Error('未知凭证类型')
+    }
+  })
   ipcMain.handle('settings:getAgent', async () => {
     const settings = await readSettings()
     return publicAgentSettings(settings)
@@ -8607,7 +8618,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('settings:listAgentModels', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => listAvailableAgentModels(kind, configuration))
   ipcMain.handle('settings:scanGradle', () => scanGradleInstallations())
-  ipcMain.handle('settings:scanJavaHomes', () => detectInstalledJavaHomes())
+  ipcMain.handle('settings:scanJavaHomes', () => scanConfiguredJavaHomes())
   ipcMain.handle('settings:probeJavaHome', (_event, home: unknown) => {
     if (typeof home !== 'string' || !home.trim()) throw new Error('缺少要检测的 Java 路径')
     return probeJavaHomeInfo(home)

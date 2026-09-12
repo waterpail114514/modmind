@@ -1,3 +1,4 @@
+import { SecretInput } from './SecretInput'
 import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
@@ -464,11 +465,11 @@ function ReleasePane({ project }: { project: ProjectInfo }): React.JSX.Element {
       <label className="check-row"><input type="checkbox" checked={settings.autoBump !== false} onChange={(event) => update('autoBump', event.target.checked)} />导出成功后自动增加版本</label>
       <label>通道<select value={settings.channel} onChange={(event) => update('channel', event.target.value as ReleaseSettings['channel'])}><option value="release">Release</option><option value="beta">Beta</option><option value="alpha">Alpha</option></select></label>
       <label className="release-platform-id">Modrinth 项目 ID<input value={settings.modrinthProjectId} onChange={(event) => update('modrinthProjectId', event.target.value)} /></label>
-      <label className="release-platform-token">Modrinth Token<input type="password" value={settings.modrinthToken ?? ''} onChange={(event) => update('modrinthToken', event.target.value)} placeholder={settings.hasModrinthToken ? '已加密保存，留空保持不变' : ''} /></label>
+      <label className="release-platform-token">Modrinth Token<SecretInput secretKey="modrinthToken" stored={Boolean(settings.hasModrinthToken)} value={settings.modrinthToken ?? ''} onChange={(event) => update('modrinthToken', event.target.value)} placeholder={settings.hasModrinthToken ? '已加密保存，留空保持不变' : ''} /></label>
       <label className="release-platform-id">CurseForge 项目 ID<input value={settings.curseForgeProjectId} onChange={(event) => update('curseForgeProjectId', event.target.value)} /></label>
-      <label className="release-platform-token">CurseForge Token<input type="password" value={settings.curseForgeToken ?? ''} onChange={(event) => update('curseForgeToken', event.target.value)} placeholder={settings.hasCurseForgeToken ? '已加密保存，留空保持不变' : ''} /></label>
+      <label className="release-platform-token">CurseForge Token<SecretInput secretKey="curseForgeToken" stored={Boolean(settings.hasCurseForgeToken)} value={settings.curseForgeToken ?? ''} onChange={(event) => update('curseForgeToken', event.target.value)} placeholder={settings.hasCurseForgeToken ? '已加密保存，留空保持不变' : ''} /></label>
       <label className="release-platform-id">GitHub 仓库<input value={settings.githubRepository} onChange={(event) => update('githubRepository', event.target.value)} placeholder="owner/repository" /></label>
-      <label className="release-platform-token">GitHub Token<input type="password" value={settings.githubToken ?? ''} onChange={(event) => update('githubToken', event.target.value)} placeholder={settings.hasGithubToken ? '已加密保存，留空保持不变' : ''} /></label>
+      <label className="release-platform-token">GitHub Token<SecretInput secretKey="githubToken" stored={Boolean(settings.hasGithubToken)} value={settings.githubToken ?? ''} onChange={(event) => update('githubToken', event.target.value)} placeholder={settings.hasGithubToken ? '已加密保存，留空保持不变' : ''} /></label>
       <label className="release-changelog">更新日志<textarea value={settings.changelog} onChange={(event) => update('changelog', event.target.value)} /></label>
     </div>
     {notice ? <div className="production-notice"><CircleAlert size={14} /><span>{notice}</span></div> : null}

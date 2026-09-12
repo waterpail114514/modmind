@@ -216,7 +216,27 @@ export const EXTERNAL_AGENT_TRANSIENT_RETRY_MAX_DELAY_MS = 60_000
  */
 export type AgentFailureKind = 'rate-limit' | 'server' | 'connection' | 'auth' | 'payment' | 'permission' | 'not-found' | 'invalid-request' | 'unknown'
 
-export function classifyAgentStreamFailure(message: string): { status: number | null; transient: boolean; reason: string; kind: AgentFailureKind } {
+export function classifyAgentStreamFailure(message: string, codexErrorInfo?: unknown): { status: number | null; transient: boolean; reason: string; kind: AgentFailureKind } {
+  // Prefer the protocol over localized/provider-specific wording. Unknown
+  // variants still use the legacy text classifier for forward compatibility.
+  const info = codexErrorInfo && typeof codexErrorInfo === 'object' ? codexErrorInfo as Record<string, unknown> : undefined
+  const type = typeof codexErrorInfo === 'string' ? codexErrorInfo : info ? Object.keys(info)[0] : undefined
+  if (type && ['contextWindowExceeded', 'sessionBudgetExceeded', 'usageLimitExceeded', 'cyberPolicy', 'misalignmentPolicyViolation', 'threadRollbackFailed', 'sandboxError', 'activeTurnNotSteerable'].includes(type)) {
+    return { status: null, transient: false, kind: 'unknown', reason: message }
+  }
+  if (type === 'unauthorized' || type === 'badRequest') return classifyAgentStreamFailure(type === 'unauthorized' ? '401 Unauthorized' : '400 Bad Request')
+  if (type && ['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'].includes(type)) {
+    const details = info?.[type]
+    const status = details && typeof details === 'object' ? (details as Record<string, unknown>).httpStatusCode : undefined
+    if (typeof status === 'number' && status >= 400 && status <= 599) return classifyAgentStreamFailure(`status: ${status}`)
+    // Preserve permanent HTTP failures present only in older message payloads.
+    const fallback = classifyAgentStreamFailure(message)
+    if (fallback.status !== null && !fallback.transient) return fallback
+    return { status: fallback.status, transient: true, kind: fallback.transient ? fallback.kind : 'connection', reason: fallback.transient ? fallback.reason : '与模型服务的连接中断' }
+  }
+  if (type === 'serverOverloaded' || type === 'internalServerError' || type === 'rateLimitExceeded') {
+    return classifyAgentStreamFailure(`status: ${type === 'serverOverloaded' ? 503 : type === 'internalServerError' ? 500 : 429}`)
+  }
   const explicitStatus = /(?:^|[\s"{,])status(?:_code)?["'\s:]+(\d{3})(?=[\s"',}]|$)/i.exec(message)
   const statusPhrase = /(?:^|\D)(429|500|502|503|504|400|401|402|403|404|415|422)(?:\s+[A-Za-z\u4e00-\u9fff]|\s*$)/.exec(message)
   const parenthesizedStatus = /[（(](400|401|402|403|404|415|422|429|500|502|503|504)[）)]/.exec(message)
@@ -234,7 +254,7 @@ export function classifyAgentStreamFailure(message: string): { status: number | 
   if (/invalid_request|请求参数无效|参数错误/i.test(message)) {
     return { status: 400, transient: false, kind: 'invalid-request', reason: '上游模型接口拒绝了 Agent 请求（HTTP 400）：这不是你的需求内容错误，ModMind 将重建会话并继续等待兼容响应' }
   }
-  const streamDisconnect = /stream disconnected|connection (?:reset|closed|refused)|request timed out|ECONNRESET|ETIMEDOUT|ENOTFOUND|network error|fetch failed/i.test(message)
+  const streamDisconnect = /stream disconnected|connection (?:reset|closed|refused|lost)|socket hang up|\breconnecting\b|request timed out|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network error|fetch failed|Codex app-server [\w/]+ 回执超时/i.test(message)
   if (streamDisconnect) return { status: null, transient: true, kind: 'connection', reason: '与模型服务的连接中断' }
   return { status: null, transient: false, kind: 'unknown', reason: message.trim().slice(0, 300) || '模型服务返回了未知错误' }
 }
@@ -268,6 +288,7 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
   let transcript = ''
   let finalMessage = ''
   let terminalFailure = ''
+  let terminalErrorInfo: unknown
   let approvalUnavailable = false
   let completion: Record<string, unknown> | undefined
   let inputBuffer = ''
@@ -417,7 +438,10 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     if (method === 'turn/completed') {
       completion = params.turn && typeof params.turn === 'object' ? params.turn as Record<string, unknown> : params
       const status = completion.status
-      if (status === 'failed') terminalFailure = typeof (completion.error as Record<string, unknown> | undefined)?.message === 'string' ? String((completion.error as Record<string, unknown>).message) : 'Codex turn failed'
+      if (status === 'failed') {
+        terminalFailure = typeof (completion.error as Record<string, unknown> | undefined)?.message === 'string' ? String((completion.error as Record<string, unknown>).message) : 'Codex turn failed'
+        terminalErrorInfo = (completion.error as Record<string, unknown> | undefined)?.codexErrorInfo
+      }
       scheduleShutdownFallback()
       setTimeout(() => { if (!closed) { try { child.stdin.end() } catch { /* already closed */ } } }, 50).unref?.()
       return
@@ -425,8 +449,14 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     if (method === 'error' || method === 'warning') {
       const errorMessage = params.error && typeof params.error === 'object' ? (params.error as Record<string, unknown>).message : undefined
       const messageValue = typeof params.message === 'string' ? params.message : typeof errorMessage === 'string' ? errorMessage : JSON.stringify(params)
+      // Recoverable notifications belong to the native turn's retry loop.
+      // Closing stdin here interrupts that loop before it can reconnect.
+      if (method === 'error' && params.willRetry === true) {
+        options.onOutput('retry', messageValue)
+        return
+      }
       if (isAutomaticApprovalFailure(messageValue)) approvalUnavailable = true
-      if (method === 'error') { terminalFailure = messageValue; scheduleShutdownFallback(); try { child.stdin.end() } catch { /* already closed */ } }
+      if (method === 'error') { terminalFailure = messageValue; terminalErrorInfo = (params.error as Record<string, unknown> | undefined)?.codexErrorInfo; scheduleShutdownFallback(); try { child.stdin.end() } catch { /* already closed */ } }
       else emit('warning', messageValue)
       return
     }
@@ -537,7 +567,7 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     if (resumedSessionId && isResumedPromptRejection({ error: { message: terminalFailure } })) {
       throw new ResumedPromptRejectionError(resumedSessionId, 'Codex')
     }
-    const classification = classifyAgentStreamFailure(terminalFailure)
+    const classification = classifyAgentStreamFailure(terminalFailure, terminalErrorInfo)
     if (classification.transient) throw new ExternalAgentTransientFailureError(classification.reason, classification.status)
     if (classification.kind === 'invalid-request') throw new ExternalAgentCompatibilityFailureError(classification.reason, classification.status)
     throw new Error(terminalFailure)

@@ -32,8 +32,8 @@ type WorkflowData = {
 }
 type WorkflowNodeType = Node<WorkflowData>
 
-const defaultSettings: ImageStudioSettings = { baseUrl: 'https://ai.soulecho.cc/v1', model: 'gpt-image-2', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true }
-const defaultCapabilities: ImageStudioCapabilities = { models: ['gpt-image-2'], sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
+const defaultSettings: ImageStudioSettings = { baseUrl: '', model: '', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true }
+const defaultCapabilities: ImageStudioCapabilities = { models: [], sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
 const defaultPerfectPixelOptions: PerfectPixelOptions = { sampleMethod: 'center', minSize: 4, peakWidth: 6, refineIntensity: 0.3, fixSquare: true }
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error) }
@@ -305,10 +305,14 @@ export default function ImageStudioWorkspace({ visible, darkMode, onOpenSettings
     const id = crypto.randomUUID()
     const outputNodeCount = finalOutputCount
     const outputNodeIds = Array.from({ length: outputNodeCount }, (_, index) => `runtime-output-${id}-${index}`)
-    const outputX = Math.max(...nodes.map((node) => node.position.x + 240), 720)
+    const previousOutputs = nodes.filter((node) => node.data.kind === 'output')
+    const outputX = previousOutputs[0]?.position.x ?? Math.max(...nodes.filter((node) => node.data.kind !== 'output').map((node) => node.position.x + 240), 720)
+    const outputY = previousOutputs.length ? Math.max(...previousOutputs.map((node) => node.position.y + Math.max(node.measured?.height ?? 0, 210))) + 24 : 70
+    const outputPosition = (index: number): { x: number; y: number } => ({ x: outputX, y: outputY + index * 234 })
+    const isCurrentOutput = (nodeId: string): boolean => nodeId.startsWith(`runtime-output-${id}-`)
     const sourceIds = terminalImageNodes.map((node) => node.id)
-    setNodes((current) => [...current.filter((node) => node.data.kind !== 'output'), ...outputNodeIds.map((outputId, index) => makeNode(outputId, 'output', { x: outputX, y: 70 + index * 175 }, { outputStatus: 'loading' }))])
-    setEdges((current) => [...current.filter((edge) => !outputNodeIds.includes(edge.target) && nodes.find((node) => node.id === edge.target)?.data.kind !== 'output'), ...outputNodeIds.flatMap((outputId, index) => sourceIds.length ? [{ id: `${sourceIds[index % sourceIds.length]}-${outputId}`, source: sourceIds[index % sourceIds.length], target: outputId, animated: true }] : [])])
+    setNodes((current) => [...current, ...outputNodeIds.map((outputId, index) => makeNode(outputId, 'output', outputPosition(index), { outputStatus: 'loading' }))])
+    setEdges((current) => [...current, ...outputNodeIds.flatMap((outputId, index) => sourceIds.length ? [{ id: `${sourceIds[index % sourceIds.length]}-${outputId}`, source: sourceIds[index % sourceIds.length], target: outputId, animated: true }] : [])])
     window.requestAnimationFrame(() => flowRef.current?.fitView({ duration: 300, padding: 0.16 }))
     setQueue((current) => [...current, { id, label: `${generationNodes.length} 个生图节点 · ${totalCount} 张`, status: 'running' }]); setBusy(true); setMessage('正在按工作流执行…')
     try {
@@ -346,10 +350,10 @@ export default function ImageStudioWorkspace({ visible, darkMode, onOpenSettings
       output = [...new Map(output.map((asset) => [asset.id, asset])).values()]
       if (!output.length) throw new Error('工作流没有产生可输出的图片，请检查节点连接')
       const finalOutputIds = output.map((_, index) => outputNodeIds[index] || `runtime-output-${id}-${index}`)
-      setNodes((current) => [...current.filter((node) => node.data.kind !== 'output'), ...output.map((asset, index) => makeNode(finalOutputIds[index], 'output', { x: outputX, y: 70 + index * 175 }, { outputStatus: 'done', outputAsset: asset, onOpenOutput: (value) => { setProcessUndoStack([]); setActive(value); setPreviewAsset(value) }, onSaveOutput: (value) => void saveAssetAs(value), onAddOutputToProject: (value) => void addAssetToProject(value) }))])
-      setEdges((current) => [...current.filter((edge) => !edge.target.startsWith(`runtime-output-${id}-`) && nodes.find((node) => node.id === edge.target)?.data.kind !== 'output'), ...finalOutputIds.flatMap((outputId, index) => sourceIds.length ? [{ id: `${sourceIds[index % sourceIds.length]}-${outputId}`, source: sourceIds[index % sourceIds.length], target: outputId, animated: false }] : [])])
-      setAssets(output); setProcessUndoStack([]); setActive(output[0] ?? null); setQueue((current) => current.map((item) => item.id === id ? { ...item, status: 'done' } : item)); setMessage(`工作流完成：${output.length} 张图片`)
-    } catch (error) { const detail = errorText(error); setNodes((current) => current.map((node) => node.data.kind === 'output' ? { ...node, data: { ...node.data, outputStatus: 'error', outputError: detail } } : node)); setQueue((current) => current.map((item) => item.id === id ? { ...item, status: 'error' } : item)); setMessage(detail) } finally { setBusy(false) }
+      setNodes((current) => [...current.filter((node) => !isCurrentOutput(node.id)), ...output.map((asset, index) => makeNode(finalOutputIds[index], 'output', current.find((node) => node.id === finalOutputIds[index])?.position ?? outputPosition(index), { outputStatus: 'done', outputAsset: asset, onOpenOutput: (value) => { setProcessUndoStack([]); setActive(value); setPreviewAsset(value) }, onSaveOutput: (value) => void saveAssetAs(value), onAddOutputToProject: (value) => void addAssetToProject(value) }))])
+      setEdges((current) => [...current.filter((edge) => !isCurrentOutput(edge.target)), ...finalOutputIds.flatMap((outputId, index) => sourceIds.length ? [{ id: `${sourceIds[index % sourceIds.length]}-${outputId}`, source: sourceIds[index % sourceIds.length], target: outputId, animated: false }] : [])])
+      setAssets((current) => [...output, ...current]); setProcessUndoStack([]); setActive(output[0] ?? null); setQueue((current) => current.map((item) => item.id === id ? { ...item, status: 'done' } : item)); setMessage(`工作流完成：${output.length} 张图片`)
+    } catch (error) { const detail = errorText(error); setNodes((current) => current.map((node) => isCurrentOutput(node.id) ? { ...node, data: { ...node.data, outputStatus: 'error', outputError: detail } } : node)); setQueue((current) => current.map((item) => item.id === id ? { ...item, status: 'error' } : item)); setMessage(detail) } finally { setBusy(false) }
   }
 
   const upload = async (file: File): Promise<void> => { if (!file.type.startsWith('image/')) return; const dataUrl = await readFileAsDataUrl(file); const asset: ImageAsset = { id: crypto.randomUUID(), dataUrl, createdAt: new Date().toISOString(), model: 'uploaded', style: 'free', size: 'original', quality: 'auto', hosted: false, credits: 0 }; setAssets((current) => [asset, ...current]); setProcessUndoStack([]); setActive(asset); setMessage('图片已载入') }

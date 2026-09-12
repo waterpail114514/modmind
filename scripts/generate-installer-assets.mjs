@@ -47,11 +47,11 @@ async function renderBmp(width, height, background, layers, target) {
 }
 
 const sidebarIcon = await sharp(iconPath)
-  .resize(192, 192, { fit: 'contain' })
+  .resize(192, 192, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } })
   .extract({ left: 14, top: 0, width: 164, height: 192 })
   .png()
   .toBuffer()
-const headerIcon = await sharp(iconPath).trim().resize(48, 48, { fit: 'contain' }).png().toBuffer()
+const headerIcon = await sharp(iconPath).trim().resize(48, 48, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
 const sidebarText = Buffer.from(`
   <svg width="164" height="314" xmlns="http://www.w3.org/2000/svg">
     <style>

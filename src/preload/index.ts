@@ -256,6 +256,7 @@ const api: ModMindApi = {
     delete: (id: string, projectPath?: string) => invoke('snapshots:delete', id, projectPath)
   },
   settings: {
+    revealSecret: (key) => invoke('settings:revealSecret', key),
     getAgent: () => invoke('settings:getAgent'),
     saveAgent: (settings: AgentSettings) => invoke('settings:saveAgent', settings),
     listAgentModels: (kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => invoke('settings:listAgentModels', kind, configuration),

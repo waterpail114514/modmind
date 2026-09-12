@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { verifiedDownload } from './downloadService'
+import { retryTransientFileLock } from './fileLockRetry'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
@@ -188,7 +189,7 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
     const backup = `${runtimePath}.previous-${randomUUID()}`
     const hasPrevious = await fs.stat(runtimePath).then(() => true).catch(() => false)
     if (hasPrevious) await fs.rename(runtimePath, backup)
-    try { await fs.rename(staging, runtimePath) }
+    try { await retryTransientFileLock(() => fs.rename(staging, runtimePath)) }
     catch (error) { if (hasPrevious) await fs.rename(backup, runtimePath); throw error }
     if (hasPrevious) await fs.rm(backup, { recursive: true, force: true }).catch(() => undefined)
     return executable

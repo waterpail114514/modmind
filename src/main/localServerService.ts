@@ -154,13 +154,15 @@ export class LocalServerManager {
         pack = prepared.pack; runtime = prepared.runtime; port = prepared.profile.port
       } else {
         await preserveLegacyServerInstance(project.path, root)
-        const built = await readExistingServerPack(project, root) ?? await buildServerPack(project, { outputDirectory: root, port, acceptEula: options.acceptEula === true, onlineMode: options.onlineMode === true })
+        // Client access already includes EULA acceptance; keep an explicit false override.
+        const acceptEula = options.acceptEula !== false
+        const built = await readExistingServerPack(project, root) ?? await buildServerPack(project, { outputDirectory: root, port, acceptEula, onlineMode: options.onlineMode === true })
         throwIfAborted(signal)
         const instanceRoot = path.join(project.path, '.modmind/server/instances/modpack')
         const deployment = await deployServerInstance(built.root, instanceRoot, signal)
         if (deployment.conflicts.length) this.capture(`保留本地配置：${deployment.conflicts.join(', ')}`, 'warning')
         pack = { ...built, root: instanceRoot, manifestPath: path.join(instanceRoot, 'modmind.server.json') }
-        await configureLocalServer(pack.root, port, options.onlineMode === true, options.acceptEula === true)
+        await configureLocalServer(pack.root, port, options.onlineMode === true, acceptEula)
         this.update({ stage: 'installing', message: '正在准备匹配版本的服务端运行时' })
         const javaPath = await this.getJavaPath(project)
         throwIfAborted(signal)

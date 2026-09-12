@@ -130,6 +130,33 @@ function stubBridgeHandlers(project: ProjectInfo): ExternalAgentBridgeHandlers {
 }
 
 describe('agent stream failure extraction', () => {
+  it.each(['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'])(
+    'uses structured %s even when the message has no recognized wording', (type) => {
+      expect(classifyAgentStreamFailure('请求未完成', { [type]: { httpStatusCode: null } }).transient).toBe(true)
+      expect(classifyAgentStreamFailure('请求未完成', { [type]: { httpStatusCode: 503 } })).toMatchObject({ transient: true, status: 503 })
+      expect(classifyAgentStreamFailure('stream disconnected', { [type]: { httpStatusCode: 401 } })).toMatchObject({ transient: false, kind: 'auth' })
+    }
+  )
+  it.each(['serverOverloaded', 'internalServerError', 'rateLimitExceeded'])(
+    'retries structured %s without an HTTP code in the message', (type) => {
+      expect(classifyAgentStreamFailure('暂不可用', type).transient).toBe(true)
+    }
+  )
+  it.each(['contextWindowExceeded', 'sessionBudgetExceeded', 'usageLimitExceeded', 'cyberPolicy', 'misalignmentPolicyViolation', 'threadRollbackFailed', 'sandboxError', 'activeTurnNotSteerable', 'unauthorized', 'badRequest'])(
+    'does not turn structured %s into a network retry', (type) => {
+      expect(classifyAgentStreamFailure('429 Too Many Requests; stream disconnected', type).transient).toBe(false)
+    }
+  )
+  it('falls back to message classification for unknown structured errors', () => {
+    expect(classifyAgentStreamFailure('socket hang up', 'other').transient).toBe(true)
+    expect(classifyAgentStreamFailure('503 Service Unavailable', { futureError: {} }).transient).toBe(true)
+  })
+  it.each(['Reconnecting... 1/5', 'connection lost', 'socket hang up', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN', 'Codex app-server turn/start 回执超时'])(
+    'routes %s to connection recovery', (message) => {
+      expect(classifyAgentStreamFailure(message)).toMatchObject({ transient: true, kind: 'connection' })
+    }
+  )
+
   it('reads the CLI-reported reason from both codex error event shapes', () => {
     expect(agentStreamFailureMessage({type: 'error', message: 'exceeded retry limit, last status: 429 Too Many Requests'}))
       .toBe('exceeded retry limit, last status: 429 Too Many Requests')
@@ -415,6 +442,8 @@ describe('ModMind external agent MCP bridge', () => {
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
       "    else if (request.method === 'turn/start') {",
       "      send({id:request.id,result:{turn:{id:'native-turn-new'}}}); send({method:'turn/started',params:{threadId:request.params.threadId,turn:{id:'native-turn-new'}}})",
+      "      if (process.env.FAKE_STRUCTURED_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { const error={message:'请求未完成',codexErrorInfo:JSON.parse(process.env.FAKE_STRUCTURED_ERROR)}; if (process.env.FAKE_ERROR_COMPLETION) send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'failed',error}}}); else send({method:'error',params:{error,willRetry:false}}); continue }",
+      "      if (process.env.FAKE_CONNECTION_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { send({method:'error',params:{error:{message:process.env.FAKE_CONNECTION_ERROR},willRetry:process.env.FAKE_NATIVE_RETRY === 'true'}}); if (process.env.FAKE_NATIVE_RETRY === 'true') setTimeout(() => { send({method:'item/completed',params:{item:{type:'agentMessage',id:'answer',text:'重连后完成'}}}); send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'completed'}}}) }, 150); continue }",
       "      if (Number(process.env.FAKE_APPROVAL_FAILURES) >= readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length) send({method:'item/completed',params:{item:{type:'commandExecution',id:'failed-review',aggregatedOutput:'This action was rejected due to unacceptable risk.\\nReason: Automatic approval review failed: stream disconnected before completion'}}})",
       "      if (process.env.FAKE_TOOL_BRIDGE && request.params.model === 'A') { const cfg=JSON.parse(readFileSync(process.env.FAKE_TOOL_BRIDGE,'utf8')); void fetch('http://127.0.0.1:'+cfg.port+'/tool',{method:'POST',headers:{'x-modmind-token':cfg.token},body:JSON.stringify({action:'apply_edits',input:{edits:[]}})}).then(r=>r.text()).catch(()=>{}); }",
       "      if (process.env.FAKE_WAIT_MODEL && request.params.model === process.env.FAKE_WAIT_MODEL) continue",
@@ -451,6 +480,68 @@ describe('ModMind external agent MCP bridge', () => {
     expect(requests).toContain('"approvalsReviewer":"auto_review"')
     const turn = requests.trim().split('\n').map(line => JSON.parse(line)).find(request => request.method === 'turn/start')
     expect(turn.params.input[0].text).toContain(WORKBENCH_SKILL_POLICY)
+  })
+
+  it.each([false, true])('keeps native reconnects in the same turn (readOnly=%s)', async (readOnly) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-native-retry-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Retry', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'retry', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const onOutput = vi.fn()
+    const audits: string[] = []
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', readOnly,
+      persistentRetry: true, retryDelayMs: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_CONNECTION_ERROR: 'Reconnecting... 1/5', FAKE_NATIVE_RETRY: 'true' },
+      signal: AbortSignal.timeout(10_000), onOutput, onProgress: () => undefined,
+      onAttemptAudit: audit => { audits.push(audit.outcome) }, bridge: stubBridgeHandlers(project)
+    })
+    expect(result.summary).toBe('重连后完成')
+    expect(onOutput).toHaveBeenCalledWith('retry', 'Reconnecting... 1/5')
+    expect(audits).toEqual(['complete'])
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1)
+  })
+
+  it.each(['Reconnecting... 5/5', 'socket hang up', 'Codex app-server turn/start 回执超时'])(
+    'resumes the same session after terminal connection failure: %s', async (message) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-terminal-retry-'))
+      temporaryRoots.push(root)
+      const project: ProjectInfo = { name: 'Retry', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'retry', createdAt: new Date().toISOString() }
+      const fake = await fakeAppServer(root)
+      const audits: string[] = []
+      const result = await runExternalAgent({
+        kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+        persistentRetry: true, retryDelayMs: 1,
+        env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_CONNECTION_ERROR: message },
+        signal: AbortSignal.timeout(10_000), onOutput: () => undefined, onProgress: () => undefined,
+        onAttemptAudit: audit => { audits.push(audit.outcome) }, bridge: stubBridgeHandlers(project)
+      })
+      expect(result.summary).toBe('完成')
+      expect(audits).toEqual(['retry', 'complete'])
+      const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+      expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(2)
+      expect(requests.find(request => request.method === 'thread/resume')?.params.threadId).toBe('thread-new')
+    }
+  )
+
+  it.each([false, true])('recovers structured errors through the existing retry loop (completion=%s)', async (completion) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-structured-retry-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Retry', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'retry', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const audits: string[] = []
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+      persistentRetry: true, retryDelayMs: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_STRUCTURED_ERROR: JSON.stringify({ responseStreamDisconnected: { httpStatusCode: 503 } }), ...(completion ? { FAKE_ERROR_COMPLETION: 'true' } : {}) },
+      signal: AbortSignal.timeout(10_000), onOutput: () => undefined, onProgress: () => undefined,
+      onAttemptAudit: audit => { audits.push(audit.outcome) }, bridge: stubBridgeHandlers(project)
+    })
+    expect(result.summary).toBe('完成')
+    expect(audits).toEqual(['retry', 'complete'])
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.find(request => request.method === 'thread/resume')?.params.threadId).toBe('thread-new')
   })
 
   it('overrides the model on a resumed native thread and on the actual turn', async () => {

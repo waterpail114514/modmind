@@ -1343,6 +1343,7 @@ export interface ModMindApi {
     delete: (id: string, projectPath?: string) => Promise<SnapshotInfo[]>
   }
   settings: {
+    revealSecret: (key: 'codex' | 'claude' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
     getAgent: () => Promise<AgentSettings>
     saveAgent: (settings: AgentSettings) => Promise<AgentSettings>
     listAgentModels: (kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => Promise<AiModelInfo[]>

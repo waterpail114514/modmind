@@ -58,7 +58,6 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
   const followConsoleRef = useRef(true)
   const [serverCommand, setServerCommand] = useState('')
   const [serverOnlineMode, setServerOnlineMode] = useState(false)
-  const serverEulaAccepted = true
   const [serverPackManifest, setServerPackManifest] = useState<ServerPackManifest | null>(null)
   const [scenarioCommand, setScenarioCommand] = useState('say ModMind 本机场景通过')
   const [scenarioEvidence, setScenarioEvidence] = useState('ModMind 本机场景通过')
@@ -225,12 +224,12 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
     </section>
     <section className="modpack-tool-section">
       <div className="modpack-tool-heading"><Play size={18} /><div><h2>本机联机验证</h2><p>启动本机服务端，等待端口就绪，再让 HeadlessMC 使用隔离测试实例连接</p></div></div>
-      <div className="modpack-tool-actions"><button className="primary-button" disabled={Boolean(busy) || !serverEulaAccepted} onClick={() => run('server-join', () => window.modmind.modpack.verifyServerJoin({ port, acceptEula: serverEulaAccepted, onlineMode: false }), (value) => { const result = asRecord(value); return result.success ? `本机联机验证通过：${String(result.address ?? '')}` : `本机联机验证未通过：${String(result.message ?? '')}` })}>{busy === 'server-join' ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}启动并验证</button></div>
+      <div className="modpack-tool-actions"><button className="primary-button" disabled={Boolean(busy)} onClick={() => run('server-join', () => window.modmind.modpack.verifyServerJoin({ port, acceptEula: true, onlineMode: false }), (value) => { const result = asRecord(value); return result.success ? `本机联机验证通过：${String(result.address ?? '')}` : `本机联机验证未通过：${String(result.message ?? '')}` })}>{busy === 'server-join' ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}启动并验证</button></div>
     </section>
     <section className="modpack-tool-section">
       <div className="modpack-tool-heading"><TerminalSquare size={18} /><div><h2>服务端场景</h2><p>发送服务器命令，并要求日志包含指定证据后才视为通过</p></div></div>
       <div className="modpack-form-grid"><label>服务器命令<input value={scenarioCommand} onChange={(event) => setScenarioCommand(event.target.value)} /></label><label>预期日志<input value={scenarioEvidence} onChange={(event) => setScenarioEvidence(event.target.value)} /></label></div>
-      <div className="modpack-tool-actions"><button className="secondary-button" disabled={Boolean(busy) || !serverEulaAccepted || !scenarioCommand.trim() || !scenarioEvidence.trim()} onClick={() => run('server-scenario', () => window.modmind.modpack.runServerScenario({ port, acceptEula: serverEulaAccepted, onlineMode: false, steps: [{ command: scenarioCommand.trim(), expect: [scenarioEvidence.trim()] }] }), (value) => { const result = asRecord(value); return result.success ? `场景通过，已完成 ${String(result.completed ?? 0)} 步` : `场景失败于第 ${String(result.failedStep ?? '?')} 步` })}>{busy === 'server-scenario' ? <LoaderCircle className="spin" size={16} /> : <TerminalSquare size={16} />}运行场景</button></div>
+      <div className="modpack-tool-actions"><button className="secondary-button" disabled={Boolean(busy) || !scenarioCommand.trim() || !scenarioEvidence.trim()} onClick={() => run('server-scenario', () => window.modmind.modpack.runServerScenario({ port, acceptEula: true, onlineMode: false, steps: [{ command: scenarioCommand.trim(), expect: [scenarioEvidence.trim()] }] }), (value) => { const result = asRecord(value); return result.success ? `场景通过，已完成 ${String(result.completed ?? 0)} 步` : `场景失败于第 ${String(result.failedStep ?? '?')} 步` })}>{busy === 'server-scenario' ? <LoaderCircle className="spin" size={16} /> : <TerminalSquare size={16} />}运行场景</button></div>
     </section>
   </>
 

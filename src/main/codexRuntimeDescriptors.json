@@ -1,47 +1,47 @@
 {
-  "version": "0.146.0",
+  "version": "0.154.0",
   "targets": [
     {
       "id": "darwin-arm64",
-      "archiveName": "codex-0.146.0-darwin-arm64.tgz",
+      "archiveName": "codex-0.154.0-darwin-arm64.tgz",
       "executableRelativePath": "package/vendor/aarch64-apple-darwin/bin/codex",
-      "integrity": "sha512-nb61yX4r5L6Z0dlC4o3u0GAK1YCd4TUvjaB382bajDoh84V+uv2hTBIVZ++fgXWV9yoeuNrNnNcn7GoTGOe2Tg==",
-      "sha512": "9dbeb5c97e2be4be99d1d942e28deed0600ad5809de1352f8da077f366da8c3a21f3857ebafda14c121567ef9f817595f72a1eb8dacd9cd727ec6a1318e7b64e"
+      "integrity": "sha512-HP/vJCH/t2hB9Kg6hotN9UglClJ6/z584fal5lEP14C9gNAgAQS4/kTQC7l5V+BA3TqwDPwINSjul28cX8AYXg==",
+      "sha512": "1cffef2421ffb76841f4a83a868b4df548250a527aff3e7ce1f6a5e6510fd780bd80d0200104b8fe44d00bb97957e040dd3ab00cfc083528ee976f1c5fc0185e"
     },
     {
       "id": "darwin-x64",
-      "archiveName": "codex-0.146.0-darwin-x64.tgz",
+      "archiveName": "codex-0.154.0-darwin-x64.tgz",
       "executableRelativePath": "package/vendor/x86_64-apple-darwin/bin/codex",
-      "integrity": "sha512-hTQR5jy/ObfTf1MDnuJCZJAe+SljKE8DDwQWN6lDFgjsPhMQz852U2tILt8Ei+G5GkQSzemHYKl2AYPwW0Y5xw==",
-      "sha512": "853411e63cbf39b7d37f53039ee24264901ef92963284f030f041637a9431608ec3e1310cfce76536b482edf048be1b91a4412cde98760a9760183f05b4639c7"
+      "integrity": "sha512-2aqz+72Hop8PF2RYglQ4JnGjm3OlRIrTykJIT0hyLeUgM6NCFy09RgTmqRCoWliKQZjEn9jjZqUEp7QujAj77g==",
+      "sha512": "d9aab3fbbd87a29f0f1764588254382671a39b73a5448ad3ca42484f48722de52033a342172d3d4604e6a910a85a588a4198c49fd8e366a504a7b42e8c08fbee"
     },
     {
       "id": "win32-x64",
-      "archiveName": "codex-0.146.0-win32-x64.tgz",
+      "archiveName": "codex-0.154.0-win32-x64.tgz",
       "executableRelativePath": "package/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
-      "integrity": "sha512-b3lxMYeR0+IhstNo4JjX1P9cPc1xwVcCVkPd1lD1wpWPJ0SBhpIkPczwbu3ZRkJcdyl342+rgyf4DUrbZLdrGA==",
-      "sha512": "6f7971318791d3e221b2d368e098d7d4ff5c3dcd71c157025643ddd650f5c2958f2744818692243dccf06eedd946425c772977e36fab8327f80d4adb64b76b18"
+      "integrity": "sha512-Stg2KEJPIKVqPPR1wCverGOR4ey3RR3cvakR07w7FNKQUMzmHaOZomRsP2bR1qOT/67yHsks9rB+MCMfIWXcRA==",
+      "sha512": "4ad83628424f20a56a3cf475c02bdeac6391e1ecb7451ddcbda911d3bc3b14d29050cce61da399a2646c3f66d1d6a393ffaef21ec92cf6b07e30231f2165dc44"
     },
     {
       "id": "win32-arm64",
-      "archiveName": "codex-0.146.0-win32-arm64.tgz",
+      "archiveName": "codex-0.154.0-win32-arm64.tgz",
       "executableRelativePath": "package/vendor/aarch64-pc-windows-msvc/bin/codex.exe",
-      "integrity": "sha512-EW6zdjDe+SLX2Iw+xymJ5+Pz2+DGexdstfFHXh4Ub+TfJsQPiMjGfZfNaoWgdJ2FsqSIzVKu2+G0KCMGYz2W8g==",
-      "sha512": "116eb37630def922d7d88c3ec72989e7e3f3dbe0c67b176cb5f1475e1e146fe4df26c40f88c8c67d97cd6a85a0749d85b2a488cd52aedbe1b4282306633d96f2"
+      "integrity": "sha512-CRUmZnE0Y/a8aLMrrA681EytOGaPaF659wJAiI4I3hsbQjaeYBSPV7PkCjy4Qn5LR/fmwIUORVH+6JaBNQL+tw==",
+      "sha512": "09152666713463f6bc68b32bac0ebcd44cad38668f685eb9f70240888e08de1b1b42369e60148f57b3e40a3cb8427e4b47f7e6c0850e4551fee896813502feb7"
     },
     {
       "id": "linux-x64",
-      "archiveName": "codex-0.146.0-linux-x64.tgz",
+      "archiveName": "codex-0.154.0-linux-x64.tgz",
       "executableRelativePath": "package/vendor/x86_64-unknown-linux-musl/bin/codex",
-      "integrity": "sha512-fswvyGprAPCMiOEue/7MKMk7pCjh9kZIJfJX5i9atmfnmGYbYCcUhZsEH9LEP0+0t5xyPqDbfNXY7NSxIVuXxA==",
-      "sha512": "7ecc2fc86a6b00f08c88e12e7bfecc28c93ba428e1f6464825f257e62f5ab667e798661b602714859b041fd2c43f4fb4b79c723ea0db7cd5d8ecd4b1215b97c4"
+      "integrity": "sha512-a4FI3A8sGtwGrOqltrPbrS2hajrHQG591EwmRfiRoLMb10VxdBtUGW4gu6IJVYENiYGA7k3P4jlRHEoCZU/s9Q==",
+      "sha512": "6b8148dc0f2c1adc06aceaa5b6b3dbad2da16a3ac7406e7dd44c2645f891a0b31bd74571741b54196e20bba20955810d898180ee4dcfe239511c4a02654fecf5"
     },
     {
       "id": "linux-arm64",
-      "archiveName": "codex-0.146.0-linux-arm64.tgz",
+      "archiveName": "codex-0.154.0-linux-arm64.tgz",
       "executableRelativePath": "package/vendor/aarch64-unknown-linux-musl/bin/codex",
-      "integrity": "sha512-qiYDxkkEFnXG7joadJW6Q+XcgyDXCpGdpa9nk/c+i0gEomur1j7bHvx12NfWWCF/y8Tqri6ay+FLuC2MjdehtA==",
-      "sha512": "aa2603c649041675c6ee3a1a7495ba43e5dc8320d70a919da5af6793f73e8b4804a26babd63edb1efc75d8d7d658217fcbc4eaae2e9acbe14bb82d8c8dd7a1b4"
+      "integrity": "sha512-KmTCB6ST484zeYlPpKP/K5P/gRaYmt6TihVD+zotoe6O9q0JSBP+FYvCz4A/zZXR7xDOHURTSjHp0sD8wWS0YQ==",
+      "sha512": "2a64c207a493e3ce3379894fa4a3ff2b93ff8116989ade938a1543fb3a2da1ee8ef6ad094813fe158bc2cf803fcd95d1ef10ce1d44534a31e9d2c0fcc164b461"
     }
   ]
 }

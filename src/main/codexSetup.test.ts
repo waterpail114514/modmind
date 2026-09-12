@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CODEX_RUNTIME_VERSION, clearPreparedCodexCredentials, getPreparedCodexEnvironment, getPreparedCodexExecutable, isManagedCodexVersion, managedCodexExecutablePath, managedCodexRuntimePath, prepareCodex, type CodexServerConfig } from './codexSetup'
 
-vi.mock('./codexExecutable', async (importOriginal) => ({ ...await importOriginal<typeof import('./codexExecutable')>(), probeCodexExecutable: vi.fn(async () => '0.146.0') }))
+vi.mock('./codexExecutable', async (importOriginal) => ({ ...await importOriginal<typeof import('./codexExecutable')>(), probeCodexExecutable: vi.fn(async () => '0.154.0') }))
 
 const settings = {
   apiKey: 'test-key',
@@ -20,10 +20,10 @@ describe('Codex beginner preparation', () => {
   })
 
   it('accepts only the exact managed Codex runtime version', () => {
-    expect(isManagedCodexVersion('codex-cli 0.146.0')).toBe(true)
-    expect(isManagedCodexVersion('v0.146.0')).toBe(true)
+    expect(isManagedCodexVersion('codex-cli 0.154.0')).toBe(true)
+    expect(isManagedCodexVersion('v0.154.0')).toBe(true)
     expect(isManagedCodexVersion('codex-cli 0.144.3')).toBe(false)
-    expect(isManagedCodexVersion('codex-cli 0.146.0-alpha')).toBe(false)
+    expect(isManagedCodexVersion('codex-cli 0.154.0-alpha')).toBe(false)
     expect(isManagedCodexVersion(undefined)).toBe(false)
   })
 

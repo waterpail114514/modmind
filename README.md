@@ -39,7 +39,7 @@ are trademarks and are not granted by the software license; see
 
 ## Versioning
 
-The current product development line is `1.4.6-preview0912`. Stable patch releases
+The current product development line is `1.4.6-preview0912-2`. Stable patch releases
 increment the patch component after the preview line is finalized.
 Run `npm.cmd run version:patch` once for each future change set; it updates both
 `package.json` and `package-lock.json` without creating a Git tag.

@@ -1,3 +1,4 @@
+import { SecretInput } from './components/SecretInput'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ReactNode, SetStateAction } from 'react'
 import { memo } from 'react'
@@ -406,7 +407,7 @@ function JavaHomePreferenceRow({ label, description, value, homes, scanning, onC
   }, [value])
 
   const normalizedValue = value.trim()
-  const knownHomes = homes.filter((home) => home.home !== normalizedValue)
+  const knownHomes = homes
   const customNotListed = Boolean(normalizedValue) && !homes.some((home) => home.home === normalizedValue)
   const statusText = probe.status === 'idle'
     ? `当前使用：${normalizedValue ? '此路径' : 'ModMind 自动配置（托管运行时）'}`
@@ -421,7 +422,7 @@ function JavaHomePreferenceRow({ label, description, value, homes, scanning, onC
       <div className="appearance-row"><div><strong>{label}</strong><p>{description}</p></div><span className={`status-dot ${probe.status === 'invalid' ? 'warning' : 'success'}`} /></div>
       <label className="field-label">自动检测
         <select
-          value={knownHomes.some((home) => home.home === normalizedValue) ? normalizedValue : ''}
+          value={normalizedValue}
           onChange={(event) => onChange(event.target.value)}
           disabled={scanning}
         >
@@ -647,6 +648,8 @@ function ProjectLauncher({
   onRename: (project: ProjectInfo) => void
 }): React.JSX.Element {
   const [menu, setMenu] = useState<{ project: ProjectInfo; x: number; y: number } | null>(null)
+  const [projectQuery, setProjectQuery] = useState('')
+  const filteredProjects = projects.filter((project) => `${project.name} ${project.path} ${platformLabel(project.loader)} ${project.minecraftVersion}`.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()))
 
   useEffect(() => {
     if (!menu) return
@@ -686,23 +689,25 @@ function ProjectLauncher({
           <ChevronRight size={17} />
         </button>
       </div>
-      {projects.length ? (
         <section className="recent-projects">
-          <h2>最近项目</h2>
+          <div className="recent-projects-toolbar">
+            <h2>最近项目 <span>{projects.length}</span></h2>
+            {projects.length > 0 ? <label className="project-search"><Search size={15} aria-hidden="true" /><input aria-label="搜索最近项目" placeholder="搜索名称、路径或版本" value={projectQuery} onChange={event => setProjectQuery(event.target.value)} />{projectQuery ? <button type="button" aria-label="清除项目搜索" onClick={() => setProjectQuery('')}><X size={13} /></button> : null}</label> : null}
+          </div>
           <div className="recent-project-list">
-            {projects.map((recent) => (
+            {filteredProjects.map((recent) => (
               <div className="recent-project-row" key={recent.path} onContextMenu={(event) => { event.preventDefault(); setMenu({ project: recent, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 92) }) }}>
                 <button className="recent-project-main" type="button" onClick={() => onSelect(recent)}>
                   <span className="project-launcher-icon project"><Box size={18} /></span>
-                  <span><strong>{recent.name}</strong><small>{recent.path}</small></span>
+                  <span><strong>{recent.name}</strong><small title={recent.path}>{recent.path}</small></span>
                   <span className="recent-project-meta">{platformLabel(recent.loader)} · {recent.minecraftVersion}</span>
                 </button>
-                <button className="recent-project-remove" type="button" title="删除项目" onClick={() => onRemove(recent)}><X size={15} /></button>
+                <button className="recent-project-remove" type="button" title="删除项目" aria-label={`删除项目 ${recent.name}`} onClick={() => onRemove(recent)}><X size={15} /></button>
               </div>
             ))}
+            {!filteredProjects.length ? <div className="recent-project-empty"><FolderOpen size={24} strokeWidth={1.4} aria-hidden="true" /><strong>{projects.length ? '没有找到匹配的项目' : '你的项目会出现在这里'}</strong><p>{projects.length ? '试试其他名称、路径或 Minecraft 版本。' : '新建一个项目，或打开已有作品，继续你的创作。'}</p></div> : null}
           </div>
         </section>
-      ) : null}
       {menu ? <div className="project-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
         <button type="button" role="menuitem" onClick={() => { onRename(menu.project); setMenu(null) }}><Pencil size={14} />重命名项目</button>
         <button type="button" role="menuitem" onClick={() => { onRemove(menu.project); setMenu(null) }}><X size={14} />删除项目</button>
@@ -1881,7 +1886,10 @@ export default function App(): React.JSX.Element {
   const [detectedJavaHomes, setDetectedJavaHomes] = useState<DetectedJavaHome[]>([])
   const [javaScanState, setJavaScanState] = useState<'idle' | 'scanning' | 'done' | 'failed'>('idle')
   const javaScanRequestedRef = useRef(false)
-  const [imageStudioSettings, setImageStudioSettings] = useState<ImageStudioSettings>({ baseUrl: 'https://ai.soulecho.cc/v1', model: 'gpt-image-2', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true })
+  const [imageStudioSettings, setImageStudioSettings] = useState<ImageStudioSettings>({ baseUrl: '', model: '', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true })
+  const [imageModels, setImageModels] = useState<string[]>([])
+  const [imageModelsLoading, setImageModelsLoading] = useState(false)
+  const [imageModelsError, setImageModelsError] = useState('')
   const [imageApiKey, setImageApiKey] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('modmind-sidebar-collapsed') === 'true' } catch { return false }
@@ -1941,7 +1949,7 @@ export default function App(): React.JSX.Element {
     originalControls.forEach((original, index) => {
       const clone = clonedControls[index]
       if (!clone) return
-      if (original instanceof HTMLInputElement && original.type === 'password') {
+      if (original instanceof HTMLInputElement && (original.type === 'password' || original.hasAttribute('data-secret'))) {
         clone.value = ''
         clone.removeAttribute('value')
         clone.setAttribute('data-modmind-redacted', 'true')
@@ -4129,12 +4137,32 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  const refreshImageModels = async (): Promise<void> => {
+    setImageModelsLoading(true)
+    setImageModelsError('')
+    try {
+      const capabilities = await window.modmind.imageStudio.capabilities()
+      setImageModels(capabilities.models)
+      if (!capabilities.models.length) setImageModelsError('服务未返回模型，请检查图像服务配置。')
+    } catch (error) {
+      setImageModels([])
+      setImageModelsError(`模型列表加载失败：${errorMessage(error)}`)
+    } finally {
+      setImageModelsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (view === 'settings') void refreshImageModels()
+  }, [view])
+
   const saveImageSettings = async (patch: Partial<ImageStudioSettings> & { apiKey?: string; clearApiKey?: boolean }): Promise<void> => {
     try {
       const next = { ...imageStudioSettings, ...patch }
       setImageStudioSettings(await window.modmind.imageStudio.saveSettings({ ...next, apiKey: patch.apiKey ?? imageApiKey, clearApiKey: patch.clearApiKey }))
       if (patch.apiKey !== undefined) setImageApiKey('')
       setNotice('图像服务设置已保存')
+      await refreshImageModels()
     } catch (error) {
       setNotice(`图像服务设置保存失败：${errorMessage(error)}`)
     }
@@ -5108,7 +5136,7 @@ export default function App(): React.JSX.Element {
           <div className="sidebar-footer">
             {project ? (
               <div className="project-switcher-row">
-                <button className="project-switcher" type="button" aria-label={`切换项目：${project.name}`} title={sidebarCollapsed ? `切换项目：${project.name}` : undefined} onClick={() => { setProjectLauncherOpen(true); setView('workspace'); void refreshRecentProjects() }}>
+                <button className="project-switcher" type="button" aria-label={`切换项目：${project.name}`} title={sidebarCollapsed ? `切换项目：${project.name}` : undefined} onClick={() => { setProjectLauncherOpen(open => !open); setView('workspace'); void refreshRecentProjects() }}>
                   <span className="project-cube"><Box size={16} /></span>
                   <span><strong>{project.name}</strong><small>{platformLabel(project.loader)} · {project.minecraftVersion}</small></span>
                   <ChevronDown size={14} />
@@ -5555,7 +5583,7 @@ export default function App(): React.JSX.Element {
                         <div className="external-agent-editor-form">
                           {editingAgent === 'claude' ? <label className="field-label">Claude Code 模式<select value={agentDraft.mode ?? 'local'} onChange={(event) => setAgentDraft((current) => ({...current, mode: event.target.value as ExternalAgentConfiguration['mode']}))}><option value="local">本机登录和配置</option><option value="hosted">ModMind 中转服务</option></select></label> : null}
                           {editingAgent === 'claude' ? <label className="field-label">命令路径<input value={agentDraft.executable ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, executable: event.target.value}))} placeholder="留空则从 PATH 查找" /></label> : null}
-                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<input type="password" value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div><div className="external-agent-reasoning-control"><span>思考强度</span><div role="group" aria-label={`${agent.label} 思考强度`}>{(editingAgent === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] as const : ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).map((value) => <button type="button" className={agentDraft.reasoningEffort === value ? 'active' : ''} key={value} onClick={() => setAgentDraft((current) => ({...current, reasoningEffort: value}))}>{value}</button>)}</div></div></> : null}
+                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div><div className="external-agent-reasoning-control"><span>思考强度</span><div role="group" aria-label={`${agent.label} 思考强度`}>{(editingAgent === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] as const : ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).map((value) => <button type="button" className={agentDraft.reasoningEffort === value ? 'active' : ''} key={value} onClick={() => setAgentDraft((current) => ({...current, reasoningEffort: value}))}>{value}</button>)}</div></div></> : null}
                         </div>
                         <div className="settings-actions editor-actions"><span><ShieldCheck size={15} />凭证通过系统加密保存</span><button className="primary-button compact" type="button" disabled={configuringAgents[editingAgent]} onClick={() => void configureExternalAgent(editingAgent)}>{configuringAgents[editingAgent] ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存 {agent.label} 配置</button></div>
                       </div>
@@ -5613,12 +5641,22 @@ export default function App(): React.JSX.Element {
                  </section>
                  <section id="settings-image" className="settings-section image-settings-section">
                     <div className="settings-heading"><h2>图像服务</h2><p>图像工坊与 Agent 共用</p></div>
+                    {imageStudioSettings.hasStoredKey ? <div className="settings-actions"><button className="secondary-button compact" type="button" onClick={() => void clearImageApiKey()}>切换为额度图像服务</button></div> : null}
                     <div className="image-service-form">
-                      <label className="field-label">Base URL<input value={imageStudioSettings.baseUrl} onChange={(event) => setImageStudioSettings({ ...imageStudioSettings, baseUrl: event.target.value })} /></label>
-                      <label className="field-label">默认图片模型<input value={imageStudioSettings.model} onChange={(event) => setImageStudioSettings({ ...imageStudioSettings, model: event.target.value })} /></label>
-                      <label className="field-label">图片 API Key<input type="password" value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} placeholder={imageStudioSettings.hasStoredKey ? '已安全保存，留空保持不变' : '输入自己的图片 API Key'} /></label>
-                      <div className="settings-actions"><span><ShieldCheck size={15} />{imageStudioSettings.hasStoredKey ? '已有加密凭证' : '未填写时使用 ModMind 托管额度'}</span><div className="settings-button-group">{imageStudioSettings.hasStoredKey ? <button className="secondary-button compact danger" type="button" onClick={() => void clearImageApiKey()}><Trash2 size={14} />删除已保存 Key</button> : null}<button className="primary-button compact" type="button" onClick={() => void saveImageSettings({ apiKey: imageApiKey })}><Save size={14} />保存图像服务</button></div></div>
+                      <label className="field-label">图片模型<select value={imageStudioSettings.model} disabled={imageModelsLoading} onChange={(event) => setImageStudioSettings({ ...imageStudioSettings, model: event.target.value })}>{!imageModels.includes(imageStudioSettings.model) && <option value={imageStudioSettings.model}>{imageStudioSettings.model ? imageStudioSettings.model + '（当前设置）' : '请选择图片模型'}</option>}{imageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+                      <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageModelsLoading} onClick={() => void refreshImageModels()}>{imageModelsLoading ? '正在加载模型…' : '刷新模型列表'}</button><button className="primary-button compact" type="button" onClick={() => void saveImageSettings({ apiKey: '' })}><Save size={14} />保存模型</button></div>
                     </div>
+                    {imageModelsError && <p role="alert">{imageModelsError}</p>}
+                    <details>
+                      <summary>自定义图像 API（可选）</summary>
+                      <p>使用自己的服务时填写地址和 Key；保存 Key 后将改用自定义 API。</p>
+                      <div className="image-service-form">
+                        <label className="field-label">Base URL<input value={imageStudioSettings.baseUrl} onChange={(event) => setImageStudioSettings({ ...imageStudioSettings, baseUrl: event.target.value })} /></label>
+                        <label className="field-label">图片 API Key<SecretInput secretKey="image" stored={imageStudioSettings.hasStoredKey} value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} placeholder={imageStudioSettings.hasStoredKey ? '已安全保存，留空保持不变' : '输入自己的图片 API Key'} /></label>
+                        <div className="settings-actions"><span><ShieldCheck size={15} />{imageStudioSettings.hasStoredKey ? '已有加密凭证' : '当前未启用自定义 API'}</span><div className="settings-button-group">{imageStudioSettings.hasStoredKey ? <button className="secondary-button compact danger" type="button" onClick={() => void clearImageApiKey()}><Trash2 size={14} />删除已保存 Key</button> : null}<button className="primary-button compact" type="button" onClick={() => void saveImageSettings({ apiKey: imageApiKey })}><Save size={14} />保存自定义 API</button></div></div>
+                      </div>
+                      <p>保存地址和 Key 后，在上方刷新并选择该服务的模型。</p>
+                    </details>
                     <div className="settings-actions"><button className="secondary-button compact" type="button" onClick={() => setView('image-studio')}><WandSparkles size={14} />打开图像工坊</button></div>
                  </section>
                 <section id="settings-build" className="settings-section">
@@ -5692,7 +5730,7 @@ export default function App(): React.JSX.Element {
                     <div className="remote-build-form">
                       <label className="field-label">Gitee 仓库地址<input value={giteeSettings.repositoryUrl} onChange={(event) => { setGiteeSettings({ ...giteeSettings, repositoryUrl: event.target.value }); setGiteeValidation(null) }} placeholder="https://gitee.com/用户名/仓库名" /></label>
                       <label className="field-label">构建分支<input value={giteeSettings.branch} onChange={(event) => setGiteeSettings({ ...giteeSettings, branch: event.target.value })} placeholder="main" /></label>
-                      <label className="field-label remote-build-token-field">Gitee Personal Access Token<input type="password" value={giteeSettings.token} onChange={(event) => setGiteeSettings({ ...giteeSettings, token: event.target.value })} placeholder={giteeSettings.hasStoredToken ? '已安全保存，留空则保持不变' : '粘贴 Gitee Token'} /><small>请授予仓库读写权限；Token 只保存在系统加密存储中，用于 Git 推送和仓库校验</small></label>
+                      <label className="field-label remote-build-token-field">Gitee Personal Access Token<SecretInput secretKey="gitee" stored={Boolean(giteeSettings.hasStoredToken)} value={giteeSettings.token} onChange={(event) => setGiteeSettings({ ...giteeSettings, token: event.target.value })} placeholder={giteeSettings.hasStoredToken ? '已安全保存，留空则保持不变' : '粘贴 Gitee Token'} /><small>请授予仓库读写权限；Token 只保存在系统加密存储中，用于 Git 推送和仓库校验</small></label>
                     </div>
                     <div className="remote-build-actions"><div className="remote-build-button-group"><button className="secondary-button compact" type="button" onClick={() => window.open('https://gitee.com/profile/personal_access_tokens', '_blank')}><ExternalLink size={14} />创建 Token</button><button className="secondary-button compact" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim()} onClick={() => void validateGitee()}>{giteeBuildBusy === 'validate' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}校验连接</button><button className="secondary-button compact" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim()} onClick={() => void saveGiteeBuildSettings()}><Save size={14} />保存</button></div><span>{giteeValidation ? (giteeValidation.valid ? `已连接 ${giteeValidation.repository}` : giteeValidation.detail) : '首次使用需要 Gitee 账号和 Token'}</span></div>
                     <div className="remote-build-primary-action"><button className="primary-button" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim() || (!giteeSettings.token.trim() && !giteeSettings.hasStoredToken)} onClick={() => void triggerGiteeBuild()}>{giteeBuildBusy === 'build' ? <LoaderCircle className="spin" size={15} /> : <CloudUpload size={15} />}推送并开始远程构建</button>{giteeBuildResult?.pipelineUrl ? <button className="secondary-button compact" type="button" onClick={() => window.open(giteeBuildResult.pipelineUrl, '_blank')}><ExternalLink size={14} />打开 Gitee 流水线</button> : null}</div>

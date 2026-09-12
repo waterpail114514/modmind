@@ -628,6 +628,8 @@ async function commonRootJavaHomeCandidates(): Promise<string[]> {
       path.join(programFiles, 'Microsoft'),
       path.join(programFiles, 'Zulu'),
       path.join(programFiles, 'Amazon Corretto'),
+      path.join(programFilesX86, 'Zulu'),
+      path.join(programFiles, 'Azul Systems'),
       path.join(programFilesX86, 'Java'),
       path.join(programFilesX86, 'Eclipse Adoptium'),
       path.join(home, '.jdks')
@@ -639,7 +641,7 @@ async function commonRootJavaHomeCandidates(): Promise<string[]> {
       const contentsHome = path.join(candidate, 'Contents', 'Home')
       if (await exists(path.join(contentsHome, 'bin', 'java.exe'))) candidates.push(contentsHome)
     }
-    return candidates
+    return [...candidates, ...(await Promise.all(candidates.map(listSubdirectoryPaths))).flat()]
   }
   if (process.platform === 'darwin') {
     const roots = await listSubdirectoryPaths('/Library/Java/JavaVirtualMachines')
@@ -653,9 +655,19 @@ async function commonRootJavaHomeCandidates(): Promise<string[]> {
  * candidate so entries carry their actual major version and dead installs are
  * filtered out.
  */
-export async function detectInstalledJavaHomes(): Promise<DetectedJavaHome[]> {
+export async function detectInstalledJavaHomes(savedHomes: string[] = []): Promise<DetectedJavaHome[]> {
   const userData = app.getPath('userData')
+  const pathHomes: string[] = []
+  for (const entry of (process.env.PATH ?? '').split(path.delimiter)) {
+    const directory = entry.trim().replace(/^"|"$/g, '')
+    if (!directory) continue
+    const executable = path.join(directory, process.platform === 'win32' ? 'java.exe' : 'java')
+    const real = await fs.realpath(executable).catch(() => '')
+    if (real) pathHomes.push(path.dirname(path.dirname(real)))
+  }
   const candidates = [
+    ...savedHomes,
+    ...pathHomes,
     ...await listSubdirectoryPaths(path.join(userData, 'minecraft-runtime', 'java')),
     ...await listSubdirectoryPaths(path.join(userData, 'build-jdks')),
     ...await commonRootJavaHomeCandidates(),
@@ -672,8 +684,9 @@ export async function detectInstalledJavaHomes(): Promise<DetectedJavaHome[]> {
     queued.add(candidateKey)
     const probed = await probeJavaHome(candidate, 8, false).catch(() => null)
     if (!probed) continue
-    const home = path.dirname(path.dirname(probed.javaPath))
-    const homeKey = path.resolve(home).toLowerCase()
+    const probedHome = path.dirname(path.dirname(probed.javaPath))
+    const home = await fs.realpath(probedHome).catch(() => probedHome)
+    const homeKey = process.platform === 'win32' ? home.toLowerCase() : home
     if (seen.has(homeKey)) continue
     seen.add(homeKey)
     detected.push({ home, major: probed.major })

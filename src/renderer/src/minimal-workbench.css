@@ -31,8 +31,8 @@
 @container (max-width: 600px) { .discussion-choice-cards { grid-template-columns: 1fr; gap: 8px; }.discussion-choice-cards button { min-height: 44px; } }
 .app-shell.beginner-mode:not(.detached-window) .sidebar { display: none; }
 .app-shell.beginner-mode:not(.detached-window) .titlebar-sidebar-toggle { display: none; }
-.app-shell.beginner-mode:not(.detached-window) { --minimal-surface: #fff; }
-.app-shell.beginner-mode.dark-mode:not(.detached-window) { --minimal-surface: #202226; }
+.app-shell.beginner-mode:not(.detached-window) { --minimal-surface: var(--mm-background); }
+.app-shell.beginner-mode.dark-mode:not(.detached-window) { --minimal-surface: var(--mm-background); }
 .app-shell.beginner-mode:not(.detached-window) > .titlebar { background: var(--minimal-surface); border-bottom-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .minimal-project-start { flex: 1; min-width: 0; }
 .minimal-project-menu { position: relative; -webkit-app-region: no-drag; }

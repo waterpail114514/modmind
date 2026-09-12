@@ -91,6 +91,9 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
         data={rows}
         computeItemKey={(_index, row) => row.id}
         initialTopMostItemIndex={rows.length - 1}
+        // A sampled long reply can otherwise be extrapolated to every unread
+        // row, exceeding Chromium's scroll-height limit before measurement.
+        defaultItemHeight={100}
         scrollerRef={scrollerRef}
         followOutput={() => followRef.current ? 'auto' : false}
         totalListHeightChanged={scrollToLatest}

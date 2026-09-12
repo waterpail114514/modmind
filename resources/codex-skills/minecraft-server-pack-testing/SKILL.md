@@ -11,7 +11,7 @@ Produce a deterministic server pack and prove that it starts and accepts the int
 
 - Confirm the active project is a modpack and that its mod plan and content validation are stable before building a server derivative.
 - Use `modmind_modpack_build_server`; do not assemble the initial server pack by copying client files manually.
-- Never set `acceptEula: true` without explicit user acceptance. Report EULA as the blocker when acceptance is absent.
+- ModMind users explicitly accept the Minecraft EULA before acquiring the client. Reuse that prior acceptance for managed local server tests: set `acceptEula: true` when passing this option, and do not ask for another checkbox or confirmation per mode, project, or test run.
 - Keep tests loopback-only. Use `onlineMode: false` for isolated automation; set it true only for an explicitly requested authenticated-server test.
 - Choose a free, non-public port and keep the same output directory and port across a build/verify sequence.
 - Inspect skipped client-only and unknown-side mods. Unknown-side exclusion can hide required server behavior and must be resolved before acceptance.
@@ -44,4 +44,4 @@ Correct pack composition, side metadata, config, port, or runtime issues and rer
 
 ## Completion Gate
 
-Do not call the server pack ready when EULA authorization is missing, a required mod was excluded, startup timed out, the ready port was not observed, the requested join failed, an assertion failed, or cleanup left the test process active.
+Do not call the server pack ready when the server reports an EULA rejection, a required mod was excluded, startup timed out, the ready port was not observed, the requested join failed, an assertion failed, or cleanup left the test process active.

@@ -14,7 +14,7 @@ import type { ServerPackResult, ServerRuntimeResult } from './serverPackService'
 import { throwIfAborted } from './asyncControl'
 import { pluginJavaVersion } from '../shared/serverPluginCompatibility'
 
-export const SERVER_CORE_HEADERS = { 'User-Agent': 'ModMind/1.4.6-preview0912 (https://github.com/waterpail114514/modmind)' }
+export const SERVER_CORE_HEADERS = { 'User-Agent': 'ModMind/1.4.6-preview0912-2 (https://github.com/waterpail114514/modmind)' }
 const cores: ServerCore[] = ['paper', 'purpur', 'spigot', 'folia', 'velocity', 'custom']
 const cache = new Map<string, { at: number; value: unknown }>()
 const safeVersion = (value: string): string => { if (!/^[A-Za-z0-9._+-]{1,80}$/.test(value)) throw new Error('核心版本或构建号无效'); return encodeURIComponent(value) }
@@ -80,7 +80,7 @@ export async function serverCoreBuilds(core: ServerCore, version: string, signal
 
 export function defaultServerProfile(project: ProjectInfo): ServerProfile {
   const core = isServerPluginPlatform(project.loader) ? project.loader : 'paper'
-  return { core, version: project.minecraftVersion.replace(/-SNAPSHOT$/, ''), javaVersion: javaFor(core, project.minecraftVersion), memoryMb: 2048, port: core === 'velocity' ? 25577 : 25565, onlineMode: true, eulaAccepted: false }
+  return { core, version: project.minecraftVersion.replace(/-SNAPSHOT$/, ''), javaVersion: javaFor(core, project.minecraftVersion), memoryMb: 2048, port: core === 'velocity' ? 25577 : 25565, onlineMode: true, eulaAccepted: true }
 }
 
 export function validateServerProfile(project: ProjectInfo, input: ServerProfile): ServerProfile {
@@ -96,7 +96,8 @@ export function validateServerProfile(project: ProjectInfo, input: ServerProfile
   if (project.javaVersion && input.javaVersion < project.javaVersion) throw new Error('所选 Java 低于插件编译目标')
   if (project.loader === 'paper' && input.core === 'spigot') throw new Error('Paper API 工程不能直接声明 Spigot 兼容，请先迁移编译目标')
   if (input.localJar && !/^\.modmind\/server\/local\/[^/\\]+\.jar$/.test(input.localJar)) throw new Error('本地核心路径无效')
-  return { core: input.core, version: input.version, build: input.build, javaVersion: input.javaVersion, memoryMb: input.memoryMb, port: input.port, onlineMode: input.onlineMode === true, eulaAccepted: input.eulaAccepted === true, ...(input.localJar ? { localJar: input.localJar } : {}) }
+  // Minecraft EULA acceptance is completed before acquiring the client; normalize legacy per-project flags.
+  return { core: input.core, version: input.version, build: input.build, javaVersion: input.javaVersion, memoryMb: input.memoryMb, port: input.port, onlineMode: input.onlineMode === true, eulaAccepted: true, ...(input.localJar ? { localJar: input.localJar } : {}) }
 }
 
 export async function readServerProfile(project: ProjectInfo): Promise<ServerProfile> {
@@ -135,7 +136,6 @@ export async function preparePluginServer(project: ProjectInfo, options: {
   onDownloadProgress?: (progress: { source: DownloadSource; downloaded: number; total?: number }) => void
 }): Promise<{ pack: ServerPackResult; runtime: ServerRuntimeResult; profile: ServerProfile }> {
   let profile = await readServerProfile(project)
-  if (!profile.eulaAccepted && profile.core !== 'velocity') throw new Error('请在服务端设置中接受 Minecraft EULA')
   const artifact = await findPluginArtifact(project)
   const descriptor = await inspectPluginJar(artifact.path)
   if (profile.core === 'folia' && !descriptor.foliaSupported) throw new Error('插件未声明 Folia 支持，请先完成线程调度适配与验证')

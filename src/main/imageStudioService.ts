@@ -18,8 +18,6 @@ import type {
   ImageStudioModeration
 } from '../shared/imageStudio'
 
-const DEFAULT_BASE_URL = 'https://ai.soulecho.cc/v1'
-const DEFAULT_MODEL = 'gpt-image-2'
 const IMAGE_SETTINGS_VERSION = 1
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 interface StoredSettings {
@@ -35,7 +33,6 @@ interface StoredSettings {
 interface HostedLease {
   baseUrl: string
   apiKey: string
-  model: string
   jobId: string
   reservedCredits: number
   capabilities?: Partial<ImageStudioCapabilities>
@@ -44,10 +41,11 @@ interface HostedLease {
 export interface ImageStudioServiceOptions {
   userDataDir: string
   projectRoot: () => string | null
-  getHostedLease: (request: ImageGenerationRequest) => Promise<HostedLease>
+  getHostedLease: (request?: ImageGenerationRequest) => Promise<HostedLease>
 }
 
 function normalizeBaseUrl(value: string): string {
+  if (!value.trim()) return ''
   const url = new URL(value.trim())
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('图片服务地址必须使用 HTTP 或 HTTPS')
   if (url.username || url.password) throw new Error('图片服务地址不能包含账号密码')
@@ -59,8 +57,8 @@ function historyPath(root: string): string { return path.join(root, 'image-studi
 
 function defaults(): ImageStudioSettings {
   return {
-    baseUrl: DEFAULT_BASE_URL,
-    model: DEFAULT_MODEL,
+    baseUrl: '',
+    model: '',
     hasStoredKey: false,
     allowAgentImages: true,
     autoApproveAgentImages: true,
@@ -112,7 +110,7 @@ async function parseImagePayload(payload: unknown): Promise<{ dataUrl: string; r
   const entries = Array.isArray(root.data) ? root.data : []
   const parsed = await Promise.all(entries.map(async (entry) => {
     const item = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {}
-    const dataUrl = await materializeImageValue(item.b64_json ?? item.url)
+    const dataUrl = await materializeImageValue(dataUrlFromValue(item.b64_json) ?? item.url)
     if (!dataUrl) return null
     return { dataUrl, ...(typeof item.revised_prompt === 'string' ? { revisedPrompt: item.revised_prompt } : {}) }
   }))
@@ -173,8 +171,8 @@ export class ImageStudioService {
       const value = JSON.parse(await fs.readFile(settingsPath(this.options.userDataDir), 'utf8')) as Partial<StoredSettings>
       return {
         version: IMAGE_SETTINGS_VERSION,
-        baseUrl: normalizeBaseUrl(typeof value.baseUrl === 'string' ? value.baseUrl : DEFAULT_BASE_URL),
-        model: typeof value.model === 'string' && value.model.trim() ? value.model.trim().slice(0, 128) : DEFAULT_MODEL,
+        baseUrl: normalizeBaseUrl(typeof value.baseUrl === 'string' ? value.baseUrl : ''),
+        model: typeof value.model === 'string' ? value.model.trim().slice(0, 128) : '',
         ...(typeof value.encryptedKey === 'string' && value.encryptedKey ? { encryptedKey: value.encryptedKey } : {}),
         allowAgentImages: true,
         autoApproveAgentImages: true,
@@ -191,6 +189,10 @@ export class ImageStudioService {
     try { return safeStorage.decryptString(Buffer.from(value.encryptedKey, 'base64')).trim() } catch { return '' }
   }
 
+  async revealApiKey(): Promise<string> {
+    return this.decryptKey()
+  }
+
   async getSettings(): Promise<ImageStudioSettings> {
     const stored = await this.readStored()
     return { baseUrl: stored.baseUrl, model: stored.model, hasStoredKey: Boolean(stored.encryptedKey), allowAgentImages: stored.allowAgentImages, autoApproveAgentImages: stored.autoApproveAgentImages, manualHostedConsent: stored.manualHostedConsent }
@@ -203,8 +205,8 @@ export class ImageStudioService {
     if (apiKey && !clearApiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存图片 API Key')
     const next: StoredSettings = {
       version: IMAGE_SETTINGS_VERSION,
-      baseUrl: normalizeBaseUrl(input.baseUrl || DEFAULT_BASE_URL),
-      model: String(input.model || DEFAULT_MODEL).trim().slice(0, 128),
+      baseUrl: normalizeBaseUrl(input.baseUrl || ''),
+      model: String(input.model || '').trim().slice(0, 128),
       allowAgentImages: true,
       autoApproveAgentImages: true,
       manualHostedConsent: true,
@@ -221,13 +223,16 @@ export class ImageStudioService {
 
   async capabilities(): Promise<ImageStudioCapabilities> {
     const stored = await this.readStored()
-    const key = await this.decryptKey(stored)
-    if (!key) return { models: [DEFAULT_MODEL], sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
-    const response = await fetch(`${stored.baseUrl}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) })
+    const ownKey = await this.decryptKey(stored)
+    const lease = ownKey ? null : await this.options.getHostedLease()
+    const key = lease?.apiKey ?? ownKey
+    const baseUrl = lease?.baseUrl ?? stored.baseUrl
+    if (!baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) })
     if (!response.ok) throw new Error(`无法读取图片模型列表（HTTP ${response.status}）`)
     const payload = await response.json() as { data?: Array<{ id?: unknown }> }
-    const models = (payload.data ?? []).map((item) => typeof item.id === 'string' ? item.id : '').filter((id) => /image/i.test(id))
-    return { models: models.length ? models : [stored.model], sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
+    const models = [...new Set((Array.isArray(payload.data) ? payload.data : []).map((item) => typeof item?.id === 'string' ? item.id.trim() : '').filter(Boolean))]
+    return { models, sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
   }
 
   async generate(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
@@ -237,10 +242,12 @@ export class ImageStudioService {
     const stored = await this.readStored()
     const ownKey = await this.decryptKey(stored)
     const hosted = !ownKey
+    if (!stored.model) throw new Error('请先在图像服务设置中选择并保存图片模型')
+    if (ownKey && !stored.baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
     const lease = hosted ? await this.options.getHostedLease({ ...request, count }) : null
     const baseUrl = lease?.baseUrl ?? stored.baseUrl
     const apiKey = lease?.apiKey ?? ownKey
-    const model = lease?.model ?? stored.model
+    const model = stored.model
     const stylePrefix = request.style === 'minecraft'
       ? `Minecraft pixel art asset, crisp hard-edged pixels, flat solid ${request.backgroundColor || '#ffffff'} background, no gradients, no shadows. `
       : ''
