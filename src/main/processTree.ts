@@ -38,13 +38,14 @@ function groupExists(child: ChildProcess): boolean {
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ESRCH') return false
-    // Darwin can report EPERM for an empty process group. Confirm its absence
-    // independently; an existing group must still surface the permission error.
+    // Darwin can report EPERM for an empty group or one containing only zombies.
+    // Confirm there are no live members before treating that group as exited.
     if (process.platform === 'darwin' && code === 'EPERM') {
       try {
-        const groups = execFileSync('/bin/ps', ['-axo', 'pgid='], { encoding: 'utf8', timeout: 5000 })
-          .trim().split(/\s+/).filter(Boolean).map(Number)
-        if (groups.length && groups.every(Number.isInteger) && !groups.includes(pid)) return false
+        const rows = execFileSync('/bin/ps', ['-axo', 'pgid=,stat='], { encoding: 'utf8', timeout: 5000 })
+          .trim().split('\n').filter(Boolean).map(row => row.trim().match(/^(\d+)\s+(\S+)$/))
+        if (rows.length && rows.every(row => row !== null)
+          && !rows.some(row => Number(row![1]) === pid && !row![2].startsWith('Z'))) return false
       } catch { /* Preserve the original permission error if inspection fails. */ }
     }
     throw error

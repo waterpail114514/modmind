@@ -9,7 +9,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 describe('managed process trees', () => {
-  it.each(['absent', 'present', 'unreadable'] as const)('checks Darwin EPERM against the process table (%s)', async (state) => {
+  it.each(['absent', 'zombie', 'present', 'unreadable'] as const)('checks Darwin EPERM against the process table (%s)', async (state) => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
     const denied = Object.assign(new Error('denied'), { code: 'EPERM' })
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw denied })
@@ -21,10 +21,10 @@ describe('managed process trees', () => {
     const fake = fixture as ChildProcess
     vi.mocked(spawn).mockReturnValueOnce(fake as ReturnType<typeof spawn>)
     if (state === 'unreadable') vi.mocked(execFileSync).mockImplementationOnce(() => { throw new Error('ps failed') })
-    else vi.mocked(execFileSync).mockReturnValueOnce(state === 'absent' ? '1\n42\n' : '1\n99999999\n')
+    else vi.mocked(execFileSync).mockReturnValueOnce(state === 'absent' ? '1 Ss\n42 S\n' : `1 Ss\n99999999 ${state === 'zombie' ? 'Z' : 'S'}\n`)
     try {
       const child = spawnManaged('test-fixture', [])
-      if (state === 'absent') await expect(terminateProcessTree(child)).resolves.toBeUndefined()
+      if (state === 'absent' || state === 'zombie') await expect(terminateProcessTree(child)).resolves.toBeUndefined()
       else await expect(terminateProcessTree(child)).rejects.toBe(denied)
       expect(kill).toHaveBeenCalledWith(-99999999, 0)
       expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true)
