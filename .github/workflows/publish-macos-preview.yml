@@ -1,0 +1,64 @@
+name: Publish verified macOS preview
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Validate macOS run ID
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Require a successful macOS build
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
+          jq -e '.conclusion == "success" and .path == ".github/workflows/build-macos.yml" and .head_branch == "main" and .event != "pull_request"' "$RUNNER_TEMP/run.json"
+          echo "sha=$(jq -r .head_sha "$RUNNER_TEMP/run.json")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: ModMind-*-unsigned-test-only
+          path: verified
+      - name: Verify and publish both architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-preview[0-9A-Za-z.-]+$ ]]
+          mkdir -p publish
+          for ARCH in arm64 x64; do
+            ROOT="verified/ModMind-$ARCH-unsigned-test-only"
+            (cd "$ROOT/release" && sha256sum -c SHA256SUMS.txt)
+            jq -e --arg arch "$ARCH" --arg version "$VERSION" '.success == true and .arch == $arch and .version == $version' "$ROOT/test-results/macos-$ARCH-smoke.json"
+            cp "$ROOT/release/ModMind-$VERSION-$ARCH.dmg" "$ROOT/release/ModMind-$VERSION-$ARCH.zip" publish/
+            cat "$ROOT/release/SHA256SUMS.txt" >> publish/SHA256SUMS.txt
+          done
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          macOS preview for Apple Silicon (arm64) and Intel (x64), with DMG and ZIP downloads.
+
+          Both architectures passed automated tests, packaged application smoke checks, archive verification, and SHA-256 checks.
+
+          These preview packages are not Apple Developer ID signed or notarized. macOS may block opening them by default.
+          NOTES
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" --target "$SOURCE_SHA" --prerelease --title "ModMind $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          gh release upload "$VERSION" publish/* --clobber
