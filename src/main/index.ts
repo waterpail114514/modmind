@@ -40,13 +40,18 @@ import { archiveSignatureForFile, extractTar } from './tarArchive'
 import { extractMinecraftVersion, inferGradleLoader, parseGradleProperties } from './existingProjectMetadata'
 import { extractSevenZipArchive } from './sevenZipArchive'
 import { windowsCmdInvocation } from './windowsCommand'
-import { setNetworkProxy } from './networkRequest'
+import { setNetworkProxy, shutdownNetwork } from './networkRequest'
 import { migrateMovedProjectMetadata } from './projectMetadataMigration'
 import { renameProjectFiles } from './projectRename'
 import { convertLegacyModtoolProject, readLegacyModtoolProject } from './legacyProjectImport'
 import { copySnapshotFilesIncremental, snapshotFileHash, type SnapshotFileMetadata } from './snapshotStore'
 import { requireManagedRuntimePreparation } from './managedRuntimePreparation'
-import { isAddonPlatform, isJavaLoader, platformLabel, PROJECT_PLATFORMS } from '../shared/projectPlatform'
+import { isAddonPlatform, isJavaLoader, isServerPluginPlatform, platformLabel, PROJECT_PLATFORMS } from '../shared/projectPlatform'
+import { findPluginArtifact, parsePluginDescriptor } from './serverPluginService'
+import { registerServerPluginIpc } from './serverPluginIpc'
+import { registerResourcePackIpc } from './resourcePackIpc'
+import { serverPluginContext } from '../shared/serverPluginContext'
+import { createResourcePack, deployResourcePack, listResourcePacks, resourcePackArchive, validateResourcePack } from './resourcePackService'
 import { normalizeProjectName, validateProjectNameInput } from '../shared/projectName'
 import { buildBedrockAddon, buildNeteaseArchive, createStoredZip } from './bedrockAddon'
 import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, installExternalAgent, launchExternalAgent, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
@@ -178,7 +183,7 @@ import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestDependenc
 import { downloadModpackContent, importModpackContent, listModpackContent, modpackContentProjectPath, removeModpackContent } from './modpackContentInventoryService'
 import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from './serverPackService'
 import { SERVER_PACK_CREATOR_MIN_JAVA } from './serverPackCreatorService'
-import { buildAndJoinServer, runServerScenario } from './serverVerificationService'
+import type { buildAndJoinServer, runServerScenario, ServerJoinVerificationResult } from './serverVerificationService'
 import { LocalServerManager } from './localServerService'
 import { applyOptimizationProfile, BUILTIN_OPTIMIZATION_PROFILES } from './optimizationService'
 import { McmodService, readManualModRequirements, saveManualModRequirements } from './mcmodService'
@@ -519,6 +524,7 @@ function shutdownApplication(): Promise<void> {
   }, 20_000)
   shutdownPromise = (async () => {
     diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'start', message: 'Stopping tasks and process trees' })
+    await localServerManager?.stop().catch(error => diagnosticJournal.recordCritical({ subsystem: 'local-server', operation: 'shutdown', phase: 'error', message: '服务端正常停止失败', error }))
     const results = await Promise.allSettled([
       Promise.resolve().then(() => shutdownPlugins()),
       Promise.resolve().then(() => chatCompletionsAdapter.close()),
@@ -527,6 +533,7 @@ function shutdownApplication(): Promise<void> {
       shutdownProcessTrees(), verifiedDownload.shutdown(), conversationStore.flush()
     ])
     for (const result of results) if (result.status === 'rejected') diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'error', message: 'A shutdown operation failed', error: result.reason })
+    await shutdownNetwork()
     disposeBlockbenchBridge()
     tray?.destroy()
     tray = null
@@ -1327,7 +1334,7 @@ function broadcastPluginSnapshot(snapshot: { plugins: unknown[] }): void {
 async function createProjectForRemote(input: ProjectCreateInput): Promise<ProjectInfo> {
   assertProjectSwitchAllowed()
   if (!(PROJECT_PLATFORMS as readonly string[]).includes(input.loader)) throw new Error('不支持的项目平台')
-  const kind = input.kind === 'modpack' ? 'modpack' : 'mod'
+  const kind = isServerPluginPlatform(input.loader) ? 'server-plugin' : input.kind === 'modpack' ? 'modpack' : 'mod'
   if (kind === 'modpack' && !isJavaLoader(input.loader)) throw new Error('整合包目前仅支持 Java 版 Fabric、Quilt、Forge 和 NeoForge')
   const name = validateProjectNameInput(input.name)
   const minecraftVersion = input.minecraftVersion.trim()
@@ -2237,7 +2244,9 @@ function createWindow(): void {
   })
   localServerManager = new LocalServerManager({
     getProject: () => currentProject,
-    getJavaPath: () => requireMinecraftRuntime().ensureJavaRuntime(),
+    getJavaPath: (project, major) => project ? aiProjectContext.run(project, () => requireMinecraftRuntime().ensureJavaRuntime(undefined, major)) : requireMinecraftRuntime().ensureJavaRuntime(undefined, major),
+    cacheDirectory: path.join(app.getPath('userData'), 'server-cores'),
+    buildPlugin: (project, signal) => aiProjectContext.run(project, () => buildProjectWithLock(signal)),
     onState: (state) => mainWindow?.webContents.send('local-server:state', state),
     onEvent: (event) => {
       diagnosticJournal.record({ subsystem: 'local-server', operation: event.stage, phase: event.level === 'error' ? 'error' : 'event', level: event.level === 'warning' ? 'warning' : event.level === 'error' ? 'error' : 'info', message: event.message })
@@ -2610,7 +2619,7 @@ async function writeProjectTemplate(project: ProjectInfo, includeStarter = true)
       await fs.writeFile(target, content, 'utf8')
     })
   )
-  if (isJavaLoader(project.loader)) await copyBundledGradleWrapper(project.path)
+  if (isJavaLoader(project.loader) || isServerPluginPlatform(project.loader)) await copyBundledGradleWrapper(project.path)
 }
 
 async function readProjectInfo(root: string): Promise<ProjectInfo | null> {
@@ -2723,6 +2732,18 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
   }
   const files = await scanExternalFiles(root)
   if (!files.length) throw new Error('The selected folder is empty.')
+  const pluginFile = files.find(file => /(?:^|\/)(?:plugin\.yml|paper-plugin\.yml|velocity-plugin\.json)$/.test(file))
+  const pluginBuildFiles = files.filter(file => ['build.gradle', 'build.gradle.kts', 'pom.xml', 'gradle.properties'].includes(file))
+  const buildText = (await Promise.all(pluginBuildFiles.map(file => fs.readFile(path.join(root, file), 'utf8')))).join('\n')
+  if (pluginFile || /(?:paper-api|spigot-api|folia-api|velocity-api)/.test(buildText)) {
+    const descriptor = pluginFile ? parsePluginDescriptor(await fs.readFile(path.join(root, pluginFile), 'utf8'), path.basename(pluginFile)) : null
+    const platform = /velocity-api/.test(buildText) || descriptor?.platform === 'velocity' ? 'velocity' : /folia-api/.test(buildText) ? 'folia' : /paper-api/.test(buildText) || descriptor?.platform === 'paper' ? 'paper' : 'spigot'
+    const version = buildText.match(/(?:paper-api|spigot-api|folia-api)[:'"\s]+(\d+\.\d+(?:\.\d+)?)/)?.[1]
+      ?? (platform === 'velocity' ? buildText.match(/velocity-api[:'"\s]+(3\.\d+\.\d+(?:-SNAPSHOT)?)/)?.[1] : undefined)
+      ?? (platform === 'velocity' ? '3.4.0-SNAPSHOT' : descriptor?.apiVersion || '1.21.1')
+    const name = descriptor?.name ?? path.basename(root)
+    return { files, analysis: { sourcePath: root, sourceName: path.basename(root), kind: pluginBuildFiles.length ? 'complete' : 'partial', fileCount: files.length, sourceFileCount: files.filter(file => /\.(java|kt)$/.test(file)).length, documentCount: 0, detectedFiles: [...pluginBuildFiles, ...(pluginFile ? [pluginFile] : [])], reasons: ['识别为服务端插件工程，保留原构建脚本；请核对推断的平台/API 版本。'], inferred: { name, namespace: slugify(name), loader: platform, kind: 'server-plugin', minecraftVersion: version } } }
+  }
   const lowerFiles = files.map((file) => file.toLowerCase())
   const buildFiles = files.filter((file) => ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'pom.xml', 'gradle.properties'].includes(file.toLowerCase()))
   const sourceFiles = files.filter((file) => externalSourceExtensions.has(path.extname(file).toLowerCase()))
@@ -4479,7 +4500,7 @@ async function stopRemoteClient(persist = false): Promise<RemoteConnectionState>
 }
 
 function assertProjectSwitchAllowed(): void {
-  if (localServerManager?.isRunning()) throw new Error('本机服务端正在运行，请先停止后再切换项目')
+  if (localServerManager?.isBusy()) throw new Error('本机服务端正在准备或运行，请先停止后再切换项目')
 }
 
 function assertProjectMutationAllowed(projectPath: string, action: string): void {
@@ -5017,6 +5038,16 @@ async function runProjectTestMatrixUnlocked(
 
   for (const target of selected) {
     if (signal?.aborted) throw Object.assign(new Error('测试矩阵已取消'), { name: 'AbortError' })
+    if (activeProject.kind === 'server-plugin' && target !== 'build') {
+      if (target !== 'server') results.push({ target, status: 'skipped', summary: '服务端插件不使用模组客户端/GameTest；请运行服务端与具体场景', durationMs: 0 })
+      else {
+        const started = Date.now()
+        try { const state = await localServerAgentOperation(activeProject, { operation: 'start' }, signal) as import('../shared/minecraft').LocalServerState; results.push({ target, status: state.running ? 'passed' : 'failed', summary: '核心启动检查；插件业务行为仍需场景验证', durationMs: Date.now() - started, logPath: state.logPath }) }
+        catch (error) { results.push({ target, status: 'failed', summary: String(error), durationMs: Date.now() - started }) }
+      }
+      onProgress?.(target, results.length, selected.length)
+      continue
+    }
     if (target === 'build') {
       const started = Date.now()
       try {
@@ -5193,6 +5224,8 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
   const addonContext = await addonService.describeForAi().catch(() => null)
   const handlers: ExternalAgentBridgeHandlers = {
     projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
+    resourcePackOperation: input => resourcePackAgentOperation(project, input),
+    serverOperation: input => localServerAgentOperation(project, input, signal),
     projectFiles: async () => {
       const files = await listManagedFiles(project.path, (name) => ignoredDirectories.has(name) || isToolDataDirectory(name))
       return { files: files.slice(0, 5_000), truncated: files.length > 5_000 }
@@ -5254,6 +5287,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     releasePreflight: () => requireReleaseService().preflight(),
     build: async () => ({ success: true, artifact: await buildProjectWithLock(signal) }),
     testMinecraft: async () => {
+      if (project.kind === 'server-plugin') return localServerAgentOperation(project, { operation: 'start' }, signal)
       const result = await runHeadlessMinecraftSmoke(project, signal, { stableWindowMs: 20_000, offline: true })
       if (!result.success) throw new Error(result.message || 'HeadlessMC smoke test failed')
       return result
@@ -5369,7 +5403,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
       const port = typeof input.port === 'number' ? input.port : 25565
       const outputDirectory = publicMcpOutputDirectory(project, input, path.join(project.path, projectDataDirectory(project), 'server-pack'))
-      return withMinecraftResourceLock(() => buildAndJoinServer({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), managedMinecraftDirectory: requireMinecraftRuntime().managedMinecraftDirectory(), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
+      return withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), managedMinecraftDirectory: requireMinecraftRuntime().managedMinecraftDirectory(), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
     modpackApplyOptimizationProfile: async (input) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
@@ -5390,7 +5424,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       })
       const port = typeof input.port === 'number' ? input.port : 25565
       const outputDirectory = publicMcpOutputDirectory(project, input, path.join(project.path, projectDataDirectory(project), 'server-scenario'))
-      return withMinecraftResourceLock(() => runServerScenario({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
+      return withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
     imageGenerate: async (input) => {
       const request = normalizeAgentImageRequest(input)
@@ -5730,9 +5764,60 @@ Treat completion review as advice. Never start another implementation turn only 
 const NETEASE_CODING_WORKFLOW = `NETEASE MOD SDK GUIDANCE. Inspect existing project files first and implement promptly using the Python Mod SDK layout (behavior_pack/modMain.py, behavior_pack/<namespace>/clientSystem.py, behavior_pack/<namespace>/serverSystem.py, and resource-pack UI JSON/textures). Do not use Gradle, Java mappings, Sourcegraph, or broad web scraping. Use official NetEase documentation only for a specific unresolved API after inspecting local templates. For engineering tasks, prefer concrete edits plus modmind_validate_content and modmind_build_project when they materially help; runtime testing belongs in the official NetEase developer workbench.`
 
 function codingWorkflowPrompt(project: ProjectInfo): string {
+  if (project.kind === 'server-plugin') return `${MANAGED_DOWNLOAD_POLICY}\n\n${serverPluginContext(project)}`
   return project.loader === 'netease-pc' || project.loader === 'netease-mobile'
     ? `${MANDATORY_CODING_WORKFLOW}\n\n${NETEASE_CODING_WORKFLOW}`
     : MANDATORY_CODING_WORKFLOW
+}
+
+async function resourcePackAgentOperation(project: ProjectInfo, input: Record<string, unknown>): Promise<unknown> {
+  const id = typeof input.id === 'string' ? input.id : ''
+  switch (input.operation) {
+    case 'list': return listResourcePacks(project)
+    case 'create': return createResourcePack(project, { name: String(input.name ?? ''), description: String(input.description ?? ''), packFormat: Number(input.packFormat) })
+    case 'validate': return validateResourcePack(project, id)
+    case 'deploy': return deployResourcePack(project, id)
+    case 'export': {
+      const bytes = await resourcePackArchive(project, id)
+      const file = path.join(project.path, 'build', 'resource-packs', `${id}.zip`)
+      await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, bytes)
+      return { path: file, bytes: bytes.length }
+    }
+    default: throw new Error('不支持的资源包操作')
+  }
+}
+
+async function localServerAgentOperation(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  if (!localServerManager || !currentProject || !sameProjectPath(project.path, currentProject.path)) throw new Error('本机服务端操作需要当前项目')
+  if (input.operation === 'state') return localServerManager.getState()
+  if (input.operation === 'stop') return localServerManager.stop()
+  if (input.operation === 'command') return localServerManager.sendCommand(String(input.command ?? ''))
+  if (input.operation === 'scenario') {
+    if (!Array.isArray(input.steps)) throw new Error('场景步骤无效')
+    return localServerManager.runScenario(input.steps as Parameters<LocalServerManager['runScenario']>[0], signal)
+  }
+  if (input.operation === 'start') {
+    const cancel = (): void => { void localServerManager?.stop().catch(() => undefined) }
+    signal?.throwIfAborted(); signal?.addEventListener('abort', cancel, { once: true })
+    try { return await localServerManager.start() } finally { signal?.removeEventListener('abort', cancel) }
+  }
+  throw new Error('不支持的服务端操作')
+}
+
+async function managedServerJoin(options: Parameters<typeof buildAndJoinServer>[0]): Promise<ServerJoinVerificationResult> {
+  if (!localServerManager || !currentProject || !sameProjectPath(currentProject.path, options.project.path)) throw new Error('联机验证需要当前项目')
+  return localServerManager.verify({ port: options.port, onlineMode: options.onlineMode, acceptEula: options.acceptEula }, async (state, signal) => {
+    const runtime = requireMinecraftRuntime()
+    await runtime.prepare(signal)
+    await runtime.syncModpack()
+    const result = await options.headless.run({ project: options.project, gameDirectory: options.gameDirectory, sourceModsDirectory: path.join(options.project.path, '.modmind/minecraft/mods'), javaPath: options.javaPath, managedMinecraftDirectory: runtime.managedMinecraftDirectory(), stableWindowMs: options.stableWindowMs ?? 20_000, joinTimeoutMs: options.joinTimeoutMs ?? 30_000, serverAddress: state.address, offline: !options.onlineMode }, signal)
+    return { success: Boolean(result.success && result.joinedServer), address: state.address ?? '', serverLogPath: state.logPath ?? '', headless: result, message: result.message }
+  })
+}
+
+async function managedServerScenario(options: Parameters<typeof runServerScenario>[0]): Promise<Awaited<ReturnType<typeof runServerScenario>>> {
+  if (!localServerManager || !currentProject || !sameProjectPath(currentProject.path, options.project.path)) throw new Error('场景验证需要当前项目')
+  return localServerManager.verify({ port: options.port, onlineMode: options.onlineMode, acceptEula: options.acceptEula }, (_state, signal) => localServerManager!.runScenario(options.steps, signal))
 }
 
 function requiredWorkflowStages(project: ProjectInfo, intent: 'engineering' | 'informational' | null): AiWorkflowStage[] {
@@ -6011,7 +6096,7 @@ async function runExternalCodingAgent(
     const initialExternalPrompt = recovery
       ? `${prompt}${unifiedHandoff}\n\nContinue the unfinished action from the unified conversation context. Do not recap context or announce preparation; proceed with the next substantive action.${missingRecoveryStages.length ? ` Suggested unfinished checks: ${missingRecoveryStages.join(', ')}.` : ''} Do not repeat completed work.`
       : prompt
-    const platformPrompt = project.loader === 'netease-pc' || project.loader === 'netease-mobile'
+    const platformPrompt = project.kind === 'server-plugin' ? `${initialExternalPrompt}\n\n${serverPluginContext(project, isInspiration)}` : project.loader === 'netease-pc' || project.loader === 'netease-mobile'
       ? `${initialExternalPrompt}\n\n${NETEASE_CODING_WORKFLOW}`
       : initialExternalPrompt
     const externalRunOptions: ExternalAgentRunOptions = {
@@ -6140,6 +6225,8 @@ async function runExternalCodingAgent(
       )),
       bridge: {
         projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
+        resourcePackOperation: input => resourcePackAgentOperation(project, input),
+        serverOperation: input => localServerAgentOperation(project, input, signal),
         projectFiles: async () => {
           const files = await listManagedFiles(project.path, (name) => ignoredDirectories.has(name) || isToolDataDirectory(name))
           return { files: files.slice(0, 5_000), truncated: files.length > 5_000 }
@@ -6399,7 +6486,7 @@ async function runExternalCodingAgent(
           const javaPath = await runtime.ensureJavaRuntime()
           const port = typeof input.port === 'number' ? input.port : 25565
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack')
-          const result = await withMinecraftResourceLock(() => buildAndJoinServer({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
+          const result = await withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
            runtimeUsed = result.success
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_verify_server_join completed successfully')
            return result
@@ -6433,7 +6520,7 @@ async function runExternalCodingAgent(
           })
           const port = typeof input.port === 'number' ? input.port : 25565
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-scenario')
-          const result = await withMinecraftResourceLock(() => runServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
+          const result = await withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
            runtimeUsed = result.success
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_run_server_scenario completed successfully')
            return result
@@ -6478,6 +6565,7 @@ async function runExternalCodingAgent(
           return { success: true, artifact }
         },
         testMinecraft: async () => {
+          if (project.kind === 'server-plugin') return localServerAgentOperation(project, { operation: 'start' }, signal)
           const currentHashes = await managedCodingHashes(project)
           if (!buildUsed || !codingHashesEqual(lastBuildHashes, currentHashes)) {
             buildCount += 1
@@ -7112,6 +7200,10 @@ function registerIpc(): void {
   })
   ipcMain.handle('mappings:openLoaderDocs', (_event, loader: LoaderKind) => {
     const urls: Record<LoaderKind, string> = {
+      paper: 'https://docs.papermc.io/paper/dev/',
+      spigot: 'https://hub.spigotmc.org/javadocs/spigot/',
+      folia: 'https://docs.papermc.io/folia/',
+      velocity: 'https://docs.papermc.io/velocity/dev/',
       fabric: 'https://docs.fabricmc.net/develop/',
       quilt: 'https://wiki.quiltmc.org/en/modding/getting-started',
       forge: 'https://docs.minecraftforge.net/en/latest/',
@@ -7140,7 +7232,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('project:listLoaderVersions', (_event, refresh = false) =>
-    requireLoaderCatalog().list(Boolean(refresh))
+    Promise.all([requireLoaderCatalog().list(Boolean(refresh)), requireLoaderCatalog().listPlugins(Boolean(refresh))]).then(options => options.flat())
   )
 
   ipcMain.handle('project:adoptExisting', async (_event, input: ExistingProjectAdoptInput) => {
@@ -7152,12 +7244,12 @@ function registerIpc(): void {
       await rememberRecentProject(currentProject)
       return currentProject
     }
-    if (!isJavaLoader(input.loader)) throw new Error('现有项目识别目前仅支持 Java Loader 工程；基岩与网易工程请新建后导入内容')
+    if (!isJavaLoader(input.loader) && !isServerPluginPlatform(input.loader)) throw new Error('现有项目识别支持 Java 模组和服务端插件工程')
     const { analysis, files } = await analyzeExistingProject(input.sourcePath)
     const name = validateProjectNameInput(input.name)
     const namespace = slugify(input.namespace)
     const minecraftVersion = input.minecraftVersion.trim()
-    if (!/^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$/.test(minecraftVersion)) throw new Error('Minecraft 版本格式无效')
+    if (!/^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-SNAPSHOT)?$/.test(minecraftVersion)) throw new Error('目标版本格式无效')
     if (analysis.kind === 'modpack') {
       let projectPath = analysis.sourcePath
       const temporaryImportRoot = path.join(app.getPath('temp'), 'modmind-import-')
@@ -7195,6 +7287,7 @@ function registerIpc(): void {
       name,
       path: projectPath,
       loader: input.loader,
+      kind: isServerPluginPlatform(input.loader) ? 'server-plugin' : 'mod',
       minecraftVersion,
       namespace,
       createdAt: new Date().toISOString(),
@@ -7278,7 +7371,7 @@ function registerIpc(): void {
   ipcMain.handle('project:create', async (_event, input: ProjectCreateInput) => {
     assertProjectSwitchAllowed()
     if (!input || !(PROJECT_PLATFORMS as readonly string[]).includes(input.loader)) throw new Error('不支持的项目平台')
-    const kind = input.kind === 'modpack' ? 'modpack' : 'mod'
+    const kind = isServerPluginPlatform(input.loader) ? 'server-plugin' : input.kind === 'modpack' ? 'modpack' : 'mod'
     if (kind === 'modpack' && !isJavaLoader(input.loader)) throw new Error('整合包目前仅支持 Java 版的 Fabric、Quilt、Forge 和 NeoForge')
     const name = validateProjectNameInput(input.name)
     const minecraftVersion = input.minecraftVersion.trim()
@@ -7637,6 +7730,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('modpack:applyKeybindPreset', (_event, input: unknown, allowConflicts?: boolean) => applyKeybindPreset(requireProject(), input as Parameters<typeof applyKeybindPreset>[1], Boolean(allowConflicts)))
   ipcMain.handle('modpack:buildServerPack', async (_event, input: unknown) => {
+    if (localServerManager?.isBusy()) throw new Error('请先停止服务端再同步服务端包')
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
     const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack')
@@ -7695,6 +7789,7 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('modpack:installServerRuntime', async (_event, input: unknown) => {
+    if (localServerManager?.isBusy()) throw new Error('请先停止服务端再安装运行时')
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
     const target = serverRuntimeDownloadDescription(project)
@@ -7740,6 +7835,7 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('modpack:verifyServerJoin', async (_event, input: unknown) => {
+    if (localServerManager?.isBusy()) throw new Error('请先停止现有服务端再运行隔离联机验证')
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
     const port = typeof value.port === 'number' ? value.port : 25565
@@ -7763,7 +7859,7 @@ function registerIpc(): void {
         ({ source, downloaded, total }) => progress(`正在从 ${source} 下载 Minecraft 兼容 Java`, 0.05 + 0.27 * (total > 0 ? downloaded / total : 0), downloaded, total)
       )
       progress('正在读取验证用服务端包', 0.32)
-      const result = await buildAndJoinServer({
+      const result = await managedServerJoin({
         project,
         outputDirectory,
         port,
@@ -7794,17 +7890,21 @@ function registerIpc(): void {
   ipcMain.handle('modpack:runServerScenario', async (_event, input: unknown) => {
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-    const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
     if (!Array.isArray(value.steps) || !value.steps.length) throw new Error('server scenario requires at least one step')
     const steps = value.steps.map((step) => {
       if (!step || typeof step !== 'object') throw new Error('invalid server scenario step')
       const record = step as Record<string, unknown>
       return { command: String(record.command ?? ''), expect: Array.isArray(record.expect) ? record.expect.map(String) : [], timeoutMs: typeof record.timeoutMs === 'number' ? record.timeoutMs : undefined }
     })
+    if (localServerManager?.isRunning()) return localServerManager.runScenario(steps)
+    if (project.kind === 'server-plugin') throw new Error('请先启动本机服务端，再执行场景')
+    const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
     const port = typeof value.port === 'number' ? value.port : 25565
     const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-scenario')
-    return runServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: value.onlineMode === true, javaPath, steps, onEvent: (event) => mainWindow?.webContents.send('minecraft:event', event) })
+    return managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: value.onlineMode === true, javaPath, steps, onEvent: (event) => mainWindow?.webContents.send('minecraft:event', event) })
   })
+  registerServerPluginIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(localServerManager?.isBusy() || runsForProject(requireProject().path).length) })
+  registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length) })
   ipcMain.handle('modpack:getServerState', () => {
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     return localServerManager.getState()
@@ -8048,6 +8148,7 @@ function registerIpc(): void {
   ipcMain.handle('project:hasExportArtifact', async (_event, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    if (project.kind === 'server-plugin') return findPluginArtifact(project).then(() => true).catch(() => false)
     if (isModpackProject(project)) {
       return readModpackManifest(project).then(() => true).catch(() => false)
     }
@@ -8068,6 +8169,14 @@ function registerIpc(): void {
   })
   ipcMain.handle('project:exportArtifact', async () => {
     const project = requireProject()
+    if (project.kind === 'server-plugin') {
+      await buildProjectWithLock()
+      const artifact = await findPluginArtifact(project)
+      const result = await dialog.showSaveDialog(mainWindow!, { title: '导出服务端插件', defaultPath: path.join(app.getPath('downloads'), artifact.name), filters: [{ name: 'Minecraft Server Plugin', extensions: ['jar'] }] })
+      if (result.canceled || !result.filePath) return null
+      if (!sameProjectPath(result.filePath, artifact.path)) await fs.copyFile(artifact.path, result.filePath)
+      return result.filePath
+    }
     if (isModpackProject(project)) {
       const release = await requireReleaseService().prepareExport()
       const result = await dialog.showSaveDialog(mainWindow!, {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { LocalServerManager } from './localServerService'
 
@@ -14,6 +14,18 @@ const project: ProjectInfo = {
 }
 
 describe('local server manager', () => {
+  it('cancels preparation before any core install can start and keeps the captured project', async () => {
+    let captured: ProjectInfo | undefined
+    const manager = new LocalServerManager({ getProject: () => ({ ...project, kind: 'server-plugin', loader: 'paper' }), getJavaPath: vi.fn(async () => 'unused'), onState: () => undefined, onEvent: () => undefined, buildPlugin: (value, signal) => { captured = value; return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })) } })
+    const start = manager.start().catch(error => error)
+    expect(manager.isBusy()).toBe(true)
+    expect(manager.getState().projectPath).toBe(project.path)
+    await manager.stop()
+    await start
+    expect(captured?.loader).toBe('paper')
+    expect(manager.isBusy()).toBe(false)
+    expect(manager.getState()).toMatchObject({ stage: 'stopped', running: false, canCancel: false })
+  })
   it('starts with a project-aware idle state and rejects commands before launch', async () => {
     const manager = new LocalServerManager({
       getProject: () => project,

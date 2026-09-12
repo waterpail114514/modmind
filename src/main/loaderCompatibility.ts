@@ -1,5 +1,6 @@
 import type { JavaLoaderKind, LoaderKind, ProjectInfo } from '../shared/types'
-import { isJavaLoader } from '../shared/projectPlatform'
+import { isJavaLoader, isServerPluginPlatform } from '../shared/projectPlatform'
+import { pluginJavaVersion, supportsPluginTarget } from '../shared/serverPluginCompatibility'
 
 export interface LoaderBuildCompatibility {
   javaVersion: number
@@ -46,6 +47,7 @@ function between(version: string, minimum: string, maximum: string): boolean {
 }
 
 export function supportsProjectCreation(loader: LoaderKind, minecraftVersion: string): boolean {
+  if (isServerPluginPlatform(loader)) return supportsPluginTarget(loader, minecraftVersion)
   if (loader === 'fabric') return between(minecraftVersion, '1.14', '26.2')
   if (loader === 'quilt') return ['1.18.2', '1.19.2', '1.19.4', '1.20.1', '1.20.2', '1.20.4', '1.20.6', '1.21'].includes(minecraftVersion)
   if (loader === 'forge') return between(minecraftVersion, '1.6.4', '26.2')
@@ -88,6 +90,7 @@ export function javaRuntimeTargetForJavaVersion(version: number): string {
 }
 
 export function buildJavaRangeForProject(project: Pick<ProjectInfo, 'loader' | 'minecraftVersion'>): { minimum: number; maximum?: number } {
+  if (isServerPluginPlatform(project.loader)) return { minimum: Math.max(17, pluginJavaVersion(project.loader, project.minecraftVersion)) }
   if (!isJavaLoader(project.loader)) return { minimum: 0 }
   const gameJava = javaVersionForMinecraft(project.minecraftVersion)
   if (project.loader === 'forge' && compareMinecraftVersions(project.minecraftVersion, '1.17') < 0) return { minimum: 8, maximum: 8 }
@@ -150,6 +153,7 @@ export function loaderBuildCompatibility(loader: JavaLoaderKind, minecraftVersio
 }
 
 export function gradleVersionForProject(project: Pick<ProjectInfo, 'loader' | 'minecraftVersion'>): string {
+  if (isServerPluginPlatform(project.loader)) return '9.5.1'
   if (!isJavaLoader(project.loader)) throw new Error(`${project.loader} projects do not use Gradle`)
   if (supportsProjectCreation(project.loader, project.minecraftVersion)) {
     return loaderBuildCompatibility(project.loader, project.minecraftVersion).gradleVersion
@@ -181,6 +185,10 @@ export function gradleWrapperProperties(project: Pick<ProjectInfo, 'loader' | 'm
 }
 
 export const officialTemplateSources: Record<LoaderKind, string> = {
+  paper: 'https://docs.papermc.io/paper/dev/project-setup/',
+  spigot: 'https://www.spigotmc.org/wiki/creating-a-blank-spigot-plugin-in-intellij-idea/',
+  folia: 'https://docs.papermc.io/folia/',
+  velocity: 'https://docs.papermc.io/velocity/dev/creating-your-first-plugin/',
   fabric: 'https://github.com/FabricMC/fabric-example-mod',
   quilt: 'https://github.com/QuiltMC/quilt-template-mod',
   forge: 'https://github.com/MinecraftForge/MinecraftForge/tree/1.21.11/mdk',

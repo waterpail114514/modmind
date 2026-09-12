@@ -3,6 +3,7 @@ import { Activity, BookOpen, Box, ClipboardList, FileCheck2, FolderOpen, Gauge, 
 import type { ModpackManifest, ModpackProviderInfo, ProjectInfo, ServerPackManifest } from '../../../shared/types'
 import type { LocalServerState } from '../../../shared/minecraft'
 import FtbQuestEditor from './FtbQuestEditor'
+import { ServerPluginSettings } from './ServerPluginTools'
 
 type ToolSection = 'content' | 'automation' | 'server' | 'modules'
 
@@ -54,6 +55,7 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
   const [port, setPort] = useState(25565)
   const [serverState, setServerState] = useState<LocalServerState>(() => initialServerState(project))
   const serverConsoleRef = useRef<HTMLDivElement>(null)
+  const followConsoleRef = useRef(true)
   const [serverCommand, setServerCommand] = useState('')
   const [serverOnlineMode, setServerOnlineMode] = useState(false)
   const serverEulaAccepted = true
@@ -84,19 +86,19 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
     if (section !== 'server') return
     let active = true
     setServerPackManifest(null)
-    void Promise.all([window.modmind.modpack.getServerState(), window.modmind.modpack.getServerPackManifest()]).then(([state, pack]) => {
+    void Promise.all([window.modmind.modpack.getServerState(), project.kind === 'modpack' ? window.modmind.modpack.getServerPackManifest() : Promise.resolve(null)]).then(([state, pack]) => {
       if (!active) return
-      setServerState(state)
+      setServerState(!state.projectPath || state.projectPath === project.path ? state : initialServerState(project))
       setServerPackManifest(pack)
     }).catch((error) => { setServerNoticeTone('error'); setNotice(error instanceof Error ? error.message : String(error)) })
-    const removeState = window.modmind.modpack.onServerState((state) => { if (active) setServerState(state) })
+    const removeState = window.modmind.modpack.onServerState((state) => { if (active && (!state.projectPath || state.projectPath === project.path)) setServerState(state) })
     const removeEvent = window.modmind.modpack.onServerEvent((event) => { if (event.level === 'error') { setServerNoticeTone('error'); setNotice(event.message) } })
     return () => { active = false; removeState(); removeEvent() }
   }, [section, project.path])
 
   useEffect(() => {
     const consoleOutput = serverConsoleRef.current
-    if (!consoleOutput) return
+    if (!consoleOutput || !followConsoleRef.current) return
     consoleOutput.scrollTop = consoleOutput.scrollHeight
   }, [serverState.recentLogs])
 
@@ -107,6 +109,7 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
     setBusy(key)
     setNotice('')
     void action().then((value) => {
+      if (asRecord(value).success === false) throw new Error(String(asRecord(value).message ?? '验证未通过'))
       if (key.startsWith('server-')) setServerNoticeTone('success')
       setNotice(success(value))
     }).catch((error) => {
@@ -154,7 +157,7 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
   </>
 
   const renderServerPanel = (): React.JSX.Element => {
-    const serverBusy = Boolean(busy && busy.startsWith('server-'))
+    const serverBusy = Boolean(busy && busy.startsWith('server-')) || Boolean(serverState.canCancel)
     const startable = !serverState.running && !serverBusy
     const runtimeReadyToCheck = Boolean(serverPackManifest)
     const operationProgress = serverState.operationProgress
@@ -168,10 +171,11 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
         <div><h1>服务端测试</h1><p>{project.loader} Loader {project.loaderVersion || '未记录'} · Minecraft {project.minecraftVersion}</p></div>
         <div className="server-panel-toolbar-actions">
           <span className={`server-status-pill ${statusTone}`}><span className="server-status-dot" />{serverStageLabel(serverState.stage)}</span>
-          {serverState.running ? <button className="secondary-button danger" disabled={serverBusy} onClick={() => runServerAction('stop', () => window.modmind.modpack.stopServer(), '本机服务端已停止')}><Square size={15} />停止</button> : <button className="primary-button" disabled={!startable} onClick={() => runServerAction('start', () => window.modmind.modpack.startServer(serverInput), '本机服务端已启动')}><Play size={15} />启动</button>}
+          {serverState.canCancel ? <button className="secondary-button" onClick={() => void window.modmind.modpack.stopServer().catch(error => setNotice(String(error)))}><Square size={15} />取消准备</button> : serverState.running ? <button className="secondary-button danger" disabled={serverBusy} onClick={() => runServerAction('stop', () => window.modmind.modpack.stopServer(), '本机服务端已停止')}><Square size={15} />停止</button> : <button className="primary-button" disabled={!startable} onClick={() => runServerAction('start', () => window.modmind.modpack.startServer(serverInput), '本机服务端已启动')}><Play size={15} />启动</button>}
           <button className="secondary-button" disabled={serverBusy || !serverState.running} onClick={() => runServerAction('restart', () => window.modmind.modpack.restartServer(serverInput), '本机服务端已重启')}><RotateCw size={15} />重启</button>
         </div>
       </header>
+      {project.kind === 'server-plugin' ? <details className="server-configuration"><summary>核心与运行配置<span>核心、Java、内存与端口</span></summary><ServerPluginSettings project={project} disabled={serverBusy || serverState.running} /></details> : null}
       <section className="server-panel-hero">
         <div className="server-panel-hero-copy"><div className={`server-panel-icon ${statusTone}`}><Server size={22} /></div><div><span className="server-panel-eyebrow">LOCAL INSTANCE</span><h2>{serverState.running ? '服务端正在运行' : serverState.stage === 'error' ? '服务端需要处理' : '服务端控制台'}</h2><p>{serverState.message}</p></div></div>
         <div className="server-panel-hero-meta"><span><Network size={14} />127.0.0.1:{serverState.port ?? port}</span>{serverState.pid ? <span><Activity size={14} />PID {serverState.pid}</span> : null}</div>
@@ -191,13 +195,13 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
       <section className="server-panel-grid">
         <div className="server-console-panel">
           <div className="server-panel-section-heading"><div><span className="server-panel-eyebrow">LIVE OUTPUT</span><h2>实时控制台</h2></div><span className="server-console-count">{serverState.recentLogs.length} 行</span></div>
-          <div ref={serverConsoleRef} className="server-console-output" role="log" aria-live="off">{serverState.recentLogs.length ? serverState.recentLogs.map((entry) => <div key={`${entry.time}-${entry.message}`}><span className="server-console-gutter">{serverLogTime(entry.time)}</span><span>{entry.message}</span></div>) : <div className="server-console-empty">启动服务端后，日志会实时显示在这里</div>}</div>
+          <div ref={serverConsoleRef} onScroll={event => { const node = event.currentTarget; followConsoleRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40 }} className="server-console-output" role="log" aria-live="off">{serverState.recentLogs.length ? serverState.recentLogs.map((entry, index) => <div key={`${entry.time}-${index}`}><span className="server-console-gutter">{serverLogTime(entry.time)}</span><span>{entry.message}</span></div>) : <div className="server-console-empty">启动服务端后，日志会实时显示在这里</div>}</div>
           <form className="server-command-bar" onSubmit={(event) => { event.preventDefault(); const command = serverCommand.trim(); if (!command || !serverState.running || serverBusy) return; runServerAction('command', () => window.modmind.modpack.sendServerCommand(command), `已发送命令：${command}`); setServerCommand('') }}><TerminalSquare size={16} /><input value={serverCommand} onChange={(event) => setServerCommand(event.target.value)} disabled={!serverState.running || serverBusy} placeholder={serverState.running ? '输入服务器命令，例如 list' : '启动服务端后可输入命令'} aria-label="服务器命令" /><button className="secondary-button compact" type="submit" disabled={!serverState.running || !serverCommand.trim() || serverBusy}>发送</button></form>
         </div>
         <aside className="server-side-panel">
           <div className="server-panel-section-heading"><div><span className="server-panel-eyebrow">OPERATIONS</span><h2>运维操作</h2></div></div>
-          <div className="server-operation-list">
-            <button className="server-operation" disabled={serverBusy} onClick={() => runServerAction('pack', async () => {
+          {project.kind === 'modpack' ? <><div className="server-operation-list">
+            <button className="server-operation" disabled={serverBusy || serverState.running} onClick={() => runServerAction('pack', async () => {
               const result = await window.modmind.modpack.buildServerPack({ ...serverInput, engine: 'serverpackcreator', includeUnknownSideMods: false })
               setServerPackManifest(await window.modmind.modpack.getServerPackManifest())
               return result
@@ -205,7 +209,7 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
             <button className="server-operation" disabled={serverBusy || !runtimeReadyToCheck} title={runtimeReadyToCheck ? undefined : '请先同步服务端包'} onClick={() => runServerAction('runtime', () => window.modmind.modpack.installServerRuntime(serverInput), '服务端运行时已就绪')}><Server size={17} /><span><strong>检查运行时</strong><small>{runtimeReadyToCheck ? '确认 Loader 和 Java 版本匹配' : '请先同步服务端包'}</small></span></button>
             <button className="server-operation" disabled={serverBusy || !runtimeReadyToCheck} title={runtimeReadyToCheck ? undefined : '请先同步服务端包'} onClick={() => runServerAction('verify', () => window.modmind.modpack.verifyServerJoin(serverInput), '本机联机验证已完成')}><ShieldCheck size={17} /><span><strong>启动并验证</strong><small>{runtimeReadyToCheck ? '使用隔离客户端验证加入' : '请先同步服务端包'}</small></span></button>
           </div>
-          <div className="server-settings-block"><h3>启动设置</h3><label className="server-setting-row"><span>监听端口</span><input type="number" min={1024} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} disabled={serverState.running || serverBusy} /></label><label className="server-setting-row check-row"><input type="checkbox" checked={serverOnlineMode} onChange={(event) => setServerOnlineMode(event.target.checked)} disabled={serverState.running || serverBusy} /><span>启用正版在线验证</span></label></div>
+          <div className="server-settings-block"><h3>启动设置</h3><label className="server-setting-row"><span>监听端口</span><input type="number" min={1024} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} disabled={serverState.running || serverBusy} /></label><label className="server-setting-row check-row"><input type="checkbox" checked={serverOnlineMode} onChange={(event) => setServerOnlineMode(event.target.checked)} disabled={serverState.running || serverBusy} /><span>启用正版在线验证</span></label></div></> : <div className="server-settings-block"><h3>场景验证</h3><label className="field-label">命令<input value={scenarioCommand} onChange={event => setScenarioCommand(event.target.value)} /></label><label className="field-label">预期新日志<input value={scenarioEvidence} onChange={event => setScenarioEvidence(event.target.value)} /></label><button className="secondary-button" disabled={!serverState.running || serverBusy || !scenarioCommand.trim() || !scenarioEvidence.trim()} onClick={() => runServerAction('scenario', () => window.modmind.modpack.runServerScenario({ steps: [{ command: scenarioCommand, expect: [scenarioEvidence] }] }), '场景验证通过')}><ShieldCheck size={15} />验证场景</button></div>}
         </aside>
       </section>
       {notice ? <div className={`server-panel-notice ${serverNoticeTone}`} role="status">{notice}</div> : null}

@@ -3,6 +3,8 @@ import path from 'node:path'
 import { XMLParser } from 'fast-xml-parser'
 import type { LoaderKind, LoaderVersionOption } from '../shared/types'
 import { PROJECT_PLATFORMS } from '../shared/projectPlatform'
+import { isServerPluginPlatform } from '../shared/projectPlatform'
+import { ServerPluginCatalog } from './serverPluginCatalog'
 import { javaVersionForMinecraft, supportsProjectCreation } from './loaderCompatibility'
 import { fetchTextWithRetry } from './networkRequest'
 
@@ -30,7 +32,7 @@ function supportedOptions(options: LoaderVersionOption[]): LoaderVersionOption[]
 }
 
 function completeCatalog(options: LoaderVersionOption[]): boolean {
-  return PROJECT_PLATFORMS.every((loader) => options.some((option) => option.loader === loader))
+  return PROJECT_PLATFORMS.filter(loader => !isServerPluginPlatform(loader)).every((loader) => options.some((option) => option.loader === loader))
 }
 
 const addonOptions: LoaderVersionOption[] = [
@@ -267,8 +269,13 @@ export async function downloadLoaderCatalog(productVersion = 'development'): Pro
 
 export class LoaderCatalog {
   private memory: LoaderVersionOption[] | null = null
+  private readonly plugins: ServerPluginCatalog
 
-  constructor(private readonly cachePath: string, private readonly productVersion = 'development') {}
+  constructor(private readonly cachePath: string, private readonly productVersion = 'development') {
+    this.plugins = new ServerPluginCatalog(`${cachePath}.plugins`)
+  }
+
+  listPlugins(refresh = false): Promise<LoaderVersionOption[]> { return this.plugins.list(refresh) }
 
   async list(refresh = false): Promise<LoaderVersionOption[]> {
     if (!refresh && this.memory) return structuredClone(this.memory)
@@ -310,6 +317,7 @@ export class LoaderCatalog {
   }
 
   async resolve(loader: LoaderKind, minecraftVersion: string): Promise<LoaderVersionOption> {
+    if (isServerPluginPlatform(loader)) return this.plugins.resolve(loader, minecraftVersion)
     const options = await this.list()
     const match = options.find((option) => option.loader === loader && option.minecraftVersion === minecraftVersion)
     if (!match) throw new Error(`${loader} 不支持 Minecraft ${minecraftVersion}`)

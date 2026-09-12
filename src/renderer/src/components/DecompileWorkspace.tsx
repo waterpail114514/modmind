@@ -370,7 +370,6 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
         <div className="decompile-sidebar-header">
           <Binary size={17} />
           <strong>受控反编译</strong>
-          <span className="sidebar-beta-badge" title="新功能测试中">Beta</span>
         </div>
         <button className="primary-button decompile-pick" type="button" onClick={() => void pickJar()} disabled={running || inspecting}>
           {inspecting ? <Loader2 className="spin" size={16} /> : <FileSearch size={16} />}
@@ -402,10 +401,6 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
       </aside>
 
       <section className="decompile-main">
-        <div className="decompile-beta-banner">
-          <span className="sidebar-beta-badge">Beta</span>
-          <span>反编译是实验性新功能：遇到识别失败、结果异常或导出问题时，请通过诊断日志反馈。它不会影响项目源码与既有功能。</span>
-        </div>
         {error ? (
           <div className="decompile-banner error">
             <CircleAlert size={15} />
@@ -459,8 +454,8 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
                 <FileSearch size={14} /> 分析依赖引用
               </button>
               {files.length && projectContext?.kind === 'modpack' ? (
-                <button className="secondary-button" type="button" disabled={running} onClick={() => void openTermsDialog()} title="把反编译源码导出为整合包的自制模组模块（Beta 功能）">
-                  <PackagePlus size={14} /> 转为自制模组 <span className="sidebar-beta-badge">Beta</span>
+                <button className="secondary-button" type="button" disabled={running} onClick={() => void openTermsDialog()} title="把反编译源码导出为整合包的自制模组模块">
+                  <PackagePlus size={14} /> 转为自制模组
                 </button>
               ) : null}
               {files.length ? (
@@ -538,7 +533,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
         <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!exportBusy) setTermsDialogOpen(false) }}>
           <div className="dialog decompile-terms-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
             <div className="dialog-header">
-              <div><h2><Lock size={16} /> {terms.title} <span className="sidebar-beta-badge" title="新功能测试中">Beta</span></h2><p>条款版本 {terms.version} · 在导出前必须完整阅读并确认</p></div>
+              <div><h2><Lock size={16} /> {terms.title}</h2><p>条款版本 {terms.version} · 在导出前必须完整阅读并确认</p></div>
               <button className="icon-button" type="button" title="关闭" disabled={exportBusy} onClick={() => setTermsDialogOpen(false)}><X size={17} /></button>
             </div>
             <div className="decompile-terms-body">

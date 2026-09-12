@@ -7,6 +7,7 @@ export function isForgeJavaProvisioningFailure(logText: string): boolean {
 }
 
 export function isGradleDistributionFailure(logText: string): boolean {
+  if (/Downloading\s+https?:\/\/[^\s]*gradle-[^\s]+\.zip/i.test(logText) && /org\.gradle\.wrapper\.(?:Install|GradleWrapperMain)/.test(logText)) return true
   return /(?:Could not (?:GET|HEAD) ['"]?https?:\/\/[^\s'"]*(?:gradle-[^\s'"]*\.zip|services\.gradle\.org)|Could not (?:download|install) [^\r\n]*(?:gradle-[^\r\n]*\.zip|Gradle distribution)|distributionUrl=.*gradle-[^\s]+\.zip)/i.test(logText)
 }
 

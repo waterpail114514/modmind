@@ -127,7 +127,10 @@ import type { ImageStudioSettings } from '../../shared/imageStudio'
 import { AI_CONTINUATION_PROMPT, aiPromptFingerprint, isRepeatedAiPrompt } from '../../shared/aiPrompt'
 import { describeAiFailureForUser } from '../../shared/aiFailure'
 import { appendMinecraftRuntimeEvent, type MinecraftRuntimeEvent } from '../../shared/minecraft'
-import { isJavaLoader, platformLabel } from '../../shared/projectPlatform'
+import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../../shared/projectPlatform'
+import { ServerPluginDependencies, ServerPluginMigration } from './components/ServerPluginTools'
+import ResourcePackWorkspace from './components/ResourcePackWorkspace'
+import { serverPluginContext } from '../../shared/serverPluginContext'
 import BlockbenchWorkspace from './components/BlockbenchWorkspace'
 import AiAttachmentPicker, { formatAiAttachmentContext } from './components/AiAttachmentPicker'
 import GitWorkspace from './components/GitWorkspace'
@@ -679,7 +682,7 @@ function ProjectLauncher({
         </button>
         <button className="project-launcher-action" type="button" onClick={onImportModJar}>
           <span className="project-launcher-icon adopt"><Binary size={19} /></span>
-          <span><strong>接管现成模组 <i className="sidebar-beta-badge" title="新功能测试中">Beta</i></strong><small>识别 JAR 的加载器与 Minecraft 版本，反编译后直接创建 ModMind 项目</small></span>
+          <span><strong>接管现成模组</strong><small>识别 JAR 的加载器与 Minecraft 版本，反编译后直接创建 ModMind 项目</small></span>
           <ChevronRight size={17} />
         </button>
       </div>
@@ -787,7 +790,7 @@ function AdoptProjectDialog({
           <label className="field-label">项目名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label className="field-label">命名空间<input value={form.namespace} onChange={(event) => setForm({ ...form, namespace: event.target.value })} /></label>
           <label className="field-label">Minecraft 版本<input value={form.minecraftVersion} onChange={(event) => setForm({ ...form, minecraftVersion: event.target.value })} /></label>
-          <label className="field-label">加载器<select value={form.loader} disabled={analysis.kind === 'complete'} onChange={(event) => setForm({ ...form, loader: event.target.value as ExistingProjectAdoptInput['loader'] })}><option value="fabric">Fabric</option><option value="quilt">Quilt</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option></select></label>
+          <label className="field-label">目标平台<select value={form.loader} disabled={analysis.kind === 'complete'} onChange={(event) => setForm({ ...form, loader: event.target.value as ExistingProjectAdoptInput['loader'] })}>{(analysis.inferred.kind === 'server-plugin' ? ['paper', 'spigot', 'folia', 'velocity'] as const : ['fabric', 'quilt', 'forge', 'neoforge'] as const).map(platform => <option key={platform} value={platform}>{platformLabel(platform)}</option>)}</select></label>
         </div>
         {analysis.detectedFiles.length ? <div className="adopt-files"><span>检测到的关键文件</span><code>{analysis.detectedFiles.slice(0, 8).join('\n')}</code></div> : null}
         {error ? <div className="inline-error"><CircleAlert size={15} />{error}</div> : null}
@@ -878,7 +881,7 @@ function AdoptModJarDialog({
     <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}>
       <div className="dialog adopt-dialog mod-jar-adopt-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <div><h2>接管现成模组 <span className="sidebar-beta-badge" title="新功能测试中">Beta</span></h2><p>{inspection.filePath}</p></div>
+          <div><h2>接管现成模组</h2><p>{inspection.filePath}</p></div>
           <button className="icon-button" title="关闭" disabled={busy} onClick={onClose}><X size={17} /></button>
         </div>
         <div className="adopt-detection">
@@ -1305,7 +1308,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       ? inspirationConversationHandoff(baseMessages)
       : (!resumeSession && messages.length ? inspirationConversationHandoff(messages) : '')
     const fallbackHandoff = inspirationConversationHandoff(baseMessages)
-    let inspirationPrompt = `Answer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
+    let inspirationPrompt = `${serverPluginContext(project, true)}\nAnswer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
     const fallbackInspirationPrompt = `The native session is unavailable. Continue from this complete visible conversation history without repeating completed work. Answer in Simplified Chinese and do not modify files.\n\n${fallbackHandoff ? `VISIBLE CONVERSATION HISTORY\n${fallbackHandoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
     const attachmentKeys = attachments.map((attachment) => `${attachment.path}:${attachment.size}`)
     const dedupeKey = aiPromptFingerprint(content, attachmentKeys)
@@ -1467,7 +1470,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
                 <span>{message.role === 'assistant' ? <Bot size={16} /> : <UserRound size={16} />}</span>
                 <div><strong>{message.role === 'assistant' ? '灵感台' : '你'}</strong>{message.role === 'assistant' ? <><MarkdownMessage content={answer.content} />{message.isFinal && message.status === 'completed' && !busy ? <button className="message-action" type="button" onClick={() => onSendToCoding(answer.content)}><Code2 size={13} />交给工作台</button> : null}{message.isFinal && message.status === 'completed' && !busy && row.index === messages.length - 1 && answer.options.length === 3 ? <div className="inspiration-followups" aria-label="继续聊聊"><span>接下来，想聊哪一个？</span>{answer.options.map(option => <button type="button" key={option} onClick={() => void send(option)}>{option}<ChevronRight size={14} /></button>)}</div> : null}{message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}</> : <p>{message.content}</p>}{!busy ? <div className="inspiration-message-actions">{message.role === 'user' ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => void editInspirationMessage(row.index, message.content)}><Pencil size={12} /></button> : null}<button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => void deleteInspirationMessage(row.index)}><Trash2 size={12} /></button><button type="button" title={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} aria-label={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} onClick={() => void rewindInspirationTo(row.index)}><Undo2 size={12} /></button></div> : null}</div>
               </div>
-            }} /> : hydrated ? <ChatWelcome key={`${project.path}:${activeConversationId}`} mode="inspiration" modpack={project.kind === 'modpack'} disabled={busy} onSelect={(prompt) => { setDraft(prompt); document.querySelector<HTMLTextAreaElement>('.inspiration-page:not([hidden]) textarea')?.focus() }} /> : <div className="inspiration-loading" role="status">正在载入对话…</div>}
+            }} /> : hydrated ? <ChatWelcome key={`${project.path}:${activeConversationId}`} mode="inspiration" modpack={project.kind === 'modpack'} serverPlugin={project.kind === 'server-plugin'} disabled={busy} onSelect={(prompt) => { setDraft(prompt); document.querySelector<HTMLTextAreaElement>('.inspiration-page:not([hidden]) textarea')?.focus() }} /> : <div className="inspiration-loading" role="status">正在载入对话…</div>}
           <div className="inspiration-compose-area">
           <div className="inspiration-composer">
             <textarea value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} aria-label="灵感提问" placeholder="一个念头、一个问题，都可以从这里开始…" />
@@ -1505,7 +1508,6 @@ function CreateProjectDialog({ onClose, onCreated }: { onClose: () => void; onCr
   }, [])
 
   const availableVersions = catalog.filter((option) => option.loader === loader)
-  const selectedOption = availableVersions.find((option) => option.minecraftVersion === version)
 
   const selectEdition = (next: 'java' | 'bedrock' | 'netease'): void => {
     setEdition(next)
@@ -1515,7 +1517,7 @@ function CreateProjectDialog({ onClose, onCreated }: { onClose: () => void; onCr
 
   useEffect(() => {
     if (!availableVersions.length || availableVersions.some((option) => option.minecraftVersion === version)) return
-    setVersion(availableVersions[0].minecraftVersion)
+    setVersion((availableVersions.find(option => option.channel === 'release') ?? availableVersions[0]).minecraftVersion)
   }, [loader, catalog, version, availableVersions])
 
   const create = async (): Promise<void> => {
@@ -1549,19 +1551,20 @@ function CreateProjectDialog({ onClose, onCreated }: { onClose: () => void; onCr
         <div className="field-label">
           项目类型
           <div className="segmented-control">
-            <button className={projectKind === 'mod' ? 'active' : ''} onClick={() => setProjectKind('mod')}>自制 Mod</button>
+            <button className={projectKind === 'mod' ? 'active' : ''} onClick={() => { setProjectKind('mod'); selectEdition('java') }}>自制 Mod</button>
             <button className={projectKind === 'modpack' ? 'active' : ''} onClick={() => { setProjectKind('modpack'); selectEdition('java') }}>整合包</button>
+            <button className={projectKind === 'server-plugin' ? 'active' : ''} onClick={() => { setProjectKind('server-plugin'); setEdition('java'); setLoader('paper'); setVersion('1.21.1') }}>服务端插件 <em className="agent-beta-tag">Beta</em></button>
           </div>
         </div>
         <div className="field-label">
           游戏平台
           <div className="segmented-control">
-            <button className={edition === 'java' ? 'active' : ''} onClick={() => selectEdition('java')}>Java 版</button>
-            <button disabled={projectKind === 'modpack'} className={edition === 'bedrock' ? 'active' : ''} onClick={() => selectEdition('bedrock')}>国际基岩版</button>
-            <button disabled={projectKind === 'modpack'} className={edition === 'netease' ? 'active' : ''} onClick={() => selectEdition('netease')}>网易版</button>
+            <button className={edition === 'java' ? 'active' : ''} onClick={() => { if (projectKind !== 'server-plugin') selectEdition('java') }}>Java 版</button>
+            <button disabled={projectKind !== 'mod'} className={edition === 'bedrock' ? 'active' : ''} onClick={() => selectEdition('bedrock')}>国际基岩版</button>
+            <button disabled={projectKind !== 'mod'} className={edition === 'netease' ? 'active' : ''} onClick={() => selectEdition('netease')}>网易版</button>
           </div>
         </div>
-        {edition === 'java' ? <div className="field-label">加载器<div className="segmented-control">
+        {projectKind === 'server-plugin' ? <div className="field-label">插件 API<div className="segmented-control">{(['paper', 'spigot', 'folia', 'velocity'] as const).map(platform => <button key={platform} className={loader === platform ? 'active' : ''} onClick={() => { setLoader(platform); setVersion(platform === 'velocity' ? '3.4.0-SNAPSHOT' : '1.21.1') }}>{platformLabel(platform)}</button>)}</div></div> : edition === 'java' ? <div className="field-label">加载器<div className="segmented-control">
           <button className={loader === 'fabric' ? 'active' : ''} onClick={() => setLoader('fabric')}>Fabric</button>
           <button className={loader === 'quilt' ? 'active' : ''} onClick={() => setLoader('quilt')}>Quilt</button>
           <button className={loader === 'forge' ? 'active' : ''} onClick={() => setLoader('forge')}>Forge</button>
@@ -1572,12 +1575,12 @@ function CreateProjectDialog({ onClose, onCreated }: { onClose: () => void; onCr
           <button className={loader === 'netease-pc' ? 'active' : ''} onClick={() => { setLoader('netease-pc'); setVersion('') }}>网易 PC</button>
         </div></div> : null}
         <label className="field-label">
-          {edition === 'java' ? 'Minecraft 版本' : edition === 'bedrock' ? '最低兼容基岩版本' : 'Mod SDK 版本'}
+          {loader === 'velocity' ? 'Velocity API 版本' : edition === 'java' ? 'Minecraft 版本' : edition === 'bedrock' ? '最低兼容基岩版本' : 'Mod SDK 版本'}
           <select value={version} disabled={catalogBusy || !availableVersions.length} onChange={(event) => setVersion(event.target.value)}>
-            {availableVersions.map((option) => <option key={`${option.loader}-${option.minecraftVersion}`} value={option.minecraftVersion}>{option.minecraftVersion}{option.supportTier === 'experimental' ? '（实验性）' : ''}</option>)}
+            {availableVersions.map((option) => <option key={`${option.loader}-${option.minecraftVersion}`} value={option.minecraftVersion}>{option.minecraftVersion}</option>)}
           </select>
           {catalogBusy ? <small>正在读取加载器兼容目录…</small> : null}
-          {selectedOption?.notes.map((note) => <small key={note}>{note}</small>)}
+          <button type="button" className="secondary-button" disabled={catalogBusy} onClick={() => { setCatalogBusy(true); setError(''); void window.modmind.project.listLoaderVersions(true).then(setCatalog).catch(reason => setError(errorMessage(reason))).finally(() => setCatalogBusy(false)) }}>刷新版本目录</button>
         </label>
         {error ? <div className="inline-error"><CircleAlert size={15} />{error}</div> : null}
         <div className="dialog-footer">
@@ -2994,8 +2997,8 @@ export default function App(): React.JSX.Element {
     setMigrationLoader(project.loader)
     setMigrationVersion('')
     setMigrationPreview(null)
-    if ((!isJavaLoader(project.loader) && ['minecraft', 'mappings', 'production', 'relationships'].includes(view))
-      || (project.kind === 'modpack' && ['blockbench', 'code', 'build', 'mappings'].includes(view))) setView('workspace')
+    if ((!isJavaLoader(project.loader) && !isServerPluginPlatform(project.loader) && ['minecraft', 'mappings', 'production', 'relationships'].includes(view))
+      || (project.kind === 'modpack' && ['build', 'mappings'].includes(view))) setView('workspace')
   }, [project])
 
   useEffect(() => {
@@ -3337,7 +3340,7 @@ export default function App(): React.JSX.Element {
     if (!project) return { success: false, error: '没有打开的项目' }
     const buildProject = project
     const buildProjectPath = buildProject.path
-    const javaProject = isJavaLoader(buildProject.loader)
+    const javaProject = isJavaLoader(buildProject.loader) || isServerPluginPlatform(buildProject.loader)
     const artifactKind = javaProject ? 'Gradle artifact' : buildProject.loader === 'bedrock' ? 'Bedrock artifact' : 'NetEase archive'
     setBuilding(true)
     setBuildResult(null)
@@ -4392,11 +4395,13 @@ export default function App(): React.JSX.Element {
   const latestEvent = events[0]
   const javaProject = !project || isJavaLoader(project.loader)
   const modpackProject = project?.kind === 'modpack'
+  const pluginProject = project?.kind === 'server-plugin'
+  const showFeatureBeta = (id: ViewId): boolean => id === 'modpack-resourcepacks' || (pluginProject && !['workspace', 'inspiration', 'plugins'].includes(id))
   const workspacePromptHeading = modpackProject ? '描述整合包的下一步' : '描述你想要的 Mod'
   const workspacePromptDescription = modpackProject
     ? 'AI 会读取当前整合包，并直接修改任务、配置、资源或脚本'
     : 'AI 将读取现有工程，直接创建或修改代码与资源文件'
-  const workspacePromptPlaceholder = modpackProject
+  const workspacePromptPlaceholder = pluginProject ? '例如：制作每日签到插件，包含权限、奖励、重复领取检查与数据保存…' : modpackProject
     ? '例如：加入一条新手任务线，并为每一步配置奖励'
     : '例如：制作一个可以储存经验值的水晶方块，右键存入，Shift 右键取出…'
   const migrationVersions = loaderCatalog.filter((option) => option.loader === migrationLoader)
@@ -4424,6 +4429,11 @@ export default function App(): React.JSX.Element {
         ]
       }
 
+      if (pluginProject) return [
+        { label: '创作', items: [{ id: 'workspace' as const, label: '工作台', icon: MessageSquareText }, { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb }] },
+        { label: '工具', items: [{ id: 'relationships' as const, label: '依赖与联动', icon: Link2 }, { id: 'code' as const, label: '代码', icon: Code2 }, { id: 'modpack-server' as const, label: '本机服务端', icon: Server }, { id: 'build' as const, label: '构建与导出', icon: Hammer }, { id: 'snapshots' as const, label: '版本迁移', icon: ArrowRightLeft }] },
+        { label: '项目', items: [{ id: 'settings' as const, label: '设置', icon: Settings }] }
+      ]
       if (modpackProject) {
         return [
           { label: '整合包', items: [
@@ -4514,9 +4524,9 @@ export default function App(): React.JSX.Element {
       }
       ]
     },
-    [javaProject, modpackProject, project]
+    [javaProject, modpackProject, pluginProject, project]
   )
-  const visibleNavGroupsRaw = uiMode === 'beginner'
+  const visibleNavGroupsRaw = uiMode === 'beginner' && !pluginProject
     ? !project
       ? [
           { label: '项目', items: [{ id: 'workspace' as const, label: '项目', icon: FolderOpen }] },
@@ -4562,9 +4572,12 @@ export default function App(): React.JSX.Element {
   )
   const visibleNavGroupsWithPlugins = useMemo(
     () => {
+      const groups = project && (isJavaLoader(project.loader) || isServerPluginPlatform(project.loader)) && !visibleNavGroupsRaw.some(group => group.items.some(item => item.id === 'modpack-resourcepacks'))
+        ? [...visibleNavGroupsRaw, { label: '资源', items: [{ id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image }] }]
+        : visibleNavGroupsRaw
       const showManagerAlways = uiMode !== 'beginner'
-      if (enabledPanelPlugins.length === 0 && !hasEnabledOverlayPlugin && !showManagerAlways) return visibleNavGroupsRaw
-      return [...visibleNavGroupsRaw, {
+      if (enabledPanelPlugins.length === 0 && !hasEnabledOverlayPlugin && !showManagerAlways) return groups
+      return [...groups, {
         label: '插件',
         items: [
           ...enabledPanelPlugins.map((plugin) => ({
@@ -4576,12 +4589,12 @@ export default function App(): React.JSX.Element {
         ]
       }]
     },
-    [enabledPanelPlugins, hasEnabledOverlayPlugin, visibleNavGroupsRaw, uiMode]
+    [enabledPanelPlugins, hasEnabledOverlayPlugin, visibleNavGroupsRaw, uiMode, project]
   )
   const navLabelMap: Partial<Record<ViewId, string>> = {
     workspace: modpackProject ? '工作台' : uiMode === 'beginner' ? '开始创作' : '工作台',
     inspiration: '灵感台',
-    relationships: uiMode === 'beginner' ? '联动模组' : '前置与联动',
+    relationships: pluginProject ? '依赖与联动' : uiMode === 'beginner' ? '联动模组' : '前置与联动',
     'modpack-manifest': '文件清单',
     'modpack-mod-list': '模组列表',
     'third-party-mods': '模组下载',
@@ -4609,7 +4622,7 @@ export default function App(): React.JSX.Element {
     code: '代码',
     build: '构建与导出',
     production: '发布',
-    snapshots: '版本记录',
+    snapshots: pluginProject ? '版本迁移' : '版本记录',
     mappings: 'Mappings',
     settings: '设置'
   }
@@ -4968,7 +4981,7 @@ export default function App(): React.JSX.Element {
         </div>
       </header>
       <main className="detached-group-window">
-        {detachedGroup ? <nav aria-label={detachedGroup?.label ?? 'ModMind'}>{detachedGroup?.items?.map((item) => <button key={item.id} type="button" onClick={() => void window.modmind.app.openDetachedWindow(item.id, item.label).catch(setErrorNotice)}><item.icon size={16} /><span>{item.label}</span>{item.id === 'decompile' || item.id === 'plugins' ? <i className="sidebar-beta-badge" title="新功能测试中">Beta</i> : null}<ChevronRight size={15} /></button>)}</nav> : <div className="detached-group-empty">类型内容正在载入</div>}
+        {detachedGroup ? <nav aria-label={detachedGroup?.label ?? 'ModMind'}>{detachedGroup?.items?.map((item) => <button key={item.id} type="button" onClick={() => void window.modmind.app.openDetachedWindow(item.id, item.label).catch(setErrorNotice)}><item.icon size={16} /><span>{item.label}</span>{showFeatureBeta(item.id) ? <em className="agent-beta-tag feature-beta-tag">Beta</em> : null}<ChevronRight size={15} /></button>)}</nav> : <div className="detached-group-empty">类型内容正在载入</div>}
       </main>
     </div>
   }
@@ -5085,7 +5098,7 @@ export default function App(): React.JSX.Element {
                   type="button"
                 >
                   <item.icon size={sidebarCollapsed ? 19 : 16} /><span>{item.label}</span>
-                  {item.id === 'decompile' || item.id === 'plugins' ? <i className="sidebar-beta-badge" title="新功能测试中">Beta</i> : null}
+                  {showFeatureBeta(item.id) ? <em className="agent-beta-tag feature-beta-tag">Beta</em> : null}
                   {item.id === 'build' && latestEvent ? <i className={`status-dot ${latestEvent.status}`} /> : null}
                 </button>
               ))}
@@ -5107,9 +5120,9 @@ export default function App(): React.JSX.Element {
           </div>
         </aside> : null}
 
-        {!isDetachedWindow && !projectIndependentView && (projectLauncherOpen || !project) ? (
+        {!isDetachedWindow && !projectIndependentView && (projectLauncherOpen || !project || (uiMode === 'advanced' && Boolean(project.draft))) ? (
           uiMode === 'beginner' ? <MinimalProjectStart draft={beginnerStartupDraft} onDraftChange={setBeginnerStartupDraft} onStart={() => void startConversationProject()} onCreate={() => setBeginnerStartupDraft('')} onOpen={() => void openProject()} preferences={beginnerAiPreferences} models={beginnerAvailableModels} saving={savingAiPreferences || creatingConversationProject} onModelChange={model => void saveBeginnerAiPreference({ model })} onReasoningLevelChange={reasoningLevel => void saveBeginnerAiPreference({ reasoningLevel })} /> : <ProjectLauncher
-            projects={recentProjects}
+            projects={recentProjects.filter((recent) => !recent.draft)}
             onCreate={() => setShowCreate(true)}
             onOpen={() => void openProject()}
             onAdopt={() => setExistingImportPicker(true)}
@@ -5133,6 +5146,7 @@ export default function App(): React.JSX.Element {
           <main ref={mainContentRef} className="main-content" data-view={view}>
             {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-content:${project.path}`} active={view === 'modpack-content'}><ModpackToolsWorkspace project={project} section="content" /></KeepAliveRoute> : null}
             {view === 'relationships' && project && project.kind !== 'modpack' && isJavaLoader(project.loader) ? <AddonRelationshipsWorkspace project={project} beginner={uiMode === 'beginner'} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /> : null}
+            {view === 'relationships' && project?.kind === 'server-plugin' ? <ServerPluginDependencies project={project} onOpenCode={() => setView('code')} /> : null}
             {view === 'ftb-quests' && project?.kind === 'modpack' ? <div className="ftb-quest-host"><FtbQuestEditor project={project} /></div> : null}
             {view === 'patchouli' && project?.kind === 'modpack' ? <PatchouliBookEditor /> : null}
             {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-migration:${project.path}`} active={view === 'modpack-migration'}><ModpackMigrationWorkspace project={project} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /></KeepAliveRoute> : null}
@@ -5151,13 +5165,13 @@ export default function App(): React.JSX.Element {
               />
             </KeepAliveRoute>
             {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-automation:${project.path}`} active={view === 'modpack-automation'}><ModpackToolsWorkspace project={project} section="automation" /></KeepAliveRoute> : null}
-            {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ModpackToolsWorkspace project={project} section="server" /></KeepAliveRoute> : null}
+            {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ModpackToolsWorkspace project={project} section="server" /></KeepAliveRoute> : null}
             {view === 'modpack-mod-list' && project?.kind === 'modpack' ? <ModpackModListWorkspace project={project} onOpenModule={(module) => { setProject(module); setView('workspace') }} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /> : null}
             {view === 'modpack-manifest' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="other" inventoryMode onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-config' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="config" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-scripts' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="scripts" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-datapacks' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="datapacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-resourcepacks' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="resourcepacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-resourcepacks' && project ? <ResourcePackWorkspace key={project.path} project={project} darkMode={settings.darkMode} onImages={() => setView('image-studio')} onModels={() => setView('blockbench')} onTest={() => setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')} installed={project.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="resourcepacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : undefined} /> : null}
             {view === 'modpack-shaders' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="shaderpacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-ui' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="ui" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-worlds' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="worlds" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
@@ -5205,7 +5219,7 @@ export default function App(): React.JSX.Element {
               onExport={() => void exportArtifact()}
               onExportServerPack={() => void exportServerPack()}
               onExportLogs={() => void exportDiagnosticLogs()}
-              onTest={() => setView('minecraft')}
+              onTest={() => setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')}
               onAttachmentError={(error) => setNotice(`无法添加附件：${errorMessage(error)}`)}
               canExportArtifact={exportArtifactAvailable}
               building={building}
@@ -5228,7 +5242,7 @@ export default function App(): React.JSX.Element {
               onRewindTimelineTo={handleRewindTimelineTo}
             /> : null}
 
-            {[...new Map([...(project ? [project] : []), ...recentProjects].map((entry) => [normalizeProjectPath(entry.path), entry])).values()].map((inspirationProject) => (
+            {[...new Map([...(project ? [project] : []), ...recentProjects].filter((entry) => uiMode === 'beginner' || !entry.draft).map((entry) => [normalizeProjectPath(entry.path), entry])).values()].map((inspirationProject) => (
               <InspirationWorkspace
                 key={inspirationProject.path}
                 project={inspirationProject}
@@ -5257,7 +5271,7 @@ export default function App(): React.JSX.Element {
               </KeepAliveRoute>
             ) : null}
 
-            {project ? <KeepAliveRoute key={`minecraft:${project.path}`} active={view === 'minecraft'}><MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => setView('relationships')} /></KeepAliveRoute> : null}
+            {project && project.kind !== 'server-plugin' ? <KeepAliveRoute key={`minecraft:${project.path}`} active={view === 'minecraft'}><MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => setView('relationships')} /></KeepAliveRoute> : null}
 
             {view === 'mappings' && project ? (
               <div className="mappings-page">
@@ -5409,19 +5423,19 @@ export default function App(): React.JSX.Element {
                   <div><h1>{project.kind === 'modpack' ? '版本' : '版本与迁移'}</h1><p>{platformLabel(project.loader)} · {project.minecraftVersion}{project.kind === 'modpack' ? ' · 整合包' : ''}</p></div>
                   <button className="primary-button" onClick={() => void createSnapshot()}><Plus size={16} />创建快照</button>
                 </div>
-                {project.kind !== 'modpack' && (isJavaLoader(project.loader) ? <section className="migration-band">
+                {project.kind === 'server-plugin' ? <ServerPluginMigration project={project} onPlan={value => { setPrompt(value); setView('workspace') }} /> : project.kind !== 'modpack' && (isJavaLoader(project.loader) ? <section className="migration-band">
                   <div className="section-title-row"><h2>迁移目标</h2><span>生成到新目录</span></div>
                   <div className="migration-controls">
                     <div className="segmented-control">
                       {(['fabric', 'quilt', 'forge', 'neoforge'] as const).map((loader) => <button key={loader} className={migrationLoader === loader ? 'active' : ''} onClick={() => { setMigrationLoader(loader); setMigrationVersion(''); setMigrationPreview(null) }}>{loader === 'fabric' ? 'Fabric' : loader === 'quilt' ? 'Quilt' : loader === 'forge' ? 'Forge' : 'NeoForge'}</button>)}
                     </div>
                     <select value={selectedMigrationVersion} onChange={(event) => { setMigrationVersion(event.target.value); setMigrationPreview(null) }}>
-                      {migrationVersions.map((option) => <option key={`${option.loader}-${option.minecraftVersion}`} value={option.minecraftVersion}>{option.minecraftVersion}{option.supportTier === 'experimental' ? '（实验性）' : ''}</option>)}
+                      {migrationVersions.map((option) => <option key={`${option.loader}-${option.minecraftVersion}`} value={option.minecraftVersion}>{option.minecraftVersion}</option>)}
                     </select>
                     <button className="secondary-button" disabled={migrationBusy || !selectedMigrationVersion} onClick={() => void previewMigration()}>{migrationBusy ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}预检</button>
                   </div>
                   {migrationPreview ? <div className="migration-preview">
-                    <div><strong>{migrationPreview.source.loader} {migrationPreview.source.minecraftVersion}</strong><ChevronRight size={15} /><strong>{migrationPreview.target.loader} {migrationPreview.target.minecraftVersion}</strong><span className={`migration-tier ${migrationPreview.target.supportTier}`}>{migrationPreview.target.supportTier === 'stable' ? '稳定' : '实验性'}</span></div>
+                    <div><strong>{migrationPreview.source.loader} {migrationPreview.source.minecraftVersion}</strong><ChevronRight size={15} /><strong>{migrationPreview.target.loader} {migrationPreview.target.minecraftVersion}</strong>{migrationPreview.target.supportTier === 'stable' ? <span className="migration-tier stable">稳定</span> : null}</div>
                     {migrationPreview.warnings.map((warning) => <p key={warning}><CircleAlert size={14} />{warning}</p>)}
                     {migrationPreview.blockers.map((blocker) => <p className="error" key={blocker}><X size={14} />{blocker}</p>)}
                     <button className="primary-button" disabled={migrationBusy || Boolean(migrationPreview.blockers.length)} onClick={() => void runMigration()}>{migrationBusy ? <LoaderCircle className="spin" size={15} /> : <PackageOpen size={15} />}生成迁移项目</button>

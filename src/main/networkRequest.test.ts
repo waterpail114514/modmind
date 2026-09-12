@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http'
+import net from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy } from './networkRequest'
+import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy, retryAfterDelay } from './networkRequest'
 
 let server: Server
 const hitCounts = new Map<string, number>()
@@ -11,6 +12,9 @@ beforeAll(async () => {
     const key = `${req.method} ${req.url}`
     const hits = (hitCounts.get(key) ?? 0) + 1
     hitCounts.set(key, hits)
+
+    if (req.url === '/missing') { res.writeHead(404); res.end('missing'); return }
+    if (req.url === '/rate-limit') { res.writeHead(429); res.end('slow down'); return }
 
     if (req.url === '/flaky' && req.method === 'GET' && hits === 1) {
       res.writeHead(502)
@@ -40,6 +44,24 @@ afterAll(async () => {
 })
 
 describe('networkRequest helpers', () => {
+  it('honors Retry-After seconds and dates with a bounded wait', () => {
+    expect(retryAfterDelay('2', 100)).toBe(2000)
+    expect(retryAfterDelay('900', 100)).toBe(60000)
+    expect(retryAfterDelay('Wed, 01 Jan 2025 00:00:02 GMT', 100, Date.parse('2025-01-01T00:00:00Z'))).toBe(2000)
+    expect(retryAfterDelay('bad', 100)).toBe(100)
+  })
+  it('does not retry permanent errors', async () => {
+    await expect(fetchTextWithRetry(`http://127.0.0.1:${port}/missing`)).rejects.toThrow('HTTP 404')
+    expect(hitCounts.get('GET /missing')).toBe(1)
+  })
+
+  it('cancels during retry backoff without another request', async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 100)
+    try { await expect(fetchTextWithRetry(`http://127.0.0.1:${port}/rate-limit`, { signal: controller.signal })).rejects.toThrow() }
+    finally { clearTimeout(timer) }
+    expect(hitCounts.get('GET /rate-limit')).toBe(1)
+  })
   it('surfaces the last HTTP status after exhausting attempts', async () => {
     await expect(fetchTextWithRetry(`http://127.0.0.1:${port}/flaky`, { attempts: 1 })).rejects.toThrow(/HTTP 502/)
   })
@@ -64,6 +86,24 @@ describe('networkRequest helpers', () => {
 })
 
 describe('configured network proxy', () => {
+  it('authenticates a proxy tunnel and releases its connection after reset', async () => {
+    let authorization = ''
+    const sockets = new Set<import('node:stream').Duplex>()
+    const proxy = createServer()
+    proxy.on('connect', (req, client, head) => {
+      authorization = String(req.headers['proxy-authorization'] ?? '')
+      const target = net.connect(port, '127.0.0.1', () => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) target.write(head); client.pipe(target); target.pipe(client) })
+      sockets.add(client); sockets.add(target)
+      client.on('error', () => target.destroy()); target.on('error', () => client.destroy())
+      client.on('close', () => { sockets.delete(client); target.destroy() }); target.on('close', () => sockets.delete(target))
+    })
+    await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve))
+    try {
+      setNetworkProxy(`http://probe:secret@127.0.0.1:${(proxy.address() as net.AddressInfo).port}`)
+      expect(await fetchTextWithRetry('http://proxy-test.invalid/echo', { attempts: 1 })).toContain('/echo')
+      expect(authorization).toBe(`Basic ${Buffer.from('probe:secret').toString('base64')}`)
+    } finally { setNetworkProxy(''); for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => proxy.close(() => resolve())) }
+  })
   afterAll(() => {
     setNetworkProxy('')
   })

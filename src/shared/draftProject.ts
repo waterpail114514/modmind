@@ -5,14 +5,15 @@ export function draftTargetFromMessage(previous: Partial<ProjectCreateInput>, me
   const next = { ...previous }
   const text = message.trim()
   if (/[?？]|还是|或者|推荐|不确定|不知道|不要|不用|不是|不想/.test(text)) return next
-  const versions = [...new Set(text.match(/\b1\.\d{1,3}(?:\.\d{1,3})?\b(?!\.)/g) ?? [])]
+  const versions = [...new Set(text.match(/\b(?:1|26|3)\.\d{1,3}(?:\.\d{1,3})?(?:-SNAPSHOT)?\b(?!\.)/g) ?? [])]
   if (versions.length === 1) next.minecraftVersion = versions[0]
-  const loaders = [...new Set((text.match(/\b(?:neoforge|forge|fabric|quilt|bedrock)\b/gi) ?? []).map(value => value.toLowerCase()))]
+  const loaders = [...new Set((text.match(/\b(?:neoforge|forge|fabric|quilt|bedrock|paper|spigot|folia|velocity)\b/gi) ?? []).map(value => value.toLowerCase()))]
   if (/基岩/.test(text)) loaders.push('bedrock')
   if (/网易/.test(text) && /手机|移动/.test(text)) loaders.push('netease-mobile')
   if (/网易/.test(text) && /电脑|PC/i.test(text)) loaders.push('netease-pc')
   if (new Set(loaders).size === 1) next.loader = loaders[0] as ProjectCreateInput['loader']
-  if (/整合包|\bmodpack\b/i.test(text)) next.kind = 'modpack'
+  if (/服务端插件|服务器插件|\b(?:paper|spigot|folia|velocity)\b/i.test(text)) next.kind = 'server-plugin'
+  else if (/整合包|\bmodpack\b/i.test(text)) next.kind = 'modpack'
   else if (/模组|\bmod\b|附加包|行为包|资源包/i.test(text)) next.kind = 'mod'
   return next
 }
@@ -20,7 +21,7 @@ export function draftTargetFromMessage(previous: Partial<ProjectCreateInput>, me
 export function missingDraftDetails(project: Pick<ProjectInfo, 'draft'>): string[] {
   if (!project.draft) return []
   const target = project.draft.target
-  return [!target.kind && '作品类型（模组或整合包）', !target.minecraftVersion && 'Minecraft 版本', !target.loader && '加载器或游戏平台'].filter((value): value is string => Boolean(value))
+  return [!target.kind && '作品类型（模组、整合包或服务端插件）', !target.minecraftVersion && 'Minecraft 或代理 API 版本', !target.loader && '加载器或游戏平台'].filter((value): value is string => Boolean(value))
 }
 
 export function draftProjectContext(project: Pick<ProjectInfo, 'name' | 'loader' | 'minecraftVersion' | 'draft'>): string {

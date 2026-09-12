@@ -1,8 +1,13 @@
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ProjectInfo } from '../shared/types'
 import type { LocalServerEvent, LocalServerOperationProgress, LocalServerState } from '../shared/minecraft'
-import { buildServerPack, installServerRuntime } from './serverPackService'
+import { buildServerPack, installServerRuntime, readExistingServerPack } from './serverPackService'
 import { ServerProcess, type ServerProcessOptions } from './serverVerificationService'
+import type { ServerScenarioStep, ServerScenarioResult } from './serverVerificationService'
+import { configureLocalServer, deployServerInstance, preserveLegacyServerInstance } from './serverInstance'
+import { preparePluginServer } from './serverCoreService'
+import { throwIfAborted } from './asyncControl'
 
 export interface LocalServerStartOptions {
   port?: number
@@ -12,7 +17,9 @@ export interface LocalServerStartOptions {
 
 export interface LocalServerManagerOptions {
   getProject: () => ProjectInfo | null
-  getJavaPath: () => Promise<string>
+  getJavaPath: (project?: ProjectInfo, major?: number) => Promise<string>
+  cacheDirectory?: string
+  buildPlugin?: (project: ProjectInfo, signal: AbortSignal) => Promise<unknown>
   onState: (state: LocalServerState) => void
   onEvent: (event: LocalServerEvent) => void
 }
@@ -39,6 +46,9 @@ export class LocalServerManager {
   private process: ServerProcess | null = null
   private startPromise: Promise<LocalServerState> | null = null
   private lastProgressUpdateAt = 0
+  private controller: AbortController | null = null
+  private verificationController: AbortController | null = null
+  private readonly options: LocalServerManagerOptions
   private state: LocalServerState = {
     stage: 'idle',
     minecraftVersion: '',
@@ -48,6 +58,7 @@ export class LocalServerManager {
   }
 
   constructor(options: LocalServerManagerOptions) {
+    this.options = options
     this.getProject = options.getProject
     this.getJavaPath = options.getJavaPath
     this.onState = options.onState
@@ -63,6 +74,34 @@ export class LocalServerManager {
   }
 
   isRunning(): boolean { return Boolean(this.process?.isRunning()) }
+  isBusy(): boolean { return Boolean(this.startPromise || this.verificationController || this.process?.isRunning() || this.state.stage === 'stopping') }
+
+  async verify<T>(options: LocalServerStartOptions, action: (state: LocalServerState, signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (this.verificationController || this.startPromise) throw new Error('服务端正在执行另一项操作')
+    const controller = new AbortController()
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const startedHere = !this.isRunning()
+    this.verificationController = controller
+    const abort = (): void => { this.controller?.abort() }
+    combined.addEventListener('abort', abort, { once: true })
+    try {
+      throwIfAborted(combined)
+      const state = startedHere ? await this.start(options) : this.getState()
+      throwIfAborted(combined)
+      this.update({ canCancel: true, message: '正在运行服务端验证' })
+      return await action(state, combined)
+    } finally {
+      combined.removeEventListener('abort', abort)
+      this.verificationController = null
+      this.update({ canCancel: false })
+      if (startedHere) await this.stop()
+    }
+  }
+
+  async runScenario(steps: ServerScenarioStep[], signal?: AbortSignal): Promise<ServerScenarioResult> {
+    if (!this.process?.isRunning()) throw new Error('请先启动本机服务端')
+    return this.process.runScenario(steps, signal)
+  }
 
   recordOperation(message: string, level: LocalServerEvent['level'] = 'info', logPath?: string): void {
     if (logPath) this.state = { ...this.state, logPath }
@@ -89,7 +128,8 @@ export class LocalServerManager {
 
   async start(options: LocalServerStartOptions = {}): Promise<LocalServerState> {
     if (this.startPromise) return this.startPromise
-    const pending = this.startInternal(options)
+    this.controller = new AbortController()
+    const pending = this.startInternal(options, this.controller.signal)
     this.startPromise = pending
     try {
       return await pending
@@ -98,17 +138,35 @@ export class LocalServerManager {
     }
   }
 
-  private async startInternal(options: LocalServerStartOptions): Promise<LocalServerState> {
+  private async startInternal(options: LocalServerStartOptions, signal: AbortSignal): Promise<LocalServerState> {
     const project = this.requireProject()
     if (this.process?.isRunning()) throw new Error('本机服务端已经在运行')
-    const port = validPort(options.port)
+    let port = validPort(options.port)
     const root = path.join(project.path, dataDirectory(project), 'server-pack')
-    this.update({ stage: 'preparing', running: false, minecraftVersion: project.minecraftVersion, loader: project.loader, loaderVersion: project.loaderVersion, port, pid: undefined, logPath: undefined, operationProgress: undefined, message: '正在构建本机服务端包', recentLogs: [] })
+    this.update({ projectPath: project.path, sessionId: randomUUID(), canCancel: true, address: undefined, stage: 'preparing', running: false, minecraftVersion: project.minecraftVersion, loader: project.loader, loaderVersion: project.loaderVersion, port, pid: undefined, logPath: undefined, operationProgress: undefined, message: '正在准备本机服务端', recentLogs: [] })
     try {
-      const pack = await buildServerPack(project, { outputDirectory: root, port, acceptEula: true, onlineMode: options.onlineMode === true, preserveExistingFiles: true })
-      this.update({ stage: 'installing', message: '正在准备匹配版本的服务端运行时' })
-      const javaPath = await this.getJavaPath()
-      const runtime = await installServerRuntime({ serverPack: pack, javaPath }, project)
+      let pack: ServerProcessOptions['pack']
+      let runtime: ServerProcessOptions['runtime']
+      if (project.kind === 'server-plugin') {
+        await this.options.buildPlugin?.(project, signal)
+        throwIfAborted(signal)
+        const prepared = await preparePluginServer(project, { javaPath: major => this.getJavaPath(project, major), cacheDirectory: this.options.cacheDirectory ?? path.join(project.path, '.modmind/server/cache'), signal, onProgress: (message, fraction) => this.setOperationProgress({ message, fraction }), onDownloadProgress: ({ downloaded, total, source }) => this.setOperationProgress({ message: `正在下载 ${source.label}`, downloaded, total, fraction: total ? downloaded / total : undefined }) })
+        pack = prepared.pack; runtime = prepared.runtime; port = prepared.profile.port
+      } else {
+        await preserveLegacyServerInstance(project.path, root)
+        const built = await readExistingServerPack(project, root) ?? await buildServerPack(project, { outputDirectory: root, port, acceptEula: options.acceptEula === true, onlineMode: options.onlineMode === true })
+        throwIfAborted(signal)
+        const instanceRoot = path.join(project.path, '.modmind/server/instances/modpack')
+        const deployment = await deployServerInstance(built.root, instanceRoot, signal)
+        if (deployment.conflicts.length) this.capture(`保留本地配置：${deployment.conflicts.join(', ')}`, 'warning')
+        pack = { ...built, root: instanceRoot, manifestPath: path.join(instanceRoot, 'modmind.server.json') }
+        await configureLocalServer(pack.root, port, options.onlineMode === true, options.acceptEula === true)
+        this.update({ stage: 'installing', message: '正在准备匹配版本的服务端运行时' })
+        const javaPath = await this.getJavaPath(project)
+        throwIfAborted(signal)
+        runtime = await installServerRuntime({ serverPack: pack, javaPath, signal, onDownloadProgress: ({ downloaded, total, source }) => this.setOperationProgress({ message: `正在下载 ${source.label}`, downloaded, total, fraction: total ? downloaded / total : undefined }) }, project)
+      }
+      throwIfAborted(signal)
       this.update({ stage: 'starting', message: '正在启动本机服务端' })
       const server = new ServerProcess()
       this.process = server
@@ -116,6 +174,8 @@ export class LocalServerManager {
         pack,
         runtime,
         port,
+        signal,
+        stopCommand: project.loader === 'velocity' ? 'shutdown' : 'stop',
         onEvent: (event) => this.capture(event.message, event.level),
         onExit: (code, signal) => {
           if (this.process !== server || this.state.stage === 'stopping') return
@@ -126,20 +186,26 @@ export class LocalServerManager {
         }
       }
       const started = await server.start(processOptions)
-      this.update({ stage: 'running', running: true, address: started.address, logPath: started.logPath, pid: server.pid, message: '本机服务端运行中' })
+      this.update({ canCancel: false, operationProgress: undefined, port, stage: 'running', running: true, address: started.address, logPath: started.logPath, pid: server.pid, message: '本机服务端运行中；业务场景尚未验证' })
       this.emit({ stage: 'running', message: `服务端已就绪：${started.address}` })
       return this.getState()
     } catch (error) {
+      await this.process?.stop(1_000)
       this.process = null
-      const message = `本机服务端启动失败：${describeError(error)}`
-      this.update({ stage: 'error', running: false, pid: undefined, message })
+      const message = signal.aborted ? '本机服务端启动已取消' : `本机服务端启动失败：${describeError(error)}`
+      this.update({ canCancel: false, operationProgress: undefined, stage: signal.aborted ? 'stopped' : 'error', running: false, pid: undefined, message })
       this.emit({ stage: 'error', message, level: 'error' })
       throw error
     }
   }
 
   async stop(): Promise<LocalServerState> {
-    if (this.startPromise) throw new Error('本机服务端正在准备启动，请等待启动完成后再停止')
+    this.verificationController?.abort()
+    if (this.startPromise) {
+      this.controller?.abort()
+      this.update({ stage: 'stopping', canCancel: false, message: '正在取消服务端准备' })
+      await this.startPromise.catch(() => undefined)
+    }
     const server = this.process
     if (!server) {
       if (this.state.stage !== 'idle') this.update({ stage: 'stopped', running: false, pid: undefined, message: '本机服务端已停止' })
@@ -171,8 +237,8 @@ export class LocalServerManager {
 
   private requireProject(): ProjectInfo {
     const project = this.getProject()
-    if (!project || project.kind !== 'modpack') throw new Error('本机服务端面板需要打开一个整合包项目')
-    if (!['fabric', 'quilt', 'forge', 'neoforge'].includes(project.loader)) throw new Error('当前整合包 Loader 不支持本机服务端')
+    if (!project || !['modpack', 'server-plugin'].includes(project.kind ?? '')) throw new Error('本机服务端需要整合包或服务端插件项目')
+    if (project.kind === 'modpack' && !['fabric', 'quilt', 'forge', 'neoforge'].includes(project.loader)) throw new Error('当前整合包 Loader 不支持本机服务端')
     return project
   }
 

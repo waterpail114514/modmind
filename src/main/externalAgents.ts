@@ -59,6 +59,8 @@ export interface ExternalAgentPluginBridgeTarget {
 }
 
 export interface ExternalAgentBridgeHandlers {
+  resourcePackOperation?: (input: Record<string, unknown>) => Promise<unknown>
+  serverOperation?: (input: Record<string, unknown>) => Promise<unknown>
   projectInfo: Record<string, unknown>
   projectFiles?: () => Promise<unknown>
   toolCalled?: (action: string) => void
@@ -940,6 +942,7 @@ const EXTERNAL_AGENT_PACKAGES: Record<ExternalAgentKind, {winget?: string; npm?:
 }
 
 const REVIEWED_ACTIONS = new Set([
+  'resource_pack_operation', 'server_operation',
   'rename_project', 'apply_edits', 'dependency_install', 'maven_dependency_install', 'addon_prepare', 'addon_import', 'addon_link_project', 'test_matrix', 'build_project', 'test_minecraft',
   'modpack_apply_plan', 'modpack_download_content', 'modpack_write_ftb_quest', 'modpack_write_patchouli_book', 'modpack_apply_keybinds',
   'modpack_build_server', 'modpack_verify_server_join', 'modpack_apply_optimization_profile', 'modpack_run_server_scenario',
@@ -948,6 +951,7 @@ const REVIEWED_ACTIONS = new Set([
 ])
 
 const READ_ONLY_DENIED_ACTIONS = new Set([
+  'resource_pack_operation', 'server_operation',
   'rename_project', 'set_intent', 'apply_edits', 'update_todo', 'dependency_install', 'maven_dependency_install', 'addon_prepare', 'addon_import', 'addon_link_project',
   'test_matrix', 'build_project', 'test_minecraft', 'modpack_apply_plan', 'modpack_download_content',
   'modpack_migration_apply', 'modpack_migration_undo',
@@ -1100,6 +1104,8 @@ async function callTool(action, input) {
 }
 
 const tools = [
+  {name:'modmind_resource_pack', description:'Manage Java resource packs in the current project: list, create, validate, export, deploy. Source editing uses normal project file tools. All exports are validated.', inputSchema:{type:'object',properties:{operation:{type:'string',enum:['list','create','validate','export','deploy']},id:{type:'string'},name:{type:'string'},description:{type:'string'},packFormat:{type:'integer'}},required:['operation']}, annotations:managedAction},
+  {name:'modmind_local_server', description:'Manage the current project local server: state, start, stop, command or scenario. Uses managed core downloads and isolated persistent instances. Start does not prove plugin behavior; scenario requires fresh expected evidence.', inputSchema:{type:'object',properties:{operation:{type:'string',enum:['state','start','stop','command','scenario']},command:{type:'string'},steps:{type:'array',items:{type:'object',properties:{command:{type:'string'},expect:{type:'array',items:{type:'string'}},timeoutMs:{type:'number'}},required:['command','expect']}}},required:['operation']}, annotations:managedAction},
   {name:'modmind_project_info', description:'Read the active ModMind project metadata and integration rules.', inputSchema:{type:'object',properties:{}}, annotations:readOnlyLocal},
   {name:'modmind_project_files', description:'List project-relative files through ModMind without invoking a shell directory command. This is read-only and excludes tool data, build output, and VCS metadata.', inputSchema:{type:'object',properties:{}}, annotations:readOnlyLocal},
   {name:'modmind_rename_project', description:'Rename the active project and migrate project-owned namespace references when the namespace changes. Use only when the user explicitly asks for a rename.', inputSchema:{type:'object',properties:{name:{type:'string'},namespace:{type:'string'}},required:['name','namespace']}, annotations:managedAction},
@@ -1259,6 +1265,8 @@ input.on('line', async (line) => {
     const args = request.params?.arguments || {};
     const actions = {
       modmind_project_info: 'project_info',
+      modmind_resource_pack: 'resource_pack_operation',
+      modmind_local_server: 'server_operation',
       modmind_project_files: 'project_files',
       modmind_rename_project: 'rename_project',
       modmind_set_intent: 'set_intent',
@@ -1920,6 +1928,14 @@ export class ModMindBridge {
       }
       let value: unknown
       switch (body.action) {
+        case 'resource_pack_operation': {
+          if (!this.handlers.resourcePackOperation) throw new Error('resource pack tools unavailable')
+          value = await this.handlers.resourcePackOperation(input); break
+        }
+        case 'server_operation': {
+          if (!this.handlers.serverOperation) throw new Error('local server tools unavailable')
+          value = await this.handlers.serverOperation(input); break
+        }
         case 'project_info': value = this.handlers.projectInfo; break
         case 'project_files': {
           if (!this.handlers.projectFiles) throw new Error('project file listing is unavailable')

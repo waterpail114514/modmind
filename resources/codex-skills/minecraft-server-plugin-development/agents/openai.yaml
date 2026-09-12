@@ -1,0 +1,4 @@
+interface:
+  display_name: "Minecraft 服务端插件开发"
+  short_description: "开发和迁移服务端插件，检查线程归属、资源清理及真实核心运行证据"
+  default_prompt: "Use $minecraft-server-plugin-development to implement this server plugin and verify its lifecycle and target-core behavior."

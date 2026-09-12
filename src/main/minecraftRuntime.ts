@@ -35,7 +35,9 @@ import type {
   MinecraftRuntimeState
 } from '../shared/minecraft'
 import type { JavaPreferences, DetectedJavaHome, LoaderKind, ProjectInfo } from '../shared/types'
-import { isJavaLoader, platformLabel } from '../shared/projectPlatform'
+import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../shared/projectPlatform'
+import { findPluginArtifact } from './serverPluginService'
+import { buildMavenPlugin } from './mavenBuild'
 import { isForgeJavaProvisioningFailure, isGradleNetworkFailure } from './gradleFailure'
 import { readModpackManifest, syncModpackOverrides } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
@@ -111,21 +113,7 @@ function errorMessage(error: unknown): string {
   return String(error)
 }
 
-function javaProxyOptions(proxyUrl: string): string {
-  if (!proxyUrl.trim()) return ''
-  try {
-    const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(proxyUrl) ? proxyUrl : `http://${proxyUrl}`)
-    if (!parsed.hostname) return ''
-    const host = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname
-    const port = parsed.port || (parsed.protocol.toLowerCase() === 'https:' ? '443' : '80')
-    if (parsed.protocol.toLowerCase().startsWith('socks')) {
-      return `-DsocksProxyHost=${host} -DsocksProxyPort=${port}`
-    }
-    return `-Dhttps.proxyHost=${host} -Dhttps.proxyPort=${port} -Dhttp.proxyHost=${host} -Dhttp.proxyPort=${port}`
-  } catch {
-    return ''
-  }
-}
+import { javaProxyOptions } from './javaEnvironment'
 
 /**
  * Electron's network stack uses the platform certificate store. This matters
@@ -1611,6 +1599,15 @@ export class MinecraftRuntimeManager {
     if (signal?.aborted) throw Object.assign(new Error('构建已取消'), { name: 'AbortError' })
     await this.authorizeBuild?.(project)
     if (project.kind === 'modpack') return this.buildModpackInternal(project, signal)
+    if (project.kind === 'server-plugin') {
+      if (!isServerPluginPlatform(project.loader)) throw new Error('插件工程平台无效')
+      if (await exists(path.join(project.path, 'pom.xml')) && !await exists(path.join(project.path, 'build.gradle')) && !await exists(path.join(project.path, 'build.gradle.kts'))) {
+        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
+      } else await this.runGradleBuild(project, signal)
+      const artifact = await findPluginArtifact(project)
+      this.updateState({ stage: 'idle', message: `插件构建完成：${artifact.name}`, mods: [artifact] })
+      return artifact
+    }
     if (!isJavaLoader(project.loader)) {
       this.emit('building-mod', project.loader === 'bedrock' ? '正在校验并打包基岩 Add-On' : '正在校验并归档网易工作台工程')
       const artifactPath = project.loader === 'bedrock'
@@ -1736,7 +1733,7 @@ export class MinecraftRuntimeManager {
     return artifact
   }
 
-  private async prepareGradleWrapperDownload(project: ProjectInfo, attempt: number): Promise<void> {
+  private async prepareGradleWrapperDownload(project: ProjectInfo, attempt: number, signal?: AbortSignal): Promise<void> {
     const propertiesPath = path.join(project.path, 'gradle', 'wrapper', 'gradle-wrapper.properties')
     const content = await fs.readFile(propertiesPath, 'utf8').catch(() => '')
     const match = content.match(/distributionUrl=.*?gradle-([0-9A-Za-z.+_-]+)-(bin|all)\.zip/i)
@@ -1744,12 +1741,26 @@ export class MinecraftRuntimeManager {
     const configuredUrl = content.match(/^distributionUrl\s*=\s*(.+)$/mi)?.[1]?.trim().replaceAll('\\:', ':') ?? ''
     const preference = await this.getGradleDownloadSource?.() ?? 'auto'
     const sources = gradleDistributionSources(match[1], preference, match[2].toLowerCase() as 'bin' | 'all')
+    if (project.kind === 'server-plugin') {
+      const checksum = content.match(/^distributionSha256Sum\s*=\s*([a-f0-9]{64})\s*$/mi)?.[1]
+      if (checksum && /^https:\/\//i.test(configuredUrl)) {
+        const key = BigInt(`0x${createHash('md5').update(configuredUrl).digest('hex')}`).toString(36)
+        const filename = `gradle-${match[1]}-${match[2]}.zip`
+        const cache = path.join(app.getPath('userData'), 'gradle-runtime/cache/wrapper/dists', filename.slice(0, -4), key)
+        const archive = path.join(cache, filename)
+        if (!await exists(`${archive}.ok`) && !await exists(archive)) {
+          await verifiedDownload.download({ sources: sources.map(source => ({ ...source })), destination: archive, expectedHash: { algorithm: 'sha256', value: checksum }, signal, timeoutMs: 120_000, retriesPerSource: 1, onProgress: progress => this.emitProgress('building-mod', `正在下载 Gradle ${match[1]}：${progress.source.label}`, progress.downloaded, progress.total ?? 0) })
+        }
+        return
+      }
+    }
     // Keep the project's original/recommended distribution on the first run.
     // Only rewrite the URL after a failed attempt, then walk every distinct
     // mirror before surfacing the original failure.
     if (attempt === 0 && /^https:\/\//i.test(configuredUrl)) return
     const alternatives = sources.filter((source) => source.url !== configuredUrl)
-    const source = alternatives[Math.max(0, attempt - 1)]
+    const index = sources.findIndex(source => source.url === configuredUrl)
+    const source = index >= 0 ? sources[(index + 1) % sources.length] : alternatives[0]
     if (!source) return
     const next = content.replace(/distributionUrl=.*$/m, `distributionUrl=${source.url.replace(/:/g, '\\:')}`)
     if (next !== content) await fs.writeFile(propertiesPath, next, 'utf8')
@@ -1768,7 +1779,7 @@ export class MinecraftRuntimeManager {
 
   private async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, retryAttempt = 0): Promise<void> {
     await this.prepareGradleMavenFallback(project)
-    await this.prepareGradleWrapperDownload(project, retryAttempt)
+    await this.prepareGradleWrapperDownload(project, retryAttempt, signal)
     const runtime = await this.gradleRuntime(project)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
@@ -1883,6 +1894,7 @@ export class MinecraftRuntimeManager {
 
   async listMods(): Promise<MinecraftManagedMod[]> {
     const project = this.requireProject()
+    if (project.kind === 'server-plugin') return findPluginArtifact(project).then(artifact => [artifact]).catch(() => [])
     if (!isJavaLoader(project.loader)) {
       const output = path.join(project.path, 'build')
       const entries = await fs.readdir(output, { withFileTypes: true }).catch(() => [])

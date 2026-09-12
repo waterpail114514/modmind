@@ -1,4 +1,7 @@
-import { spawnManaged, stopProcessTree } from './processTree'
+import { spawnManaged, terminateProcessTree } from './processTree'
+import { StringDecoder } from 'node:string_decoder'
+import { managedJavaEnvironment } from './javaEnvironment'
+import { throwIfAborted, waitForCondition } from './asyncControl'
 import { createWriteStream, promises as fs } from 'node:fs'
 import type { WriteStream } from 'node:fs'
 import net from 'node:net'
@@ -8,12 +11,18 @@ import type { ProjectInfo } from '../shared/types'
 import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from '../shared/minecraft'
 import { HeadlessMcService } from './headlessMcService'
 import { buildServerPack, installServerRuntime, type ServerPackResult, type ServerRuntimeResult } from './serverPackService'
+import { readModpackManifest } from './modpackService'
+import { modpackModsRoot } from './modpackPaths'
+import { configureLocalServer, deployServerInstance } from './serverInstance'
 
 export interface ServerProcessOptions {
   pack: ServerPackResult
   runtime: ServerRuntimeResult
   port: number
   readyTimeoutMs?: number
+  signal?: AbortSignal
+  stopCommand?: string
+  gracefulTimeoutMs?: number
   onEvent?: (event: MinecraftRuntimeEvent) => void
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void
 }
@@ -101,8 +110,13 @@ export class ServerProcess {
   private logPath = ''
   private log: WriteStream | null = null
   private outputLines: string[] = []
+  private sequence = 0
+  private entries: Array<{ sequence: number; line: string }> = []
+  private stopCommand = 'stop'
+  private gracefulTimeoutMs = 10_000
+  private stopping: Promise<void> | null = null
 
-  isRunning(): boolean { return Boolean(this.child && this.child.exitCode === null) }
+  isRunning(): boolean { return Boolean(this.child && this.child.pid && this.child.exitCode === null && this.child.signalCode === null) }
   get transcriptPath(): string { return this.logPath }
   get pid(): number | undefined { return this.child?.pid ?? undefined }
   get recentOutput(): string[] { return [...this.outputLines] }
@@ -117,13 +131,15 @@ export class ServerProcess {
   async start(options: ServerProcessOptions): Promise<{ address: string; logPath: string }> {
     if (this.isRunning()) throw new Error('server process is already running')
     if (!options.pack.root || !options.runtime.launchCommand.length) throw new Error('server pack runtime is incomplete')
-    // The server may have been generated before the app-level agreement was recorded.
-    // Always set the runtime file immediately before launch.
-    await fs.writeFile(path.join(options.pack.root, 'eula.txt'), 'eula=true\n', 'utf8')
+    if (options.signal) throwIfAborted(options.signal)
+    this.stopCommand = options.stopCommand ?? 'stop'
+    this.gracefulTimeoutMs = options.gracefulTimeoutMs ?? 10_000
     const logDirectory = path.join(options.pack.root, 'logs')
     await fs.mkdir(logDirectory, { recursive: true })
     this.logPath = path.join(logDirectory, `modmind-server-${Date.now()}.log`)
     this.outputLines = []
+    this.entries = []
+    this.sequence = 0
     const log = createWriteStream(this.logPath, { flags: 'w' })
     this.log = log
     const [executable, ...args] = options.runtime.launchCommand
@@ -133,38 +149,64 @@ export class ServerProcess {
       shell: false,
       windowsVerbatimArguments: options.runtime.windowsVerbatimArguments,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env
+      env: managedJavaEnvironment()
     })
     this.child = child
     let output = ''
     let ready = false
     let spawnError = ''
     let batchPausePrompt = false
-    const capture = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
-      const text = chunk.toString('utf8')
-      log.write(text)
-      output = `${output}${text}`.slice(-120_000)
-      if (isWindowsBatchPausePrompt(output)) batchPausePrompt = true
-      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-      const displayLines = lines.map((line) => isWindowsBatchPausePrompt(line) ? '服务端启动失败，请检查您的服务端包' : line)
-      this.outputLines.push(...displayLines)
-      if (this.outputLines.length > 500) this.outputLines.splice(0, this.outputLines.length - 500)
-      if (/(?:Done \([\d.]+s\)!|For help, type "help"|Server started|Dedicated server took)/i.test(text)) ready = true
-      displayLines.slice(-5).forEach((line) => event(options.onEvent, line, level))
+    const line = (text: string, level: MinecraftRuntimeEvent['level']): void => {
+      if (!text.trim()) return
+      const display = isWindowsBatchPausePrompt(text) ? '服务端启动失败，请检查您的服务端包' : text
+      this.outputLines.push(display)
+      this.entries.push({ sequence: ++this.sequence, line: display })
+      if (this.outputLines.length > 2_000) this.outputLines.shift()
+      if (this.entries.length > 2_000) this.entries.shift()
+      if (/(?:Done \([\d.,]+s\)!|For help, type "help"|Server started|Dedicated server took)/i.test(text)) ready = true
+      const severity = /\b(?:ERROR|FATAL)\b/.test(text) ? 'error' : /\bWARN\b/.test(text) ? 'warning' : level
+      event(options.onEvent, display, severity)
     }
-    child.stdout.on('data', (chunk: Buffer) => capture(chunk, 'info'))
-    child.stderr.on('data', (chunk: Buffer) => capture(chunk, 'warning'))
+    const streamCapture = (level: MinecraftRuntimeEvent['level']): { write: (chunk: Buffer) => void; end: () => void } => {
+      const decoder = new StringDecoder('utf8')
+      let pending = ''
+      const capture = (text: string): void => {
+        if (!log.writableEnded && !log.destroyed && !log.write(text)) {
+          const stream = level === 'info' ? child.stdout : child.stderr
+          stream.pause()
+          log.once('drain', () => { if (!stream.destroyed) stream.resume() })
+        }
+        output = `${output}${text}`.slice(-120_000)
+        if (isWindowsBatchPausePrompt(output)) batchPausePrompt = true
+        pending += text
+        const lines = pending.split(/\r?\n/)
+        pending = lines.pop() ?? ''
+        lines.forEach(value => line(value, level))
+        if (pending.length > 120_000) { line(pending, level); pending = '' }
+      }
+      return { write: chunk => capture(decoder.write(chunk)), end: () => { capture(decoder.end()); line(pending, level); pending = '' } }
+    }
+    const stdout = streamCapture('info')
+    const stderr = streamCapture('warning')
+    child.stdout.on('data', stdout.write)
+    child.stderr.on('data', stderr.write)
+    child.stdout.once('end', stdout.end)
+    child.stderr.once('end', stderr.end)
+    log.on('error', error => { spawnError = error.message; void this.stop(0).catch(() => undefined) })
+    child.stdin.on('error', error => event(options.onEvent, error.message, 'warning'))
     child.once('error', (error) => { spawnError = error.message })
     child.once('exit', (code, signal) => options.onExit?.(code, signal))
+    child.once('close', () => { log.end(); if (this.log === log) this.log = null })
     const deadline = Date.now() + Math.min(Math.max(options.readyTimeoutMs ?? 180_000, 10_000), 15 * 60_000)
     while (Date.now() < deadline && child.exitCode === null) {
-      if (spawnError || batchPausePrompt) break
+      if (spawnError || batchPausePrompt || options.signal?.aborted) break
       if (ready && await tcpProbe('127.0.0.1', options.port)) break
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
-    if (spawnError || child.exitCode !== null || !ready || !(await tcpProbe('127.0.0.1', options.port))) {
-      await this.stop()
+    if (options.signal?.aborted || spawnError || child.exitCode !== null || child.signalCode !== null || !ready || !(await tcpProbe('127.0.0.1', options.port))) {
+      await this.stop(1_000)
       this.log = null
+      if (options.signal) throwIfAborted(options.signal)
       const pauseError = batchPausePrompt ? '，服务端启动失败，请检查您的服务端包' : ''
       const modAdvice = batchPausePrompt ? '' : serverModRetryAdvice(output, options.pack.copiedMods)
       const outputTail = batchPausePrompt ? '' : output ? `\n${output.slice(-8_000)}` : ''
@@ -174,32 +216,47 @@ export class ServerProcess {
     return { address: `127.0.0.1:${options.port}`, logPath: this.logPath }
   }
 
-  async runScenario(steps: ServerScenarioStep[]): Promise<ServerScenarioResult> {
+  async runScenario(steps: ServerScenarioStep[], signal?: AbortSignal): Promise<ServerScenarioResult> {
     if (!this.child || this.child.exitCode !== null) throw new Error('server process is not running')
     const evidence: string[] = []
     for (const [index, step] of steps.entries()) {
+      if (signal) throwIfAborted(signal)
       const command = typeof step.command === 'string' ? step.command.trim() : ''
       if (!command || command.length > 1_000 || /[\r\n]/.test(command)) throw new Error(`invalid server scenario command at step ${index + 1}`)
-      this.sendCommand(command)
       const expected = (step.expect ?? []).filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()).slice(0, 20)
+      if (!expected.length) throw new Error(`scenario step ${index + 1} requires evidence`)
+      const cursor = this.sequence
+      this.sendCommand(command)
+      const matchingLine = (pattern: string): string | undefined => this.entries.find(entry => entry.sequence > cursor && entry.line.toLowerCase().includes(pattern.toLowerCase()))?.line
       const deadline = Date.now() + Math.min(Math.max(step.timeoutMs ?? 10_000, 1_000), 120_000)
       while (expected.length && Date.now() < deadline) {
-        const matched = expected.filter((pattern) => this.outputLines.some((line) => line.toLowerCase().includes(pattern.toLowerCase())))
-        if (matched.length === expected.length) { evidence.push(...matched.map((pattern) => `${index + 1}: ${pattern}`)); break }
-        if (this.child.exitCode !== null) return { success: false, completed: index, failedStep: index + 1, evidence, logPath: this.logPath }
+        if (signal) throwIfAborted(signal)
+        const matched = expected.map(matchingLine).filter((value): value is string => Boolean(value))
+        if (matched.length === expected.length) { evidence.push(...matched.map(value => `${index + 1}: ${value}`)); break }
+        if (!this.isRunning()) return { success: false, completed: index, failedStep: index + 1, evidence, logPath: this.logPath }
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
-      if (expected.length && expected.some((pattern) => !this.outputLines.some((line) => line.toLowerCase().includes(pattern.toLowerCase())))) return { success: false, completed: index, failedStep: index + 1, evidence, logPath: this.logPath }
+      if (expected.some(pattern => !matchingLine(pattern))) return { success: false, completed: index, failedStep: index + 1, evidence, logPath: this.logPath }
     }
     return { success: true, completed: steps.length, evidence, logPath: this.logPath }
   }
 
-  async stop(): Promise<void> {
+  async stop(timeoutMs = this.gracefulTimeoutMs): Promise<void> {
+    if (this.stopping) return this.stopping
+    const pending = this.stopInternal(timeoutMs)
+    this.stopping = pending
+    try { await pending } finally { if (this.stopping === pending) this.stopping = null }
+  }
+
+  private async stopInternal(timeoutMs: number): Promise<void> {
     const child = this.child
     if (!child) return
-    await stopProcessTree(child)
-    if (child.exitCode === null && child.signalCode === null) await Promise.race([new Promise<void>((resolve) => child.once('exit', () => resolve())), new Promise<void>((resolve) => setTimeout(resolve, 5_000))])
-    if (this.log) await new Promise<void>((resolve) => this.log?.end(resolve))
+    if (this.isRunning() && child.stdin.writable && !child.stdin.destroyed) this.sendCommand(this.stopCommand)
+    const exited = (): boolean => child.exitCode !== null || child.signalCode !== null || !child.pid
+    if (!await waitForCondition(exited, timeoutMs, 50)) await terminateProcessTree(child)
+    if (!await waitForCondition(exited, 5_000, 50)) throw new Error('服务端进程尚未确认退出')
+    const log = this.log
+    if (log && !log.writableEnded && !log.destroyed) await new Promise<void>(resolve => log.end(resolve))
     this.log = null
     this.child = null
   }
@@ -208,8 +265,11 @@ export class ServerProcess {
 export async function buildAndJoinServer(options: ServerJoinVerificationOptions & { outputDirectory: string; acceptEula: boolean; port: number }): Promise<ServerJoinVerificationResult> {
   if (!options.acceptEula) throw new Error('启动并验证前必须确认 Mojang EULA')
   options.onProgress?.({ message: options.serverPack ? '正在读取已同步的服务端包' : '正在构建验证用服务端包', fraction: 0.36 })
-  const pack = options.serverPack ?? await buildServerPack(options.project, { outputDirectory: options.outputDirectory, acceptEula: options.acceptEula, port: options.port, onlineMode: options.onlineMode === true })
-  await fs.writeFile(path.join(pack.root, 'eula.txt'), 'eula=true\n', 'utf8')
+  const built = options.serverPack ?? await buildServerPack(options.project, { outputDirectory: options.outputDirectory, acceptEula: options.acceptEula, port: options.port, onlineMode: options.onlineMode === true })
+  const instanceRoot = path.join(options.project.path, '.modmind', 'server', 'instances', 'join-verification')
+  await deployServerInstance(built.root, instanceRoot)
+  const pack = { ...built, root: instanceRoot, manifestPath: path.join(instanceRoot, 'modmind.server.json') }
+  await configureLocalServer(pack.root, options.port, options.onlineMode === true, options.acceptEula)
   options.onProgress?.({ message: '正在下载并安装验证服务端运行时', fraction: 0.44 })
   const runtime = await installServerRuntime({
     serverPack: pack,
@@ -229,7 +289,7 @@ export async function buildAndJoinServer(options: ServerJoinVerificationOptions 
     const headless = await options.headless.run({
       project: options.project,
       gameDirectory: options.gameDirectory,
-      sourceModsDirectory: path.join(pack.root, 'mods'),
+      sourceModsDirectory: modpackModsRoot(options.project, await readModpackManifest(options.project)),
       javaPath: options.javaPath,
       managedMinecraftDirectory: options.managedMinecraftDirectory,
       stableWindowMs: options.stableWindowMs ?? 20_000,

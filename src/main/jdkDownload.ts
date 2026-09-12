@@ -6,6 +6,7 @@ import extractZip from 'extract-zip'
 import { diagnosticJournal } from './diagnosticLog'
 import { verifiedDownload } from './downloadService'
 import { fetchJsonWithRetry } from './networkRequest'
+import { withToolInstallLock } from './managedToolInstall'
 
 interface AdoptiumAsset {
   binary?: {
@@ -128,37 +129,48 @@ async function findJdkHome(root: string): Promise<string | null> {
   return null
 }
 
+async function validCachedJdk(home: string, major: number): Promise<boolean> {
+  const release = await fs.readFile(path.join(home, 'release'), 'utf8').catch(() => '')
+  const version = release.match(/^JAVA_VERSION="([^"]+)"/m)?.[1]
+  const actual = version?.startsWith('1.') ? Number(version.split('.')[1]) : Number(version?.split('.')[0])
+  if (actual !== major) return false
+  return (await Promise.all(['java', 'javac', 'jar'].map(tool => fs.stat(path.join(home, 'bin', `${tool}${process.platform === 'win32' ? '.exe' : ''}`)).then(stat => stat.isFile() && stat.size > 0).catch(() => false)))).every(Boolean)
+}
+
 export async function ensureManagedJdk(
   cacheRoot: string,
   major: number,
   onProgress?: (progress: ManagedJdkProgress) => void
 ): Promise<ManagedJdkResult> {
+  cacheRoot = path.resolve(cacheRoot)
   await fs.mkdir(cacheRoot, { recursive: true })
   const destination = path.join(cacheRoot, `temurin-${major}-${platformName(process.platform)}-${architectureName(process.arch)}`)
-  const installed = await findJdkHome(destination).catch(() => null)
-  if (installed) return { home: installed, major, source: 'ModMind JDK 缓存' }
+  return withToolInstallLock(destination, undefined, async () => {
+    const installed = await findJdkHome(destination).catch(() => null)
+    if (installed && await validCachedJdk(installed, major)) return { home: installed, major, source: 'ModMind JDK 缓存' }
 
-  const asset = await fetchAsset(major)
-  const temporary = await fs.mkdtemp(path.join(cacheRoot, `.temurin-${major}-`))
-  const archive = path.join(os.tmpdir(), `modmind-${process.pid}-${Date.now()}-${asset.name}`)
-  try {
-    const source = await downloadVerified(jdkDownloadSources(asset.name, major, asset.link), archive, asset.checksum, asset.size ?? 0, onProgress)
-    const extracted = path.join(temporary, 'extracted')
-    await fs.mkdir(extracted, { recursive: true })
-    if (asset.name.endsWith('.zip')) await extractZip(archive, { dir: extracted })
-    else if (asset.name.endsWith('.tar.gz')) await extractTar(archive, extracted)
-    else throw new Error(`不支持的 JDK 归档格式：${asset.name}`)
-    const home = await findJdkHome(extracted)
-    if (!home) throw new Error('JDK 归档中没有找到 javac')
-    if (process.platform !== 'win32') {
-      for (const tool of ['java', 'javac', 'javap']) await fs.chmod(path.join(home, 'bin', tool), 0o755)
+    const asset = await fetchAsset(major)
+    const temporary = await fs.mkdtemp(path.join(cacheRoot, `.temurin-${major}-`))
+    const archive = path.join(os.tmpdir(), `modmind-${process.pid}-${Date.now()}-${asset.name}`)
+    try {
+      const source = await downloadVerified(jdkDownloadSources(asset.name, major, asset.link), archive, asset.checksum, asset.size ?? 0, onProgress)
+      const extracted = path.join(temporary, 'extracted')
+      await fs.mkdir(extracted, { recursive: true })
+      if (asset.name.endsWith('.zip')) await extractZip(archive, { dir: extracted })
+      else if (asset.name.endsWith('.tar.gz')) await extractTar(archive, extracted)
+      else throw new Error(`不支持的 JDK 归档格式：${asset.name}`)
+      const home = await findJdkHome(extracted)
+      if (!home || !await validCachedJdk(home, major)) throw new Error('JDK 归档缺少完整工具或 Java 主版本不匹配')
+      if (process.platform !== 'win32') {
+        for (const tool of ['java', 'javac', 'javap']) await fs.chmod(path.join(home, 'bin', tool), 0o755)
+      }
+      await fs.rm(destination, { recursive: true, force: true })
+      await fs.mkdir(path.dirname(destination), { recursive: true })
+      await fs.rename(home, destination)
+      return { home: destination, major, source }
+    } finally {
+      await fs.rm(archive, { force: true }).catch(() => undefined)
+      await fs.rm(temporary, { recursive: true, force: true }).catch(() => undefined)
     }
-    await fs.rm(destination, { recursive: true, force: true })
-    await fs.mkdir(path.dirname(destination), { recursive: true })
-    await fs.rename(home, destination)
-    return { home: destination, major, source }
-  } finally {
-    await fs.rm(archive, { force: true }).catch(() => undefined)
-    await fs.rm(temporary, { recursive: true, force: true }).catch(() => undefined)
-  }
+  })
 }

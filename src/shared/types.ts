@@ -8,8 +8,9 @@ import type {AdvancedAssetCandidate, AdvancedAssetComparison, AdvancedAssetPrevi
 
 export type JavaLoaderKind = 'fabric' | 'quilt' | 'forge' | 'neoforge'
 export type AddonPlatformKind = 'bedrock' | 'netease-pc' | 'netease-mobile'
-export type LoaderKind = JavaLoaderKind | AddonPlatformKind
-export type ProjectKind = 'mod' | 'modpack'
+export type ServerPluginPlatform = 'paper' | 'spigot' | 'folia' | 'velocity'
+export type LoaderKind = JavaLoaderKind | AddonPlatformKind | ServerPluginPlatform
+export type ProjectKind = 'mod' | 'modpack' | 'server-plugin'
 
 export type LoaderSupportTier = 'stable' | 'experimental'
 
@@ -1192,6 +1193,8 @@ export interface DownloadActivitySnapshot {
 }
 
 export interface ModMindApi {
+  resourcePacks: import('./resourcePack').ResourcePackApi
+  serverPlugin: import('./serverPlugin').ServerPluginApi
   app: {
     getPlatformInfo: () => Readonly<import('./platform').RuntimePlatformInfo>
     getVersion: () => Promise<string>

@@ -20,11 +20,12 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
   const followRef = useRef(true)
   const frame = useRef<number>()
   const updateFollowing = useCallback((value: boolean) => {
+    if (followRef.current === value) return
     followRef.current = value
     setFollowing(value)
   }, [])
   const scrollToLatest = useCallback(() => {
-    if (frame.current !== undefined) cancelAnimationFrame(frame.current)
+    if (!followRef.current || frame.current !== undefined) return
     frame.current = requestAnimationFrame(() => {
       frame.current = undefined
       if (followRef.current && scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'instant' })
@@ -50,7 +51,8 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
       if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)) pause()
     }
     const onPointerDown = (event: PointerEvent): void => {
-      if (event.target === scroller) pause()
+      // Reading and opening historical steps take priority over output following.
+      if (event.button === 0) pause()
     }
     const onScroll = (): void => {
       if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 4) updateFollowing(true)
@@ -76,6 +78,7 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
       scroller.removeEventListener('pointerdown', onPointerDown)
       scroller.removeEventListener('scroll', onScroll)
       if (frame.current !== undefined) cancelAnimationFrame(frame.current)
+      frame.current = undefined
     }
   }, [scroller, scrollToLatest, updateFollowing])
 
@@ -83,6 +86,8 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
     <FooterContext.Provider value={footer}>
       <Virtuoso
         className="agent-conversation"
+        tabIndex={0}
+        aria-label="工作台对话记录"
         data={rows}
         computeItemKey={(_index, row) => row.id}
         initialTopMostItemIndex={rows.length - 1}

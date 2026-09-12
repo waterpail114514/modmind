@@ -5,9 +5,10 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { diagnosticJournal } from './diagnosticLog'
 import { downloadActivities } from './downloadActivityService'
-import { proxiedUndiciRequest } from './networkRequest'
+import { disposeResponseBody, proxiedUndiciRequest, retryAfterDelay } from './networkRequest'
+import { setTimeout as delay } from 'node:timers/promises'
 
-export type DownloadHashAlgorithm = 'sha1' | 'sha256' | 'sha512'
+export type DownloadHashAlgorithm = 'sha1' | 'sha256' | 'sha512' | 'md5'
 
 export interface DownloadSource {
   id: string
@@ -126,37 +127,42 @@ async function streamDownload(
     headers: { 'User-Agent': 'ModMind/1.3 (verified-download)', ...(source.headers ?? {}) },
     signal: abortSignal(request.signal, timeoutMs),
     bodyTimeout: timeoutMs,
-    headersTimeout: Math.min(timeoutMs, 60_000)
+    headersTimeout: Math.min(timeoutMs, 60_000),
+    requireHttpsRedirects: true
   })
-  if (!response.ok) throw new Error(`HTTP ${response.statusCode}`)
-  if (!isAllowedDownloadUrl(source.url)) throw new Error('redirected to a non-HTTPS URL')
-  const declared = Number(response.headers.get('content-length') ?? 0)
-  if (declared > maxBytes) throw new Error(`content length ${declared} exceeds ${maxBytes}`)
-  const total = declared || undefined
-  let bytes = 0
-  const meter = new Transform({
-    transform(chunk, _encoding, callback) {
-      bytes += chunk.length
-      if (bytes > maxBytes) {
-        callback(new Error(`download exceeds ${maxBytes} bytes`))
-        return
+  try {
+    if (!response.ok) throw Object.assign(new Error(`HTTP ${response.statusCode}`), { retryAfterMs: retryAfterDelay(response.headers.get('retry-after'), 250) })
+    if (!isAllowedDownloadUrl(source.url)) throw new Error('redirected to a non-HTTPS URL')
+    const declared = Number(response.headers.get('content-length') ?? 0)
+    if (!Number.isSafeInteger(declared) || declared < 0) throw new Error('invalid response content length')
+    if (declared > maxBytes) throw new Error(`content length ${declared} exceeds ${maxBytes}`)
+    const total = declared || undefined
+    let bytes = 0
+    const meter = new Transform({
+      transform(chunk, _encoding, callback) {
+        bytes += chunk.length
+        if (bytes > maxBytes) {
+          callback(new Error(`download exceeds ${maxBytes} bytes`))
+          return
+        }
+        request.onProgress?.({ source, downloaded: bytes, total })
+        callback(null, chunk)
       }
-      request.onProgress?.({ source, downloaded: bytes, total })
-      callback(null, chunk)
+    })
+    const hasher = request.expectedHash ? hashStream(request.expectedHash.algorithm) : undefined
+    await fs.mkdir(path.dirname(partial), { recursive: true })
+    const input = response.body as unknown as NodeJS.ReadableStream
+    const output = createWriteStream(partial, { flags: 'w', mode: 0o600 })
+    if (hasher) await pipeline(input, meter, hasher, output)
+    else await pipeline(input, meter, output)
+    if (!bytes) throw new Error('download returned an empty file')
+    if (declared && bytes !== declared) throw new Error('content length mismatch')
+    const hash = hasher ? (hasher as Transform & { digest?: string }).digest : undefined
+    if (request.expectedHash && hash?.toLowerCase() !== request.expectedHash.value.toLowerCase()) {
+      throw new Error(`${request.expectedHash.algorithm} mismatch: expected ${request.expectedHash.value}, got ${hash ?? 'unknown'}`)
     }
-  })
-  const hasher = request.expectedHash ? hashStream(request.expectedHash.algorithm) : undefined
-  await fs.mkdir(path.dirname(partial), { recursive: true })
-  const input = response.body as unknown as NodeJS.ReadableStream
-  const output = createWriteStream(partial, { flags: 'w', mode: 0o600 })
-  if (hasher) await pipeline(input, meter, hasher, output)
-  else await pipeline(input, meter, output)
-  if (!bytes) throw new Error('download returned an empty file')
-  const hash = hasher ? (hasher as Transform & { digest?: string }).digest : undefined
-  if (request.expectedHash && hash?.toLowerCase() !== request.expectedHash.value.toLowerCase()) {
-    throw new Error(`${request.expectedHash.algorithm} mismatch: expected ${request.expectedHash.value}, got ${hash ?? 'unknown'}`)
-  }
-  return { bytes, hash }
+    return { bytes, hash }
+  } finally { disposeResponseBody(response) }
 }
 
 export class DownloadManager {
@@ -189,7 +195,7 @@ export class DownloadManager {
     const retries = configuredRetries ?? DEFAULT_RETRIES
     const failures: DownloadAttemptFailure[] = []
     const destination = path.resolve(request.destination)
-    const partial = `${destination}.partial-${process.pid}-${Date.now()}`
+    const partial = `${destination}.partial-${randomUUID()}`
     const downloadId = randomUUID()
     const activityId = request.trackActivity === false
       ? ''
@@ -253,7 +259,7 @@ export class DownloadManager {
               }
             }, maxBytes, timeoutMs)
             await fs.mkdir(path.dirname(destination), { recursive: true })
-            await fs.rm(destination, { force: true })
+            request.signal?.throwIfAborted()
             await fs.rename(partial, destination)
             diagnosticJournal.record({
               subsystem: 'download',
@@ -263,7 +269,7 @@ export class DownloadManager {
               durationMs: Date.now() - startedAt,
               data: { downloadId, source: diagnosticSource(source), bytes: result.bytes, attempts, previousFailures: failures }
             })
-            downloadActivities.complete(activityId, `已从 ${source.label} 下载并校验`)
+            downloadActivities.complete(activityId, `已从 ${source.label} 下载${request.expectedHash ? `并通过 ${request.expectedHash.algorithm} 校验` : '（上游未提供校验值）'}`)
             return { source, destination, bytes: result.bytes, ...(result.hash ? { hash: result.hash } : {}), attempts, failures }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -280,7 +286,7 @@ export class DownloadManager {
             })
             if (request.signal?.aborted) throw Object.assign(new Error('download cancelled'), { name: 'AbortError', cause: error })
             const maxAttempts = configuredRetries ?? (isPermanentDownloadError(error) ? 2 : 3)
-            if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+            if (attempt < maxAttempts) await delay((error as { retryAfterMs?: number })?.retryAfterMs ?? 250 * attempt, undefined, { signal: request.signal })
             else break
           }
         }

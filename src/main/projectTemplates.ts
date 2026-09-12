@@ -10,6 +10,7 @@ import {
 import { CURRENT_PROJECT_VERSION } from './projectVersion'
 import { bedrockTemplateFiles, neteaseTemplateFiles } from './addonTemplates'
 import { normalizeProjectName, projectPropertiesValue } from '../shared/projectName'
+import { pluginTemplateFiles } from './serverPluginTemplates'
 
 function slugPackage(project: ProjectInfo): { name: string; path: string } {
   const name = `dev.modmind.${project.namespace}`
@@ -777,6 +778,7 @@ SOFTWARE.
 }
 
 export function projectTemplateFiles(project: ProjectInfo, includeStarter = true): Record<string, string> {
+  if (project.kind === 'server-plugin') return pluginTemplateFiles(project, includeStarter)
   // Keep template generation safe even when called with legacy or externally loaded metadata.
   project = { ...project, name: normalizeProjectName(project.name) }
   assertProjectCreationSupported(project.loader, project.minecraftVersion)

@@ -5,12 +5,20 @@ import { isModpackProject, readModpackManifest } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { descriptorPath } from './projectTemplates'
 import { inspectBedrockAddon, inspectNeteaseProject } from './bedrockAddon'
+import { inspectPluginProject } from './serverPluginService'
 
 async function exists(target: string): Promise<boolean> {
   return await fs.access(target).then(() => true).catch(() => false)
 }
 
 export async function inspectProjectPreflight(project: ProjectInfo, manifestName = 'modmind.project.json'): Promise<{ success: boolean; logs: string[] }> {
+  if (project.kind === 'server-plugin') {
+    const logs: string[] = []
+    for (const file of [manifestName, await exists(path.join(project.path, 'pom.xml')) ? 'pom.xml' : 'gradle/wrapper/gradle-wrapper.properties']) logs.push(`${await exists(path.join(project.path, file)) ? 'PASS' : 'FAIL'}  ${file}`)
+    try { const descriptor = await inspectPluginProject(project); logs.push(`${descriptor || project.loader === 'velocity' ? 'PASS' : 'FAIL'}  插件描述文件${project.loader === 'velocity' ? '（构建时生成）' : ''}`) }
+    catch (error) { logs.push(`FAIL  ${error instanceof Error ? error.message : String(error)}`) }
+    return { success: !logs.some(line => line.startsWith('FAIL')), logs }
+  }
   if (isModpackProject(project)) {
     const logs: string[] = []
     try {

@@ -99,6 +99,9 @@ export interface LocalServerOperationProgress {
 }
 
 export interface LocalServerState {
+  projectPath?: string
+  sessionId?: string
+  canCancel?: boolean
   stage: LocalServerStage
   minecraftVersion: string
   loader?: LoaderKind

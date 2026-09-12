@@ -80,7 +80,7 @@ export async function initializeDraftProject(root: string, services: {
     const missing = missingDraftDetails(original)
     if (missing.length) throw new Error(`请先在对话中补充：${missing.join('、')}`)
     const target = original.draft.target as ProjectCreateInput
-    if (!(PROJECT_PLATFORMS as readonly string[]).includes(target.loader) || !['mod', 'modpack'].includes(target.kind ?? '')) throw new Error('不支持的工程类型或平台')
+    if (!(PROJECT_PLATFORMS as readonly string[]).includes(target.loader) || !['mod', 'modpack', 'server-plugin'].includes(target.kind ?? '')) throw new Error('不支持的工程类型或平台')
     if (target.kind === 'modpack' && !isJavaLoader(target.loader)) throw new Error('整合包目前仅支持 Java 版平台')
     const compatibility = await services.resolve(target.loader, target.minecraftVersion)
     const project: ProjectInfo = { ...original, kind: target.kind, loader: target.loader, minecraftVersion: target.minecraftVersion, loaderVersion: compatibility.loaderVersion, apiVersion: compatibility.apiVersion, qslVersion: compatibility.qslVersion, javaVersion: compatibility.javaVersion }

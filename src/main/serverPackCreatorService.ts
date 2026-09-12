@@ -5,6 +5,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
 import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides } from './modpackService'
+import { commitDirectory } from './serverInstance'
 import { readModpackLock } from './modpackLockService'
 import { modpackModsRoot } from './modpackPaths'
 
@@ -333,8 +334,7 @@ export async function buildWithServerPackCreator(options: ServerPackCreatorOptio
     }
     const manifestPath = path.join(staging, 'modmind.server.json')
     await fs.writeFile(manifestPath, `${JSON.stringify(packManifest, null, 2)}\n`, 'utf8')
-    await fs.rm(output, { recursive: true, force: true })
-    await fs.rename(staging, output)
+    await commitDirectory(staging, output)
     return { root: output, copiedMods: mods, skippedClientMods, directMods, warnings, manifestPath: path.join(output, 'modmind.server.json'), engine: 'serverpackcreator', engineVersion: SERVER_PACK_CREATOR_VERSION, logPath }
   } finally {
     await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)

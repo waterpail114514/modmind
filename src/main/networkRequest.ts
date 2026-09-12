@@ -1,4 +1,5 @@
 import { Agent, ProxyAgent, interceptors, request } from 'undici'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export interface FetchTextOptions {
   timeoutMs?: number
@@ -11,8 +12,11 @@ export interface FetchTextOptions {
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_ATTEMPTS = 3
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+export function retryAfterDelay(value: string | null, fallback: number, now = Date.now()): number {
+  if (!value) return fallback
+  const seconds = Number(value)
+  const milliseconds = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - now
+  return Number.isFinite(milliseconds) ? Math.min(60_000, Math.max(0, milliseconds)) : fallback
 }
 
 /**
@@ -40,21 +44,31 @@ export async function fetchTextWithRetry(url: string, options: FetchTextOptions 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   let lastError: unknown
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let retryable = true
+    let retryDelay = attempt * 350
     try {
+      options.signal?.throwIfAborted()
+      const signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(options.signal ? [options.signal] : [])])
       const response = await proxiedUndiciRequest(url, {
         method: options.method ?? 'GET',
         headers: { 'User-Agent': 'ModMind/1.4 (network-request)', ...(options.headers ?? {}) },
-        signal: options.signal,
+        signal,
         bodyTimeout: timeoutMs,
         headersTimeout: timeoutMs,
         ...(body !== undefined ? { body } : {})
       })
-      if (!response.ok) throw new Error(`${url} returned HTTP ${response.statusCode}`)
-      return await response.body.text()
+      try {
+        if (!response.ok) {
+          retryDelay = retryAfterDelay(response.headers.get('retry-after'), retryDelay)
+          retryable = response.statusCode >= 500 || [408, 425, 429].includes(response.statusCode)
+          throw new Error(`${url} returned HTTP ${response.statusCode}`)
+        }
+        return await response.body.text()
+      } finally { disposeResponseBody(response) }
     } catch (error) {
       lastError = error
-      if (options.signal?.aborted || attempt >= attempts) break
-      await delay(attempt * 350)
+      if (options.signal?.aborted || !retryable || attempt >= attempts) break
+      await delay(retryDelay, undefined, { signal: options.signal })
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError))
@@ -67,10 +81,19 @@ export async function fetchTextWithRetry(url: string, options: FetchTextOptions 
  */
 let proxyOverrideUrl = ''
 let proxyOverrideAgent: ProxyAgent | undefined
+let environmentProxyUrl = ''
+let environmentProxyAgent: ProxyAgent | undefined
+const directAgent = new Agent({ connections: 8, keepAliveTimeout: 10_000, keepAliveMaxTimeout: 30_000 })
+
+export async function shutdownNetwork(): Promise<void> {
+  await Promise.allSettled([directAgent.destroy(), proxyOverrideAgent?.destroy(), environmentProxyAgent?.destroy()])
+  proxyOverrideAgent = undefined
+  environmentProxyAgent = undefined
+}
 
 function newProxyAgent(proxyUrl: string): ProxyAgent | undefined {
   try {
-    return new ProxyAgent(/^[a-z][a-z0-9+.-]*:\/\//i.test(proxyUrl) ? proxyUrl : `http://${proxyUrl}`)
+    return new ProxyAgent({ uri: /^[a-z][a-z0-9+.-]*:\/\//i.test(proxyUrl) ? proxyUrl : `http://${proxyUrl}`, connections: 8, keepAliveTimeout: 10_000, keepAliveMaxTimeout: 30_000 })
   } catch {
     return undefined
   }
@@ -119,8 +142,12 @@ export function proxyDispatcher(url?: string): ProxyAgent | undefined {
   if (url && (process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy) && shouldBypassProxy(url)) return undefined
   const proxyUrl = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy
   const trimmed = proxyUrl?.trim()
-  if (!trimmed) return undefined
-  return newProxyAgent(trimmed)
+  if (trimmed !== environmentProxyUrl) {
+    void environmentProxyAgent?.close().catch(() => undefined)
+    environmentProxyUrl = trimmed ?? ''
+    environmentProxyAgent = trimmed ? newProxyAgent(trimmed) : undefined
+  }
+  return environmentProxyAgent
 }
 
 export interface ProxiedRequestOptions {
@@ -130,6 +157,7 @@ export interface ProxiedRequestOptions {
   bodyTimeout?: number
   headersTimeout?: number
   body?: string
+  requireHttpsRedirects?: boolean
 }
 
 export interface ProxiedResponse {
@@ -137,7 +165,14 @@ export interface ProxiedResponse {
   statusCode: number
   headers: { get(name: string): string | null }
   /** undici's body is already a Node readable; it also exposes .text(). */
-  body: NodeJS.ReadableStream & { text(): Promise<string> }
+  body: NodeJS.ReadableStream & { text(): Promise<string>; destroy?(): void }
+}
+
+/** Undici emits an AbortError when destroying an unread error response. */
+export function disposeResponseBody(response: ProxiedResponse): void {
+  if (!response.body.destroy) return
+  response.body.once('error', () => undefined)
+  response.body.destroy()
 }
 
 /**
@@ -153,10 +188,32 @@ export async function proxiedUndiciRequest(url: string, options: ProxiedRequestO
 }
 
 async function actualProxiedRequest(url: string, options: ProxiedRequestOptions): Promise<ProxiedResponse> {
+  if (options.requireHttpsRedirects) {
+    let current = new URL(url)
+    let headers = { ...options.headers }
+    for (let redirects = 0; redirects <= 5; redirects += 1) {
+      const response = await request(current, {
+        method: 'GET', headers, signal: options.signal, bodyTimeout: options.bodyTimeout,
+        headersTimeout: options.headersTimeout, dispatcher: proxyDispatcher(current.href) ?? directAgent
+      })
+      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+        response.body.on('error', () => undefined)
+        response.body.destroy()
+        if (redirects === 5) throw new Error('download exceeds redirect limit')
+        const next = new URL(String(response.headers.location), current)
+        if (next.protocol !== 'https:') throw new Error('download redirected to a non-HTTPS URL')
+        if (next.origin !== current.origin) headers = Object.fromEntries(Object.entries(headers).filter(([key]) => !['authorization', 'cookie', 'proxy-authorization', 'host'].includes(key.toLowerCase())))
+        current = next
+        continue
+      }
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, statusCode: response.statusCode, headers: { get: name => response.headers[name.toLowerCase()]?.toString() ?? null }, body: response.body as unknown as ProxiedResponse['body'] }
+    }
+    throw new Error('download exceeds redirect limit')
+  }
   // A custom dispatcher cannot take maxRedirections, so always compose the
   // redirect interceptor — with a ProxyAgent when configured, a default Agent
   // otherwise.
-  const base = proxyDispatcher(url) ?? new Agent()
+  const base = proxyDispatcher(url) ?? directAgent
   const response = await request(url, {
     method: options.method ?? 'GET',
     headers: options.headers,

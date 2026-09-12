@@ -102,9 +102,13 @@ const thinkingTopics = [
   ['把灵感整理成方案', '为当前项目构思一个玩法，并整理为目标、核心循环与待验证问题。']
 ] as const
 
-export function createChatStarters(mode: ChatStarterMode, modpack = false): { greeting: string; suggestions: ChatStarter[] } {
+export function createChatStarters(mode: ChatStarterMode, modpack = false, serverPlugin = false): { greeting: string; suggestions: ChatStarter[] } {
   const greetings = mode === 'workbench' ? makingGreetings : thinkingGreetings
-  const pool: ChatStarter[] = mode === 'workbench'
+  const pool: ChatStarter[] = serverPlugin ? [
+    { title: '每日签到与奖励', prompt: mode === 'workbench' ? '为当前服务端插件实现每日签到、权限与持久化，验证重复领取和重启后记录。' : '帮我设计适合当前服务器的签到奖励，讨论防刷与经济平衡，先不修改文件。' },
+    { title: '家与传送', prompt: mode === 'workbench' ? '实现设家与回家指令，包含权限、移动取消与数据保存。使用当前平台 API。' : '讨论传送插件的冷却、成本与多人体验，优先复用成熟 API，先不修改工程。' },
+    { title: '插件联动与兼容', prompt: mode === 'workbench' ? '检查当前插件 API、运行依赖和目标核心，补充可验证的兼容检查。' : '分析当前插件适合联动哪些成熟插件，以及 Paper、Spigot、Folia 或代理目标的边界。' }
+  ] : mode === 'workbench'
     ? makingTopics.map(([title, concept]) => ({ title, prompt: modpack
       ? `我想为当前整合包加入${concept}。先检查现有内容，优先利用已有模组和配置实现，避免重复安装。`
       : `我想在当前模组中实现${concept}。先检查项目已有实现，再完成一个可验证的基础版本。` }))
@@ -113,5 +117,5 @@ export function createChatStarters(mode: ChatStarterMode, modpack = false): { gr
     const j = Math.floor(Math.random() * (i + 1))
     ;[pool[i], pool[j]] = [pool[j], pool[i]]
   }
-  return { greeting: greetings[Math.floor(Math.random() * greetings.length)].replaceAll('{project}', modpack ? '整合包' : '模组'), suggestions: pool.slice(0, 3) }
+  return { greeting: greetings[Math.floor(Math.random() * greetings.length)].replaceAll('{project}', serverPlugin ? '服务端插件' : modpack ? '整合包' : '模组'), suggestions: pool.slice(0, 3) }
 }

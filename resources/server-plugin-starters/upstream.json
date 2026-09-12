@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/minecraft-dev/MinecraftDev",
+  "commit": "dec3e63ba62b9f6aaea5ad6a21bc011fe087b08c",
+  "license": "LGPL-3.0",
+  "files": [
+    {
+      "file": "bukkit.java.ft",
+      "upstream": "src/main/resources/fileTemplates/j2ee/bukkit/Bukkit Main Class.java.ft",
+      "sha256": "64b3245a8df34c631eed903792eaf890b3548892f83b9603b4516834fff6164f"
+    },
+    {
+      "file": "velocity3.java.ft",
+      "upstream": "src/main/resources/fileTemplates/j2ee/velocity/Velocity Main Class.java.ft",
+      "sha256": "ccaa04437859d017cd58c85164d47d1a93e5a402a7bb85e4ff96f89bfa5e0b10"
+    },
+    {
+      "file": "velocity4.java.ft",
+      "upstream": "src/main/resources/fileTemplates/j2ee/velocity/Velocity Main Class V2.java.ft",
+      "sha256": "f17ef013abe169d0753ab585aecba4a26c9f4aa55d49e923e752aa45e409c60f"
+    },
+    {
+      "file": "LICENSE-LGPL.txt",
+      "upstream": "license.txt",
+      "sha256": "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118"
+    }
+  ]
+}

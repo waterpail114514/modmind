@@ -1,5 +1,6 @@
 /** Short routing metadata only; skill bodies are read by the agent on demand. */
 export const WORKBENCH_SKILL_ROUTES = [
+  ['minecraft-server-plugin-development', '开发、迁移、修复或验收 Paper/Spigot/Folia/Velocity 服务端插件；包含生命周期、线程调度、内存与资源清理；不用于 ModMind 应用扩展或 Fabric/Forge Mod。'],
   ['minecraft-mod-development', '实现 Java Mod 的物品、方块、实体、界面、网络、世界生成等功能；纯问答、专项修复或迁移不默认叠加此 skill。'],
   ['minecraft-addon-development', '编写对第三方 Mod 的扩展、联动或兼容代码，需要其 API、注册项、源码或 JAR；仅给整合包安装已有 Mod 不使用。'],
   ['minecraft-build-repair', '定位并修复实际编译、Gradle、JDK、依赖、Mixin、注册或启动错误；没有故障时不预先读取。'],

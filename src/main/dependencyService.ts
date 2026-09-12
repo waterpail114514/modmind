@@ -11,7 +11,7 @@ import type {
   ManagedDependency
 } from '../shared/production'
 import type { ProjectInfo } from '../shared/types'
-import { isJavaLoader, platformLabel } from '../shared/projectPlatform'
+import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../shared/projectPlatform'
 import { verifiedDownload } from './downloadService'
 import { fetchJsonWithRetry } from './networkRequest'
 
@@ -252,7 +252,7 @@ export class DependencyService {
 
   private javaProject(): ProjectInfo {
     const project = this.getProject()
-    if (!isJavaLoader(project.loader)) throw new Error(`${platformLabel(project.loader)} 不使用 Maven/Gradle Mod 依赖中心`)
+    if (!isJavaLoader(project.loader) && !isServerPluginPlatform(project.loader)) throw new Error(`${platformLabel(project.loader)} 不使用 Maven/Gradle 依赖中心`)
     return project
   }
 
@@ -289,6 +289,7 @@ export class DependencyService {
 
   async install(input: DependencyInstallInput): Promise<ManagedDependency> {
     const project = this.javaProject()
+    if (project.kind === 'server-plugin') throw new Error('运行插件请使用插件依赖工具；编译 API 使用 Maven 坐标')
     const projectId = safeSegment(input.projectId, '项目 ID')
     const available = await this.versions(projectId)
     const selected = input.versionId

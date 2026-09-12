@@ -151,7 +151,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
     <div className="settings-page plugins-page">
       <div className="content-toolbar">
         <div>
-          <h1>插件 <i className="sidebar-beta-badge" title="新功能测试中">Beta</i></h1>
+          <h1>插件</h1>
           <p>管理完全可信的本机 Node 扩展与沙箱面板；保存文件即自动热重载</p>
         </div>
         <div className="plugins-toolbar-actions">
@@ -176,8 +176,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
         </div>
       </div>
 
-      <div className="plugin-beta-banner">
-        <span className="sidebar-beta-badge">Beta</span>
+      <div className="plugin-trust-banner">
         <span>后端插件拥有完整 Node 权限，可读写本机文件、联网和启动进程。只安装并启用你完全信任的插件。</span>
       </div>
 

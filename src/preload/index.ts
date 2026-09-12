@@ -46,6 +46,32 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 const api: ModMindApi = {
+  resourcePacks: {
+    list: root => invoke('resource-packs:list', root),
+    create: (root, input) => invoke('resource-packs:create', root, input),
+    import: (root, directory) => invoke('resource-packs:import', root, directory),
+    read: (root, id, file) => invoke('resource-packs:read', root, id, file),
+    write: (root, id, file, content, baseline) => invoke('resource-packs:write', root, id, file, content, baseline),
+    importAssets: (root, id, directory) => invoke('resource-packs:importAssets', root, id, directory),
+    removeFile: (root, id, file, baseline) => invoke('resource-packs:removeFile', root, id, file, baseline),
+    validate: (root, id) => invoke('resource-packs:validate', root, id),
+    export: (root, id) => invoke('resource-packs:export', root, id),
+    deploy: (root, id) => invoke('resource-packs:deploy', root, id)
+  },
+  serverPlugin: {
+    search: (root, query) => invoke('server-plugin:search', root, query),
+    dependencyVersions: (root, id) => invoke('server-plugin:dependencyVersions', root, id),
+    downloadDependency: (root, versionId) => invoke('server-plugin:downloadDependency', root, versionId),
+    profile: projectPath => invoke('server-plugin:profile', projectPath),
+    saveProfile: (projectPath, profile) => invoke('server-plugin:saveProfile', projectPath, profile),
+    versions: core => invoke('server-plugin:versions', core),
+    builds: (core, version) => invoke('server-plugin:builds', core, version),
+    importCore: projectPath => invoke('server-plugin:importCore', projectPath),
+    dependencies: projectPath => invoke('server-plugin:dependencies', projectPath),
+    importDependencies: projectPath => invoke('server-plugin:importDependencies', projectPath),
+    removeDependency: (projectPath, fileName) => invoke('server-plugin:removeDependency', projectPath, fileName),
+    inspect: projectPath => invoke('server-plugin:inspect', projectPath)
+  },
   app: {
     getPlatformInfo: () => platformInfo,
     getVersion: () => invoke('app:version'),

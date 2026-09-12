@@ -2,7 +2,10 @@ import { spawnManaged, stopProcessTree } from './processTree'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { JavaLoaderKind, ProjectInfo, ServerPackManifest } from '../shared/types'
+import type { JavaLoaderKind, LoaderKind, ProjectInfo, ServerPackManifest } from '../shared/types'
+import { managedJavaEnvironment } from './javaEnvironment'
+import { fetchJsonWithRetry } from './networkRequest'
+import { commitDirectory, preserveLegacyServerInstance } from './serverInstance'
 import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { auditModpackLock, readModpackLock } from './modpackLockService'
@@ -49,7 +52,7 @@ export interface ServerRuntimeResult {
   serverJar?: string
   launchCommand: string[]
   windowsVerbatimArguments?: boolean
-  loader: JavaLoaderKind
+  loader: LoaderKind
   loaderVersion: string
 }
 
@@ -239,7 +242,8 @@ async function copyFileChecked(source: string, target: string): Promise<{ size: 
 }
 
 async function runJava(javaPath: string, args: string[], cwd: string, signal?: AbortSignal): Promise<void> {
-  const child = spawnManaged(javaPath, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: process.env })
+  signal?.throwIfAborted()
+  const child = spawnManaged(javaPath, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: managedJavaEnvironment() })
   let output = ''
   const append = (chunk: Buffer): void => { output = `${output}${chunk.toString('utf8')}`.slice(-80_000) }
   child.stdout.on('data', append)
@@ -261,8 +265,7 @@ function loaderSources(loader: JavaLoaderKind, minecraftVersion: string, loaderV
     return { direct: true, sources: [{ id: 'fabric-meta', label: 'Fabric Meta', url }] }
   }
   if (loader === 'quilt') {
-    const url = `https://meta.quiltmc.org/v3/versions/loader/${encodeURIComponent(minecraftVersion)}/${encodeURIComponent(loaderVersion)}/1.0.0/server/jar`
-    return { direct: true, sources: [{ id: 'quilt-meta', label: 'Quilt Meta', url }] }
+    return { direct: false, sources: [{ id: 'quilt-meta', label: 'Quilt Installer 元数据', url: 'https://meta.quiltmc.org/v3/versions/installer' }] }
   }
   const file = loader === 'forge' ? `forge-${minecraftVersion}-${loaderVersion}-installer.jar` : `neoforge-${loaderVersion}-installer.jar`
   const primary = loader === 'forge' ? `https://maven.minecraftforge.net/net/minecraftforge/forge/${minecraftVersion}-${loaderVersion}/${file}` : `https://maven.neoforged.net/releases/net/neoforged/neoforge/${loaderVersion}/${file}`
@@ -279,7 +282,7 @@ async function detectInstalledServerRuntime(root: string, project: ProjectInfo, 
     && marker.loader === project.loader
     && marker.loaderVersion === expectedLoaderVersion)
   if (requireMarker && !markerMatches) return null
-  const jarCandidates = ['server.jar', `${project.loader}-server.jar`, 'forge-server.jar', 'neoforge-server.jar']
+  const jarCandidates = project.loader === 'quilt' ? ['quilt-server-launch.jar'] : ['server.jar', `${project.loader}-server.jar`, 'forge-server.jar', 'neoforge-server.jar']
   const serverJar = (await Promise.all(jarCandidates.map(async (name) => {
     const file = path.join(root, name)
     return await fs.stat(file).then((stat) => stat.isFile()).catch(() => false) ? file : null
@@ -309,6 +312,7 @@ export function serverRuntimeDownloadDescription(project: Pick<ProjectInfo, 'loa
 
 export async function buildServerPack(project: ProjectInfo, options: ServerPackOptions): Promise<ServerPackResult> {
   if (project.kind !== 'modpack') throw new Error('a modpack project is required to build a server pack')
+  await preserveLegacyServerInstance(project.path, options.outputDirectory)
   if (options.engine === 'serverpackcreator') {
     const manifest = await readModpackManifest(project)
     if (!manifest.mods.length) {
@@ -384,8 +388,7 @@ export async function buildServerPack(project: ProjectInfo, options: ServerPackO
         await fs.cp(path.join(output, entry.name), path.join(staging, entry.name), { recursive: true, force: true })
       }
     }
-    await fs.rm(output, { recursive: true, force: true })
-    await fs.rename(staging, output)
+    await commitDirectory(staging, output)
     return { root: output, copiedMods, skippedClientMods, directMods, warnings, manifestPath: path.join(output, 'modmind.server.json') }
   } finally {
     await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)
@@ -401,9 +404,17 @@ export async function installServerRuntime(options: ServerRuntimeInstallOptions,
   if (installed) return installed
   const selected = loaderSources(project.loader as JavaLoaderKind, project.minecraftVersion, loaderVersion)
   const target = path.join(options.serverPack.root, selected.direct ? 'server.jar' : 'installer.jar')
-  await verifiedDownload.download({ sources: selected.sources, destination: target, maxBytes: 512 * 1024 * 1024, retriesPerSource: 2, signal: options.signal, onProgress: options.onDownloadProgress })
+  if (project.loader === 'quilt') {
+    const installers = await fetchJsonWithRetry<Array<{ url: string; hashes?: { sha256?: string } }>>('https://meta.quiltmc.org/v3/versions/installer', { signal: options.signal })
+    const installer = installers.find(entry => /^https:\/\//.test(entry.url) && /^[a-f0-9]{64}$/i.test(entry.hashes?.sha256 ?? ''))
+    if (!installer) throw new Error('Quilt Installer 目录没有可校验的发行文件')
+    await verifiedDownload.download({ sources: [{ id: 'quilt-installer', label: 'Quilt 官方安装器', url: installer.url }], expectedHash: { algorithm: 'sha256', value: installer.hashes!.sha256! }, destination: target, signal: options.signal, onProgress: options.onDownloadProgress })
+  } else await verifiedDownload.download({ sources: selected.sources, destination: target, maxBytes: 512 * 1024 * 1024, retriesPerSource: 2, signal: options.signal, onProgress: options.onDownloadProgress })
   if (!selected.direct) {
-    await runJava(options.javaPath, ['-jar', target, '--installServer'], options.serverPack.root, options.signal)
+    const args = project.loader === 'quilt'
+      ? ['-jar', target, 'install', 'server', project.minecraftVersion, loaderVersion, `--install-dir="${options.serverPack.root}"`, '--download-server']
+      : ['-jar', target, '--installServer']
+    await runJava(options.javaPath, args, options.serverPack.root, options.signal)
     await fs.rm(target, { force: true })
   }
   // The installer creates the runtime before ModMind writes its marker, so the

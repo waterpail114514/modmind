@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.5",
+  "version": "1.4.6-preview0912",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -185,6 +185,11 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/server-plugin-starters",
+        "to": "server-plugin-starters",
+        "filter": ["**/*"]
       },
       {
         "from": "resources/trayTemplate.png",

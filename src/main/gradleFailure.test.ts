@@ -7,6 +7,9 @@ import {
 } from './gradleFailure'
 
 describe('Gradle wrapper failure classification', () => {
+  it('recognizes the actual Wrapper connect timeout after a distribution redirect', () => {
+    expect(isGradleNetworkFailure('Downloading https://services.gradle.org/distributions/gradle-9.5.1-bin.zip\njava.net.ConnectException: Connection timed out: getsockopt\n at org.gradle.wrapper.Install.forceFetch(SourceFile:2)')).toBe(true)
+  })
   it('recognizes wrapper distribution lock timeouts on Windows', () => {
     const log = 'Timeout of 120000 reached waiting for exclusive access to file: C:\\Users\\me\\cache\\wrapper\\dists\\gradle-9.5.1-bin\\key\\gradle-9.5.1-bin.zip'
 

@@ -187,3 +187,11 @@ design-system dependency is bundled.
 - Project: https://github.com/iOfficeAI/AionUi
 - Copyright: 2025 AionUi (aionui.com)
 - License: Apache-2.0
+# Minecraft Development server plugin starters
+
+The Bukkit/Velocity lifecycle starter templates are adapted from
+https://github.com/minecraft-dev/MinecraftDev at revision
+dec3e63ba62b9f6aaea5ad6a21bc011fe087b08c (LGPL-3.0).
+Exact upstream files, SHA-256 values, source and license texts are retained in
+resources/server-plugin-starters and included with the application resources.
+Generated plugin projects and JARs retain template attribution and license texts.
