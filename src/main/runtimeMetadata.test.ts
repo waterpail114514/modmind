@@ -23,7 +23,7 @@ describe('runtime metadata relocation', () => {
       preparedAt: new Date().toISOString()
     }, 'C:/Users/new-user/AppData/Roaming/modmind/minecraft-runtime/java')
 
-    expect(metadata?.javaPath).toBe(managedJavaExecutable('C:/Users/new-user/AppData/Roaming/modmind/minecraft-runtime/java', 'java-runtime-delta', 'win32'))
+    expect(metadata?.javaPath).toBe(managedJavaExecutable('C:/Users/new-user/AppData/Roaming/modmind/minecraft-runtime/java', 'java-runtime-delta'))
     expect(metadata?.javaPath).not.toContain('old-user')
     expect(metadata?.javaTarget).toBe('java-runtime-delta')
   })

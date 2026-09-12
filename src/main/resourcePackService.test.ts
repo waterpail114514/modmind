@@ -9,7 +9,7 @@ import { createStoredZip } from './bedrockAddon'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
-async function project(): Promise<ProjectInfo> { const root = await fs.mkdtemp(path.join(os.tmpdir(), 'resource-pack-')); roots.push(root); return { name: 'Test', path: root, namespace: 'test', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' } }
+async function project(): Promise<ProjectInfo> { const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'resource-pack-'))); roots.push(root); return { name: 'Test', path: root, namespace: 'test', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' } }
 
 it('creates and exports a pack with pack.mcmeta at archive root', async () => {
   const p = await project()

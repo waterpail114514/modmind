@@ -1,16 +1,22 @@
-import { describe, expect, it } from 'vitest'
-import { inspectForDecompilation, runDecompilation } from './decompilePipeline'
+import { afterEach, describe, expect, it } from 'vitest'
+import { inspectForDecompilation } from './decompilePipeline'
 import { createStoredZip } from './bedrockAddon'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+
+const javac = String(process.env.PATH ?? '').split(path.delimiter)
+  .map((directory) => path.join(directory, process.platform === 'win32' ? 'javac.exe' : 'javac'))
+  .find(existsSync)
+const roots: string[] = []
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 
 describe('probe pipeline on real fixture', () => {
-  it('runs inspect + decompile on the compiled jar', async () => {
-    const javac = String(process.env.PATH ?? '').split(path.delimiter).map((d) => path.join(d, 'javac.exe')).find((p) => { try { return require('node:fs').existsSync(p) } catch { return false } })
-    console.log('JAVAC:', JSON.stringify(javac))
+  it.skipIf(!javac)('inspects a compiled Forge jar when a JDK is available', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'probe-pipe-'))
+    roots.push(root)
     const src = path.join(root, 'src')
     await fs.mkdir(src, { recursive: true })
     await fs.writeFile(path.join(src, 'MyMod.java'), 'public class MyMod { public static int compute(int v) { return v * 42; } }\n')
@@ -23,12 +29,8 @@ describe('probe pipeline on real fixture', () => {
     }
     const jarPath = path.join(root, 'mymod.jar')
     await fs.writeFile(jarPath, createStoredZip(files))
-    try {
-      const inspected = await inspectForDecompilation(jarPath, { cacheRoot: root })
-      console.log('INSPECT:', JSON.stringify({ modId: inspected.modId, loader: inspected.loader, hint: inspected.obfuscationHint }))
-    } catch (error) {
-      console.log('INSPECT FAILED:', (error as Error).message.slice(0, 400))
-    }
-    expect(true).toBe(true)
+    const inspected = await inspectForDecompilation(jarPath, { cacheRoot: root })
+    expect(inspected.modId).toBe('mymod')
+    expect(inspected.loader).toBe('forge')
   })
 })

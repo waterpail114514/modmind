@@ -421,6 +421,7 @@ describe('ModMind external agent MCP bridge', () => {
     const runner = path.join(root, 'fake-app-server.mjs')
     const log = path.join(root, 'app-server-requests.jsonl')
     await fs.writeFile(runner, [
+      '#!/usr/bin/env node',
       "import { appendFileSync, readFileSync } from 'node:fs'",
       "import { spawn } from 'node:child_process'",
       "const log = process.env.FAKE_APP_SERVER_LOG",
@@ -1204,7 +1205,7 @@ describe('ModMind external agent MCP bridge', () => {
       namespace: 'agent_cancel', createdAt: new Date().toISOString()
     }
     const runner = path.join(root, 'long-running-agent.mjs')
-    await fs.writeFile(runner, "console.log(JSON.stringify({type:'thread.started',thread_id:'cancel-thread'}));setInterval(() => undefined, 1000);", 'utf8')
+    await fs.writeFile(runner, "#!/usr/bin/env node\nconsole.log(JSON.stringify({type:'thread.started',thread_id:'cancel-thread'}));setInterval(() => undefined, 1000);", 'utf8')
     const executable = process.platform === 'win32' ? path.join(root, 'long-running-agent.cmd') : runner
     if (process.platform === 'win32') await fs.writeFile(executable, `@echo off\r\nnode "%~dp0long-running-agent.mjs" %*\r\n`, 'utf8')
     else await fs.chmod(executable, 0o755)
@@ -1416,6 +1417,7 @@ describe('ModMind external agent MCP bridge', () => {
     }
     const runner = path.join(root, 'silent-agent.mjs')
     await fs.writeFile(runner, [
+      '#!/usr/bin/env node',
       "setTimeout(() => {",
       "  console.log(JSON.stringify({type:'thread.started', thread_id:'silent-thread'}));",
       "  console.log(JSON.stringify({type:'item.completed', item:{type:'agent_message', text:'finished after silence'}}));",

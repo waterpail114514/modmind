@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 
 const owned = new Map<ChildProcess, number>()
 const stopping = new WeakMap<ChildProcess, Promise<void>>()
@@ -35,7 +35,20 @@ function groupExists(child: ChildProcess): boolean {
   const pid = owned.get(child)
   if (!pid || pid <= 1 || pid === process.pid) return false
   try { process.kill(-pid, 0); return true }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false; throw error }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    // Darwin can report EPERM for an empty process group. Confirm its absence
+    // independently; an existing group must still surface the permission error.
+    if (process.platform === 'darwin' && code === 'EPERM') {
+      try {
+        const groups = execFileSync('/bin/ps', ['-axo', 'pgid='], { encoding: 'utf8', timeout: 5000 })
+          .trim().split(/\s+/).filter(Boolean).map(Number)
+        if (groups.length && groups.every(Number.isInteger) && !groups.includes(pid)) return false
+      } catch { /* Preserve the original permission error if inspection fails. */ }
+    }
+    throw error
+  }
 }
 
 export function terminateProcessTree(child: ChildProcess, options: { gracefulTimeoutMs?: number } = {}): Promise<void> {
