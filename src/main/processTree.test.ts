@@ -13,7 +13,12 @@ describe('managed process trees', () => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
     const denied = Object.assign(new Error('denied'), { code: 'EPERM' })
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw denied })
-    const fake = Object.assign(new EventEmitter(), { pid: 99999999, exitCode: null, signalCode: null }) as ChildProcess
+    const fixture = Object.assign(new EventEmitter(), {
+      pid: 99999999,
+      exitCode: null as number | null,
+      signalCode: null
+    })
+    const fake = fixture as ChildProcess
     vi.mocked(spawn).mockReturnValueOnce(fake as ReturnType<typeof spawn>)
     if (state === 'unreadable') vi.mocked(execFileSync).mockImplementationOnce(() => { throw new Error('ps failed') })
     else vi.mocked(execFileSync).mockReturnValueOnce(state === 'absent' ? '1\n42\n' : '1\n99999999\n')
@@ -25,7 +30,7 @@ describe('managed process trees', () => {
       expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true)
     } finally {
       // Remove the fake owned group without touching a real process.
-      fake.exitCode = 0
+      fixture.exitCode = 0
       kill.mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }) })
       await terminateProcessTree(fake)
       kill.mockRestore()
