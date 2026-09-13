@@ -1,0 +1,42 @@
+/* Shared content pages use the resource-pack shell and existing theme tokens. */
+.pack-content-workspace { overflow:hidden; }
+.pack-content-workspace>.content-toolbar { flex:0 0 auto; }
+.pack-content-workspace>.resource-pack-toolbar { flex:0 0 auto; }
+.pack-content-create { display:inline-flex; align-items:center; gap:6px; padding:0 9px; border:1px solid var(--line); border-radius:6px; background:var(--surface); }
+.pack-content-create select { max-width:170px; height:32px; border:0; background:transparent; color:inherit; font:inherit; }
+.pack-content-create option { background:var(--surface); }
+.pack-content-workspace .pack-content-files { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.pack-content-workspace .resource-pack-file-tools { flex:0 0 auto; }
+.pack-content-file-list { flex:1; min-height:0; overflow:auto; }
+.pack-content-workspace .pack-content-file { height:44px; min-height:44px; padding:5px 7px; gap:8px; }
+.pack-content-file>span { display:block; min-width:0; }
+.pack-content-file strong { display:block; font-size:var(--type-body); font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pack-content-file small { display:block; color:var(--muted); font-size:var(--type-meta); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pack-content-list-message { display:flex; align-items:center; gap:7px; padding:14px 8px; color:var(--muted); font-size:var(--type-support); }
+.pack-content-file-info { display:flex; flex-wrap:wrap; gap:12px; padding:8px 13px; border-bottom:1px solid var(--line); color:var(--muted); font-size:var(--type-support); }
+.pack-content-text-preview { position:relative; flex:1; min-height:280px; }
+.pack-content-edit-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 13px; border-bottom:1px solid var(--line); color:var(--muted); font-size:var(--type-support); }
+.pack-content-text-preview>section { position:absolute !important; inset:0; }
+.pack-content-source-url { display:flex; flex-direction:column; gap:6px; max-width:100%; font-size:var(--type-support); color:var(--muted); overflow-wrap:anywhere; }
+.pack-content-download-panel { flex:0 0 auto; padding:12px 20px; border-bottom:1px solid var(--line); background:var(--surface); max-height:40%; overflow:auto; }
+.pack-content-workspace .pack-content-download-row { margin:0; grid-template-columns:minmax(180px,2fr) minmax(140px,1.5fr) minmax(100px,1fr) auto; }
+.pack-content-workspace .pack-content-download-row input,.pack-content-workspace .pack-content-download-row select { color:inherit; background:var(--surface); border:1px solid var(--line); border-radius:6px; }
+.pack-content-workspace .pack-content-download-row label { color:var(--muted); }
+.pack-content-workspace .server-pack-config-panel { flex:0 0 auto; margin:0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:var(--surface); }
+.pack-content-workspace .server-pack-config-heading { padding:9px 20px; }
+.pack-content-workspace .server-pack-config-title>span { display:none; }
+.pack-content-workspace .server-pack-config-title h2 { font-size:var(--type-body); }
+.pack-content-workspace .server-pack-config-title p { font-size:var(--type-support); }
+.pack-content-workspace .server-pack-config-list { max-height:144px; }
+.pack-content-workspace .resource-pack-empty small { color:var(--muted); }
+@media(max-width:1100px) { .pack-content-workspace .pack-content-download-row { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:760px) {
+  .pack-content-workspace { overflow:auto; }
+  .pack-content-workspace .resource-pack-body { flex:1 0 auto; min-height:520px; grid-template-rows:170px minmax(350px,1fr); }
+  .pack-content-workspace .pack-content-files { height:170px; max-height:170px; }
+  .pack-content-workspace .resource-pack-editor { min-height:350px; }
+  .pack-content-workspace .resource-pack-editor-heading { flex-wrap:wrap; }
+  .pack-content-download-panel { padding:10px; max-height:none; }
+  .pack-content-workspace .server-pack-config-heading { padding:9px 10px; flex-wrap:wrap; }
+  .pack-content-workspace .pack-content-download-row { grid-template-columns:1fr; }
+}

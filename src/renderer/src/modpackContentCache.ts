@@ -24,7 +24,11 @@ export async function loadModpackContent(projectPath: string, refresh = false): 
   const existing = pending.get(projectPath)
   if (existing) return existing
 
-  const request = window.modmind.modpack.listContent(refresh).then((inventory) => remember(projectPath, inventory))
+  const request = window.modmind.modpack.listContent(refresh).then((inventory) => {
+    remember(projectPath, inventory)
+    if (refresh) window.dispatchEvent(new Event('modmind:content-changed'))
+    return inventory
+  })
   pending.set(projectPath, request)
   try {
     return await request

@@ -48,6 +48,7 @@ import { sameProjectPath } from './projectPath'
 import { ensureGradleMavenFallback, gradleDistributionSources, type GradleDownloadSourcePreference } from './gradleDownload'
 import { windowsCmdInvocation } from './windowsCommand'
 import { managedJavaExecutable, normalizeRuntimeMetadata, type RuntimeMetadata } from './runtimeMetadata'
+import { prepareLoaderApiTestPolicy } from './loaderApiTestPolicy'
 import { diagnosticJournal } from './diagnosticLog'
 import { verifiedDownload } from './downloadService'
 import { downloadActivities } from './downloadActivityService'
@@ -312,7 +313,7 @@ function summarizeMinecraftCrash(report: string): string {
     .slice(0, 6)
     .map((line) => line.trim())
   const diagnostic = rootCause?.includes("This registry can't create intrusive holders")
-    ? 'DETERMINISTIC DIAGNOSTIC: Moving Item/Block construction into register() does not fix this failure. Ensure a compatible Fabric API is declared in Gradle, present in the runtime mods directory, and loaded before registering content during ModInitializer.'
+    ? 'DIAGNOSTIC HINT: Check registration timing and compatible registry lifecycle support for this Minecraft version. Fabric API may be supplied externally or through the required jar-in-jar modules; this error alone does not prove the full Fabric API is required. Inspect the artifact and loaded modules before changing dependencies.'
     : undefined
   return [description, entrypoint, rootCause, ...modFrames, diagnostic].filter(Boolean).join('\n')
 }
@@ -2328,6 +2329,11 @@ export class MinecraftRuntimeManager {
   }
 
   private async ensureManagedLoaderApi(project: ProjectInfo): Promise<void> {
+    if (project.loader !== 'fabric' && project.loader !== 'quilt') return
+    if (!await prepareLoaderApiTestPolicy(project.path, project.loader)) {
+      this.emit('installing-loader', '测试配置已禁用完整 API 自动安装，并清理 ModMind 托管的 API；验证无外置 API 时还需检查其余模组与内嵌依赖')
+      return
+    }
     const version = project.apiVersion ?? await readConfiguredLoaderApiVersion(project)
     const label = project.loader === 'quilt' ? 'Quilted Fabric API' : 'Fabric API'
     if (!version) {

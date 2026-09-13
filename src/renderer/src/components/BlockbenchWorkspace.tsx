@@ -91,6 +91,9 @@ export type BlockbenchWorkspaceProps = {
   visible?: boolean
   darkMode?: boolean
   project?: {namespace?: string}
+  resourceTarget?: import('../../../shared/modelSource').ResourceModelTarget | null
+  onCloseResource?: () => void
+  onDetachResource?: () => void
 }
 
 const initialState: WorkspaceState = {
@@ -192,7 +195,7 @@ function mergeState(current: WorkspaceState, payload: BlockbenchStatePayload): W
   }
 }
 
-export function BlockbenchWorkspace({ visible = true, darkMode = false, project }: BlockbenchWorkspaceProps): React.JSX.Element {
+export function BlockbenchWorkspace({ visible = true, darkMode = false, project, resourceTarget, onCloseResource, onDetachResource }: BlockbenchWorkspaceProps): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const lastBoundsRef = useRef<string | null>(null)
   const bridge = useMemo(getBridge, [])
@@ -201,6 +204,15 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project 
   )
   const [pendingAction, setPendingAction] = useState('')
   const [notice, setNotice] = useState('')
+  const resourceBaseline = useRef('')
+  useEffect(() => { resourceBaseline.current = resourceTarget?.baseline ?? '' }, [resourceTarget])
+  useEffect(() => {
+    if (!visible || !bridge) return
+    let active = true
+    void window.modmind.blockbench.getState().then(value => { if (active) setState(current => mergeState(current, value)) }).catch(() => undefined)
+    void bridge.projectState().then(value => { if (active) setState(current => ({ ...current, projectName: value.project.name, dirty: !value.project.saved })) }).catch(() => undefined)
+    return () => { active = false }
+  }, [visible, bridge, resourceTarget])
   const [intentOpen, setIntentOpen] = useState(false)
   const [intentMode, setIntentMode] = useState<'generate' | 'refine' | 'advanced' | 'reference'>('generate')
   const [intentText, setIntentText] = useState(() => JSON.stringify(defaultIntent, null, 2))
@@ -281,6 +293,8 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project 
     setNotice('')
     try {
       await action()
+      const document = await bridge?.projectState().catch(() => null)
+      if (document) setState(current => ({ ...current, projectName: document.project.name, dirty: !document.project.saved }))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error))
     } finally {
@@ -484,11 +498,19 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project 
             title="保存模型"
             aria-label="保存模型"
             disabled={!bridge || Boolean(pendingAction)}
-            onClick={() => bridge && void execute('save', () => bridge.saveProject())}
+            onClick={() => bridge && void execute('save', async () => {
+              if (!resourceTarget) return bridge.saveProject()
+              resourceBaseline.current = await window.modmind.resourcePacks.saveModel({ ...resourceTarget, baseline: resourceBaseline.current })
+              setNotice('模型已保存到资源包；单独修改的贴图请另行保存。')
+            })}
           >
             {pendingAction === 'save' ? <LoaderCircle className="bb-spin" size={16} /> : <Save size={16} />}
           </button>
           <span className="bb-toolbar-divider" />
+          <button className="bb-tool-button" type="button" title="打开 YSM 源模型，支持 ysm.json 或未加密 ZIP" disabled={!bridge || Boolean(pendingAction)} onClick={() => void execute('ysm', async () => {
+            const result = await window.modmind.blockbench.openYsm()
+            if (result) { onDetachResource?.(); setNotice(`已打开 ${result.name}。主模型、默认贴图和主 / 附加动画已加载；控制器、游戏变量与模组联动请在 YSM 客户端验证。`) }
+          })}>YSM</button>
           <button className="bb-tool-button" type="button" title="撤销" aria-label="撤销" disabled={!bridge} onClick={() => runAction('undo')}>
             <Undo2 size={16} />
           </button>
@@ -527,8 +549,9 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project 
       <div className="bb-document-bar">
         <div className="bb-document-name">
           <span className={`bb-document-dot ${state.dirty ? 'dirty' : ''}`} />
-          <strong>{state.projectName}</strong>
+          <strong title={resourceTarget?.file}>{resourceTarget ? `资源包 · ${resourceTarget.file.split('/').at(-1)}` : state.projectName}</strong>
         </div>
+        {resourceTarget ? <button className="bb-resource-return" disabled={Boolean(pendingAction)} onClick={onCloseResource}>返回资源包</button> : null}
         <div className={`bb-runtime-state ${isError ? 'error' : state.aiActive ? 'ai' : ''}`}>
           {isError ? <CircleAlert size={13} /> : isLoading ? <LoaderCircle className="bb-spin" size={13} /> : <CheckCircle2 size={13} />}
           <span>{statusText}</span>

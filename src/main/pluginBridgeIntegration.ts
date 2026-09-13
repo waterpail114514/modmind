@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, net } from 'electron'
 import { PluginService } from './pluginService'
-import { PluginRuntime } from './pluginRuntime'
+import { PluginRuntime, type PluginRuntimeOptions } from './pluginRuntime'
 import { registerPluginProtocol, registerPluginProtocolScheme } from './pluginProtocol'
 import { InitialReadiness } from './initialReadiness'
 import type { ExternalAgentPluginBridgeTarget } from './externalAgents'
@@ -26,6 +26,7 @@ export function initializePlugins(options: {
   projectInfo: () => { name: string; path: string; kind: string } | null
   onSnapshotChanged: (snapshot: PluginSnapshot) => void
   onDiagnosticsChanged?: (diagnostics: PluginDiagnostics) => void
+  hostContextOp?: PluginRuntimeOptions['hostContextOp']
 }): void {
   if (pluginService) return
   const globalDirectory = path.join(options.userDataDirectory, 'plugins')
@@ -42,6 +43,7 @@ export function initializePlugins(options: {
     projectInfo: options.projectInfo,
     netFetch: ((input: string | URL | Request, init?: RequestInit) => net.fetch(input.toString(), init)) as typeof fetch,
     clipboardWrite: (text) => clipboard.writeText(text),
+    hostContextOp: options.hostContextOp,
     onRuntimeError: (pluginId, error) => pluginService?.setRuntimeError(pluginId, error),
     onDiagnostics: (diagnostics) => options.onDiagnosticsChanged?.(diagnostics),
     log: (_level, message) => {

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createStoredZip } from './bedrockAddon'
-import { inspectModJar } from './jarInspection'
+import { inspectModJar, readModJarIdentities } from './jarInspection'
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))
@@ -65,6 +65,22 @@ function annotatedModClass(values: { modid: string; name?: string; version?: str
 }
 
 describe('mod JAR inspection', () => {
+  it.each([
+    ['fabric.mod.json', JSON.stringify({ schemaVersion: 1, id: 'create', name: 'Create', version: '1' })],
+    ['quilt.mod.json', JSON.stringify({ quilt_loader: { id: 'create', version: '1', metadata: { name: 'Create' } } })],
+    ['META-INF/mods.toml', '[[mods]]\nmodId="create"\ndisplayName="Create"\nversion="1"'],
+    ['META-INF/neoforge.mods.toml', '[[mods]]\nmodId="create"\ndisplayName="Create"\nversion="1"'],
+    ['mcmod.info', JSON.stringify([{ modid: 'create', name: 'Create', version: '1' }])]
+  ])('reads configuration identities from %s without class analysis', async (name, data) => {
+    const target = await fixture([{ name, data }, { name: 'ignored/Invalid.class', data: 'not a class' }])
+    expect(await readModJarIdentities(target)).toEqual([{ id: 'create', name: 'Create' }])
+  })
+
+  it('leaves missing or invalid metadata unidentified', async () => {
+    const target = await fixture([{ name: 'fabric.mod.json', data: '{broken' }])
+    expect(await readModJarIdentities(target)).toEqual([])
+  })
+
   it('reads Fabric identity, dependencies and package summaries', async () => {
     const target = await fixture([
       { name: 'fabric.mod.json', data: JSON.stringify({ schemaVersion: 1, id: 'create_addition', name: 'Create Addition', version: '1.2.3', depends: { fabricloader: '>=0.16', minecraft: '1.21.1', create: '6.0.5' }, suggests: { jei: '*' } }) },

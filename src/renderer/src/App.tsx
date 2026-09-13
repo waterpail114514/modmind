@@ -1,3 +1,5 @@
+import { editorLanguage } from './lib/editorLanguage'
+import { useModpackContentFeatures } from './lib/useModpackContentFeatures'
 import { SecretInput } from './components/SecretInput'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ReactNode, SetStateAction } from 'react'
@@ -523,17 +525,6 @@ function errorMessage(error: unknown): string {
 
 function aiFailureMessage(error: unknown): string {
   return describeAiFailureForUser(errorMessage(error))
-}
-
-function editorLanguage(relativePath: string): string {
-  const extension = relativePath.split('.').at(-1)?.toLowerCase() ?? ''
-  return {
-    java: 'java', kt: 'kotlin', kts: 'kotlin', gradle: 'groovy', groovy: 'groovy',
-    json: 'json', json5: 'json', mcmeta: 'json', md: 'markdown', html: 'html', htm: 'html',
-    xml: 'xml', yaml: 'yaml', yml: 'yaml', js: 'javascript', jsx: 'javascript',
-    ts: 'typescript', tsx: 'typescript', py: 'python', css: 'css', scss: 'scss', properties: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini',
-    lang: 'plaintext', mcfunction: 'plaintext', snbt: 'plaintext', toml: 'plaintext', zs: 'javascript'
-  }[extension] ?? 'plaintext'
 }
 
 function isEditablePath(relativePath: string): boolean {
@@ -1675,6 +1666,9 @@ export default function App(): React.JSX.Element {
   const { confirm: requestConfirm, dialog: confirmDialog } = useConfirmDialog()
   const { prompt: requestPrompt, dialog: promptDialog } = usePromptDialog()
   const [view, setView] = useState<ViewId>(initialDetachedView ?? 'workspace')
+  const [resourceImageTarget, setResourceImageTarget] = useState<import('../../shared/resourcePack').ResourceImageTarget | null>(null)
+  const [resourceModelTarget, setResourceModelTarget] = useState<import('../../shared/modelSource').ResourceModelTarget | null>(null)
+  const [resourceSelection, setResourceSelection] = useState<{ projectPath: string; id: string; file: string } | null>(null)
   // 用户插件系统：注册表快照（零插件时为空，侧边栏不加任何分组）
   const [pluginSnapshot, setPluginSnapshot] = useState<PluginSnapshot>({ plugins: [] })
   useEffect(() => {
@@ -1725,6 +1719,8 @@ export default function App(): React.JSX.Element {
   const [showCreate, setShowCreate] = useState(false)
   const [renamingProject, setRenamingProject] = useState<ProjectInfo | null>(null)
   const [files, setFiles] = useState<FileNode[]>([])
+  const contentFeatureRevision = useMemo(() => ({ files, view }), [files, view])
+  const { features: contentFeatures, error: contentFeaturesError } = useModpackContentFeatures(project?.kind === 'modpack' ? project.path : undefined, contentFeatureRevision)
   const [selectedFile, setSelectedFile] = useState('')
   const [editorContent, setEditorContent] = useState('')
   const [editorDirty, setEditorDirty] = useState(false)
@@ -2743,10 +2739,10 @@ export default function App(): React.JSX.Element {
   }, [aiTimeline, activeWorkbenchConversationId, aiHistoryLoadedKey, project?.path])
 
   useEffect(() => {
-    if (settings.codingBackend === 'quota') return
+    if (!project?.path || settings.codingBackend === 'quota') return
     const activeAgent = settings.codingBackend
     void window.modmind.externalAgents.history(activeAgent).then(() => undefined).catch(() => undefined)
-  }, [settings.codingBackend])
+  }, [settings.codingBackend, project?.path])
   useEffect(() => {
     let deviceStateGeneration = 0
     const applyDeviceState = (state: DeviceConnectionState): void => {
@@ -3014,6 +3010,7 @@ export default function App(): React.JSX.Element {
     const timer = window.setTimeout(() => setNotice(''), 2600)
     return () => window.clearTimeout(timer)
   }, [notice])
+  useEffect(() => { if (contentFeaturesError) setNotice(contentFeaturesError) }, [contentFeaturesError])
 
   useEffect(() => {
     if (view !== 'blockbench') void window.modmind.blockbench.hide()
@@ -3439,6 +3436,41 @@ export default function App(): React.JSX.Element {
       }
     }
   }
+
+  useEffect(() => {
+    if (isDetachedWindow) return
+    return window.modmind.plugins.onWorkbenchRequest((request) => {
+      try {
+        if (!project || !activeWorkbenchConversationId || !aiOutputHistoryKey || aiHistoryLoadedKey !== aiOutputHistoryKey
+          || workbenchPersistenceState === 'loading' || workbenchPersistenceState === 'error') {
+          throw new Error('当前工作台对话尚未就绪')
+        }
+        if (request.target && (request.target.projectPath !== project.path || request.target.conversationId !== activeWorkbenchConversationId)) {
+          throw new Error('当前项目或对话已切换，请重新读取对话后重试')
+        }
+        if (request.operation === 'setDraft') {
+          if (planning || draftPreparing) throw new Error('工作台正在执行任务，请稍后填写输入框')
+          const text = request.text ?? ''
+          setPrompt((current) => request.mode === 'replace' ? text : current ? `${current}\n${text}` : text)
+          setView('workspace')
+          window.modmind.plugins.respondWorkbench({ requestId: request.requestId, ok: true, result: { updated: true } })
+        } else {
+          window.modmind.plugins.respondWorkbench({ requestId: request.requestId, ok: true, result: {
+            projectPath: project.path,
+            conversationId: activeWorkbenchConversationId,
+            title: workbenchConversations.find((item) => item.id === activeWorkbenchConversationId)?.title ?? '',
+            busy: planning || draftPreparing,
+            draft: prompt,
+            messages: workbenchFinalDialogue(aiTimelineRef.current).slice(-200).map((item) => ({
+              id: item.id, role: item.kind === 'user' ? 'user' : 'assistant', content: item.content.slice(0, 16000)
+            }))
+          } })
+        }
+      } catch (error) {
+        window.modmind.plugins.respondWorkbench({ requestId: request.requestId, ok: false, error: errorMessage(error) })
+      }
+    })
+  })
 
   const captureIdea = async (phase?: 'engineering' | 'discussion', initialPrompt?: string): Promise<void> => {
     const submittedPrompt = initialPrompt ?? (phase === 'engineering' ? '开始制作' : prompt)
@@ -4721,7 +4753,8 @@ export default function App(): React.JSX.Element {
     label: group.label === '创建' || group.label === '鍒涗綔' ? '创作' : group.label === '项目' || group.label === '椤圭洰' ? '项目' : group.label === '应用' || group.label === '搴旂敤' ? '应用' : group.label,
     items: (() => {
       const mapped = group.items
-        .filter((item) => uiMode !== 'beginner' || !['ftb-quests', 'patchouli', 'image-studio'].includes(item.id))
+        .filter(item => item.id === 'ftb-quests' ? contentFeatures.ftbQuests : item.id === 'patchouli' ? contentFeatures.patchouli : true)
+        .filter((item) => uiMode !== 'beginner' || item.id !== 'image-studio')
         .map((item) => ({ ...item, label: navLabelMap[item.id] || item.label }))
       if (uiMode === 'beginner' && modpackProject && !mapped.some((item) => item.id === 'modpack-server')) {
         mapped.push({ id: 'modpack-server' as const, label: '服务端测试', icon: Server })
@@ -5195,17 +5228,17 @@ export default function App(): React.JSX.Element {
             {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-automation:${project.path}`} active={view === 'modpack-automation'}><ModpackToolsWorkspace project={project} section="automation" /></KeepAliveRoute> : null}
             {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ModpackToolsWorkspace project={project} section="server" /></KeepAliveRoute> : null}
             {view === 'modpack-mod-list' && project?.kind === 'modpack' ? <ModpackModListWorkspace project={project} onOpenModule={(module) => { setProject(module); setView('workspace') }} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /> : null}
-            {view === 'modpack-manifest' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="other" inventoryMode onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-config' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="config" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-scripts' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="scripts" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-datapacks' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="datapacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-resourcepacks' && project ? <ResourcePackWorkspace key={project.path} project={project} darkMode={settings.darkMode} onImages={() => setView('image-studio')} onModels={() => setView('blockbench')} onTest={() => setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')} installed={project.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="resourcepacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : undefined} /> : null}
-            {view === 'modpack-shaders' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="shaderpacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-ui' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="ui" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-worlds' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="worlds" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-manifest' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="other" inventoryMode onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-config' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="config" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-scripts' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="scripts" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-datapacks' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="datapacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-resourcepacks' && project ? <ResourcePackWorkspace key={project.path} project={project} darkMode={settings.darkMode} initialSelection={resourceSelection?.projectPath === project.path ? resourceSelection : undefined} onImages={target => { setResourceImageTarget(target ?? null); setResourceSelection(target ?? null); setView('image-studio') }} onModels={target => { setResourceModelTarget(target ?? null); setResourceSelection(target ?? null); setView('blockbench') }} onTest={() => setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')} /> : null}
+            {view === 'modpack-shaders' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="shaderpacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-ui' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="ui" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-worlds' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="worlds" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {view === 'modpack-client' && project?.kind === 'modpack' ? <ModpackKeybindWorkspace project={project} onOpenRaw={(relativePath) => void openEditorFile(relativePath)} /> : null}
-            {view === 'modpack-server-content' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="server" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-files' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} section="other" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-server-content' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="server" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
+            {view === 'modpack-files' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="other" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
             {project?.kind === 'modpack' ? <div className="third-party-route" hidden={view !== 'third-party-mods'}><ThirdPartyModsWorkspace key={project.path} project={project} visible={view === 'third-party-mods'} /></div> : null}
 
             {view === 'workspace' && project && normalizeProjectPath(activeWorkbenchProjectRef.current) === normalizeProjectPath(project.path) ? <AgentWorkbench
@@ -5289,12 +5322,12 @@ export default function App(): React.JSX.Element {
               />
             ))}
 
-            {uiMode === 'advanced' || view === 'image-studio' ? <div className="image-studio-host" hidden={view !== 'image-studio'}><ImageStudioWorkspace visible={view === 'image-studio'} darkMode={settings.darkMode} onOpenSettings={() => setView('settings')} /></div> : null}
+            {uiMode === 'advanced' || view === 'image-studio' ? <div className="image-studio-host" hidden={view !== 'image-studio'}><ImageStudioWorkspace visible={view === 'image-studio'} darkMode={settings.darkMode} onOpenSettings={() => setView('settings')} resourceTarget={resourceImageTarget?.projectPath === project?.path ? resourceImageTarget : null} onCloseResource={() => { setResourceImageTarget(null); setView('modpack-resourcepacks') }} /></div> : null}
 
             {project ? (
               <KeepAliveRoute key={`blockbench:${project.path}`} active={view === 'blockbench'}>
                 <div className="blockbench-page">
-                  <BlockbenchWorkspace visible={view === 'blockbench'} darkMode={settings.darkMode} project={project} />
+                  <BlockbenchWorkspace visible={view === 'blockbench'} darkMode={settings.darkMode} project={project} resourceTarget={resourceModelTarget?.projectPath === project.path ? resourceModelTarget : null} onDetachResource={() => setResourceModelTarget(null)} onCloseResource={() => { setResourceModelTarget(null); setView('modpack-resourcepacks') }} />
                 </div>
               </KeepAliveRoute>
             ) : null}

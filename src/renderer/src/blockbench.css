@@ -149,6 +149,8 @@
   background: #f1f1f3;
 }
 
+.bb-resource-return { margin-left:auto; padding:3px 7px; border:1px solid var(--line); border-radius:5px; background:transparent; cursor:pointer; white-space:nowrap; }
+
 .bb-document-name,
 .bb-runtime-state {
   min-width: 0;

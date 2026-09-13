@@ -9,12 +9,20 @@ export type PluginPermission =
   | 'storage'           // 插件私有键值存储（userData/plugins/.data/<id>/）
   | 'net.fetch'         // 通过 ModMind 宿主桥发起 fetch
   | 'clipboard.write'   // 写入系统剪贴板
+  | 'ui.overlay'        // 控制本插件的悬浮界面
+  | 'chat.read'         // 读取当前工作台对话
+  | 'chat.write'        // 填写工作台输入框
+  | 'chat.context'      // 为指定对话提供 AI 补充上下文
 
 export const PLUGIN_PERMISSIONS: readonly PluginPermission[] = [
   'project.read',
   'storage',
   'net.fetch',
-  'clipboard.write'
+  'clipboard.write',
+  'ui.overlay',
+  'chat.read',
+  'chat.write',
+  'chat.context'
 ]
 
 export function isPluginPermission(value: unknown): value is PluginPermission {
@@ -113,10 +121,36 @@ export interface PluginDiagnostics {
 
 export interface PluginOverlayWindowState {
   pluginId: string
+  /** 关闭后不再显示应用内悬浮界面，直到显式恢复。 */
+  hidden?: boolean
   open: boolean
   alwaysOnTop: boolean
   bounds?: { x: number; y: number; width: number; height: number }
 }
+
+export interface PluginChatTarget {
+  projectPath: string
+  conversationId: string
+}
+
+export interface PluginChatSnapshot extends PluginChatTarget {
+  title: string
+  busy: boolean
+  draft: string
+  messages: Array<{ id: string; role: 'user' | 'assistant'; content: string }>
+}
+
+export interface PluginWorkbenchRequest {
+  requestId: string
+  operation: 'getCurrent' | 'setDraft'
+  target?: PluginChatTarget
+  text?: string
+  mode?: 'replace' | 'append'
+}
+
+export type PluginWorkbenchResult =
+  | { requestId: string; ok: true; result: PluginChatSnapshot | { updated: true } }
+  | { requestId: string; ok: false; error: string }
 
 export interface PluginToolDescriptor {
   /** MCP 工具全名：modmind_plugin_<pluginId>_<toolName> */
@@ -175,6 +209,7 @@ export type PluginPanelRequest =
   | { type: 'getProjectInfo'; requestId: string }
   | { type: 'netFetch'; requestId: string; url: string; init?: { method?: string; headers?: Record<string, string>; body?: string } }
   | { type: 'copyToClipboard'; requestId: string; text: string }
+  | { type: 'context'; requestId: string; op: string; args?: Record<string, unknown> }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
 
 export interface PluginPanelResponse {
@@ -208,6 +243,9 @@ export function isPluginPanelMessage(value: unknown): value is PluginPanelReques
       return typeof record.requestId === 'string' && typeof record.url === 'string'
     case 'copyToClipboard':
       return typeof record.requestId === 'string' && typeof record.text === 'string'
+    case 'context':
+      return typeof record.requestId === 'string' && typeof record.op === 'string'
+        && (record.args === undefined || Boolean(record.args && typeof record.args === 'object' && !Array.isArray(record.args)))
     case 'log':
       return (
         typeof record.message === 'string' &&

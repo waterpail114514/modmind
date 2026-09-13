@@ -167,7 +167,7 @@ function predicateValue(descriptor: FtbIconDescriptor, key: string): number | un
   return undefined
 }
 interface Model { textures: Record<string, string>; generated: boolean; entity: boolean; elements?: unknown[]; loader?: string; trace: string[]; tint: boolean; display?: Record<string, unknown> }
-async function modelFor(index: ResourceIndex, name: string, descriptor: FtbIconDescriptor, active = new Set<string>()): Promise<Model> {
+async function modelFor(index: ResourceIndex, name: string, descriptor: FtbIconDescriptor, active = new Set<string>(), applyOverrides = true): Promise<Model> {
   if (active.size > 32 || active.has(name)) throw new Error(`Model parent/override cycle: ${name}`)
   const next = new Set(active).add(name)
   if (['minecraft:builtin/generated', 'minecraft:item/generated', 'minecraft:item/handheld', 'minecraft:item/handheld_rod'].includes(name)) {
@@ -180,7 +180,7 @@ async function modelFor(index: ResourceIndex, name: string, descriptor: FtbIconD
   if (!raw) throw new Error(`Model unavailable: ${entry}`)
   index.models ??= new Map()
   const model = index.models.get(entry) ?? boundedSet(index.models, entry, record(JSON.parse(raw.toString('utf8'))), 512)
-  const overrides = Array.isArray(model.overrides) ? model.overrides : []
+  const overrides = applyOverrides && Array.isArray(model.overrides) ? model.overrides : []
   for (const value of [...overrides].reverse()) {
     const override = record(value)
     if (typeof override.model !== 'string') continue
@@ -193,7 +193,7 @@ async function modelFor(index: ResourceIndex, name: string, descriptor: FtbIconD
       return { ...result, trace: [entry, ...result.trace] }
     }
   }
-  const parent = typeof model.parent === 'string' ? await modelFor(index, qualify(model.parent), descriptor, next) : { textures: {}, generated: false, entity: false, trace: [], tint: false }
+  const parent = typeof model.parent === 'string' ? await modelFor(index, qualify(model.parent), descriptor, next, applyOverrides) : { textures: {}, generated: false, entity: false, trace: [], tint: false }
   const textures = { ...parent.textures }
   for (const [key, value] of Object.entries(record(model.textures))) if (typeof value === 'string') textures[key] = value
   return { ...parent, textures, display: { ...parent.display, ...record(model.display) }, elements: Array.isArray(model.elements) ? model.elements : parent.elements, loader: typeof model.loader === 'string' ? model.loader : parent.loader, trace: [entry, ...parent.trace], tint: parent.tint || name === 'minecraft:item/template_spawn_egg' }
@@ -246,12 +246,12 @@ async function decodeTextureUncached(index: ResourceIndex, entry: string): Promi
   return { frames, times, width, height, interpolation: animation.interpolate === true }
 }
 
-async function render(index: ResourceIndex, descriptor: FtbIconDescriptor): Promise<FtbQuestIconInspection> {
+async function render(index: ResourceIndex, descriptor: FtbIconDescriptor, modelId?: string): Promise<FtbQuestIconInspection> {
   const trace: string[] = []
   const result = (icon: FtbQuestIconResult | null, reason: string): FtbQuestIconInspection => ({ icon, reason, generation: index.generation, sources: trace.map(entry => `${index.entries.get(entry)?.[0] ?? (index.remote && entry.startsWith('assets/minecraft/') ? `https://cdn.jsdelivr.net/gh/misode/mcmeta@${index.version}-assets` : 'builtin')} :: ${entry}`) })
   try {
     const [namespace, name] = descriptor.id.split(':')
-    const model = await modelFor(index, `${namespace}:item/${name}`, descriptor)
+    const model = await modelFor(index, modelId ?? `${namespace}:item/${name}`, descriptor)
     trace.push(...model.trace)
     if (model.entity || model.loader) return result(null, model.loader ? `Custom model loader requires renderer: ${model.loader}` : 'builtin/entity requires the item/block entity renderer')
     if (model.elements?.length) {
@@ -342,6 +342,47 @@ async function render(index: ResourceIndex, descriptor: FtbIconDescriptor): Prom
     return inspection
   } catch (error) { return result(null, error instanceof Error ? error.message : String(error)) }
 }
+/** Uses the same inheritance, texture and animation resolver as quest icons.
+ * The authoring pack wins over the instance stack; mutable authoring reads are never cached across previews.
+ * Callers validate the source directory and entries before supplying them here.
+ */
+async function authoredModelIndex(project: ProjectInfo, root: string, files: string[], file: string): Promise<{ index: ResourceIndex; modelId: string; descriptor: FtbIconDescriptor }> {
+  const match = /^assets\/([a-z0-9_.-]+)\/models\/(.+)\.json$/.exec(file)
+  if (!match) throw new Error('仅支持 assets/<命名空间>/models/ 下的 Java 模型；其他模型请在模型编辑器中打开')
+  const base = await indexFor(project)
+  const entries = new Map(base.entries)
+  for (const entry of files) if (entry.startsWith('assets/')) entries.set(entry, [root, ...(entries.get(entry) ?? [])])
+  const index: ResourceIndex = {
+    generation: base.generation, version: base.version, entries,
+    sources: [root, ...base.sources], warnings: base.warnings,
+    reads: new Map(), icons: new Map(), decoded: new Map()
+  }
+  return { index, descriptor: { id: `${match[1]}:preview` }, modelId: `${match[1]}:${match[2]}` }
+}
+
+export async function inspectAuthoredResourceModel(project: ProjectInfo, root: string, files: string[], file: string): Promise<FtbQuestIconInspection> {
+  const { index, descriptor, modelId } = await authoredModelIndex(project, root, files, file)
+  return render(index, descriptor, modelId)
+}
+
+export async function authoredModelDocument(project: ProjectInfo, root: string, files: string[], file: string): Promise<import('../shared/modelSource').ModelSourceDocument> {
+  const { index, descriptor, modelId } = await authoredModelIndex(project, root, files, file)
+  const model = await modelFor(index, modelId, descriptor, new Set(), false)
+  if (model.entity || model.loader) throw new Error('该模型依赖游戏自定义渲染器，无法直接在 Blockbench 中编辑')
+  if ((model.elements?.length ?? 0) > 512 || Object.keys(model.textures).length > 128) throw new Error('模型超过编辑器导入限制')
+  const textures: import('../shared/modelSource').ModelSourceDocument['textures'] = []
+  const textureLocations: Record<string, string> = {}
+  for (const [id, value] of Object.entries(model.textures)) {
+    const entry = textureReference(value, model.textures)
+    const decoded = await decodeTexture(index, entry)
+    const match = /^assets\/([^/]+)\/textures\/(.+)\.png$/.exec(entry)!
+    textureLocations[id] = `${match[1]}:${match[2]}`
+    textures.push({ id, name: textureLocations[id], dataUrl: `data:image/png;base64,${decoded.frames[0].toString('base64')}` })
+  }
+  return { name: file.split('/').at(-1)!.replace(/\.json$/, ''), format: 'java_block',
+    model: { ...(model.generated ? { parent: 'minecraft:item/generated' } : {}), ...(model.elements ? { elements: model.elements } : {}), textures: textureLocations, display: model.display ?? {} }, textures, animations: [] }
+}
+
 export async function inspectFtbQuestIcon(project: ProjectInfo, input: unknown, remote = false): Promise<FtbQuestIconInspection> {
   const local = await indexFor(project)
   if (remote && !local.remoteIndex) local.remoteIndex = { ...local, remote: true, reads: new Map(), icons: new Map(), decoded: new Map() }

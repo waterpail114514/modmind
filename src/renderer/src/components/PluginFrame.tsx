@@ -48,6 +48,9 @@ export function PluginFrame({ plugin, entry, theme, surface, className, onReady,
       }
 
       switch (data.type) {
+        case 'context':
+          complete(data.requestId, window.modmind.plugins.handleContextOp(plugin.manifest.id, data.op, data.args ?? {}))
+          break
         case 'invokeTool':
           complete(data.requestId, window.modmind.plugins.invokeTool(plugin.manifest.id, data.toolName, data.input))
           break

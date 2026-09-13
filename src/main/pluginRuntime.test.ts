@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PluginRuntime } from './pluginRuntime'
 import { pluginMcpToolName, parsePluginMcpToolName } from '../shared/plugins'
@@ -75,6 +75,22 @@ describe('PluginRuntime tool descriptors', () => {
     ]))
     await expect(runtime.handleContextOp('noperm', 'projectInfo', {})).rejects.toThrow('缺少权限')
     await expect(runtime.handleContextOp('noperm', 'unknownOp', {})).rejects.toThrow('未知上下文操作')
+  })
+
+  it('checks host permissions and binds UI operations to the calling plugin', async () => {
+    const hostContextOp = vi.fn(async () => ({ updated: true }))
+    const runtime = new PluginRuntime({ hostScriptPath: '/host.mjs', dataRootDirectory: '/data', projectInfo: () => null, hostContextOp })
+    const enabled = record({ manifest: { ...record().manifest, permissions: ['ui.overlay', 'chat.context'] } })
+    runtime.syncRecords(new Map([['demo', enabled]]))
+    await expect(runtime.handleContextOp('demo', 'chatGetCurrent', {})).rejects.toThrow('chat.read')
+    await expect(runtime.handleContextOp('demo', 'chatSetDraft', {})).rejects.toThrow('chat.write')
+    expect(hostContextOp).not.toHaveBeenCalled()
+    await runtime.handleContextOp('demo', 'overlayClose', { pluginId: 'other' })
+    expect(hostContextOp).toHaveBeenLastCalledWith(enabled, 'overlayClose', { pluginId: 'other' })
+    await runtime.handleContextOp('demo', 'chatSetContext', { key: 'facts', text: 'hello' })
+    expect(hostContextOp).toHaveBeenCalledTimes(2)
+    runtime.syncRecords(new Map([['demo', { ...enabled, enabled: false }]]))
+    await expect(runtime.handleContextOp('demo', 'chatSetContext', {})).rejects.toThrow('插件不可用')
   })
 
   it('round-trips call ids and host context requests', async () => {

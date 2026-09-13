@@ -22,6 +22,8 @@ export interface PluginRuntimeOptions {
   netFetch?: typeof fetch
   /** 系统剪贴板写入实现。 */
   clipboardWrite?: (text: string) => void | Promise<void>
+  /** 宿主 UI / 对话能力；权限由运行时统一检查。 */
+  hostContextOp?: (plugin: PluginRecord, op: string, args: Record<string, unknown>) => Promise<unknown>
   /** 测试注入点；生产态使用 Electron utilityProcess.fork。 */
   forkHost?: typeof utilityProcess.fork
   /** 后端入口启动状态，用于管理页展示。 */
@@ -355,6 +357,23 @@ export class PluginRuntime {
     if (!record || !record.enabled || record.error || record.runtimeError) throw new Error(`插件不可用：${pluginId}`)
 
     switch (op) {
+      case 'overlayGetState':
+      case 'overlayClose':
+      case 'overlayShow':
+      case 'overlayPopOut':
+      case 'overlayDock':
+      case 'overlaySetAlwaysOnTop':
+      case 'chatGetCurrent':
+      case 'chatSetDraft':
+      case 'chatSetContext':
+      case 'chatRemoveContext': {
+        const permission = op.startsWith('overlay') ? 'ui.overlay'
+          : op === 'chatGetCurrent' ? 'chat.read'
+            : op === 'chatSetDraft' ? 'chat.write' : 'chat.context'
+        if (!record.manifest.permissions.includes(permission)) throw new Error(`缺少权限：${permission}`)
+        if (!this.options.hostContextOp) throw new Error('宿主 UI / 对话能力未配置')
+        return this.options.hostContextOp(record, op, args)
+      }
       case 'projectInfo': {
         if (!record.manifest.permissions.includes('project.read')) throw new Error('缺少权限：project.read')
         return this.options.projectInfo()

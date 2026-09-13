@@ -59,6 +59,11 @@ export async function archiveEntries(file: string): Promise<string[]> {
   }
   return walk(file)
 }
+
+/** Read ZIP metadata without decompressing every asset just to build a file list. */
+export async function archiveFileInfo(file: string): Promise<Array<{ path: string; size: number }>> {
+  return [...(await catalog(file)).values()].map(entry => ({ path: entry.fileName, size: entry.uncompressedSize }))
+}
 export async function archiveRead(file: string, name: string): Promise<Buffer> {
   if (name.split(/[\\/]/).some(part => part === '..') || path.isAbsolute(name)) throw new Error('Invalid resource path')
   if (!file.includes('!/') && (await fs.stat(file)).isDirectory()) {

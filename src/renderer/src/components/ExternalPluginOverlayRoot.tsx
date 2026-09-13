@@ -46,7 +46,7 @@ export function ExternalPluginOverlayRoot(): JSX.Element {
         >
           {alwaysOnTop ? <Pin size={13} /> : <PinOff size={13} />}
         </button>
-        <button type="button" title="关闭" aria-label="关闭" onClick={() => void window.modmind.app.close()}><X size={14} /></button>
+        <button type="button" title="关闭" aria-label="关闭" onClick={() => void window.modmind.plugins.setOverlayVisible(pluginId, false)}><X size={14} /></button>
       </header>
       <PluginFrame
         plugin={plugin}

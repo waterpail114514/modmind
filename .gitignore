@@ -21,6 +21,7 @@ ui-check*.jpg
 /modmind-mcp-open-source.zip
 /docs/*
 !/docs/plugin-development.zh-CN.md
+!/docs/fabric-api-test-policy.zh-CN.md
 /modmind-mcp-open-source/
 /resources/server-pack-creator/.parts/
 /resources/server-pack-creator/*.partial

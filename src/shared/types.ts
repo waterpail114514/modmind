@@ -1277,6 +1277,9 @@ export interface ModMindApi {
     openModule: (namespace: string) => Promise<ProjectInfo>
     sync: () => Promise<MinecraftRuntimeState>
     listContent: (refresh?: boolean) => Promise<ModpackContentInventory>
+    configModIdentities: (projectPath: string) => Promise<import('./contentFileFilters').ModConfigIdentity[]>
+    contentFeatures: (projectPath: string) => Promise<import('./modpackContentFeatures').ModpackContentFeatures>
+    onModsChanged: (listener: (projectPath: string) => void) => () => void
     contentProjectPath: (contentPath: string) => Promise<string>
     importContent: (kind: ModpackContentKind, scope?: ModpackContentScope) => Promise<ModpackContentImportResult | null>
     downloadContent: (input: ModpackContentDownloadInput) => Promise<ModpackContentDownloadResult>
@@ -1420,6 +1423,7 @@ export interface ModMindApi {
     show: (bounds: BlockbenchBounds) => Promise<void>
     hide: () => Promise<void>
     openProject: () => Promise<void>
+    openYsm: () => Promise<{ name: string; animations: number } | null>
     saveProject: () => Promise<void>
     setTheme: (theme: 'light' | 'dark') => Promise<void>
     runAction: (action: string) => Promise<void>
@@ -1504,6 +1508,9 @@ export interface ModMindApi {
     exportDoc: (content: string) => Promise<string>
     delete: (pluginId: string) => Promise<import('./plugins').PluginSnapshot>
     getOverlayWindows: () => Promise<import('./plugins').PluginOverlayWindowState[]>
+    setOverlayVisible: (pluginId: string, visible: boolean) => Promise<import('./plugins').PluginOverlayWindowState>
+    onWorkbenchRequest: (listener: (request: import('./plugins').PluginWorkbenchRequest) => void) => () => void
+    respondWorkbench: (result: import('./plugins').PluginWorkbenchResult) => void
     openOverlayWindow: (pluginId: string) => Promise<import('./plugins').PluginOverlayWindowState>
     closeOverlayWindow: (pluginId: string) => Promise<import('./plugins').PluginOverlayWindowState>
     setOverlayAlwaysOnTop: (pluginId: string, alwaysOnTop: boolean) => Promise<import('./plugins').PluginOverlayWindowState>

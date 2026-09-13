@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import {
   Archive,
   Boxes,
@@ -8,12 +8,12 @@ import {
   CloudDownload,
   FileCode2,
   FileCog,
-  FileArchive,
   FileJson,
   FolderOpen,
   Image,
-  ListChecks,
   LoaderCircle,
+  Plus,
+  RefreshCw,
   MonitorCog,
   PackageOpen,
   Save,
@@ -27,6 +27,12 @@ import {
 import type { ModpackContentInventory, ModpackContentItem, ModpackContentKind, ModpackContentScope, ModpackManifest, ProjectInfo, ServerPackManifest } from '../../../shared/types'
 import { useConfirmDialog } from './InteractionDialogs'
 import { cachedModpackContent, loadModpackContent } from '../modpackContentCache'
+import ContentTextEditor, { type ContentEditorHandle } from './ContentTextEditor'
+import { contentDraftKey, setContentDraft } from '../lib/contentDrafts'
+import ResourceImagePreview from './ResourceImagePreview'
+import { configModAssociation, type ModConfigIdentity } from '../../../shared/contentFileFilters'
+import '../resource-packs.css'
+import '../content-workspace.css'
 
 export type ModpackContentSection = Exclude<ModpackContentKind, 'quests'>
 
@@ -62,7 +68,7 @@ function dataPackMetadata(project: ProjectInfo): string {
 
 const sectionInfo: Record<ModpackContentSection, SectionInfo> = {
   config: { label: '配置与默认项', description: 'config · defaultconfigs · serverconfig', icon: FileCog, path: 'config/', targets: [{ label: '通用配置', path: 'config' }, { label: '默认配置', path: 'defaultconfigs' }, { label: '服务端配置', path: 'serverconfig', scope: 'server' }], starters: [{ label: '通用配置', path: 'config/pack.toml' }, { label: '默认配置', path: 'defaultconfigs/pack.toml' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加配置', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
-  scripts: { label: '脚本与 KubeJS', description: 'KubeJS 与启动脚本', icon: Braces, path: 'kubejs/', targets: [{ label: 'KubeJS', path: 'kubejs' }, { label: '启动脚本', path: 'scripts' }], starters: [{ label: '服务端脚本', path: 'kubejs/server_scripts/pack.js' }, { label: '客户端脚本', path: 'kubejs/client_scripts/pack.js' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加脚本', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
+  scripts: { label: '脚本与 KubeJS', description: 'KubeJS 与启动脚本', icon: Braces, path: 'kubejs/', targets: [{ label: '全部 KubeJS', path: 'kubejs' }, { label: '服务端脚本', path: 'kubejs/server_scripts', scope: 'server' }, { label: '客户端脚本', path: 'kubejs/client_scripts', scope: 'client' }, { label: '启动脚本', path: 'kubejs/startup_scripts' }, { label: '资源 assets', path: 'kubejs/assets', scope: 'client' }, { label: '数据 data', path: 'kubejs/data' }, { label: '其他脚本 / CraftTweaker', path: 'scripts' }], starters: [{ label: '服务端脚本', path: 'kubejs/server_scripts/pack.js' }, { label: '客户端脚本', path: 'kubejs/client_scripts/pack.js' }, { label: '启动脚本', path: 'kubejs/startup_scripts/pack.js' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加脚本', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
   datapacks: { label: '数据包', description: 'datapacks · OpenLoader · Paxi', icon: FileJson, path: 'datapacks/', targets: [{ label: '数据包', path: 'datapacks' }, { label: 'OpenLoader', path: 'openloader/data', requirement: { label: 'OpenLoader', matches: ['openloader'] } }, { label: 'Paxi', path: 'paxi/datapacks', requirement: { label: 'Paxi', matches: ['paxi'] } }], starters: [{ label: '数据包描述', path: 'datapacks/pack.mcmeta', content: dataPackMetadata }, { label: '函数文件', path: 'datapacks/data/example/functions/start.mcfunction', content: () => '# Runs from your data pack.\n' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加数据包', emptyTitle: '暂无数据包内容', emptyDescription: '从描述文件或函数入口开始，完成后可在代码编辑器中继续编辑' },
   resourcepacks: { label: '资源包', description: '客户端视觉资源', icon: Image, path: 'resourcepacks/', targets: [{ label: '资源包', path: 'resourcepacks', scope: 'client' }], starters: [], mode: 'assets', scopeOptions: ['client'], tone: 'utility', addLabel: '添加资源包', emptyTitle: '暂无资源包', emptyDescription: '导入或下载 ZIP 资源包后，它会以客户端内容随整合包分发' },
   shaderpacks: { label: '光影包', description: 'shaderpacks · 客户端内容', icon: Sparkles, path: 'shaderpacks/', targets: [{ label: '光影包', path: 'shaderpacks', scope: 'client' }], starters: [], mode: 'assets', scopeOptions: ['client'], tone: 'utility', addLabel: '添加光影包', emptyTitle: '暂无光影包', emptyDescription: '导入或下载 ZIP 光影包后，它会以客户端内容随整合包分发' },
@@ -73,8 +79,8 @@ const sectionInfo: Record<ModpackContentSection, SectionInfo> = {
   other: { label: '文件工作台', description: '未归类的 MRPack 覆盖文件', icon: Boxes, path: '', targets: [{ label: '自定义位置', path: '' }, { label: '全局资源', path: 'global_packs' }], starters: [{ label: '说明文件', path: 'README.txt' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加内容', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' }
 }
 
-const editableExtensions = new Set(['cfg', 'conf', 'ini', 'js', 'json', 'json5', 'kts', 'lang', 'mcfunction', 'properties', 'snbt', 'toml', 'ts', 'txt', 'xml', 'yaml', 'yml', 'zs'])
-const CONTENT_ROW_HEIGHT = 56
+const editableExtensions = new Set(['cfg', 'conf', 'ini', 'js', 'json', 'json5', 'mcmeta', 'md', 'kts', 'lang', 'mcfunction', 'properties', 'snbt', 'toml', 'ts', 'txt', 'xml', 'yaml', 'yml', 'zs'])
+const CONTENT_ROW_HEIGHT = 44
 const CONTENT_ROW_OVERSCAN = 8
 
 function formatBytes(value?: number): string {
@@ -104,14 +110,28 @@ function isEditableContent(item: ModpackContentItem): boolean {
   return Boolean(extension && editableExtensions.has(extension))
 }
 
-export default function ModpackContentWorkspace({ project, section, onOpenEditor, onCreateFile, inventoryMode = false }: { project: ProjectInfo; section: ModpackContentSection; onOpenEditor: (contentPath?: string) => void; onCreateFile: (contentPath: string, content?: string) => void; inventoryMode?: boolean }): React.JSX.Element {
+export default function ModpackContentWorkspace({ project, section, onOpenEditor, onCreateFile, inventoryMode = false, darkMode = false }: { project: ProjectInfo; section: ModpackContentSection; onOpenEditor: (contentPath?: string) => void; onCreateFile: (contentPath: string, content?: string) => void; inventoryMode?: boolean; darkMode?: boolean }): React.JSX.Element {
   const info = inventoryMode ? { label: '文件清单', description: 'MRPack 远程来源与本地覆盖内容', icon: PackageOpen, path: '', targets: [{ label: '自定义位置', path: '' }, { label: '全局资源', path: 'global_packs' }], starters: [{ label: '说明文件', path: 'README.txt' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加内容', emptyTitle: '暂无内容', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' } satisfies SectionInfo : sectionInfo[section]
   const Icon = info.icon
+  const editorRef = useRef<ContentEditorHandle | null>(null)
+  const openCodeEditor = async (contentPath?: string): Promise<void> => {
+    if (editorRef.current && !await editorRef.current.save()) return
+    onOpenEditor(contentPath)
+  }
   const [inventory, setInventory] = useState<ModpackContentInventory>({ version: 1, items: [] })
   const [manifest, setManifest] = useState<ModpackManifest | null>(null)
   const [serverPackManifest, setServerPackManifest] = useState<ServerPackManifest | null>(null)
   const [serverPackModsExpanded, setServerPackModsExpanded] = useState(false)
-  const [selectedServerPackMod, setSelectedServerPackMod] = useState('')
+  const [selectedId, setSelectedId] = useState('')
+  const [query, setQuery] = useState('')
+  const [fileFilter, setFileFilter] = useState('all')
+  const [modFilter, setModFilter] = useState('all')
+  const [modIdentities, setModIdentities] = useState<ModConfigIdentity[]>([])
+  const [modsLoading, setModsLoading] = useState(false)
+  const [modsError, setModsError] = useState('')
+  const supportsModFilter = !inventoryMode && (section === 'config' || section === 'server')
+  const [downloadOpen, setDownloadOpen] = useState(false)
+  const [previewRevision, setPreviewRevision] = useState(0)
   const [initialLoading, setInitialLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
@@ -145,6 +165,7 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     setTargetPath('')
     setTargetIndex(0)
     setTargetIsSuggested(false)
+    setSelectedId(''); setQuery(''); setFileFilter('all'); setModFilter('all'); setDownloadOpen(false)
     setExtract(section === 'worlds')
     setServerPackModsExpanded(false)
     const cached = cachedModpackContent(project.path)
@@ -168,7 +189,20 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
         .finally(() => { if (current) setInitialLoading(false) })
     }
     return () => { current = false }
-  }, [project.path, section])
+  }, [project.path, section, inventoryMode])
+
+  useEffect(() => {
+    let current = true
+    setModIdentities([])
+    setModsError('')
+    setModFilter('all')
+    setModsLoading(supportsModFilter)
+    if (supportsModFilter) void window.modmind.modpack.configModIdentities(project.path)
+      .then(mods => { if (current) setModIdentities(mods) })
+      .catch(() => { if (current) setModsError('模组识别失败，请刷新重试') })
+      .finally(() => { if (current) setModsLoading(false) })
+    return () => { current = false }
+  }, [project.path, supportsModFilter, previewRevision])
 
   useEffect(() => {
     const element = listRef.current
@@ -185,18 +219,41 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     setListScrollTop(0)
   }, [project.path, section])
 
-  const items = useMemo(() => inventoryMode ? inventory.items : inventory.items.filter((item) => item.kind === section), [inventory.items, inventoryMode, section])
-  const { remote, total, firstEditable } = useMemo(() => ({
+  const items = useMemo(() => inventoryMode ? inventory.items : inventory.items.filter((item) => item.kind === section || (section === 'server' && /^(serverconfig|defaultconfigs)\//.test(item.path))), [inventory.items, inventoryMode, section])
+  const { remote, total } = useMemo(() => ({
     remote: items.filter((item) => item.delivery === 'remote').length,
-    total: items.reduce((sum, item) => sum + (item.size ?? 0), 0),
-    firstEditable: items.find(isEditableContent)
+    total: items.reduce((sum, item) => sum + (item.size ?? 0), 0)
   }), [items])
+  const filters = useMemo(() => inventoryMode
+    ? [...new Set(items.map(item => item.kind))].map(kind => ({ value: kind, label: sectionInfo[kind as ModpackContentSection]?.label ?? '任务文件' }))
+    : info.targets.filter(target => target.path).map(target => ({ value: target.path, label: target.label })), [inventoryMode, items, info.targets])
+  const associations = useMemo(() => new Map(items.map(item => [item.id, configModAssociation(item.path, modIdentities)])), [items, modIdentities])
+  const modOptions = useMemo(() => {
+    const counts = new Map<string, { mod: ModConfigIdentity; count: number }>()
+    for (const mod of associations.values()) if (mod) {
+      const entry = counts.get(mod.id) ?? { mod, count: 0 }
+      entry.count++
+      counts.set(mod.id, entry)
+    }
+    return [...counts.values()].sort((a, b) => a.mod.name.localeCompare(b.mod.name))
+  }, [associations])
+  const filteredItems = useMemo(() => items.filter(item => {
+    const matchesFilter = fileFilter === 'all' || (inventoryMode ? item.kind === fileFilter : item.path === fileFilter || item.path.startsWith(`${fileFilter}/`))
+    const mod = associations.get(item.id)
+    const matchesMod = !supportsModFilter || modFilter === 'all' || (modFilter === 'unassigned' ? !mod : `mod:${mod?.id}` === modFilter)
+    return matchesFilter && matchesMod && item.path.toLowerCase().includes(query.trim().toLowerCase())
+  }), [items, inventoryMode, fileFilter, query, associations, supportsModFilter, modFilter])
+  const selectedItem = filteredItems.find(item => item.id === selectedId)
+  useEffect(() => {
+    setSelectedId(current => filteredItems.some(item => item.id === current) ? current : filteredItems[0]?.id ?? '')
+  }, [filteredItems])
+  useEffect(() => { listRef.current?.scrollTo({ top: 0 }); setListScrollTop(0) }, [query, fileFilter, modFilter])
   const virtualRange = useMemo(() => {
     const visibleRows = Math.ceil(listViewportHeight / CONTENT_ROW_HEIGHT)
     const start = Math.max(0, Math.floor(listScrollTop / CONTENT_ROW_HEIGHT) - CONTENT_ROW_OVERSCAN)
-    return { start, end: Math.min(items.length, start + visibleRows + CONTENT_ROW_OVERSCAN * 2) }
-  }, [items.length, listScrollTop, listViewportHeight])
-  const visibleItems = items.slice(virtualRange.start, virtualRange.end)
+    return { start, end: Math.min(filteredItems.length, start + visibleRows + CONTENT_ROW_OVERSCAN * 2) }
+  }, [filteredItems.length, listScrollTop, listViewportHeight])
+  const visibleItems = filteredItems.slice(virtualRange.start, virtualRange.end)
   const editorFirst = info.mode === 'editor'
   const selectedTarget = info.targets[targetIndex]
   const targetRequirement = selectedTarget?.requirement
@@ -209,27 +266,12 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     void action().catch((error) => setNotice(error instanceof Error ? error.message : String(error))).finally(() => setBusy(''))
   }
 
-  useEffect(() => {
-    const mods = serverPackManifest?.mods ?? []
-    setSelectedServerPackMod((current) => mods.includes(current) ? current : mods[0] ?? '')
-  }, [serverPackManifest])
-
   const addServerPackMods = (): void => run('server-mod-add', async () => {
     const updated = await window.modmind.modpack.addServerPackMods()
     if (!updated) return
     setServerPackManifest(updated)
     setNotice(`服务端 Mod 已更新：${updated.mods.length} 个`)
   })
-
-  const removeServerPackMod = async (): Promise<void> => {
-    const fileName = selectedServerPackMod
-    if (!fileName || busy || !await requestConfirm({ title: `移除“${fileName}”`, message: '该 Mod 将从当前服务端包删除', confirmLabel: '移除 Mod', tone: 'danger' })) return
-    run('server-mod-remove', async () => {
-      const updated = await window.modmind.modpack.removeServerPackMod(fileName)
-      setServerPackManifest(updated)
-      setNotice(`服务端 Mod 已更新：${updated.mods.length} 个`)
-    })
-  }
 
   const exportServerPack = (): void => run('server-export', async () => {
     const target = await window.modmind.modpack.exportServerPack()
@@ -270,7 +312,9 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
   const remove = async (item: ModpackContentItem): Promise<void> => {
     if (busy || !await requestConfirm({ title: '移除已管理内容？', message: '这会从整合包中删除文件或目录，且无法自动恢复', detail: item.path, confirmLabel: '移除内容', cancelLabel: '保留内容', tone: 'danger' })) return
     run(`remove:${item.id}`, async () => {
+    const relative = await window.modmind.modpack.contentProjectPath(item.path)
     await window.modmind.modpack.removeContent(item.id)
+    setContentDraft(contentDraftKey(project.path, relative), undefined)
     await load(() => true, true)
     })
   }
@@ -283,28 +327,7 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     setScope(target.scope ?? info.scopeOptions[0] ?? defaultScope(section))
   }
 
-  const focusDownload = (): void => downloadInputRef.current?.focus()
-
-  const renderServerModList = section === 'server' ? (() => {
-    const rows = serverPackManifest?.mods ?? []
-    return <section className="pack-server-mod-list">
-      <div className="pack-server-mod-list-heading"><div><span className="pack-server-mod-list-icon"><ListChecks size={18} /></span><div><h2>服务端 Mod 清单</h2><p>这里只显示已经同步到服务端包目录的实际结果</p></div></div><span>{serverPackManifest ? `${rows.length} 个已同步` : '尚未同步'}</span></div>
-      <div className="pack-server-mod-list-table" role="table" aria-label="服务端 Mod 清单">
-        {rows.map((fileName) => {
-          const directlyMerged = serverPackManifest?.directMods?.some((entry) => entry.toLowerCase() === fileName.toLowerCase())
-          return <div className="pack-server-mod-row" role="row" key={fileName}><span className="pack-server-mod-side server">服务端</span><strong>{fileName}</strong><small>{directlyMerged ? 'ModMind 直接合并' : 'ServerPackCreator 已复制'}</small></div>
-        })}
-        {!rows.length ? <div className="pack-server-mod-empty">{serverPackManifest ? '同步结果中没有服务端 Mod' : '尚未同步服务端包，完成同步后这里才会显示实际 Mod'}</div> : null}
-      </div>
-    </section>
-  })() : null
-
-  const renderServerPackActions = section === 'server' ? <section className="pack-server-mod-actions">
-    <button className="secondary-button" type="button" disabled={Boolean(busy) || !serverPackManifest} onClick={addServerPackMods}>{busy === 'server-mod-add' ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}添加服务端 Mod</button>
-    <label><select value={selectedServerPackMod} disabled={Boolean(busy) || !serverPackManifest?.mods.length} onChange={(event) => setSelectedServerPackMod(event.target.value)}>{serverPackManifest?.mods.map((fileName) => <option key={fileName} value={fileName}>{fileName}</option>)}</select></label>
-    <button className="icon-button danger" type="button" title="移除选中的服务端 Mod" aria-label="移除选中的服务端 Mod" disabled={Boolean(busy) || !selectedServerPackMod} onClick={() => void removeServerPackMod()}>{busy === 'server-mod-remove' ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}</button>
-    <button className="primary-button" type="button" disabled={Boolean(busy) || !serverPackManifest} onClick={exportServerPack}>{busy === 'server-export' ? <LoaderCircle className="spin" size={15} /> : <Archive size={15} />}导出服务端包</button>
-  </section> : null
+  useEffect(() => { if (downloadOpen) downloadInputRef.current?.focus() }, [downloadOpen])
 
   const renderServerPackManager = section === 'server' ? (() => {
     const rows = serverPackManifest?.mods ?? []
@@ -329,48 +352,89 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     {targetDependencyMissing ? <div className="pack-content-requirement" role="status"><Archive size={14} />“{selectedTarget.label}”需要已安装 {targetRequirement?.label}</div> : null}
   </>
 
-  return <div className="pack-content-page">
-    <header className="content-toolbar pack-content-toolbar">
-      <div><span className={`pack-content-eyebrow ${info.tone}`}>PACK CONTENT</span><h1>{info.label}</h1><p>{info.description}</p></div>
-      <div className="pack-content-summary" aria-label="内容统计">{initialLoading ? <span><LoaderCircle className="spin" size={13} />正在加载内容</span> : <><span>{items.length} 项内容</span><span>{remote} 个远程来源</span><span>{formatBytes(total)}</span></>}</div>
-    </header>
+  const reveal = (item: ModpackContentItem): void => run('reveal', async () => {
+    const relative = await window.modmind.modpack.contentProjectPath(item.path)
+    await window.modmind.project.reveal(relative, project.path)
+  })
 
-    {renderServerPackManager}
-
-    <section className="pack-content-editor-start">
-      <div className="pack-content-editor-copy"><span>{editorFirst ? <FileCode2 size={18} /> : <Icon size={18} />}</span><div><h2>{editorFirst ? firstEditable ? '继续编辑文件' : '从代码编辑器开始' : info.addLabel}</h2><p>{editorFirst ? firstEditable?.path || info.path || '新建或选择一个项目文件' : info.path}</p></div></div>
-      <div className="pack-content-editor-actions">{editorFirst ? <button className="primary-button" type="button" onClick={() => onOpenEditor(firstEditable?.path)}><FileCode2 size={15} />{firstEditable ? '打开文件' : '代码编辑器'}</button> : <button className="secondary-button" type="button" onClick={() => onOpenEditor()}><FolderOpen size={15} />文件工作台</button>}<button className="secondary-button" type="button" disabled={Boolean(busy)} onClick={importLocal}>{busy === 'import' ? <LoaderCircle className="spin" size={15} /> : <Upload size={15} />}{section === 'worlds' ? '导入世界目录' : '导入文件'}</button></div>
-      {info.starters.length ? <div className="pack-content-editor-starters"><span>新建文件</span>{info.starters.map((starter) => <button className="secondary-button compact" type="button" key={starter.path} onClick={() => onCreateFile(starter.path, starter.content?.(project))}><FileCode2 size={14} />{starter.label}</button>)}</div> : null}
-      <details className="pack-content-download-disclosure"><summary><CloudDownload size={14} />从链接添加</summary>{downloadControls}</details>
-    </section>
-
-    <section className="pack-content-list-section">
-      <div className="pack-content-list-heading"><div><h2>已管理内容</h2></div><button className="icon-button" title="刷新内容列表" aria-label="刷新内容列表" disabled={Boolean(busy) || initialLoading} onClick={() => void run('refresh', () => load(() => true, true))}>{busy === 'refresh' ? <LoaderCircle className="spin" size={15} /> : <PackageOpen size={15} />}</button></div>
-      <div className="pack-content-list" ref={listRef} onScroll={(event) => setListScrollTop(event.currentTarget.scrollTop)}>
-        {initialLoading ? <div className="pack-content-loading" role="status"><LoaderCircle className="spin" size={22} /><div><strong>正在加载内容</strong><small>正在读取配置、资源与脚本文件</small></div></div> : null}
-        {!initialLoading && items.length ? <div className="pack-content-virtual" style={{ height: items.length * CONTENT_ROW_HEIGHT }}><div className="pack-content-virtual-window" style={{ transform: `translateY(${virtualRange.start * CONTENT_ROW_HEIGHT}px)` }}>{visibleItems.map((item) => <ContentRow item={item} busy={busy} projectPath={project.path} onRemove={(entry) => void remove(entry)} onOpenEditor={onOpenEditor} showKind={inventoryMode} key={item.id} />)}</div></div> : null}
-        {!initialLoading && !items.length ? <div className="pack-content-empty"><span className="pack-content-empty-icon"><Icon size={22} /></span><div className="pack-content-empty-copy"><strong>{info.emptyTitle}</strong><small>{info.emptyDescription}</small></div><div className="pack-content-empty-actions">{editorFirst ? <button type="button" className="secondary-button compact" onClick={() => onOpenEditor()}><FileCode2 size={14} />代码编辑器</button> : null}<button type="button" className="secondary-button compact" disabled={Boolean(busy)} onClick={importLocal}><Upload size={14} />{section === 'worlds' ? '导入世界目录' : '导入本地文件'}</button>{!editorFirst ? <button type="button" className="secondary-button compact" disabled={Boolean(busy)} onClick={focusDownload}><CloudDownload size={14} />添加下载</button> : null}</div></div> : null}
+  return <div className="resource-pack-workspace pack-content-workspace">
+    <header className="content-toolbar">
+      <div><h1>{info.label}</h1><p>{project.name} · {project.minecraftVersion}</p></div>
+      <div className="resource-pack-actions">
+        <button className="icon-button" title="刷新内容列表" disabled={Boolean(busy) || initialLoading} onClick={() => run('refresh', async () => { await load(() => true, true); setPreviewRevision(value => value + 1) })}><RefreshCw size={16} /></button>
+        {info.starters.length ? <label className="pack-content-create"><Plus size={15} /><select aria-label="新建文件" value="" disabled={Boolean(busy)} onChange={event => { const starter = info.starters.find(item => item.path === event.target.value); if (starter) onCreateFile(starter.path, starter.content?.(project)) }}><option value="" disabled>新建文件</option>{info.starters.map(starter => <option key={starter.path} value={starter.path}>{starter.label}</option>)}</select></label> : null}
+        <button className="secondary-button" disabled={Boolean(busy)} onClick={importLocal}><Upload size={15} />{section === 'worlds' ? '导入世界目录' : '导入文件'}</button>
+        <button className="secondary-button" aria-expanded={downloadOpen} aria-controls="pack-content-download" onClick={() => setDownloadOpen(value => !value)}><CloudDownload size={15} />从链接添加</button>
       </div>
-    </section>
-    {notice ? <div className="pack-content-notice" role="status">{notice}</div> : null}
+    </header>
+    <div className="resource-pack-toolbar">
+      <label>文件范围<select aria-label="文件范围" value={fileFilter} onChange={event => setFileFilter(event.target.value)}><option value="all">全部{inventoryMode ? '内容' : '文件'}</option>{filters.map(filter => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select></label>
+      {supportsModFilter ? <label title={modsError || '根据已安装模组 ID 与配置文件名或目录名匹配；未匹配的文件仍可查看'}>关联模组<select aria-label="关联模组" value={modFilter} disabled={modsLoading || Boolean(modsError)} onChange={event => setModFilter(event.target.value)}><option value="all">{modsLoading ? '正在识别模组…' : modsError || '全部模组 / 配置'}</option>{modOptions.map(({ mod, count }) => <option key={mod.id} value={`mod:${mod.id}`}>{mod.name} ({mod.id}) · {count}</option>)}<option value="unassigned">未识别 / 共享配置 · {items.length - [...associations.values()].filter(Boolean).length}</option></select></label> : null}
+      <span>{initialLoading ? '正在加载…' : `${filteredItems.length} 项内容`}</span>
+      <span className="resource-pack-origin">{remote ? `${remote} 个远程来源 · ` : ''}{items.length ? formatBytes(total) : info.description}</span>
+      <div className="resource-pack-actions"><button className="secondary-button" onClick={() => void openCodeEditor(selectedItem && isEditableContent(selectedItem) ? selectedItem.path : undefined)}><FileCode2 size={15} />代码编辑器</button></div>
+    </div>
+    {downloadOpen ? <section id="pack-content-download" className="pack-content-download-panel" aria-label="从链接添加内容">{downloadControls}</section> : null}
+    {renderServerPackManager}
+    <div className="resource-pack-body">
+      <aside className="resource-pack-files pack-content-files" aria-label="内容文件列表">
+        <div className="resource-pack-file-tools"><input aria-label="筛选内容文件" placeholder="筛选文件" value={query} onChange={event => setQuery(event.target.value)} /></div>
+        <div className="pack-content-file-list" ref={listRef} onScroll={event => setListScrollTop(event.currentTarget.scrollTop)}>
+          {initialLoading ? <div className="pack-content-list-message" role="status"><LoaderCircle className="spin" size={16} />正在读取文件…</div> : null}
+          {!initialLoading && filteredItems.length ? <div className="pack-content-virtual" style={{ height: filteredItems.length * CONTENT_ROW_HEIGHT }}><div className="pack-content-virtual-window" style={{ transform: `translateY(${virtualRange.start * CONTENT_ROW_HEIGHT}px)` }}>{visibleItems.map(item => {
+            const ItemIcon = item.directory ? FolderOpen : contentVisual(item).Icon
+            return <button key={item.id} className={`resource-pack-file pack-content-file${selectedId === item.id ? ' active' : ''}`} aria-pressed={selectedId === item.id} title={item.path} onClick={() => setSelectedId(item.id)}>
+              <ItemIcon size={15} /><span><strong>{item.path}</strong><small>{inventoryMode ? `${contentVisual(item).label} · ` : ''}{item.delivery === 'remote' ? '远程已校验' : item.directory ? '目录内容' : '本地覆盖'} · {scopeLabel(item.scope)}</small></span>
+            </button>
+          })}</div></div> : null}
+          {!initialLoading && !filteredItems.length ? <div className="pack-content-list-message">{items.length ? '没有匹配的文件' : info.emptyTitle}</div> : null}
+        </div>
+      </aside>
+      <section className="resource-pack-editor" aria-label="文件编辑与详情">
+        <div className="resource-pack-editor-heading"><span>{selectedItem?.path ?? '选择文件'}</span>{selectedItem ? <div className="resource-pack-actions">
+          {selectedItem.sourceUrl ? <button className="icon-button" title="打开来源" onClick={() => void window.open(selectedItem.sourceUrl, '_blank')}><WandSparkles size={15} /></button> : null}
+          <button className="icon-button" title="在文件管理器中显示" disabled={Boolean(busy)} onClick={() => reveal(selectedItem)}><FolderOpen size={16} /></button>
+          <button className="icon-button danger" title="移除内容" disabled={Boolean(busy)} onClick={() => void remove(selectedItem)}><Trash2 size={15} /></button>
+        </div> : null}</div>
+        {selectedItem && !initialLoading ? <ContentPreview key={`${project.path}:${selectedItem.id}`} projectPath={project.path} item={selectedItem} darkMode={darkMode} revision={previewRevision} editorRef={editorRef} mod={supportsModFilter ? associations.get(selectedItem.id) : undefined} /> : <div className="resource-pack-empty"><Icon size={28} /><p>{initialLoading ? '正在加载内容…' : items.length ? '选择文件以查看内容' : info.emptyTitle}</p><small>{items.length ? '可在左侧筛选或切换文件范围' : info.emptyDescription}</small><div className="resource-pack-actions"><button className="secondary-button" disabled={Boolean(busy)} onClick={importLocal}><Upload size={15} />{section === 'worlds' ? '导入世界目录' : '导入文件'}</button>{editorFirst ? <button className="secondary-button" onClick={() => void openCodeEditor()}><FileCode2 size={15} />代码编辑器</button> : null}</div></div>}
+      </section>
+    </div>
+    {notice || busy ? <div className="resource-pack-notice" role="status">{busy ? <LoaderCircle className="spin" size={15} /> : null}{notice || '处理中…'}</div> : null}
     {confirmDialog}
   </div>
 }
 
-function ContentRow({ item, busy, projectPath, onRemove, onOpenEditor, showKind }: { item: ModpackContentItem; busy: string; projectPath: string; onRemove: (item: ModpackContentItem) => void; onOpenEditor: (contentPath?: string) => void; showKind: boolean }): React.JSX.Element {
-  const visual = item.kind === 'resourcepacks' ? { Icon: Image, tone: 'utility', label: '资源包' }
-    : item.kind === 'shaderpacks' ? { Icon: Sparkles, tone: 'utility', label: '光影包' }
-      : item.kind === 'worlds' ? { Icon: Save, tone: 'utility', label: '世界' }
-        : item.kind === 'datapacks' ? { Icon: FileArchive, tone: 'utility', label: '数据包' }
-          : { Icon: FileJson, tone: 'utility', label: sectionInfo[item.kind as ModpackContentSection]?.label ?? item.kind }
-  const extension = item.directory ? '目录' : item.path.split('.').at(-1)?.toUpperCase() ?? '文件'
-  const scopeLabel = item.scope === 'common' ? '通用' : item.scope === 'client' ? '客户端' : '服务端'
-  return <div className="pack-content-row">
-    <span className={`pack-content-row-icon ${visual.tone} ${item.delivery}`}><visual.Icon size={16} /></span>
-    <span><strong>{item.path}</strong><small className="pack-content-row-meta">{showKind ? <b>{visual.label}</b> : null}<b>{extension}</b><b>{item.delivery === 'remote' ? '远程已校验' : item.directory ? '目录内容' : '本地覆盖'}</b><b>{scopeLabel}</b><b>{formatBytes(item.size)}</b></small></span>
-    {item.sourceUrl ? <button className="icon-button" type="button" title="在浏览器中打开来源" aria-label="打开来源" onClick={() => void window.open(item.sourceUrl, '_blank')}><WandSparkles size={15} /></button> : null}
-    {isEditableContent(item) ? <button className="icon-button" type="button" title="在代码编辑器中打开" aria-label={`编辑 ${item.path}`} onClick={() => onOpenEditor(item.path)}><FileCode2 size={15} /></button> : null}
-    <button className="icon-button" type="button" title="在文件管理器中显示" aria-label="显示内容" onClick={() => void window.modmind.modpack.contentProjectPath(item.path).then((relativePath) => window.modmind.project.reveal(relativePath, projectPath))}><FolderOpen size={15} /></button>
-    <button className="icon-button danger" type="button" title="移除内容" aria-label="移除内容" disabled={Boolean(busy)} onClick={() => onRemove(item)}>{busy === `remove:${item.id}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}</button>
-  </div>
+function scopeLabel(scope: ModpackContentScope): string { return scope === 'common' ? '通用' : scope === 'client' ? '客户端' : '服务端' }
+
+function contentVisual(item: ModpackContentItem): { Icon: typeof Image; label: string } {
+  const entry = sectionInfo[item.kind as ModpackContentSection]
+  return { Icon: entry?.icon ?? FileJson, label: entry?.label ?? '任务文件' }
+}
+
+/** Reuse the text editor and resource image viewer in the content workspace. */
+function ContentPreview({ projectPath, item, darkMode, revision, mod, editorRef }: { projectPath: string; item: ModpackContentItem; darkMode: boolean; revision: number; mod?: ModConfigIdentity; editorRef: MutableRefObject<ContentEditorHandle | null> }): React.JSX.Element {
+  const [content, setContent] = useState<{ path: string; text?: string; image?: string; error?: string } | null>(null)
+  const image = !item.directory && /\.(png|jpe?g|webp|gif|bmp)$/i.test(item.path)
+  const text = isEditableContent(item)
+  const oversized = Boolean(item.size && item.size > (image ? 20 : 2) * 1024 * 1024)
+  useEffect(() => {
+    let current = true
+    setContent(null)
+    if ((!text && !image) || oversized) return
+    void (async () => {
+      const path = await window.modmind.modpack.contentProjectPath(item.path)
+      if (!current) return
+      const value = image ? { image: await window.modmind.project.readImageAsset(path) } : { text: await window.modmind.project.readFile(path, projectPath) }
+      if (current) setContent({ path, ...value })
+    })().catch(error => { if (current) setContent({ path: item.path, error: error instanceof Error ? error.message : String(error) }) })
+    return () => { current = false }
+  }, [projectPath, item.path, item.size, image, text, oversized, revision])
+  const ItemIcon = item.directory ? FolderOpen : contentVisual(item).Icon
+  return <>
+    <div className="pack-content-file-info"><span>{item.directory ? '目录' : item.path.split('.').at(-1)?.toUpperCase() ?? '文件'}</span><span>{scopeLabel(item.scope)}</span><span>{formatBytes(item.size)}</span>{mod ? <span title={`模组 ID：${mod.id}；依据文件名或目录名匹配`}>{mod.name} · 名称匹配</span> : null}</div>
+    {(text || image) && !oversized && !content ? <div className="resource-pack-empty" role="status"><LoaderCircle className="spin" size={22} />正在读取文件…</div>
+      : content?.text !== undefined ? <ContentTextEditor projectPath={projectPath} path={content.path} text={content.text} darkMode={darkMode} editorRef={editorRef} />
+      : content?.image ? <ResourceImagePreview src={content.image} name={item.path} />
+      : <div className="resource-pack-empty"><ItemIcon size={30} /><p>{content?.error ? '暂时无法预览此文件' : item.directory ? '目录内容' : oversized ? '文件超过预览大小限制' : '此文件使用专用格式'}</p><small>{content?.error || (item.directory ? '使用上方「在文件管理器中显示」查看目录。' : '可以查看文件位置和来源，或使用对应工具打开。')}</small>{item.sourceUrl ? <div className="pack-content-source-url"><span>下载来源</span><span>{item.sourceUrl}</span></div> : null}</div>}
+  </>
 }

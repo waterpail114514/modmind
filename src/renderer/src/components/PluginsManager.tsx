@@ -242,6 +242,11 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
                       <button className="secondary-button compact" type="button" onClick={() => onOpenPanel(plugin.manifest.id)}>打开面板</button>
                     ) : null}
                     {!plugin.error && plugin.enabled && plugin.manifest.overlay ? (
+                      <button className="secondary-button compact" type="button" onClick={() => void runAction(async () => { await window.modmind.plugins.setOverlayVisible(plugin.manifest.id, true) }, '悬浮界面已恢复到应用内')}>
+                        显示悬浮界面
+                      </button>
+                    ) : null}
+                    {!plugin.error && plugin.enabled && plugin.manifest.overlay ? (
                       <button className="secondary-button compact" type="button" onClick={() => void runAction(async () => { await window.modmind.plugins.openOverlayWindow(plugin.manifest.id) }, '悬浮窗已弹到桌面')}>
                         <ExternalLink size={13} />弹到桌面
                       </button>

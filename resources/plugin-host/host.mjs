@@ -70,6 +70,20 @@ function requirePermission(permission) {
 
 const ctx = {
   log,
+  overlay: {
+    getState: () => permittedContext('ui.overlay', 'overlayGetState'),
+    close: () => permittedContext('ui.overlay', 'overlayClose'),
+    show: () => permittedContext('ui.overlay', 'overlayShow'),
+    popOut: () => permittedContext('ui.overlay', 'overlayPopOut'),
+    dock: () => permittedContext('ui.overlay', 'overlayDock'),
+    setAlwaysOnTop: (alwaysOnTop) => permittedContext('ui.overlay', 'overlaySetAlwaysOnTop', { alwaysOnTop })
+  },
+  chat: {
+    getCurrent: (target) => permittedContext('chat.read', 'chatGetCurrent', { target }),
+    setDraft: (text, options = {}) => permittedContext('chat.write', 'chatSetDraft', { ...options, text }),
+    setContext: (key, text, target) => permittedContext('chat.context', 'chatSetContext', { key, text, target }),
+    removeContext: (key, target) => permittedContext('chat.context', 'chatRemoveContext', { key, target })
+  },
   projectInfo() {
     requirePermission('project.read')
     return requestContext('projectInfo', {})
@@ -93,6 +107,11 @@ const ctx = {
   callTool(toolName, input) {
     return requestContext('pluginTool', { toolName, input })
   }
+}
+
+function permittedContext(permission, op, args = {}) {
+  requirePermission(permission)
+  return requestContext(op, args)
 }
 
 const toolHandlers = new Map()

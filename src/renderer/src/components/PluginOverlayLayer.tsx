@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ExternalLink, GripHorizontal } from 'lucide-react'
+import { ExternalLink, GripHorizontal, X } from 'lucide-react'
 import type { PluginOverlayWindowState, PluginRecord, PluginSnapshot } from '../../../shared/plugins'
 import { PluginFrame } from './PluginFrame'
 
@@ -89,6 +89,9 @@ function InAppPluginOverlay({ plugin, theme, order }: { plugin: PluginRecord; th
         <button type="button" title="弹出到桌面" aria-label="弹出到桌面" onClick={() => void window.modmind.plugins.openOverlayWindow(plugin.manifest.id)}>
           <ExternalLink size={13} />
         </button>
+        <button type="button" title="关闭悬浮界面" aria-label="关闭悬浮界面" onClick={() => void window.modmind.plugins.setOverlayVisible(plugin.manifest.id, false)}>
+          <X size={13} />
+        </button>
       </header>
       <PluginFrame
         plugin={plugin}
@@ -110,7 +113,7 @@ export function PluginOverlayLayer({ snapshot, theme }: PluginOverlayLayerProps)
     return () => { disposed = true; unsubscribe() }
   }, [])
 
-  const externalIds = useMemo(() => new Set(externalWindows.filter((state) => state.open).map((state) => state.pluginId)), [externalWindows])
+  const externalIds = useMemo(() => new Set(externalWindows.filter((state) => state.open || state.hidden).map((state) => state.pluginId)), [externalWindows])
   const overlays = snapshot.plugins.filter((plugin) => plugin.enabled && !plugin.error && plugin.manifest.overlay && !externalIds.has(plugin.manifest.id))
   if (!overlays.length) return null
 

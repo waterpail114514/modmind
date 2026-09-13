@@ -1,4 +1,5 @@
 import { desktopProcessEnvironment } from './desktopEnvironment'
+import { modpackConfigIdentities, modpackContentFeatures } from './modpackConfigIdentities'
 import { runtimePlatformInfo } from '../shared/platform'
 import { normalizeAgentApprovalMode } from '../shared/agentApproval'
 import { nativeToolDiagnostics } from './nativeToolDiagnostics'
@@ -18,6 +19,7 @@ import os from 'node:os'
 import path from 'node:path'
 import extractZip from 'extract-zip'
 import { BlockbenchBridge } from './blockbenchBridge'
+import { readYsmSource } from './modelSourceService'
 import { MinecraftRuntimeManager, detectInstalledJavaHomes, probeJavaHomeInfo } from './minecraftRuntime'
 import { HeadlessMcService, supportsHeadlessMc } from './headlessMcService'
 import { MappingService } from './mappingService'
@@ -56,6 +58,7 @@ import { normalizeProjectName, validateProjectNameInput } from '../shared/projec
 import { buildBedrockAddon, buildNeteaseArchive, createStoredZip } from './bedrockAddon'
 import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, installExternalAgent, launchExternalAgent, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
 import { createPluginBridgeTarget, getPluginService, getPluginRuntime, importPluginZipInteractive, initializePlugins, refreshPluginRegistry, registerPluginProtocolSchemeEarly, shutdownPlugins, waitForPluginRegistry } from './pluginBridgeIntegration'
+import { PluginChatBridge } from './pluginChatBridge'
 import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from '../shared/plugins'
 import { clearPreparedCodexCredentials, ensureManagedCodexRuntime, isManagedCodexVersion, managedCodexExecutablePath, prepareCodex, type CodexServerConfig, type CodexSetupProgress } from './codexSetup'
 import { ChatCompletionsAdapter } from './chatCompletionsAdapter'
@@ -172,7 +175,7 @@ import type {
 } from '../shared/types'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 import { ImageStudioService } from './imageStudioService'
-import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, updateModpackModuleSide } from './modpackService'
+import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, updateModpackModuleSide } from './modpackService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { ModProviderRegistry } from './modProviderService'
 import { applyModpackPlan, planModpack } from './modpackPlanner'
@@ -232,6 +235,11 @@ let currentProject: ProjectInfo | null = null
 const aiProjectContext = new AsyncLocalStorage<ProjectInfo>()
 const detachedWindows = new Map<DetachedWindowTarget, BrowserWindow>()
 const pluginOverlayWindows = new Map<string, BrowserWindow>()
+const hiddenPluginOverlays = new Set<string>()
+const pluginChatBridge = new PluginChatBridge(() => {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return null
+  return { id: mainWindow.webContents.id, send: (request) => mainWindow!.webContents.send('plugins:workbenchRequest', request) }
+})
 
 diagnosticJournal.configure(app.getPath('logs'), () => currentProject ? {
   name: currentProject.name,
@@ -1993,12 +2001,25 @@ function loadDetachedRenderer(window: BrowserWindow, target: DetachedWindowTarge
 
 function pluginOverlayWindowState(pluginId: string): PluginOverlayWindowState {
   const window = pluginOverlayWindows.get(pluginId)
-  if (!window || window.isDestroyed()) return { pluginId, open: false, alwaysOnTop: false }
-  return { pluginId, open: true, alwaysOnTop: window.isAlwaysOnTop(), bounds: window.getBounds() }
+  if (!window || window.isDestroyed()) return { pluginId, open: false, hidden: hiddenPluginOverlays.has(pluginId), alwaysOnTop: false }
+  return { pluginId, open: true, hidden: false, alwaysOnTop: window.isAlwaysOnTop(), bounds: window.getBounds() }
 }
 
 function pluginOverlayWindowStates(): PluginOverlayWindowState[] {
-  return [...pluginOverlayWindows.keys()].map(pluginOverlayWindowState).filter((state) => state.open)
+  return [...new Set([...pluginOverlayWindows.keys(), ...hiddenPluginOverlays])].map(pluginOverlayWindowState)
+}
+
+function setPluginOverlayVisibility(pluginId: string, visible: boolean): PluginOverlayWindowState {
+  const record = getPluginService()?.getEnabledPlugin(pluginId)
+  if (!record?.manifest.overlay) throw new Error(`插件 ${pluginId} 没有可用悬浮界面`)
+  if (visible) hiddenPluginOverlays.delete(pluginId)
+  else hiddenPluginOverlays.add(pluginId)
+  const window = pluginOverlayWindows.get(pluginId)
+  // Remove before close: docking must not be interpreted as the user dismissing the window.
+  pluginOverlayWindows.delete(pluginId)
+  if (window && !window.isDestroyed()) window.close()
+  broadcastPluginOverlayWindows()
+  return pluginOverlayWindowState(pluginId)
 }
 
 function broadcastPluginOverlayWindows(): void {
@@ -2029,6 +2050,7 @@ function createPluginOverlayWindow(pluginId: string): BrowserWindow {
   const record = getPluginService()?.getEnabledPlugin(pluginId)
   const overlay = record?.manifest.overlay
   if (!record || !overlay) throw new Error(`插件 ${pluginId} 没有可用悬浮界面`)
+  hiddenPluginOverlays.delete(pluginId)
 
   const width = overlay.width ?? (overlay.mode === 'pet' ? 220 : 360)
   const height = overlay.height ?? (overlay.mode === 'pet' ? 280 : 300)
@@ -2067,7 +2089,10 @@ function createPluginOverlayWindow(pluginId: string): BrowserWindow {
     broadcastPluginOverlayWindows()
   })
   window.on('closed', () => {
-    if (pluginOverlayWindows.get(pluginId) === window) pluginOverlayWindows.delete(pluginId)
+    if (pluginOverlayWindows.get(pluginId) === window) {
+      pluginOverlayWindows.delete(pluginId)
+      hiddenPluginOverlays.add(pluginId)
+    }
     broadcastPluginOverlayWindows()
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -7061,6 +7086,16 @@ function registerIpc(): void {
   ipcMain.handle('blockbench:openProject', () =>
     requireBlockbench().executeAction({ type: 'run-command', command: 'open-project' })
   )
+  ipcMain.handle('blockbench:openYsm', async () => {
+    const project = requireProject()
+    if (runsForProject(project.path).length) throw new Error('项目正在执行任务，请稍后打开模型')
+    const result = await dialog.showOpenDialog(mainWindow!, { title: '打开 YSM 源模型（ysm.json 或未加密 ZIP）', properties: ['openFile'], filters: [{ name: 'YSM 模型源文件', extensions: ['json', 'zip', 'ysm'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    const document = await readYsmSource(result.filePaths[0])
+    if (requireProject().path !== project.path || runsForProject(project.path).length) throw new Error('项目状态已改变，请重新打开模型')
+    await requireBlockbenchForProject(project).loadSourceDocument(document)
+    return { name: document.name, animations: document.animations.length }
+  })
   ipcMain.handle('blockbench:saveProject', () =>
     requireBlockbench().executeAction({ type: 'run-command', command: 'save-project-dialog' })
   )
@@ -7430,10 +7465,11 @@ function registerIpc(): void {
     if (result.canceled || !result.filePaths[0]) return null
     const converted = await convertLegacyModtoolProject(result.filePaths[0])
     const info = converted.project ?? await readProjectInfo(result.filePaths[0])
-    if (!info) throw new Error('所选目录不是 ModMind 项目，缺少 modmind.project.json')
-    currentProject = await offerProjectVersionMigration(info)
-    await rememberRecentProject(currentProject)
-    return currentProject
+      if (!info) throw new Error('所选目录不是 ModMind 项目，缺少 modmind.project.json')
+      currentProject = await offerProjectVersionMigration(info)
+      await rememberRecentProject(currentProject)
+      emitProjectChanged()
+      return currentProject
   })
 
   ipcMain.handle('project:openRecent', async (_event, projectPath: string) => {
@@ -7442,10 +7478,11 @@ function registerIpc(): void {
     assertProjectSwitchAllowed()
     const converted = await convertLegacyModtoolProject(resolvedProjectPath)
     const info = converted.project ?? await readProjectInfo(resolvedProjectPath)
-    if (!info) throw new Error('最近项目不存在或已经不再是有效的 ModMind 项目')
-    currentProject = await offerProjectVersionMigration(info)
-    await rememberRecentProject(currentProject)
-    return currentProject
+      if (!info) throw new Error('最近项目不存在或已经不再是有效的 ModMind 项目')
+      currentProject = await offerProjectVersionMigration(info)
+      await rememberRecentProject(currentProject)
+      emitProjectChanged()
+      return currentProject
   })
 
   ipcMain.handle('project:listRecent', () => readRecentProjects())
@@ -7719,6 +7756,21 @@ function registerIpc(): void {
   })
   ipcMain.handle('modpack:writeFtbQuest', (_event, input: unknown) => writeFtbQuestChapter(requireProject(), input as Parameters<typeof writeFtbQuestChapter>[1]))
   ipcMain.handle('modpack:writePatchouliBook', (_event, input: unknown) => writePatchouliBook(requireProject(), input as Parameters<typeof writePatchouliBook>[1]))
+  ipcMain.handle('modpack:configModIdentities', (_event, projectPath: string) => {
+    const project = requireProject()
+    if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
+    return modpackConfigIdentities(project)
+  })
+  onModpackManifestChanged(projectPath => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('modpack:modsChanged', projectPath)
+    }
+  })
+  ipcMain.handle('modpack:contentFeatures', (_event, projectPath: string) => {
+    const project = requireProject()
+    if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
+    return modpackContentFeatures(project)
+  })
   ipcMain.handle('modpack:contentProjectPath', (_event, contentPath: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
@@ -7906,7 +7958,7 @@ function registerIpc(): void {
     return managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: value.onlineMode === true, javaPath, steps, onEvent: (event) => mainWindow?.webContents.send('minecraft:event', event) })
   })
   registerServerPluginIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(localServerManager?.isBusy() || runsForProject(requireProject().path).length) })
-  registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length) })
+  registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), blockbench: requireBlockbench })
   ipcMain.handle('modpack:getServerState', () => {
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     return localServerManager.getState()
@@ -8710,7 +8762,8 @@ function registerIpc(): void {
   })
   ipcMain.handle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
-    return readExternalAgentHistory(requireProject(), kind)
+    const project = aiProjectContext.getStore() ?? currentProject
+    return project ? readExternalAgentHistory(project, kind) : ''
   })
   ipcMain.handle('external-agents:install', async (_event, kind: ExternalAgentKind) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
@@ -8815,6 +8868,13 @@ function registerIpc(): void {
         ? recovery.backend
         : (await readSettings()).codingBackend
     const preparedConversation = await prepareConversationRequest(project, prompt, requestedSurface, options ?? {}, recovery)
+    pluginChatBridge.syncRecords(getPluginService()?.getSnapshot().plugins ?? [])
+    const pluginContext = !recovery && requestedSurface === 'workspace' && preparedConversation.options.conversationId
+      ? pluginChatBridge.contextFor({ projectPath: project.path, conversationId: preparedConversation.options.conversationId }) : ''
+    if (pluginContext) {
+      prompt += pluginContext
+      if (preparedConversation.options.fallbackPrompt) preparedConversation.options.fallbackPrompt += pluginContext
+    }
     const branchNative = preparedConversation.document?.native[selectedBackend]
     const conversationOptions: AiCreateCodeOptions = branchNative && preparedConversation.document?.parent && preparedConversation.document.nativeForkPending
       ? { ...preparedConversation.options, forkFrom: { sessionId: branchNative.sessionId, ...(preparedConversation.document.parent.nativeTurnId ? preparedConversation.document.parent.boundary === 'before' ? { beforeTurnId: preparedConversation.document.parent.nativeTurnId } : { lastTurnId: preparedConversation.document.parent.nativeTurnId } : branchNative.lastTurnId ? { lastTurnId: branchNative.lastTurnId } : {}), nativeMode: preparedConversation.document.parent.nativeMode } }
@@ -9142,16 +9202,17 @@ function registerIpc(): void {
     return service.getSnapshot()
   })
   ipcMain.handle('plugins:getOverlayWindows', () => pluginOverlayWindowStates())
+  ipcMain.handle('plugins:setOverlayVisible', (_event, pluginId: string, visible: boolean) => setPluginOverlayVisibility(String(pluginId), visible === true))
+  ipcMain.on('plugins:workbenchResult', (event, response: import('../shared/plugins').PluginWorkbenchResult) => {
+    pluginChatBridge.respond(event.sender.id, response)
+  })
   ipcMain.handle('plugins:openOverlayWindow', (_event, pluginId: string) => {
     const normalizedId = String(pluginId)
     createPluginOverlayWindow(normalizedId)
     return pluginOverlayWindowState(normalizedId)
   })
   ipcMain.handle('plugins:closeOverlayWindow', (_event, pluginId: string) => {
-    const normalizedId = String(pluginId)
-    const window = pluginOverlayWindows.get(normalizedId)
-    if (window && !window.isDestroyed()) window.close()
-    return { pluginId: normalizedId, open: false, alwaysOnTop: false } satisfies PluginOverlayWindowState
+    return setPluginOverlayVisibility(String(pluginId), true)
   })
   ipcMain.handle('plugins:setOverlayAlwaysOnTop', (_event, pluginId: string, alwaysOnTop: unknown) => {
     const normalizedId = String(pluginId)
@@ -9204,7 +9265,33 @@ app.whenReady().then(async () => {
     userDataDirectory: app.getPath('userData'),
     projectRoot: () => currentProject?.path ?? null,
     projectInfo: () => currentProject ? { name: currentProject.name, path: currentProject.path, kind: currentProject.kind ?? 'mod' } : null,
+    hostContextOp: async (plugin, op, args) => {
+      const pluginId = plugin.manifest.id
+      switch (op) {
+        case 'overlayGetState': return pluginOverlayWindowState(pluginId)
+        case 'overlayClose': return setPluginOverlayVisibility(pluginId, false)
+        case 'overlayShow':
+        case 'overlayDock': return setPluginOverlayVisibility(pluginId, true)
+        case 'overlayPopOut':
+          createPluginOverlayWindow(pluginId)
+          return pluginOverlayWindowState(pluginId)
+        case 'overlaySetAlwaysOnTop': {
+          if (typeof args.alwaysOnTop !== 'boolean') throw new Error('alwaysOnTop 必须是布尔值')
+          const window = pluginOverlayWindows.get(pluginId)
+          if (!window || window.isDestroyed()) throw new Error('悬浮窗口未打开')
+          window.setAlwaysOnTop(args.alwaysOnTop, 'floating')
+          broadcastPluginOverlayWindows()
+          return pluginOverlayWindowState(pluginId)
+        }
+        default: {
+          const result = await pluginChatBridge.handle(plugin, op, args)
+          pluginChatBridge.syncRecords(getPluginService()?.getSnapshot().plugins ?? [])
+          return result
+        }
+      }
+    },
     onSnapshotChanged: (snapshot) => {
+      pluginChatBridge.syncRecords(snapshot.plugins)
       getPluginRuntime()?.syncRecords(new Map(snapshot.plugins.map((record) => [record.manifest.id, record])))
       reconcilePluginOverlayWindows(snapshot)
       broadcastPluginSnapshot(snapshot)

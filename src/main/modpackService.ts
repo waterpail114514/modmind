@@ -11,6 +11,11 @@ import { isRemoteModpackContent, readManagedModpackContent } from './modpackCont
 import { excludesModsFromOverrides, modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
 
 export const MODPACK_MANIFEST = 'modmind.pack.json'
+const manifestListeners = new Set<(projectPath: string) => void>()
+export function onModpackManifestChanged(listener: (projectPath: string) => void): () => void {
+  manifestListeners.add(listener)
+  return () => { manifestListeners.delete(listener) }
+}
 
 export function isModpackProject(project: ProjectInfo): boolean {
   return project.kind === 'modpack'
@@ -94,6 +99,9 @@ export async function writeModpackManifest(project: ProjectInfo, manifest: Modpa
     await fs.rename(pending, target)
   } finally {
     await fs.rm(pending, { force: true }).catch(() => undefined)
+  }
+  for (const listener of manifestListeners) {
+    try { listener(project.path) } catch { /* UI notifications must not fail an already completed write. */ }
   }
   return manifest
 }

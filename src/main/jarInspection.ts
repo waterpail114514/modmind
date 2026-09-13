@@ -7,6 +7,8 @@ import { parse as parseToml } from 'smol-toml'
 import type { AddonApiProfile, AddonRelationshipDependency } from '../shared/production'
 import type { JavaLoaderKind } from '../shared/types'
 import { inspectLegacyForgeAnnotations, type LegacyForgeAnnotation } from './legacyForgeAnnotations'
+import { archiveEntries, archiveRead } from './ftbResourceArchive'
+import type { ModConfigIdentity } from '../shared/contentFileFilters'
 
 export interface InspectedModJar {
   filePath: string
@@ -322,6 +324,26 @@ async function scanFiles(root: string): Promise<{ files: string[]; classNames: s
   }
   const packages = [...packageCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 80).map(([name]) => name)
   return { files, classNames: classes, packages }
+}
+
+/** Metadata-only path for file grouping: reuse descriptor parsers without unpacking or scanning classes. */
+export async function readModJarIdentities(filePath: string): Promise<ModConfigIdentity[]> {
+  const entries = await archiveEntries(filePath)
+  const candidates: Array<[string, (raw: string) => DescriptorResult]> = [
+    ['fabric.mod.json', fabricDescriptor], ['quilt.mod.json', quiltDescriptor],
+    ['META-INF/neoforge.mods.toml', raw => forgeDescriptor(raw, 'neoforge')],
+    ['META-INF/mods.toml', raw => forgeDescriptor(raw, 'forge')],
+    ['mcmod.info', raw => legacyForgeDescriptor(raw, [])]
+  ]
+  for (const [entry, parse] of candidates) if (entries.includes(entry)) {
+    try {
+      const raw = await archiveRead(filePath, entry)
+      if (raw.length > 1024 * 1024) continue
+      const descriptor = parse(raw.toString('utf8'))
+      return descriptor.modIds.map(id => ({ id, name: id === descriptor.primaryModId ? descriptor.displayName : id }))
+    } catch { /* Try another declared format; unidentified JARs remain unassigned. */ }
+  }
+  return []
 }
 
 export async function inspectModJar(filePath: string, expectedLoader?: JavaLoaderKind): Promise<InspectedModJar> {

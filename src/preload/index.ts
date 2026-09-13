@@ -48,9 +48,14 @@ window.addEventListener('unhandledrejection', (event) => {
 const api: ModMindApi = {
   resourcePacks: {
     list: root => invoke('resource-packs:list', root),
+    makeEditable: (root, id) => invoke('resource-packs:makeEditable', root, id),
     create: (root, input) => invoke('resource-packs:create', root, input),
     import: (root, directory) => invoke('resource-packs:import', root, directory),
     read: (root, id, file) => invoke('resource-packs:read', root, id, file),
+    previewModel: (root, id, file) => invoke('resource-packs:previewModel', root, id, file),
+    thumbnail: (root, id, file) => invoke('resource-packs:thumbnail', root, id, file),
+    openModel: (root, id, file) => invoke('resource-packs:openModel', root, id, file),
+    saveModel: target => invoke('resource-packs:saveModel', target),
     write: (root, id, file, content, baseline) => invoke('resource-packs:write', root, id, file, content, baseline),
     importAssets: (root, id, directory) => invoke('resource-packs:importAssets', root, id, directory),
     removeFile: (root, id, file, baseline) => invoke('resource-packs:removeFile', root, id, file, baseline),
@@ -175,6 +180,13 @@ const api: ModMindApi = {
     openModule: (namespace: string) => invoke('modpack:openModule', namespace),
     sync: () => invoke('modpack:sync'),
     listContent: (refresh?: boolean) => invoke('modpack:listContent', refresh),
+    configModIdentities: root => invoke('modpack:configModIdentities', root),
+    contentFeatures: root => invoke('modpack:contentFeatures', root),
+    onModsChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, projectPath: string): void => listener(projectPath)
+      ipcRenderer.on('modpack:modsChanged', handler)
+      return () => ipcRenderer.removeListener('modpack:modsChanged', handler)
+    },
     contentProjectPath: (contentPath) => invoke('modpack:contentProjectPath', contentPath),
     importContent: (kind, scope) => invoke('modpack:importContent', kind, scope),
     downloadContent: (input) => invoke('modpack:downloadContent', input),
@@ -361,6 +373,7 @@ const api: ModMindApi = {
     show: (bounds: BlockbenchBounds) => invoke('blockbench:show', bounds),
     hide: () => invoke('blockbench:hide'),
     openProject: () => invoke('blockbench:openProject'),
+    openYsm: () => invoke('blockbench:openYsm'),
     saveProject: () => invoke('blockbench:saveProject'),
     setTheme: (theme: 'light' | 'dark') => invoke('blockbench:setTheme', theme),
     runAction: (action: string) => invoke('blockbench:runAction', action),
@@ -561,6 +574,13 @@ const api: ModMindApi = {
     exportDoc: (content: string) => invoke('plugins:exportDoc', content),
     delete: (pluginId: string) => invoke('plugins:delete', pluginId),
     getOverlayWindows: () => invoke('plugins:getOverlayWindows'),
+    setOverlayVisible: (pluginId: string, visible: boolean) => invoke('plugins:setOverlayVisible', pluginId, visible),
+    onWorkbenchRequest: (listener: (request: import('../shared/plugins').PluginWorkbenchRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: import('../shared/plugins').PluginWorkbenchRequest): void => listener(request)
+      ipcRenderer.on('plugins:workbenchRequest', handler)
+      return () => ipcRenderer.removeListener('plugins:workbenchRequest', handler)
+    },
+    respondWorkbench: (result: import('../shared/plugins').PluginWorkbenchResult) => ipcRenderer.send('plugins:workbenchResult', result),
     openOverlayWindow: (pluginId: string) => invoke('plugins:openOverlayWindow', pluginId),
     closeOverlayWindow: (pluginId: string) => invoke('plugins:closeOverlayWindow', pluginId),
     setOverlayAlwaysOnTop: (pluginId: string, alwaysOnTop: boolean) => invoke('plugins:setOverlayAlwaysOnTop', pluginId, alwaysOnTop),

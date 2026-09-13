@@ -28,6 +28,7 @@ import {
   type BlockbenchVector3
 } from '../shared/blockbench'
 import {diffBlockbenchProjects} from './blockbenchDiff'
+import type { ModelSourceDocument } from '../shared/modelSource'
 
 export interface BlockbenchBridgeOptions {
   window: BrowserWindow
@@ -976,6 +977,40 @@ const PAGE_DISPATCHER = String.raw`async function dispatchBlockbenchAction(actio
     return {message: 'Command executed', data: {command: action.command}};
   }
 
+  if (action.type === 'load-source-document') {
+    const source = action.document;
+    const codec = CodecsApi && CodecsApi[source.format];
+    if (!codec || typeof codec.load !== 'function') throw new Error('Blockbench model codec is unavailable: ' + source.format);
+    await codec.load(source.model, {name: source.name, path: source.name + (source.format === 'project' ? '.bbmodel' : '.json'), no_file: true});
+    const current = typeof Project !== 'undefined' ? Project : root.Project;
+    if (!current) throw new Error('Blockbench did not create a model project');
+    current.name = source.name;
+    for (const item of source.textures) {
+      let texture = TextureApi.all.find(texture => texture.id === item.id);
+      if (!texture) texture = new TextureApi({id: item.id, name: item.name}).add(false);
+      texture.fromDataURL(item.dataUrl);
+      if (source.format === 'java_block') {
+        const parts = item.name.split(':');
+        const location = parts.length > 1 ? parts[1] : parts[0];
+        texture.namespace = parts.length > 1 ? parts[0] : 'minecraft';
+        texture.folder = location.split('/').slice(0, -1).join('/');
+        texture.name = location.split('/').pop() + '.png';
+      } else {
+        texture.name = item.name;
+        texture.apply(true);
+      }
+    }
+    if (source.animations.length) {
+      const animationCodecApi = typeof AnimationCodec !== 'undefined' ? AnimationCodec : root.AnimationCodec;
+      const animationCodec = animationCodecApi && animationCodecApi.codecs && animationCodecApi.codecs.bedrock;
+      if (!animationCodec || typeof animationCodec.loadFile !== 'function') throw new Error('Blockbench animation codec is unavailable');
+      for (const file of source.animations) await animationCodec.loadFile({name: file.name, path: file.name, content: file.content});
+    }
+    if (CanvasApi && CanvasApi.updateAll) CanvasApi.updateAll();
+    if (BarItemsApi && BarItemsApi.frame_all) BarItemsApi.frame_all.trigger();
+    return {message: 'Model source loaded', data: {projectUuid: current.uuid}};
+  }
+
   if (action.type === 'serialize-project') {
     if (!CodecsApi || !CodecsApi.project || typeof CodecsApi.project.compile !== 'function') {
       throw new Error('Blockbench project codec is unavailable');
@@ -1044,6 +1079,35 @@ export class BlockbenchBridge {
 
   getStatus(): BlockbenchBridgeStatus {
     return { ...this.status }
+  }
+
+  loadSourceDocument(document: ModelSourceDocument): Promise<string> {
+    return this.enqueue(async () => {
+      this.assertAlive()
+      if (this.status.phase !== 'ready') throw new Error('模型编辑器尚未就绪，请稍后重试')
+      if (Buffer.byteLength(JSON.stringify(document), 'utf8') > 48 * 1024 * 1024) throw new Error('模型数据超过导入限制')
+      const previous = await this.activeProjectUuid()
+      try {
+        const result = await this.invokePage({ type: 'load-source-document', document })
+        const uuid = result.data?.projectUuid
+        if (typeof uuid !== 'string' || uuid === previous) throw new Error('未能在新文档中打开模型')
+        return uuid
+      } catch (error) {
+        const current = await this.activeProjectUuid()
+        if (current && current !== previous) await this.discardProject(current, previous)
+        throw error
+      }
+    })
+  }
+
+  serializeSourceDocument(projectUuid: string, projectFile: boolean): Promise<string> {
+    return this.enqueue(async () => {
+      if (await this.activeProjectUuid() !== projectUuid) throw new Error('当前模型已切换，请重新从资源包打开后保存')
+      if (!projectFile && (await this.readProjectState()).format.id !== 'java_block') throw new Error('模型格式已改变，无法覆盖 Java 资源包模型')
+      const result = await this.invokePage({ type: projectFile ? 'serialize-project' : 'serialize-export' })
+      if (typeof result.content !== 'string' || Buffer.byteLength(result.content, 'utf8') > 16 * 1024 * 1024) throw new Error('模型导出内容无效或过大')
+      return result.content
+    })
   }
 
   onStatus(listener: StatusListener): () => void {
@@ -1583,6 +1647,7 @@ export class BlockbenchBridge {
   private async invokePage(
     action:
       | BlockbenchAction
+      | { type: 'load-source-document'; document: ModelSourceDocument }
       | { type: 'serialize-project' }
       | { type: 'serialize-export' }
       | { type: 'serialize-texture'; textureUuid?: string; textureName?: string }
@@ -1597,7 +1662,7 @@ export class BlockbenchBridge {
       | { type: 'capture-views'; views: BlockbenchViewPreset[]; width: number; height: number }
   ): Promise<PageActionResult> {
     const encoded = Buffer.from(JSON.stringify(action), 'utf8').toString('base64')
-    const script = `(async()=>{const action=JSON.parse(atob(${JSON.stringify(encoded)}));return (${PAGE_DISPATCHER})(action)})()`
+    const script = `(async()=>{const action=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(${JSON.stringify(encoded)}),c=>c.charCodeAt(0))));return (${PAGE_DISPATCHER})(action)})()`
     const result: unknown = await this.view.webContents.executeJavaScript(script, true)
     if (!isRecord(result) || typeof result.message !== 'string') {
       throw new Error('Blockbench returned an invalid action result')

@@ -66,6 +66,8 @@ ModMind 插件是放在约定目录下的一组文件：一个 `plugin.json` 清
 
 声明 `overlay` 后，插件界面会在 ModMind 主窗口内跨页面常驻。管理页或悬浮界面右上角的弹出按钮可把它转移到独立透明窗口；该窗口可以拖到 ModMind 外、跨显示器、调整大小和置顶。独立窗口的“收回”按钮会把界面重新停靠到主窗口。
 
+应用内和桌面悬浮窗均提供“关闭”按钮。关闭只隐藏悬浮界面，不停用插件，也不会重新出现在应用内；在管理页点击“显示悬浮界面”可恢复，或点击“弹到桌面”再次弹出。隐藏状态保留到本次应用退出。插件自身也可以声明 `ui.overlay` 后调用下面的控制接口。
+
 `mode: "floating"` 使用普通悬浮工具窗口外观；`mode: "pet"` 使用透明背景，并只在悬停时显示宿主控制条。插件页面仍处于 sandbox iframe，不能访问外层窗口或 Electron API。拖动、关闭、置顶与收回都由宿主控制。
 
 ## 信任与宿主桥能力
@@ -80,6 +82,10 @@ ModMind 插件是放在约定目录下的一组文件：一个 `plugin.json` 清
 | `storage` | 后端 `ctx.storage.get/set(key, value)` 私有键值存储（按插件 id 隔离） |
 | `net.fetch` | 后端 `ctx.net.fetch(url, init)` / 面板 `netFetch` 经宿主发起网络请求 |
 | `clipboard.write` | 面板 `copyToClipboard` 写系统剪贴板 |
+| `ui.overlay` | 控制本插件悬浮界面的关闭、显示、弹出、收回及桌面置顶 |
+| `chat.read` | 读取主窗口当前工作台对话、输入草稿、运行状态和最近消息 |
+| `chat.write` | 追加或替换主窗口工作台输入草稿；不自动发送 |
+| `chat.context` | 按项目和对话设置、更新、移除插件提供的 AI 补充上下文 |
 
 导入他人插件时，ModMind 会同时展示完整信任警告与声明的宿主桥能力。
 
@@ -87,7 +93,7 @@ ModMind 插件是放在约定目录下的一组文件：一个 `plugin.json` 清
 
 - 面板运行在 `sandbox="allow-scripts allow-downloads"` 的跨源 iframe 中；不能直接调用 Electron、Node、文件系统或主应用 API。资源由 `modmind-plugin://` 提供，CSP 禁止直接联网（`connect-src 'none'`）；联网需声明 `net.fetch` 并通过 `postMessage` 发送 `netFetch` 请求。
 - 后端在独立 utilityProcess 中运行以隔离崩溃，但拥有完整 Node 权限；只安装和运行你完全信任来源的插件。
-- `permissions` 会约束 `modmindPlugin.ctx` 的 `project.read`、`storage`、`net.fetch` 和剪贴板桥调用，但不是系统权限边界。
+- `permissions` 会约束 `modmindPlugin.ctx` 的项目、存储、网络、剪贴板、悬浮窗和对话桥调用，但不是系统权限边界。
 - `ctx.callTool()` 只提供同一插件已声明工具之间的便利调用；后端本身仍是完全可信代码。
 - 工作台的插件制作工具只会在插件目录内新增或修改文件，不提供删除文件或修改 ModMind 源码的能力。
 
@@ -106,7 +112,7 @@ ModMind 插件是放在约定目录下的一组文件：一个 `plugin.json` 清
 
 ## 面板 API
 
-面板以 `<iframe sandbox="allow-scripts">` 加载，源唯一且随机。通信全部经 `window.parent.postMessage`：
+面板以 `<iframe sandbox="allow-scripts allow-downloads">` 加载，源唯一且随机。通信全部经 `window.parent.postMessage`：
 
 ```js
 // 宿主会在面板加载后下发 hostInfo（主题、项目信息等）
@@ -126,6 +132,45 @@ window.parent.postMessage({ type: 'log', level: 'info', message: '...' }, '*')
 ```
 
 宿主通过 `hostInfo.theme` 下发明暗主题。随附模板会据此设置 `--mm-bg`、`--mm-text`、`--mm-border`、`--mm-surface`；自定义面板也应在收到 `hostInfo` 后应用这些变量。
+
+## 悬浮窗与对话 API
+
+后端使用 `ctx.overlay`、`ctx.chat`。面板和悬浮页面使用通用的 `context` 消息，返回格式仍为 `result`，通过 `requestId` 配对。例如：
+
+```js
+window.parent.postMessage({
+  type: 'context', requestId: crypto.randomUUID(), op: 'overlayClose', args: {}
+}, '*')
+```
+
+| 后端调用 | 面板 `op` | `args` / 行为 |
+|---|---|---|
+| `ctx.overlay.getState()` | `overlayGetState` | 返回 `open`（桌面窗口）、`hidden`、`alwaysOnTop` 和可用的 `bounds` |
+| `ctx.overlay.close()` | `overlayClose` | 关闭本插件悬浮界面 |
+| `ctx.overlay.show()` | `overlayShow` | 在应用内恢复显示 |
+| `ctx.overlay.popOut()` | `overlayPopOut` | 弹出桌面窗口 |
+| `ctx.overlay.dock()` | `overlayDock` | 收回应用内 |
+| `ctx.overlay.setAlwaysOnTop(true)` | `overlaySetAlwaysOnTop` | `{ alwaysOnTop: true }`，要求桌面窗口已经打开 |
+| `ctx.chat.getCurrent(target?)` | `chatGetCurrent` | `{ target? }`，返回 `projectPath`、`conversationId`、`title`、`busy`、`draft`、`messages` |
+| `ctx.chat.setDraft(text, options?)` | `chatSetDraft` | `{ text, mode?: 'append' 或 'replace', target? }`，默认追加，执行任务中拒绝修改 |
+| `ctx.chat.setContext(key, text, target?)` | `chatSetContext` | `{ key, text, target? }`，同插件同对话同 key 更新覆盖 |
+| `ctx.chat.removeContext(key, target?)` | `chatRemoveContext` | `{ key, target? }`，只移除本插件条目 |
+
+`target` 是 `{ projectPath, conversationId }`。不传时操作主窗口当前工作台对话；异步处理后写回时建议始终传入先前读取的 target，对话已切换会明确报错，避免写到其他会话。没有项目或历史仍在加载时会返回错误。对话快照最多包含最近 200 条用户/助手消息，每条最多 16000 字符。
+
+```js
+const { ctx } = modmindPlugin
+const current = await ctx.chat.getCurrent() // chat.read
+const target = { projectPath: current.projectPath, conversationId: current.conversationId }
+await ctx.chat.setContext('project-notes', '本项目约定使用事件总线注册功能。', target) // chat.context
+await ctx.chat.setDraft('请按项目约定添加功能', { target }) // chat.write
+// 后续不需要这项上下文时：
+await ctx.chat.removeContext('project-notes', target)
+```
+
+上下文由 ModMind 在该工作台会话的后续新 AI 请求中直接附加，包含插件来源标记，支持 Codex、Claude 和额度后端，无需改写它们的原生记忆文件。它不是系统指令，不覆盖用户请求，不伪造聊天记录，不主动启动任务，也不打断或修改正在执行的请求；灵感台和恢复旧任务不追加新上下文。已发送给模型的历史内容无法通过 remove 撤回。
+
+上下文暂存在当前应用进程内；禁用、移除、热重载插件或退出应用后清除。单条最多 32000 字符，每个对话全部插件合计最多 64000 字符，每个插件最多保留 100 项；key 为 1-80 位字母、数字、下划线、点或连字符。输入草稿单次写入最多 100000 字符。后端仍按现有规则懒启动，需要先通过工具调用或开发者控制台激活；面板不需要后端即可直接使用这些接口。
 
 ## 后端 API
 

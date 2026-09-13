@@ -1,5 +1,38 @@
 # Third-Party Notices
 
+## React Zoom Pan Pinch
+
+Image previews use `react-zoom-pan-pinch` 4.2.0, provided under the MIT License.
+Upstream: https://github.com/BetterTyped/react-zoom-pan-pinch
+
+Copyright (c) 2019 prc5
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Three.js
+
+Resource model previews use the existing Three.js 0.180.0 dependency and its
+upstream OrbitControls. Project: https://github.com/mrdoob/three.js
+
+Copyright © 2010-2025 three.js authors. Three.js is provided under the MIT
+License; the MIT permission and warranty text reproduced above applies.
+
 ## Gradle Wrapper
 
 ModMind bundles the unmodified Gradle Wrapper scripts and JAR from Gradle 9.2.1 so

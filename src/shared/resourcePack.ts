@@ -1,6 +1,45 @@
+import type { FtbQuestIconResult } from './types'
+
+export type ResourceCategory = 'all' | 'image' | 'model' | 'audio' | 'language' | 'font' | 'other'
+export function resourceCategory(file: string): Exclude<ResourceCategory, 'all'> {
+  if (/\.(?:png(?:\.mcmeta)?|jpe?g|webp|gif)$/i.test(file)) return 'image'
+  if (/\.bbmodel$/i.test(file) || /(?:^|\/)models\/.+\.json$/i.test(file)) return 'model'
+  if (/\.(?:ogg|mp3|wav)$/i.test(file) || /(?:^|\/)sounds\.json$/i.test(file)) return 'audio'
+  if (/(?:^|\/)lang\//.test(file)) return 'language'
+  if (/(?:^|\/)font\//.test(file) || /\.(?:ttf|otf)$/i.test(file)) return 'font'
+  return 'other'
+}
+
+export interface ResourceModelPreview {
+  icon: FtbQuestIconResult | null
+  reason: string
+  sources: string[]
+  localReferences?: string[]
+}
+
+export interface ResourceImageTarget {
+  projectPath: string
+  id: string
+  file: string
+  baseline: string
+  dataUrl: string
+}
+
+export interface ResourceFileContent {
+  text?: string
+  dataUrl?: string
+  baseline: string
+  readOnly?: boolean
+  unsupported?: string
+  size?: number
+}
+
 export interface ResourcePackInfo {
   id: string
   path: string
+  origin?: 'project' | 'installed'
+  readOnly?: boolean
+  error?: string
   name: string
   description: string
   packFormat: number | null
@@ -13,7 +52,12 @@ export interface ResourcePackApi {
   list: (projectPath: string) => Promise<ResourcePackInfo[]>
   create: (projectPath: string, input: ResourcePackCreate) => Promise<ResourcePackInfo>
   import: (projectPath: string, directory?: boolean) => Promise<ResourcePackInfo | null>
-  read: (projectPath: string, id: string, file: string) => Promise<{ text?: string; dataUrl?: string; baseline: string }>
+  makeEditable: (projectPath: string, id: string) => Promise<ResourcePackInfo>
+  read: (projectPath: string, id: string, file: string) => Promise<ResourceFileContent>
+  previewModel: (projectPath: string, id: string, file: string) => Promise<ResourceModelPreview>
+  thumbnail: (projectPath: string, id: string, file: string) => Promise<string>
+  openModel: (projectPath: string, id: string, file: string) => Promise<import('./modelSource').ResourceModelTarget>
+  saveModel: (target: import('./modelSource').ResourceModelTarget) => Promise<string>
   write: (projectPath: string, id: string, file: string, content: string, baseline: string | null) => Promise<ResourcePackInfo>
   importAssets: (projectPath: string, id: string, directory: string) => Promise<ResourcePackInfo | null>
   removeFile: (projectPath: string, id: string, file: string, baseline: string) => Promise<ResourcePackInfo>
