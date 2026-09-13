@@ -41,6 +41,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - name: Create temporary App Store Connect key
         env:
           APPLE_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}

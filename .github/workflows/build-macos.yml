@@ -39,6 +39,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - name: Package unsigned test artifacts
         run: node scripts/build-macos.mjs --allow-unsigned --arch ${{ matrix.arch }}
       - name: Verify packaged dependencies and managed runtimes
