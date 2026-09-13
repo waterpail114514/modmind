@@ -42,7 +42,7 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           VERSION=$(node -p 'require("./package.json").version')
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-preview[0-9A-Za-z.-]+$ ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-preview[0-9A-Za-z.-]+)?$ ]]
           mkdir -p publish
           for ARCH in arm64 x64; do
             ROOT="verified/ModMind-$ARCH-unsigned-test-only"
@@ -59,6 +59,7 @@ jobs:
           These preview packages are not Apple Developer ID signed or notarized. macOS may block opening them by default.
           NOTES
           if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            [[ "$VERSION" == *-preview* ]]
             gh release create "$VERSION" --target "$SOURCE_SHA" --prerelease --title "ModMind $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
           fi
           gh release upload "$VERSION" publish/* --clobber
