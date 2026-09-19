@@ -15,7 +15,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true })
 })
 async function fixture(linked = false) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'module-delegation-')); roots.push(root)
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'module-delegation-'))); roots.push(root)
   const pack: ProjectInfo = { kind: 'modpack', path: path.join(root, 'pack'), name: 'Pack', namespace: 'pack', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' }
   await fs.mkdir(pack.path)
   await createModpackTemplate(pack)
