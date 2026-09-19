@@ -1,7 +1,26 @@
+import { importAiAttachmentSources } from './aiAttachmentImport'
+import { claudeHostedEnvironment, claudeSessionHome, fetchClaudeModels } from './claudeCompatibility'
+import type { AiAttachmentSource } from '../shared/aiAttachments'
+import { normalizeThemePreset, normalizeAppearance, normalizeCustomThemeColors } from '../shared/appTheme'
+import { importBackgroundMedia, serveBackgroundMedia } from './appearanceMedia'
+import { summarizeLog } from '../shared/creationFeedback'
+import { CreationFeedbackService } from './creationFeedbackService'
+import { PlayerTestService } from './playerTestService'
+import { LocalTestService } from './localTestService'
+import { readServerProfile } from './serverCoreService'
+import type { LocalTestOptions } from '../shared/minecraft'
+import { captureCreationRequest } from './creationEvidence'
+import { currentVerification } from './creationBuildEvidence'
+import { projectSearchFiles, searchProjectText } from './projectSearch'
+import { inspectModpackModules, resolveAgentModpackModule } from './modpackModuleTools'
+import { delegateModpackModule, ModpackModuleTasks } from './modpackModuleDelegation'
+import { workbenchSkillNames } from './workbenchSkillPolicy'
+import { MODPACK_AGENT_WORKFLOW_GUIDANCE } from './modpackAgentPolicy'
 import { desktopProcessEnvironment } from './desktopEnvironment'
 import { modpackConfigIdentities, modpackContentFeatures } from './modpackConfigIdentities'
 import { runtimePlatformInfo } from '../shared/platform'
 import { normalizeAgentApprovalMode } from '../shared/agentApproval'
+import { configureAgentProtection, assertAgentWriteAllowed } from './agentProtection'
 import { nativeToolDiagnostics } from './nativeToolDiagnostics'
 import { platformWindowOptions } from './platformWindow'
 import { installApplicationMenu } from './applicationMenu'
@@ -9,9 +28,9 @@ import { DeviceDeepLinkQueue } from './deviceDeepLinkQueue'
 import { beginProcessShutdown, shutdownProcessTrees } from './processTree'
 import { cleanupTerminalScripts } from './nativeTerminal'
 import { verifiedDownload } from './downloadService'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, Tray } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { promises as fs, readFileSync } from 'node:fs'
+import { promises as fs, readFileSync, createReadStream } from 'node:fs'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -85,6 +104,8 @@ import { selectFinalAiAnswer } from '../shared/aiOutput'
 import { WorkbenchDataStore } from './workbenchDataStore'
 import { ConversationStore } from './conversationStore'
 import { usesInspirationWorkflow } from '../shared/workbenchFlow'
+import { normalizeWorkbenchFeatures, type WorkbenchFeatures } from '../shared/workbenchFeatures'
+import { runRenderedMinecraftTest } from './renderedMinecraftTest'
 import { createDraftProject, recordDraftMessage, initializeDraftProject } from './draftProjectService'
 import { draftProjectContext } from '../shared/draftProject'
 import {
@@ -100,6 +121,7 @@ import {
   pollDeviceCode,
   queryDeviceUsage,
   requestDeviceCode,
+  requestDeviceImageLease,
   sendDeviceFastMode
 } from './deviceIntegration'
 import {
@@ -175,8 +197,11 @@ import type {
 } from '../shared/types'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 import { ImageStudioService } from './imageStudioService'
-import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, updateModpackModuleSide } from './modpackService'
+import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, updateModpackModuleSide, auditImportedPackArtifacts } from './modpackService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
+import { importModpackModule } from './modpackModuleImport'
+import { readModpackModuleProject } from './modpackService'
+import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState } from './curseForgePackService'
 import { ModProviderRegistry } from './modProviderService'
 import { applyModpackPlan, planModpack } from './modpackPlanner'
 import { auditModpackLock, lockedModFromFile, readModpackLock, writeModpackLock } from './modpackLockService'
@@ -191,16 +216,19 @@ import { LocalServerManager } from './localServerService'
 import { applyOptimizationProfile, BUILTIN_OPTIMIZATION_PROFILES } from './optimizationService'
 import { McmodService, readManualModRequirements, saveManualModRequirements } from './mcmodService'
 import { assessModpackMigration, createModpackMigration, inspectModpackMigrationJar } from './modpackMigrationService'
-import { modpackModsRoot } from './modpackPaths'
+import { modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
 import { assertSeparateMigrationTrees } from './migrationPathSafety'
 import { reviewAiAction, type AiReviewerConfig } from './aiReviewer'
 import { RemoteControllerAgent, type RemoteAppAction, type RemoteAppState, type RemoteProjectSummary, type RemoteQuotaConfig } from './remoteAgentController'
 import { RemoteClientService, remoteEndpointFromSite, type RemoteServerCancel } from './remoteClientService'
 import { DiagnosticArchiveCollector, summarizeDiagnosticDirectory } from './diagnosticArchive'
 import { diagnosticJournal, installConsoleDiagnosticCapture, installProcessDiagnosticHandlers, redactDiagnosticText } from './diagnosticLog'
+import { DiagnosticSession } from './diagnosticSession'
+import { diagnosticHandle, diagnosticIpcOperations } from './diagnosticIpc'
 import { downloadActivities } from './downloadActivityService'
 import { AppUpdateService, normalizeAppUpdateUrl } from './appUpdateService'
 import { inspectForDecompilation, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar, type DecompileRunRequest } from './decompilePipeline'
+import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from './decompiledPluginProject'
 import { DECOMPILE_MIN_JAVA } from './jarDecompileService'
 import { createModuleFromDecompiledSources, DECOMPILE_TERMS_TITLE, DECOMPILE_TERMS_VERSION, DECOMPILE_TERMS_SECTIONS, plannedModulePaths, renderDecompileTerms, seedProjectFromDecompiledSources } from './decompileModuleExport'
 import { readDecompileCacheEntry } from './decompileCache'
@@ -210,6 +238,14 @@ import type { DecompileInspectResult } from '../shared/decompile'
 if (process.argv.includes('--macos-smoke-check') && process.env.MODMIND_SMOKE_ROOT && path.isAbsolute(process.env.MODMIND_SMOKE_ROOT)) {
   app.setPath('userData', path.join(process.env.MODMIND_SMOKE_ROOT, 'userData'))
 }
+
+configureAgentProtection([
+  app.getAppPath(), app.getPath('userData'), app.getPath('logs'),
+  ...(app.isPackaged ? [path.dirname(process.execPath), process.resourcesPath] : []),
+  ...(app.isPackaged && process.platform === 'darwin' ? [path.resolve(process.execPath, '../../..')] : []),
+  ...[process.env.APPDATA, process.env.LOCALAPPDATA].filter((root): root is string => Boolean(root))
+    .flatMap(root => [path.join(root, 'ModMind'), path.join(root, 'modmind-updater')])
+])
 
 function sendDecompileEvent(signal: AbortSignal | undefined, event: { jarSha256: string; phase: string; message: string; ratio?: number }): void {
   if (signal?.aborted) return
@@ -309,6 +345,8 @@ async function runDiagnosticOperation<T>(subsystem: string, operation: string, m
 let blockbenchBridge: BlockbenchBridge | null = null
 let minecraftRuntime: MinecraftRuntimeManager | null = null
 let localServerManager: LocalServerManager | null = null
+let playerTestService: PlayerTestService | null = null
+let localTestService: LocalTestService | null = null
 let headlessMcService: HeadlessMcService | null = null
 let forwardMinecraftEventsToServerPanel = false
 let mappingService: MappingService | null = null
@@ -336,6 +374,15 @@ const chatCompletionsAdapter = new ChatCompletionsAdapter()
 let publicMcpIntent: 'engineering' | 'informational' = 'informational'
 let curseForgeProviderKey = process.env.MODMIND_CURSEFORGE_API_KEY ?? '$2a$10$BB17.sSejQebcTN01XAqmeXbucdfzq/nIKXylaKLpQHtHLrREVPku'
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const diagnosticSession = hasSingleInstanceLock ? new DiagnosticSession(app.getPath('logs'), diagnosticJournal) : undefined
+diagnosticSession?.startHeartbeat()
+app.on('quit', (_event, exitCode) => {
+  if (exitCode === 0 && shutdownComplete) diagnosticSession?.finish()
+})
+app.on('child-process-gone', (_event, details) => {
+  diagnosticJournal.recordCritical({ subsystem: 'process', operation: 'child-process-gone', phase: 'gone',
+    level: details.reason === 'clean-exit' ? 'info' : 'error', message: `${details.type} process exited: ${details.reason}`, data: details })
+})
 // modmind-plugin:// scheme 特权必须在 app.ready 前注册
 registerPluginProtocolSchemeEarly()
 const pendingDeviceDeepLinks = new DeviceDeepLinkQueue(handleDeviceDeepLink)
@@ -531,12 +578,14 @@ function shutdownApplication(): Promise<void> {
   }, 20_000)
   shutdownPromise = (async () => {
     diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'start', message: 'Stopping tasks and process trees' })
+    await playerTestService?.stop().catch(error => console.warn('测试会话停止失败', error))
+    await localTestService?.stop().catch(error => console.warn('本机测试停止失败', error))
     await localServerManager?.stop().catch(error => diagnosticJournal.recordCritical({ subsystem: 'local-server', operation: 'shutdown', phase: 'error', message: '服务端正常停止失败', error }))
     const results = await Promise.allSettled([
       Promise.resolve().then(() => shutdownPlugins()),
       Promise.resolve().then(() => chatCompletionsAdapter.close()),
       stopRemoteClient(), stopPublicMcpBridge(),
-      headlessMcService?.stop(), localServerManager?.stop(), minecraftRuntime?.stop(),
+      playerTestService?.stop(), headlessMcService?.stop(), localServerManager?.stop(), minecraftRuntime?.stop(),
       shutdownProcessTrees(), verifiedDownload.shutdown(), conversationStore.flush()
     ])
     for (const result of results) if (result.status === 'rejected') diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'error', message: 'A shutdown operation failed', error: result.reason })
@@ -569,12 +618,6 @@ function isToolDataDirectory(name: string): boolean {
 
 const MAX_AI_ATTACHMENT_FILES = 8
 
-function safeAttachmentName(source: string): string {
-  const extension = path.extname(source).toLowerCase().replace(/[^a-z0-9.]/g, '').slice(0, 16)
-  const stem = path.basename(source, path.extname(source)).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'attachment'
-  return `${stem}${extension}`
-}
-
 function isImageAttachment(name: string): boolean {
   return /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i.test(name)
 }
@@ -594,38 +637,21 @@ async function attachmentDirectorySize(source: string): Promise<number> {
   return total
 }
 
-async function pickAiAttachments(kind: AiAttachmentSelectionKind): Promise<AiAttachment[]> {
-  const project = requireProject()
+async function attachmentProject(requestedProjectPath?: string): Promise<ProjectInfo> {
+  const project = requestedProjectPath?.trim() ? await readProjectInfo(path.resolve(requestedProjectPath)) : requireProject()
+  if (!project) throw new Error('附件所属项目不存在或不是有效 ModMind 项目')
+  return project
+}
+
+async function pickAiAttachments(kind: AiAttachmentSelectionKind, requestedProjectPath?: string): Promise<AiAttachment[]> {
+  const project = await attachmentProject(requestedProjectPath)
   const result = await dialog.showOpenDialog(mainWindow!, {
     title: kind === 'directory' ? '选择发送给 AI 的文件夹' : '选择发送给 AI 的文件或图片',
     properties: kind === 'directory' ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections']
   })
   if (result.canceled || !result.filePaths.length) return []
-  if (result.filePaths.length > MAX_AI_ATTACHMENT_FILES) throw new Error(`一次最多上传 ${MAX_AI_ATTACHMENT_FILES} 个附件`)
-  const relativeDirectory = path.posix.join(projectDataDirectory(project), 'attachments')
-  const targetDirectory = path.join(project.path, ...relativeDirectory.split('/'))
-  const selected: Array<{ source: string; name: string; size: number; isDirectory: boolean }> = []
-  for (const source of result.filePaths) {
-    const stat = await fs.stat(source)
-    const isDirectory = stat.isDirectory()
-    if (!stat.isFile() && !isDirectory) throw new Error('只能上传文件或文件夹')
-    if (isDirectory && (isPathInside(targetDirectory, source) || isPathInside(source, targetDirectory))) {
-      throw new Error('不能上传 ModMind 附件目录或包含它的文件夹')
-    }
-    selected.push({ source, name: safeAttachmentName(source), size: isDirectory ? await attachmentDirectorySize(source) : stat.size, isDirectory })
-  }
-  await fs.mkdir(targetDirectory, { recursive: true })
-  return Promise.all(selected.map(async (file) => {
-    const id = randomUUID()
-    const fileName = `${id.slice(0, 8)}-${file.name}`
-    const relativePath = path.posix.join(relativeDirectory, fileName)
-    if (file.isDirectory) {
-      await fs.cp(file.source, path.join(targetDirectory, fileName), { recursive: true })
-    } else {
-      await fs.copyFile(file.source, path.join(targetDirectory, fileName))
-    }
-    return { id, name: file.name, path: relativePath, size: file.size, isImage: !file.isDirectory && isImageAttachment(file.name), isDirectory: file.isDirectory }
-  }))
+  const copied = await importAiAttachmentSources(project.path, result.filePaths.map((source) => ({ path: source })))
+  return validateAiAttachments(copied, project.path)
 }
 
 async function validateAiAttachments(attachments: AiAttachment[], requestedProjectPath?: string): Promise<AiAttachment[]> {
@@ -649,6 +675,11 @@ async function validateAiAttachments(attachments: AiAttachment[], requestedProje
     if (!stat || (!stat.isFile() && !stat.isDirectory()) || stat.isDirectory() !== (attachment.isDirectory === true)) continue
     const canonicalPath = await fs.realpath(absolutePath).catch(() => '')
     if (!canonicalPath || !isPathInside(canonicalPath, canonicalAttachmentDirectory)) continue
+    let diagnosticSummary: string | undefined
+    if (stat.isFile() && stat.size <= 16 * 1024 * 1024 && /\.(?:log|txt)$/i.test(attachment.name)) {
+      const text = await fs.readFile(canonicalPath, 'utf8')
+      if (summarizeLog(text).diagnostic) diagnosticSummary = (await new CreationFeedbackService(project).evidence(text, 'user-attachment')).prompt
+    }
     seen.add(absolutePath.toLowerCase())
     validated.push({
       id: attachment.id.slice(0, 256),
@@ -656,6 +687,7 @@ async function validateAiAttachments(attachments: AiAttachment[], requestedProje
       path: path.relative(project.path, absolutePath).replaceAll('\\', '/'),
       size: stat.isDirectory() ? await attachmentDirectorySize(absolutePath) : stat.size,
       isImage: stat.isFile() && isImageAttachment(attachment.name),
+      ...(diagnosticSummary ? { diagnosticSummary } : {}),
       ...(stat.isDirectory() ? { isDirectory: true } : {})
     })
   }
@@ -1328,6 +1360,7 @@ function emitProjectChanged(): void {
   } else if (!publicMcpBridge && currentProject && mcpBridgePreferenceEnabled) {
     void startPublicMcpBridge(currentProject.path).catch((error) => console.warn('[mcp-bridge] failed to start after project open', error))
   }
+  void playerTestService?.projectChanged(currentProject?.path).catch(error => console.warn('测试会话清理失败', error))
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
   mainWindow.webContents.send('project:changed', currentProject)
 }
@@ -1629,6 +1662,8 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
     : 'medium'
   const preferences = normalizeQuotaModelPreferences({ model, reasoningLevel, fastMode: Boolean(value.fastMode) }, DEFAULT_BEGINNER_AI_PREFERENCES)
   const previous = await readBeginnerAiPreferences()
+  if (initialRevision !== quotaConfiguration.current()) throw new Error('线路正在切换，请稍后重新选择模型')
+  if (previous.model === preferences.model && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode) return preferences
   const credentials = await readDeviceCredentials()
   if (previous.fastMode !== preferences.fastMode) {
     if (!credentials) throw new Error('请先连接 ModMind 账号，再切换 Fast 模式')
@@ -1758,6 +1793,7 @@ async function prepareManagedCodex(
           configSource,
           existingExecutable: existingExecutable?.trim() || undefined,
           bundledSkillsDir: bundledCodexSkillsDirectory(),
+          bundledSkillNames: workbenchSkillNames(project),
           imageToolsEnabled: true,
           rememberPrepared: false,
           onProgress: (progress) => {
@@ -1820,18 +1856,7 @@ function externalAgentEnvironment(kind: ExternalAgentKind, configuration: Extern
     return {CODEX_HOME: codexHome, MODMIND_THIRD_PARTY_API_KEY: apiKey}
   }
   if (kind !== 'claude') return {}
-  const claudeEffort = configuration.reasoningEffort === 'low' || configuration.reasoningEffort === 'medium' || configuration.reasoningEffort === 'high' || configuration.reasoningEffort === 'xhigh' || configuration.reasoningEffort === 'max'
-    ? configuration.reasoningEffort
-    : 'high'
-  return {
-    ANTHROPIC_BASE_URL: baseUrl,
-    ANTHROPIC_API_KEY: apiKey,
-    ANTHROPIC_MODEL: model,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
-    CLAUDE_CODE_EFFORT_LEVEL: claudeEffort
-  }
+  return claudeHostedEnvironment(configuration, path.join(app.getPath('userData'), 'external-agents', 'claude'))
 }
 
 async function configureExternalAgentProvider(kind: ExternalAgentKind, settings: AgentSettings): Promise<{kind: ExternalAgentKind; executable?: string; configPath?: string; detail: string}> {
@@ -2271,16 +2296,41 @@ function createWindow(): void {
     getJavaPath: (project, major) => project ? aiProjectContext.run(project, () => requireMinecraftRuntime().ensureJavaRuntime(undefined, major)) : requireMinecraftRuntime().ensureJavaRuntime(undefined, major),
     cacheDirectory: path.join(app.getPath('userData'), 'server-cores'),
     buildPlugin: (project, signal) => aiProjectContext.run(project, () => buildProjectWithLock(signal)),
-    onState: (state) => mainWindow?.webContents.send('local-server:state', state),
+    onState: (state) => {
+      mainWindow?.webContents.send('local-server:state', state)
+      localTestService?.serverChanged(state)
+    },
     onEvent: (event) => {
       diagnosticJournal.record({ subsystem: 'local-server', operation: event.stage, phase: event.level === 'error' ? 'error' : 'event', level: event.level === 'warning' ? 'warning' : event.level === 'error' ? 'error' : 'info', message: event.message })
       mainWindow?.webContents.send('local-server:event', event)
     }
   })
+  localTestService = new LocalTestService({
+    project: requireProject,
+    server: localServerManager,
+    createClient: async (project, onState, onEvent) => {
+      const profile = project.kind === 'server-plugin' ? await readServerProfile(project) : undefined
+      if (profile?.core === 'velocity') throw new Error('Velocity 需要后端世界服，请使用单独启动服务端')
+      const clientProject = profile ? { ...project, minecraftVersion: profile.version } : project
+      return new MinecraftRuntimeManager({
+        getProject: () => clientProject,
+        vanillaClient: project.kind === 'server-plugin',
+        instanceDirectory: path.join(project.path, '.modmind', 'local-test-client'),
+        getJavaPreference: async () => (await readSettings()).javaPreferences,
+        onState,
+        onEvent
+      })
+    },
+    onState: state => mainWindow?.webContents.send('local-test:state', state)
+  })
   headlessMcService = new HeadlessMcService({
     userDataDirectory: app.getPath('userData'),
     onEvent: forwardMinecraftRuntimeEvent
   })
+  playerTestService = new PlayerTestService({ server: () => {
+    if (!localServerManager) throw new Error('本机测试服务不可用')
+    return localServerManager
+  }, currentProject: () => currentProject, headless: requireHeadlessMc, javaPreferences: async () => (await readSettings()).javaPreferences, onEvent: forwardMinecraftRuntimeEvent })
   blockbenchBridge.onStatus((status) => {
     diagnosticJournal.record({ subsystem: 'blockbench', operation: 'bridge', phase: status.phase, level: status.phase === 'error' ? 'error' : 'info', message: status.message || `Blockbench bridge: ${status.phase}`, data: status })
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
@@ -2313,8 +2363,12 @@ function createWindow(): void {
     aiAbortControllers.clear()
     activeAiRuns.clear()
     disposeBlockbenchBridge()
-    void localServerManager?.destroy()
-    localServerManager = null
+    const closingServer = localServerManager
+    void (async () => {
+      try { await playerTestService?.stop(); await localTestService?.stop() }
+      catch (error) { console.warn('测试会话清理失败', error) }
+      finally { await closingServer?.destroy(); if (localServerManager === closingServer) localServerManager = null }
+    })()
     minecraftRuntime?.destroy()
     minecraftRuntime = null
     void headlessMcService?.stop()
@@ -2514,7 +2568,21 @@ async function withMinecraftResourceLock<T>(operation: () => Promise<T>): Promis
 }
 
 function buildProjectWithLock(signal?: AbortSignal): Promise<MinecraftManagedMod> {
-  return withMinecraftResourceLock(() => requireMinecraftRuntime().buildProject(signal))
+  const project = requireProject()
+  return withMinecraftResourceLock(async () => {
+    const startedAt = Date.now()
+    const feedback = new CreationFeedbackService(project)
+    try {
+      return await feedback.build(() => requireMinecraftRuntime().buildProject(signal), signal)
+    } finally {
+      for (const buildLog of [path.join(project.path, projectDataDirectory(project), 'builds', 'minecraft-test-build.log'), path.join(project.path, '.modmind', 'builds', 'maven-build.log')]) {
+        const stat = await fs.stat(buildLog).catch(() => null)
+        if (!stat || stat.mtimeMs < startedAt) continue
+        const text = await fs.readFile(buildLog, 'utf8').catch(() => '')
+        if (text) await feedback.evidence(text, 'managed-build').catch(error => console.warn('构建日志归档失败', error))
+      }
+    }
+  })
 }
 
 async function renameProjectRecord(project: ProjectInfo, input: ProjectRenameInput): Promise<ProjectInfo> {
@@ -2614,21 +2682,10 @@ function normalizeAgentImageRequest(input: unknown): ImageGenerationRequest {
 async function createHostedImageLease(request?: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号，或在专业设置中保存图片 API Key')
-  const timestamp = new Date().toISOString()
-  const response = await fetch(`${credentials.siteUrl}/api/device/image-lease`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.apiKey}`, 'Idempotency-Key': randomUUID() },
-    body: JSON.stringify({ username: credentials.username, timestamp }),
-    signal: AbortSignal.timeout(20_000)
-  })
-  const payload = await response.json().catch(() => null) as { data?: Record<string, unknown>; message?: string; error?: string; apiKey?: unknown; baseUrl?: unknown; model?: unknown } | null
-  if (!response.ok) throw new Error(typeof payload?.message === 'string' ? payload.message : typeof payload?.error === 'string' ? payload.error : `托管图片授权接口不可用（HTTP ${response.status}）`)
-  const data = payload?.data ?? payload ?? {}
-  const baseUrl = typeof data.baseUrl === 'string' ? normalizeRelayBaseUrl(data.baseUrl) : ''
-  const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : ''
+  const { baseUrl, apiKey } = await requestDeviceImageLease(credentials, AbortSignal.timeout(20_000))
+  if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请重新运行图像任务')
   const jobId = randomUUID()
   const reservedCredits = request ? Math.max(1, request.count) : 0
-  if (!baseUrl || !apiKey) throw new Error('托管图片授权响应缺少临时 Key 或 Base URL')
   return { baseUrl, apiKey, jobId, reservedCredits }
 }
 
@@ -2728,6 +2785,7 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
         ? `已识别 ${formatLabel[externalModpack.format]} 归档布局；将保留 overrides/ 中的配置、资源和本地 Mod`
         : `已识别 ${formatLabel[externalModpack.format]}，将以实例布局原地接管，不移动 mods、config 或 kubejs`,
       `检测到 ${externalModpack.localModFiles.length} 个本地 Mod、${externalModpack.overrideFiles.length} 个配置或资源文件`,
+      ...(externalModpack.remoteFiles.length ? [`清单另含 ${externalModpack.remoteFiles.length} 个远程文件（其中 ${externalModpack.remoteFiles.filter(entry => /^mods\/[^/]+\.jar$/i.test(entry.path)).length} 个 Mod），接管时将按原清单下载并校验`] : []),
       ...externalModpack.warnings
     ]
     return {
@@ -2919,6 +2977,7 @@ async function performExternalModpackAdoption(context: ExternalModpackAdoptionCo
       createdTemporaryDestination = true
     }
     const materialized = await materializeExternalModpack(imported, context.projectPath, {
+      curseForge: { resolve: curseForgePackResolver(curseForgeProviderKey, path.join(app.getPath('userData'), 'pack-metadata-cache')), cacheDirectory: path.join(app.getPath('userData'), 'pack-download-cache') },
       trackDownloadActivities: false,
       onProgress: (progress) => downloadActivities.update(activityId, { detail: modpackAdoptionProgressDetail(progress) })
     })
@@ -2931,6 +2990,7 @@ async function performExternalModpackAdoption(context: ExternalModpackAdoptionCo
       importedAt: new Date().toISOString(),
       ...(materialized.unresolvedDependencyCount ? { unresolvedDependencies: materialized.unresolvedDependencyCount } : {})
     })
+    await auditImportedPackArtifacts(project)
   } catch (error) {
     if (context.isTemporaryImport && createdTemporaryDestination) {
       await fs.rm(context.projectPath, { recursive: true, force: true }).catch(() => undefined)
@@ -2958,7 +3018,10 @@ async function adoptExternalModpackWithRetry(context: ExternalModpackAdoptionCon
   })
   try {
     const project = await performExternalModpackAdoption(context, activityId)
-    downloadActivities.complete(activityId, '整合包下载、校验与接管已完成')
+    const manifest = await readModpackManifest(project)
+    downloadActivities.complete(activityId, manifest.source?.unresolvedDependencies
+      ? `工作区已接管，仍有 ${manifest.source.unresolvedDependencies} 个必需文件待安装；请在模组列表继续安装`
+      : '整合包下载、校验与接管已完成')
     return project
   } catch (error) {
     downloadActivities.fail(activityId, error)
@@ -3059,10 +3122,16 @@ async function resolveExistingProjectSource(inputPath: string): Promise<string> 
   }
   const entries = await fs.readdir(extractionRoot, { withFileTypes: true })
   const directories = entries.filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
-  if (directories.length === 1 && entries.every((entry) => entry.isDirectory() || entry.name.startsWith('.'))) {
-    return path.join(extractionRoot, directories[0].name)
+  const selectedRoot = directories.length === 1 && entries.every((entry) => entry.isDirectory() || entry.name.startsWith('.'))
+    ? path.join(extractionRoot, directories[0].name) : extractionRoot
+  if ((await Promise.all(['manifest.json', 'modrinth.index.json'].map(file => fs.access(path.join(selectedRoot, file)).then(() => true, () => false)))).some(Boolean)) {
+    const hash = createHash('sha256')
+    for await (const chunk of createReadStream(resolved)) hash.update(chunk as Buffer)
+    const provenance = path.join(selectedRoot, '.modmind', 'import')
+    await fs.mkdir(provenance, { recursive: true })
+    await fs.writeFile(path.join(provenance, 'source-archive.json'), JSON.stringify({ fileName: path.basename(resolved), size: stat.size, sha256: hash.digest('hex') }, null, 2), 'utf8')
   }
-  return extractionRoot
+  return selectedRoot
 }
 
 async function copyImportedReferences(sourceRoot: string, destinationRoot: string, files: string[]): Promise<number> {
@@ -3273,7 +3342,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   const kinds = ['codex', 'claude'] as const
   const normalized: AgentSettings = {
     ...value,
-    codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'codex',
+    codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
     codexApprovalMode: normalizeAgentApprovalMode(value.codexApprovalMode),
     allowBuildScriptChanges: value.allowBuildScriptChanges !== false,
     preferLocalGradle: Boolean(value.preferLocalGradle),
@@ -3281,7 +3350,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
     gradleDownloadSource: value.gradleDownloadSource === 'china' || value.gradleDownloadSource === 'official' ? value.gradleDownloadSource : 'auto',
     networkProxyUrl: normalizeNetworkProxyUrl(value.networkProxyUrl),
     javaPreferences: normalizeJavaPreferences(value.javaPreferences),
-    darkMode: Boolean(value.darkMode),
+    ...normalizeAppearance(value),
     closeBehavior: value.closeBehavior === 'tray' || value.closeBehavior === 'quit' ? value.closeBehavior : 'ask',
     notificationsEnabled: value.notificationsEnabled !== false
   }
@@ -3308,7 +3377,12 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries }
   if (Object.keys(encryptedAgentKeys).length) stored.encryptedAgentKeys = encryptedAgentKeys
       await writeAgentSettingsAtomically(stored)
-      resolveWrite(await readSettings())
+      const savedSettings = await readSettings()
+      const appearance = normalizeAppearance(savedSettings)
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('settings:appearance', appearance)
+      }
+      resolveWrite(savedSettings)
     } catch (error) {
       rejectWrite(error)
     }
@@ -3336,6 +3410,11 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
   await diagnosticJournal.flush()
   const exportedAt = new Date().toISOString()
   const collector = new DiagnosticArchiveCollector()
+  // Reserve archive space for core evidence before verbose project and AI logs.
+  for (const name of ['diagnostic-session.json', 'diagnostic-critical.jsonl', 'diagnostic-critical.previous.jsonl', 'diagnostic-events.jsonl', 'diagnostic-events.previous.jsonl']) {
+    await collector.addFile(path.join(app.getPath('logs'), name), `app-logs/${name}`)
+  }
+  collector.addJson('diagnostic-operations-pending.json', diagnosticIpcOperations.snapshot())
 
   const project = currentProject
   const runtimeState = minecraftRuntime?.getState()
@@ -3373,6 +3452,7 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
       imageService: imageSettings ? { baseUrl: imageSettings.baseUrl, model: imageSettings.model, hasApiKey: imageSettings.hasStoredKey } : null
     } : null,
     diagnosticJournal: diagnosticJournal.status(),
+    previousSession: diagnosticSession?.previous,
     project: project ? {
       kind: project.kind ?? 'mod',
       name: project.name,
@@ -3468,7 +3548,7 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
   collector.addJson('app-runtime/minecraft-cache-summary.json', await summarizeDiagnosticDirectory(path.join(userData, 'minecraft-runtime')))
   collector.addJson('app-runtime/server-pack-creator-summary.json', await summarizeDiagnosticDirectory(path.join(userData, 'server-pack-creator')))
   await collector.addDirectory(path.join(userData, 'server-pack-creator'), 'app-runtime/server-pack-creator', { include: (relative) => /\.(?:log|json)$/i.test(relative) })
-  await collector.addDirectory(app.getPath('logs'), 'app-logs')
+  await collector.addDirectory(app.getPath('logs'), 'app-logs', { include: relative => !/^diagnostic-(?:session\.json|(?:critical|events)(?:\.previous)?\.jsonl)$/.test(relative) })
   const entries = collector.finalize({ journal: diagnosticJournal.status() })
   await fs.writeFile(result.filePath, createStoredZip(entries))
   diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'export', phase: 'success', message: `Diagnostic archive exported with ${entries.length} files`, data: { target: result.filePath, entries: entries.length } })
@@ -3634,8 +3714,8 @@ async function migrateLegacyUserData(): Promise<void> {
 
 async function readSettings(): Promise<AgentSettings> {
   const defaults: AgentSettings = {
-    codingBackend: 'codex',
-    codexApprovalMode: 'auto-review',
+    codingBackend: 'quota',
+    codexApprovalMode: 'yolo',
     allowBuildScriptChanges: true,
     preferLocalGradle: false,
     gradleExecutable: '',
@@ -3696,7 +3776,7 @@ async function readSettings(): Promise<AgentSettings> {
       codexApprovalMode: normalizeAgentApprovalMode(stored.codexApprovalMode),
       codingBackend: ['quota', 'codex', 'claude'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
-        : 'codex',
+        : 'quota',
       allowBuildScriptChanges: stored.allowBuildScriptChanges !== false,
       preferLocalGradle: Boolean(stored.preferLocalGradle),
       gradleExecutable: typeof stored.gradleExecutable === 'string' ? stored.gradleExecutable.slice(0, 4096) : '',
@@ -3705,7 +3785,7 @@ async function readSettings(): Promise<AgentSettings> {
         : 'auto',
       networkProxyUrl: normalizeNetworkProxyUrl(stored.networkProxyUrl),
       javaPreferences: normalizeJavaPreferences(stored.javaPreferences),
-      darkMode: Boolean(stored.darkMode),
+      ...normalizeAppearance(stored),
       closeBehavior: stored.closeBehavior === 'tray' || stored.closeBehavior === 'quit' ? stored.closeBehavior : 'ask',
       notificationsEnabled: stored.notificationsEnabled !== false
     }
@@ -3730,6 +3810,7 @@ async function listAvailableAgentModels(kind: ExternalAgentKind, input: External
   const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
+  if (kind === 'claude') return parseModelPayload(await fetchClaudeModels(baseUrl, apiKey))
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
 }
 
@@ -3841,6 +3922,7 @@ function normalizeCodingPath(value: string, _allowBuildScriptChanges = true, _al
 }
 
 async function resolveSafeCodingTarget(relativePath: string, project: ProjectInfo = requireProject()): Promise<string> {
+  assertAgentWriteAllowed(project.path, relativePath)
   const target = resolveProjectPathFor(project, relativePath)
   const segments = relativePath.replaceAll('\\', '/').split('/').slice(0, -1)
   let current = project.path
@@ -4223,7 +4305,7 @@ function sendAiProgress(event: Electron.IpcMainInvokeEvent, item: PipelineEvent,
     data: { detail: item.detail, sessionId, projectPath, runId, conversationId: routedItem.conversationId, turnId: routedItem.turnId, todo: item.todo }
   })
   const publish = (value: PipelineEvent): void => {
-    const payload = { ...value, title: sanitizeAiUserText(value.title), detail: sanitizeAiUserText(value.detail) }
+    const payload = { ...value, title: value.status === 'error' ? '任务未完成' : sanitizeAiUserText(value.title), detail: value.status === 'error' ? describeAiFailureForUser(value.detail || value.title) : sanitizeAiUserText(value.detail) }
     const windows = BrowserWindow.getAllWindows()
     if (windows.length) {
       for (const window of windows) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('ai:progress', payload)
@@ -4244,7 +4326,9 @@ function writeAiAttemptAudit(audit: ExternalAgentAttemptAudit, sessionId?: strin
   aiOutputLogWrite = aiOutputLogWrite.then(async () => {
     await fs.mkdir(app.getPath('logs'), { recursive: true })
     await fs.appendFile(path.join(app.getPath('logs'), 'ai-attempt-audit.jsonl'), `${redactDiagnosticText(JSON.stringify(payload))}\n`, 'utf8')
-  }).catch(() => undefined)
+  }).catch((error) => {
+    diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'ai-audit-write', phase: 'error', message: 'Unable to persist AI attempt audit', error })
+  })
 }
 
 function sendAiOutput(
@@ -4257,7 +4341,7 @@ function sendAiOutput(
   options?: Pick<AiOutputEvent, 'terminal' | 'recoverable' | 'usage' | 'backend' | 'itemId' | 'streamId'>
 ): void {
   const time = new Date().toISOString()
-  const safeContent = sanitizeAiUserText(content)
+  const safeContent = kind === 'error' ? describeAiFailureForUser(content) : sanitizeAiUserText(content)
   const run = runId ? activeAiRuns.get(runId) ?? recentAiRunRoutes.get(runId) : undefined
   const actualBackend = options?.backend ?? run?.backend
   const terminalError = kind === 'error' && options?.terminal !== false
@@ -4269,7 +4353,7 @@ function sendAiOutput(
       phase: terminalError ? 'error' : kind,
       level: terminalError ? 'error' : kind === 'warning' || kind === 'error' ? 'warning' : 'info',
       message: kind === 'error' || kind === 'warning' ? safeContent : `AI output event: ${kind}`,
-      data: { kind, sessionId, projectPath, contentLength: safeContent.length, ...(kind === 'tool' || kind === 'retry' ? { content: safeContent } : {}) }
+      data: { kind, sessionId, runId, itemId: options?.itemId, streamId: options?.streamId, projectPath, contentLength: content.length, contentLog: 'ai-output-events.jsonl', ...(kind === 'error' || kind === 'warning' ? { originalContent: content } : {}) }
     })
   }
   if (kind !== 'delta') {
@@ -4277,7 +4361,9 @@ function sendAiOutput(
     aiOutputLogWrite = aiOutputLogWrite.then(async () => {
       await fs.mkdir(app.getPath('logs'), { recursive: true })
       await fs.appendFile(path.join(app.getPath('logs'), 'ai-output-events.jsonl'), `${redactDiagnosticText(JSON.stringify(logPayload))}\n`, 'utf8')
-    }).catch(() => undefined)
+    }).catch((error) => {
+      diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'ai-output-write', phase: 'error', message: 'Unable to persist AI output log', error })
+    })
   }
   const publish = (value: AiOutputEvent): void => {
     const windows = BrowserWindow.getAllWindows()
@@ -4362,7 +4448,7 @@ async function waitForWorkspaceRunsToStop(projectPath: string, timeoutMs = 12_00
 
 async function assertBackendSwitchTargetReady(backend: AgentSettings['codingBackend'], settings: AgentSettings): Promise<void> {
   if (backend === 'quota') {
-    if (!await readDeviceCredentials()) throw new Error('请先连接 ModMind 账号，再切换到智能引擎')
+    if (!await readDeviceCredentials()) throw new Error('请先连接 ModMind 账号，再切换到 ModMind')
     return
   }
 
@@ -4384,6 +4470,7 @@ async function assertBackendSwitchTargetReady(backend: AgentSettings['codingBack
   if (configured.mode === 'hosted') externalAgentEnvironment('claude', configured)
   const detected = await detectExternalAgent('claude', {executables: [configured.executable ?? '']})
   if (!detected.installed) throw new Error('Claude Code 尚未安装或命令路径不可用，请先在设置中完成配置')
+  if (detected.compatible === false) throw new Error(detected.detail)
 }
 
 function registerAiRun(run: ActiveAiRun): void {
@@ -4463,6 +4550,61 @@ function remoteInvokeEvent(onActivity: (text: string, progress?: number) => void
   return { sender } as unknown as Electron.IpcMainInvokeEvent
 }
 
+async function runModpackModuleWorkbench(
+  pack: ProjectInfo, input: Record<string, unknown>, backend: AgentSettings['codingBackend'], signal: AbortSignal,
+  callbacks: { beforeRun?: (module: ProjectInfo) => Promise<void>; onActivity?: (text: string) => void; workbenchFeatures?: WorkbenchFeatures } = {}
+) {
+  return delegateModpackModule(pack, input, {
+    signal,
+    beforeRun: async module => {
+      assertProjectMutationAllowed(module.path, '委派自制 Mod 开发')
+      await callbacks.beforeRun?.(module)
+    },
+    run: async (module, request, parentSignal) => {
+      const controller = new AbortController()
+      const abort = (): void => controller.abort(parentSignal.reason)
+      parentSignal.addEventListener('abort', abort, { once: true })
+      if (parentSignal.aborted) abort()
+      const conversationId = `ws-delegated-${randomUUID()}`
+      const turnId = `turn-${randomUUID()}`
+      const sessionId = `delegated-${randomUUID()}`
+      const run: ActiveAiRun = {
+        id: aiRunId(REMOTE_SENDER_ID, module.path, sessionId), senderId: REMOTE_SENDER_ID,
+        startedAt: new Date().toISOString(), sessionId, sessionScope: `workspace/${conversationId}`,
+        projectPath: module.path, executionProfile: 'standard', backend, surface: 'workspace',
+        conversationId, generation: 0, turnId
+      }
+      try {
+        callbacks.onActivity?.(`已将需求交给「${module.name}」的独立工作台`)
+        const result = await withAiRun(run, controller, async () => {
+          throwIfAborted(controller.signal)
+          const prepared = await prepareConversationRequest(module, request, 'workspace', {
+            runId: run.id, conversationId, turnId, sessionScope: run.sessionScope, projectPath: module.path
+          })
+          return runExternalCodingAgent(
+            remoteInvokeEvent(text => callbacks.onActivity?.(`[${module.name}] ${text}`)),
+            request, sessionId, backend, 'standard', undefined,
+            { ...prepared.options, runId: run.id, surface: 'workspace', workbenchFeatures: callbacks.workbenchFeatures }, controller.signal,
+            { onProgress: item => callbacks.onActivity?.(`[${module.name}] ${item.title}${item.detail ? `：${item.detail}` : ''}`) }
+          )
+        })
+        // A child answer is separate from build evidence and pack integration.
+        await resolveAgentModpackModule(pack, module.namespace)
+        const feedback = new CreationFeedbackService(module)
+        const state = await feedback.state()
+        const delivery = state.tasks.find(task => task.id === turnId)?.delivery
+        return {
+          status: delivery?.status ?? 'completed', namespace: module.namespace, projectPath: module.path, conversationId,
+          summary: result.finalResponse ?? result.summary, changedFiles: result.changedFiles,
+          tests: result.tests, warnings: result.warnings, remaining: delivery?.remaining ?? [],
+          buildVerified: await feedback.verifyLatestBuild(), packIntegrationVerified: false,
+          nextStep: '检查委派结果和未完成事项。完成源码任务后调用 modmind_build_project 编译并同步整合包；再按改动进行整合包运行验证。'
+        }
+      } finally { parentSignal.removeEventListener('abort', abort) }
+    }
+  })
+}
+
 async function runRemoteWorkbenchTask(prompt: string, callbacks: { signal?: AbortSignal; onActivity?: (text: string, progress?: number) => void }): Promise<{ summary: string; result?: Record<string, unknown>; changedFiles?: string[] }> {
   const project = requireProject()
   const settings = await readSettings()
@@ -4527,6 +4669,7 @@ async function stopRemoteClient(persist = false): Promise<RemoteConnectionState>
 }
 
 function assertProjectSwitchAllowed(): void {
+  if (localTestService?.isBusy()) throw new Error('本机测试正在准备或运行，请先停止后再切换项目')
   if (localServerManager?.isBusy()) throw new Error('本机服务端正在准备或运行，请先停止后再切换项目')
 }
 
@@ -4582,6 +4725,7 @@ interface AiWorkflowState {
 }
 
 interface ActiveAiTask {
+  workbenchFeatures?: WorkbenchFeatures
   taskId: string
   runId?: string
   projectPath: string
@@ -5032,6 +5176,19 @@ async function runHeadlessMinecraftSmoke(
   return withMinecraftResourceLock(() => runHeadlessMinecraftSmokeUnlocked(project, signal, options))
 }
 
+async function runManagedRenderedTest(project: ProjectInfo, signal?: AbortSignal) {
+  if (project.kind === 'server-plugin' || !isJavaLoader(project.loader)) throw new Error('此入口支持 Java Mod 和整合包；服务端插件请使用玩家测试的 rendered 模式，基岩版和网易版使用其官方测试工具')
+  return withMinecraftResourceLock(() => {
+    const runtime = requireMinecraftRuntime()
+    return runRenderedMinecraftTest({
+      isRunning: () => runtime.getState().running,
+      build: () => buildProjectWithLock(signal),
+      launch: (options, window, taskSignal) => runtime.testLaunch(options, window, taskSignal),
+      stop: () => runtime.stop()
+    }, signal)
+  })
+}
+
 async function runProjectTestMatrixUnlocked(
   targets: TestTarget[],
   signal?: AbortSignal,
@@ -5242,6 +5399,7 @@ async function applyModpackMigrationForAgent(project: ProjectInfo, input: Record
 }
 
 async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: AbortSignal): Promise<ExternalAgentBridgeHandlers> {
+  const moduleTasks = new ModpackModuleTasks(signal, async (input, childSignal) => runModpackModuleWorkbench(project, input, (await readSettings()).codingBackend, childSignal))
   const localReviewConfig: AiReviewerConfig = {
     reviewMode: 'codex-auto',
     codexExecutable: process.platform === 'win32' ? 'codex.cmd' : 'codex',
@@ -5250,12 +5408,17 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
   const addonService = createAddonRelationshipService(() => project)
   const addonContext = await addonService.describeForAi().catch(() => null)
   const handlers: ExternalAgentBridgeHandlers = {
+    modpackModules: input => inspectModpackModules(project, input),
+    modpackDelegateModule: async input => moduleTasks.start(input),
+    modpackModuleTask: input => moduleTasks.read(input),
     projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
     resourcePackOperation: input => resourcePackAgentOperation(project, input),
     serverOperation: input => localServerAgentOperation(project, input, signal),
+    creationContext: input => creationContextOperation(project, input),
+    playerTest: (category, input) => { if (!playerTestService) throw new Error('玩家测试服务不可用'); return playerTestService.execute(project, category, input, signal) },
+    projectSearch: (query, limit) => searchProjectText(project, query, limit),
     projectFiles: async () => {
-      const files = await listManagedFiles(project.path, (name) => ignoredDirectories.has(name) || isToolDataDirectory(name))
-      return { files: files.slice(0, 5_000), truncated: files.length > 5_000 }
+      return projectSearchFiles(project)
     },
     reviewAction: (action, input) => reviewAiAction(localReviewConfig, { project, request: 'external MCP integration', action, input }, signal),
     renameProject: (name, namespace) => renameProjectRecord(project, { name, namespace }),
@@ -5310,10 +5473,12 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     addonImport: async (paths, role) => addonService.importExact(await resolveAddonImportPaths(project, paths), role === 'optional' || role === 'test' ? role : 'required'),
     addonLinkProject: (projectPath) => linkAddonProject(project, projectPath, signal),
     contentValidate: () => requireContentService().validate(),
-    testMatrix: (targets) => runProjectTestMatrix(targets.filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target)), signal),
+    testMatrix: (targets) => { moduleTasks.assertCollected(); return runProjectTestMatrix(targets.filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target)), signal) },
+    testRendered: () => { moduleTasks.assertCollected(); return runManagedRenderedTest(project, signal) },
     releasePreflight: () => requireReleaseService().preflight(),
-    build: async () => ({ success: true, artifact: await buildProjectWithLock(signal) }),
+    build: async () => { moduleTasks.assertCollected(); const artifact = await buildProjectWithLock(signal); return { success: true, artifact } },
     testMinecraft: async () => {
+      moduleTasks.assertCollected()
       if (project.kind === 'server-plugin') return localServerAgentOperation(project, { operation: 'start' }, signal)
       const result = await runHeadlessMinecraftSmoke(project, signal, { stableWindowMs: 20_000, offline: true })
       if (!result.success) throw new Error(result.message || 'HeadlessMC smoke test failed')
@@ -5673,6 +5838,7 @@ function normalizeReadablePath(value: string, project: ProjectInfo = requireProj
 }
 
 function describeAgentRunError(error: unknown): string {
+  diagnosticJournal.record({ subsystem: 'ai', operation: 'task-error', phase: 'error', level: 'error', message: 'AI task failed before user-facing translation', error })
   if (error instanceof Error && error.name === 'AbortError') return 'Agent 任务已停止，停止前完成的修改已保留'
   if (error instanceof Error && error.name === 'TimeoutError') return describeAiFailureForUser('上游模型响应超时')
   return describeAiFailureForUser(sanitizeAiUserText(error instanceof Error ? error.message : String(error)))
@@ -5782,7 +5948,7 @@ const MANDATORY_CODING_WORKFLOW = `${MANAGED_DOWNLOAD_POLICY}
 
 MODMIND WORKFLOW GUIDANCE. Choose the smallest workflow that reliably satisfies the user's request. Project info, intent classification, Todo, validation, managed builds, runtime tests, and independent review are available helpers, not completion gates. Do not repeat work merely to satisfy a process checklist.
 
-For engineering changes, implement the requested behavior and use the most relevant validation. Prefer a managed build when compilation or packaging matters, and a managed runtime test when the task changes startup, registration, mixins, world generation, networking, loader compatibility, or gameplay behavior. The Agent smoke-test path uses HeadlessMC in an isolated, hidden, offline instance; it must not open the user's Minecraft window. If a useful check cannot be run, state that plainly in the final answer instead of retrying completed work.
+For engineering changes, implement the requested behavior and use the most relevant enabled validation. Prefer a managed build when compilation or packaging matters. Respect the current turn's feature checklist even when a skill recommends testing. When enabled, the headless smoke-test path uses HeadlessMC in an isolated, hidden, offline instance; real-interface testing uses modmind_test_rendered or a supported rendered player session and may open its own visible game window. Do not take over the user's existing game. If a useful check is unchecked or unsupported, state that plainly instead of bypassing the choice or claiming verification.
 
 Native Agent tools, terminal commands, and file tools remain available for uncovered work. Never run Gradle build, assemble, compileJava, runClient, runServer, or runGameTestServer directly; use modmind_build_project, modmind_test_matrix, or modmind_test_minecraft so ModMind owns serialization, cancellation, and process cleanup. Never use Stop-Process -Force, taskkill /f, kill -9, or delete Gradle daemon registry files. On Windows, commands run in Windows PowerShell 5.1, so do not use Bash-only operators such as || or &&. Do not waste tokens replaying optional planning or verification steps.
 
@@ -5791,6 +5957,7 @@ Treat completion review as advice. Never start another implementation turn only 
 const NETEASE_CODING_WORKFLOW = `NETEASE MOD SDK GUIDANCE. Inspect existing project files first and implement promptly using the Python Mod SDK layout (behavior_pack/modMain.py, behavior_pack/<namespace>/clientSystem.py, behavior_pack/<namespace>/serverSystem.py, and resource-pack UI JSON/textures). Do not use Gradle, Java mappings, Sourcegraph, or broad web scraping. Use official NetEase documentation only for a specific unresolved API after inspecting local templates. For engineering tasks, prefer concrete edits plus modmind_validate_content and modmind_build_project when they materially help; runtime testing belongs in the official NetEase developer workbench.`
 
 function codingWorkflowPrompt(project: ProjectInfo): string {
+  if (project.kind === 'modpack') return `${MANDATORY_CODING_WORKFLOW}\n\n${MODPACK_AGENT_WORKFLOW_GUIDANCE}`
   if (project.kind === 'server-plugin') return `${MANAGED_DOWNLOAD_POLICY}\n\n${serverPluginContext(project)}`
   return project.loader === 'netease-pc' || project.loader === 'netease-mobile'
     ? `${MANDATORY_CODING_WORKFLOW}\n\n${NETEASE_CODING_WORKFLOW}`
@@ -5814,21 +5981,65 @@ async function resourcePackAgentOperation(project: ProjectInfo, input: Record<st
   }
 }
 
+async function creationContextOperation(project: ProjectInfo, input: Record<string, unknown>): Promise<unknown> {
+  const service = new CreationFeedbackService(project)
+  if (input.operation === 'delivery') return service.delivery(String(input.taskId), input.delivery as import('../shared/creationFeedback').CreationTaskRecord['delivery'])
+  if (input.operation === 'target') {
+    if (typeof input.path !== 'string' || input.artifacts !== undefined && (!Array.isArray(input.artifacts) || input.artifacts.length > 30 || input.artifacts.some(item => typeof item !== 'string'))) throw new Error('目标或产物列表无效')
+    return service.target(String(input.taskId), input.path, input.artifacts as string[] | undefined)
+  }
+  if (input.operation === 'read') return service.read(String(input.id), Number(input.start ?? 1), Number(input.count ?? 100))
+  if (input.operation === 'requirement') return service.requirement(Number(input.revision), { ...input.requirement as import('../shared/creationFeedback').CreationRequirement, author: 'assistant' })
+  if (input.operation === 'hypothesis') return service.mutate(state => {
+    const task = state.tasks.find(item => item.id === input.taskId)
+    if (!task || typeof input.text !== 'string' || input.text.length > 4000) throw new Error('任务或假设无效')
+    task.hypothesis = input.text
+  })
+  return service.view()
+}
+
+const serverEvidenceCursors = new Map<string, number>()
 async function localServerAgentOperation(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   if (!localServerManager || !currentProject || !sameProjectPath(project.path, currentProject.path)) throw new Error('本机服务端操作需要当前项目')
-  if (input.operation === 'state') return localServerManager.getState()
-  if (input.operation === 'stop') return localServerManager.stop()
-  if (input.operation === 'command') return localServerManager.sendCommand(String(input.command ?? ''))
-  if (input.operation === 'scenario') {
-    if (!Array.isArray(input.steps)) throw new Error('场景步骤无效')
-    return localServerManager.runScenario(input.steps as Parameters<LocalServerManager['runScenario']>[0], signal)
+  const manager = localServerManager
+  const feedback = new CreationFeedbackService(project)
+  let result: unknown
+  let operationError: unknown
+  try {
+    if (input.operation === 'state') result = manager.getState()
+    else if (input.operation === 'stop') { await playerTestService?.stop(); await localTestService?.stop(); result = await manager.stop() }
+    else if (input.operation === 'command') result = { ...await manager.sendCommand(String(input.command ?? '')), commandSent: true, commandVerified: false }
+    else if (input.operation === 'scenario') {
+      if (!Array.isArray(input.steps)) throw new Error('场景步骤无效')
+      result = await manager.runScenario(input.steps as Parameters<LocalServerManager['runScenario']>[0], signal)
+    } else if (input.operation === 'start') {
+      if (localTestService?.isBusy()) throw new Error('请先停止页面中的本机测试')
+      const cancel = (): void => { void manager.stop().catch(() => undefined) }
+      signal?.throwIfAborted(); signal?.addEventListener('abort', cancel, { once: true })
+      try { result = await manager.start() } finally { signal?.removeEventListener('abort', cancel) }
+    } else throw new Error('不支持的服务端操作')
+  } catch (error) { operationError = error }
+  const state = manager.getState()
+  let text = ''
+  if (state.logPath) {
+    const cursorKey = `${project.path}:${state.sessionId}`
+    const start = serverEvidenceCursors.get(cursorKey) ?? 0
+    const handle = await fs.open(state.logPath, 'r').catch(() => null)
+    if (handle) try {
+      const stat = await handle.stat(); const offset = stat.size < start ? 0 : start
+      const buffer = Buffer.alloc(Math.min(1024 * 1024, Math.max(0, stat.size - offset)))
+      const read = await handle.read(buffer, 0, buffer.length, offset)
+      text = buffer.subarray(0, read.bytesRead).toString('utf8')
+      serverEvidenceCursors.set(cursorKey, offset + read.bytesRead)
+      while (serverEvidenceCursors.size > 100) serverEvidenceCursors.delete(serverEvidenceCursors.keys().next().value!)
+    } finally { await handle.close() }
   }
-  if (input.operation === 'start') {
-    const cancel = (): void => { void localServerManager?.stop().catch(() => undefined) }
-    signal?.throwIfAborted(); signal?.addEventListener('abort', cancel, { once: true })
-    try { return await localServerManager.start() } finally { signal?.removeEventListener('abort', cancel) }
-  }
-  throw new Error('不支持的服务端操作')
+  const evidence = text || operationError ? await feedback.evidence(`${operationError ? `${String(operationError)}\n` : ''}${text}`, 'managed-server') : undefined
+  if (input.operation === 'start') await feedback.check({ stage: 'startup', passed: !operationError && state.running, detail: state.message, sessionId: state.sessionId, buildId: project.kind === 'server-plugin' ? (await feedback.state()).builds.at(-1)?.id : undefined, evidenceId: evidence?.id })
+  if (operationError) throw new Error(`${String(operationError)}${evidence ? `\n日志证据：${evidence.id}\n${evidence.prompt}` : ''}`)
+  const value = result && typeof result === 'object' ? result as Record<string, unknown> : {}
+  const { recentLogs: _logs, ...rest } = value
+  return { ...rest, ...(evidence ? { logSummary: evidence.prompt, evidenceId: evidence.id } : {}), logPath: state.logPath, logsAreIncremental: true }
 }
 
 async function managedServerJoin(options: Parameters<typeof buildAndJoinServer>[0]): Promise<ServerJoinVerificationResult> {
@@ -5861,6 +6072,8 @@ function markWorkflowStage(workflow: AiWorkflowState, stage: AiWorkflowStage, ev
 function auditWorkflow(workflow: AiWorkflowState, changedFiles: string[], buildUsed: boolean, runtimeUsed: boolean, todo?: AgentTodoItem[]): { required: AiWorkflowStage[]; completed: AiWorkflowStage[]; missing: AiWorkflowStage[]; evidence: Partial<Record<AiWorkflowStage, string>> } {
   const completed = new Set(workflow.completed)
   const evidence = { ...workflow.evidence }
+  if (!buildUsed) { completed.delete('build'); delete evidence.build }
+  if (!runtimeUsed) { completed.delete('runtime_test'); delete evidence.runtime_test }
   if (changedFiles.length) {
     completed.add('implementation')
     evidence.implementation ??= `Detected ${changedFiles.length} changed managed file${changedFiles.length === 1 ? '' : 's'}`
@@ -5892,13 +6105,15 @@ async function runExternalCodingAgent(
   recovery?: ActiveAiTask,
   context: AiCreateCodeOptions = {},
   taskSignal?: AbortSignal,
-  lifecycle: { onBackendReady?: () => void } = {}
+  lifecycle: { onBackendReady?: () => void; onProgress?: (item: PipelineEvent) => void } = {}
 ): Promise<CodingResult> {
   const project = requireProject()
   const signal = taskSignal ?? new AbortController().signal
   throwIfAborted(signal, 'Agent 任务已停止')
   const surface: AiSurface = context.surface === 'inspiration' ? 'inspiration' : 'workspace'
   const isInspiration = usesInspirationWorkflow(context)
+  const selectedFeatures = context.workbenchFeatures ?? recovery?.workbenchFeatures
+  const workbenchFeatures = selectedFeatures === undefined ? undefined : normalizeWorkbenchFeatures(selectedFeatures)
   if (project.draft && !isInspiration) throw new Error('当前项目仅用于对话，请先补齐版本和平台信息，再开始制作')
   const recoveryBackend = recovery?.backend
   const backendChanged = Boolean(recoveryBackend && recoveryBackend !== backend)
@@ -5918,8 +6133,17 @@ async function runExternalCodingAgent(
   const usesQuota = backend === 'quota'
   const externalBackend: ExternalAgentKind = backend === 'quota' ? 'codex' : backend
   const agentLabel = externalAgentLabel(externalBackend)
+  const creation = new CreationFeedbackService(project)
+  const creationTaskId = context.turnId ?? `turn-${sessionId ?? Date.now()}`
+  if (!isInspiration) {
+    prompt = await creation.begin(creationTaskId, prompt, context.conversationId)
+    context = { ...context, fallbackPrompt: await creation.recover(prompt, context.conversationId, context.fallbackPrompt) }
+  }
   const settings = await awaitWithAbort(readSettings(), signal, 'Agent 任务已停止')
-  const sendCodingProgress = (item: PipelineEvent): void => sendAiProgress(event, item, sessionId, project.path, context.runId)
+  const sendCodingProgress = (item: PipelineEvent): void => {
+    sendAiProgress(event, item, sessionId, project.path, context.runId)
+    lifecycle.onProgress?.(item)
+  }
   const inspirationQuestion = context.inspirationQuestion?.trim() || prompt
   const reasoningEffort = isInspiration ? inspirationReasoningEffort(inspirationQuestion) : undefined
   const savedExternalConfiguration = settings.externalAgents?.[externalBackend] ?? {}
@@ -5980,8 +6204,8 @@ async function runExternalCodingAgent(
     : recovery
     ? await awaitWithAbort(managedCodingHashesAt(path.join(project.path, projectDataDirectory(project), 'snapshots', snapshot.id, 'files')), signal, 'Agent 任务已停止')
     : await awaitWithAbort(managedCodingHashes(project), signal, 'Agent 任务已停止')
-  let buildUsed = Boolean(recovery?.state.lastBuildSucceeded)
-  let runtimeUsed = Boolean(recovery?.workflow?.completed.includes('runtime_test'))
+  let buildUsed = false
+  let runtimeUsed = false
   let buildCount = recovery?.state.buildCount ?? 0
   let declaredIntent: 'engineering' | 'informational' | null = recovery?.state.intent ?? null
   let lastBuildHashes: Map<string, string> | null = null
@@ -5991,6 +6215,7 @@ async function runExternalCodingAgent(
   const generation = context.generation ?? storedConversation?.generation ?? 0
   const turnId = context.turnId ?? `turn-${taskId}`
   const activeTask: ActiveAiTask = {
+    workbenchFeatures,
     taskId,
     runId: context.runId ?? recovery?.runId ?? taskId,
     projectPath: project.path,
@@ -6100,6 +6325,11 @@ async function runExternalCodingAgent(
     sendCodingProgress(pipelineEvent('planning', '恢复外部代理 Todo', `${activeTask.state.todo.length} 个任务已恢复`, 'running', activeTask.state.todo))
   }
   sendCodingProgress(pipelineEvent('planning', `${agentLabel} 正在接管任务`, '已创建快照并启动 ModMind MCP 桥', 'running'))
+  const moduleTasks = new ModpackModuleTasks(signal, (input, childSignal) => runModpackModuleWorkbench(project, input, backend, childSignal, {
+    workbenchFeatures,
+    beforeRun: async module => { await creation.target(creationTaskId, module.path) },
+    onActivity: text => sendCodingProgress(pipelineEvent('writing', '自制模组工作台正在处理委派', text, 'running'))
+  }))
   try {
     let managedExternalEnvironment = usesQuota
       ? codexSetup?.environment
@@ -6127,13 +6357,14 @@ async function runExternalCodingAgent(
       ? `${initialExternalPrompt}\n\n${NETEASE_CODING_WORKFLOW}`
       : initialExternalPrompt
     const externalRunOptions: ExternalAgentRunOptions = {
+      workbenchFeatures,
       kind: externalBackend,
       approvalMode: normalizeAgentApprovalMode(settings.codexApprovalMode),
       runId: activeTask.runId,
       appVersion: app.getVersion(),
       executable: configuredExecutable,
       env: managedExternalEnvironment,
-      sessionHome: codexSetup?.home,
+      sessionHome: codexSetup?.home ?? (externalBackend === 'claude' ? claudeSessionHome(managedExternalEnvironment ?? process.env) : undefined),
       ...(!usesQuota && externalBackend === 'codex' && runExternalConfiguration.model ? { model: runExternalConfiguration.model, modelProvider: 'thirdparty' } : {}),
       ...(usesQuota ? {
         liveConfiguration: quotaConfiguration,
@@ -6182,17 +6413,29 @@ async function runExternalCodingAgent(
         workflowWrite = workflowWrite.then(writeTask).catch(() => undefined)
         lifecycle.onBackendReady?.()
       },
+      onUsage: usage => {
+        if (!isInspiration) void creation.mutate(state => {
+          const task = state.tasks.find(item => item.id === creationTaskId)
+          if (task) task.usage = { input: usage.inputTokens ?? 0, cached: usage.cachedInputTokens ?? 0, output: usage.outputTokens ?? 0 }
+        }).catch(() => undefined)
+      },
+      onNativeTurn: async (externalSessionId, nativeTurnId) => {
+        if (activeTask.conversationId) {
+          await conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, externalSessionId, nativeTurnId, turnId, codexSetup?.home)
+        }
+      },
       onSessionId: (externalSessionId) => {
         activeTask.sessionId = externalSessionId
         activeTask.nativeSessions = { ...activeTask.nativeSessions, [backend]: externalSessionId }
         externalRunOptions.sessionId = externalSessionId
         externalRunOptions.resumeSession = true
         if (activeTask.conversationId) {
-          void conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, externalSessionId, undefined, undefined, codexSetup?.home).catch(() => undefined)
+          void conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, externalSessionId, undefined, undefined, externalRunOptions.sessionHome).catch(() => undefined)
         }
         workflowWrite = workflowWrite.then(writeTask).catch(() => undefined)
       },
       onAttemptAudit: (audit) => writeAiAttemptAudit(audit, sessionId, project.path),
+      onContextRecovery: recovery => diagnosticJournal.record({ subsystem: 'ai', operation: 'native-context-recovery', phase: recovery.phase, level: recovery.phase.endsWith('failure') ? 'warning' : 'info', message: recovery.reason ?? recovery.phase, data: { ...recovery, runId: context.runId, conversationId: context.conversationId } }),
       retryScope,
       sessionFingerprint,
       onRetryState: (state) => {
@@ -6251,12 +6494,30 @@ async function runExternalCodingAgent(
         status === 'error' ? { terminal: false, recoverable: true } : undefined
       )),
       bridge: {
+        modpackModules: input => inspectModpackModules(project, input),
+        modpackDelegateModule: async input => {
+          buildUsed = false
+          runtimeUsed = false
+          lastBuildHashes = null
+          lastRuntimeHashes = null
+          activeTask.state.lastBuildSucceeded = false
+          const result = moduleTasks.start(input)
+          await writeTask()
+          return result
+        },
+        modpackModuleTask: async input => {
+          const task = await moduleTasks.read(input)
+          if (task.result?.changedFiles.length) recordWorkflow('implementation', `Module workbench completed edits for ${task.namespace}`)
+          return task
+        },
         projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
         resourcePackOperation: input => resourcePackAgentOperation(project, input),
         serverOperation: input => localServerAgentOperation(project, input, signal),
+        creationContext: input => creationContextOperation(project, input),
+        playerTest: (category, input) => { if (!playerTestService) throw new Error('玩家测试服务不可用'); return playerTestService.execute(project, category, input, signal) },
+        projectSearch: (query, limit) => searchProjectText(project, query, limit),
         projectFiles: async () => {
-          const files = await listManagedFiles(project.path, (name) => ignoredDirectories.has(name) || isToolDataDirectory(name))
-          return { files: files.slice(0, 5_000), truncated: files.length > 5_000 }
+          return projectSearchFiles(project)
         },
         toolCalled: (action) => {
           if (action === 'project_info') recordWorkflow('project_info', 'modmind_project_info returned active project metadata')
@@ -6509,12 +6770,15 @@ async function runExternalCodingAgent(
           return result
         },
         modpackVerifyServerJoin: async (input) => {
+          runtimeUsed = false
+          lastRuntimeHashes = null
           if (!isModpackProject(project)) throw new Error('current project is not a modpack')
           const javaPath = await runtime.ensureJavaRuntime()
           const port = typeof input.port === 'number' ? input.port : 25565
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack')
           const result = await withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
            runtimeUsed = result.success
+           if (result.success) lastRuntimeHashes = await managedCodingHashes(project)
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_verify_server_join completed successfully')
            return result
         },
@@ -6537,6 +6801,8 @@ async function runExternalCodingAgent(
           }
         },
         modpackRunServerScenario: async (input) => {
+          runtimeUsed = false
+          lastRuntimeHashes = null
           if (!isModpackProject(project)) throw new Error('current project is not a modpack')
           const javaPath = await runtime.ensureJavaRuntime()
           if (!Array.isArray(input.steps) || !input.steps.length) throw new Error('server scenario requires at least one step')
@@ -6549,6 +6815,7 @@ async function runExternalCodingAgent(
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-scenario')
           const result = await withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
            runtimeUsed = result.success
+           if (result.success) lastRuntimeHashes = await managedCodingHashes(project)
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_run_server_scenario completed successfully')
            return result
         },
@@ -6558,7 +6825,10 @@ async function runExternalCodingAgent(
           return result
         },
         testMatrix: async (targets) => {
+          moduleTasks.assertCollected()
           const selected = [...new Set(targets)].filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target))
+          if (selected.includes('build') || selected.includes('client')) { buildUsed = false; lastBuildHashes = null; activeTask.state.lastBuildSucceeded = false }
+          if (selected.some(target => target !== 'build')) { runtimeUsed = false; lastRuntimeHashes = null }
           const matrix = await runProjectTestMatrix(selected, signal)
           if (selected.includes('build') || selected.includes('client')) {
             buildUsed = matrix.results.some((result) => (result.target === 'build' || result.target === 'client') && result.status === 'passed')
@@ -6580,29 +6850,52 @@ async function runExternalCodingAgent(
         },
         releasePreflight: () => requireReleaseService().preflight(),
         build: async () => {
+          moduleTasks.assertCollected()
           buildCount += 1
           activeTask.state.buildCount = buildCount
           await writeTask()
-          buildUsed = true
+          buildUsed = false
+          runtimeUsed = false
+          lastBuildHashes = null
+          activeTask.state.lastBuildSucceeded = false
           const artifact = await buildProjectWithLock(signal)
+          buildUsed = await creation.verifyLatestBuild()
           recordWorkflow('build', 'modmind_build_project completed successfully')
           lastBuildHashes = await managedCodingHashes(project)
-          activeTask.state.lastBuildSucceeded = true
+          activeTask.state.lastBuildSucceeded = buildUsed
           await writeTask()
           return { success: true, artifact }
         },
+        testRendered: async () => {
+          moduleTasks.assertCollected()
+          const result = await runManagedRenderedTest(project, signal)
+          buildUsed = await creation.verifyLatestBuild()
+          if (buildUsed) { lastBuildHashes = await managedCodingHashes(project); recordWorkflow('build', 'Visible client test completed the managed build') }
+          runtimeUsed = result.success
+          if (runtimeUsed) { lastRuntimeHashes = await managedCodingHashes(project); recordWorkflow('runtime_test', 'Visible client startup test passed; visual/gameplay behavior remains unverified') }
+          activeTask.state.lastBuildSucceeded = buildUsed
+          await writeTask()
+          return result
+        },
         testMinecraft: async () => {
+          moduleTasks.assertCollected()
+          runtimeUsed = false
+          lastRuntimeHashes = null
           if (project.kind === 'server-plugin') return localServerAgentOperation(project, { operation: 'start' }, signal)
           const currentHashes = await managedCodingHashes(project)
           if (!buildUsed || !codingHashesEqual(lastBuildHashes, currentHashes)) {
             buildCount += 1
             activeTask.state.buildCount = buildCount
             await writeTask()
-            buildUsed = true
+            buildUsed = false
+            runtimeUsed = false
+            lastBuildHashes = null
+            activeTask.state.lastBuildSucceeded = false
             await buildProjectWithLock(signal)
+            buildUsed = await creation.verifyLatestBuild()
             recordWorkflow('build', 'modmind_test_minecraft completed the managed build')
             lastBuildHashes = await managedCodingHashes(project)
-            activeTask.state.lastBuildSucceeded = true
+            activeTask.state.lastBuildSucceeded = buildUsed
             await writeTask()
           }
           const smokeArtifact = (await runtime.listMods()).find((mod) => mod.projectArtifact)
@@ -6690,7 +6983,7 @@ async function runExternalCodingAgent(
             const handoffAvailable = asset.dataUrl.startsWith('data:image/') && asset.dataUrl.length <= 8 * 1024 * 1024
             assets.push({ ...(relative ? { path: relative } : {}), ...(handoffAvailable ? { dataUrl: asset.dataUrl } : {}), handoffAvailable })
           }
-          return { success: true, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt }
+          return { success: !generated.error, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(generated.error ? { error: generated.error } : {}) }
         },
         imageProcess: (operation, dataUrl) => requireImageStudio().process(operation, dataUrl),
         imageProjectAssets: async () => {
@@ -6726,18 +7019,27 @@ async function runExternalCodingAgent(
       }
     }
     const result = await runUntilAnswer()
+    moduleTasks.assertCollected()
+    const targetChanges = isInspiration ? [] : await creation.finishTargets(creationTaskId)
+    if (!isInspiration) await creation.mutate(state => {
+      const task = state.tasks.find(item => item.id === creationTaskId)
+      if (task) { task.answer = result.summary.slice(0, 4000); task.elapsedMs = Date.now() - new Date(task.createdAt).getTime() }
+    })
     if (activeTask.conversationId && result.sessionId) {
-      await conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, result.sessionId, result.nativeTurnId, turnId, codexSetup?.home).catch(() => undefined)
+      await conversationStore.setNativeState(project.path, activeTask.conversationId, generation, backend, result.sessionId, result.nativeTurnId, turnId, externalRunOptions.sessionHome).catch(() => undefined)
     }
     updateManagedDownloadAudit(workflow, project, prompt, activeTask.changedFiles, activeTask.state.managedDownloads ?? [], activeTask.state.managedDownloadFailures ?? [], activeTask.state.nativeCoveredDownloads ?? [])
     let finalWorkflowAudit = auditWorkflow(workflow, [], buildUsed, runtimeUsed, activeTask.state.todo)
     if (isInspiration) finalWorkflowAudit = { ...finalWorkflowAudit, missing: [] }
     const after = isInspiration ? before : await managedCodingHashes(project)
+    buildUsed = !isInspiration && currentVerification(buildUsed, lastBuildHashes, after) && await creation.verifyLatestBuild()
+    runtimeUsed = !isInspiration && currentVerification(runtimeUsed, lastRuntimeHashes, after)
     const changedFiles = [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file))
     ensureEngineeringRequirements(changedFiles)
     updateManagedDownloadAudit(workflow, project, prompt, changedFiles, activeTask.state.managedDownloads ?? [], activeTask.state.managedDownloadFailures ?? [], activeTask.state.nativeCoveredDownloads ?? [])
     finalWorkflowAudit = auditWorkflow(workflow, changedFiles, buildUsed, runtimeUsed, activeTask.state.todo)
-    const finalIntent = declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational')
+    const hasTargetChanges = targetChanges.some(target => target.changedFiles?.length)
+    const finalIntent = hasTargetChanges ? 'engineering' : declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational')
     activeTask.changedFiles = changedFiles
     const finalResponse = completedAnswer(result).slice(-120_000)
     const summary = finalResponse.slice(0, 4_000)
@@ -6745,6 +7047,7 @@ async function runExternalCodingAgent(
       ...(buildUsed ? ['已使用 ModMind 托管构建'] : []),
       ...(runtimeUsed ? ['已使用 ModMind Minecraft 测试'] : [])
     ]
+    const creationState = isInspiration ? undefined : await creation.state()
     const report = {
       prompt,
       sessionId: activeTask.sessionId,
@@ -6755,11 +7058,14 @@ async function runExternalCodingAgent(
       intent: finalIntent,
       tasks: activeTask.state.tasks,
       files: changedFiles.map((file) => ({ path: file, purpose: '外部代理修改' })),
+      ...(targetChanges.length ? { projects: targetChanges } : {}),
       tests,
       warnings: activeTask.state.warnings,
       ...(changedFiles.length ? { snapshotId: snapshot.id } : {}),
       buildVerified: buildUsed,
       runtimeVerified: runtimeUsed,
+      buildEvidence: creationState?.builds.at(-1),
+      delivery: creationState?.tasks.find(task => task.id === creationTaskId)?.delivery,
       workflow: finalWorkflowAudit
     }
     await fs.mkdir(path.join(project.path, 'docs'), { recursive: true })
@@ -6793,6 +7099,8 @@ async function runExternalCodingAgent(
     }
   } catch (error) {
     await workflowWrite.catch(() => undefined)
+    // Stop delegated writers before hashing the parent's failure checkpoint.
+    await moduleTasks.close()
     if (!isInspiration) {
       const message = error instanceof Error ? error.message : String(error)
       const cancelled = error instanceof Error && error.name === 'AbortError'
@@ -6815,6 +7123,8 @@ async function runExternalCodingAgent(
     // Keep the snapshot and active task for automatic or manual recovery in the workspace.
     flushBufferedProgress()
     throw error
+  } finally {
+    await moduleTasks.close()
   }
 }
 
@@ -6981,41 +7291,41 @@ async function runAutomatedE2E(): Promise<void> {
 
 function registerIpc(): void {
   ipcMain.on('app:platformInfo', (event) => { event.returnValue = runtimePlatformInfo(process.platform, process.arch, app.isPackaged) })
-  ipcMain.handle('app:version', () => app.getVersion())
-  ipcMain.handle('app:checkForUpdates', () => checkForAppUpdates())
-  ipcMain.handle('app:getUpdateState', () => appUpdateService?.snapshot() ?? { phase: 'idle', currentVersion: app.getVersion() })
-  ipcMain.handle('app:downloadUpdate', () => {
+  diagnosticHandle('app:version', () => app.getVersion())
+  diagnosticHandle('app:checkForUpdates', () => checkForAppUpdates())
+  diagnosticHandle('app:getUpdateState', () => appUpdateService?.snapshot() ?? { phase: 'idle', currentVersion: app.getVersion() })
+  diagnosticHandle('app:downloadUpdate', () => {
     if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
     return appUpdateService.downloadUpdate()
   })
-  ipcMain.handle('app:installUpdate', () => appUpdateService?.installDownloadedUpdate() ?? false)
-  ipcMain.handle('downloads:list', () => downloadActivities.snapshot())
-  ipcMain.handle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))
-  ipcMain.handle('downloads:cancel', (_event, id: unknown) => downloadActivities.cancel(typeof id === 'string' ? id : ''))
-  ipcMain.handle('downloads:restart', (_event, id: unknown) => downloadActivities.restart(typeof id === 'string' ? id : ''))
-  ipcMain.handle('downloads:dismiss', (_event, id: unknown) => downloadActivities.dismiss(typeof id === 'string' ? id : ''))
-  ipcMain.handle('downloads:clearFinished', () => downloadActivities.clearFinished())
-  ipcMain.handle('device:getState', () => readDeviceState())
-  ipcMain.handle('device:authorize', () => beginDeviceAuthorization())
-  ipcMain.handle('device:cancelAuthorization', () => cancelDeviceAuthorization())
-  ipcMain.handle('device:disconnectLocal', () => disconnectDeviceLocally())
-  ipcMain.handle('device:refreshUsage', () => refreshDeviceUsage())
-  ipcMain.handle('device:getAiPreferences', () => readBeginnerAiPreferences())
-  ipcMain.handle('device:saveAiPreferences', (_event, preferences: BeginnerAiPreferences) => saveBeginnerAiPreferences(preferences))
-  ipcMain.handle('device:listModels', (_event, force?: boolean) => listBeginnerModels(force === true))
-  ipcMain.handle('device:openSite', (_event, relativePath?: string) => openConfiguredDeviceSite(relativePath))
-  ipcMain.handle('remote:getState', () => remoteClient?.getState() ?? { status: 'disabled', enabled: false })
-  ipcMain.handle('remote:start', () => startRemoteClientIfPossible(true))
-  ipcMain.handle('remote:stop', () => stopRemoteClient(true))
-  ipcMain.handle('mcp-bridge:getState', () => mcpBridgeState())
-  ipcMain.handle('mcp-bridge:setEnabled', (_event, enabled: unknown) => setMcpBridgeEnabledFromSettings(enabled === true))
-  ipcMain.handle('image-studio:getSettings', () => requireImageStudio().getSettings())
-  ipcMain.handle('image-studio:saveSettings', (_event, value) => requireImageStudio().saveSettings(value))
-  ipcMain.handle('image-studio:capabilities', () => requireImageStudio().capabilities())
-  ipcMain.handle('image-studio:generate', (_event, value: ImageGenerationRequest) => runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(value)))
-  ipcMain.handle('image-studio:process', (_event, operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options) => runDiagnosticOperation('image-studio', operation, 'Image processing', () => requireImageStudio().process(operation, dataUrl, options), { inputBytes: Buffer.byteLength(dataUrl, 'utf8') }))
-  ipcMain.handle('image-studio:history', () => requireImageStudio().history())
-  ipcMain.handle('image-studio:saveAsset', async (_event, dataUrl: string, suggestedName: string) => {
+  diagnosticHandle('app:installUpdate', () => appUpdateService?.installDownloadedUpdate() ?? false)
+  diagnosticHandle('downloads:list', () => downloadActivities.snapshot())
+  diagnosticHandle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))
+  diagnosticHandle('downloads:cancel', (_event, id: unknown) => downloadActivities.cancel(typeof id === 'string' ? id : ''))
+  diagnosticHandle('downloads:restart', (_event, id: unknown) => downloadActivities.restart(typeof id === 'string' ? id : ''))
+  diagnosticHandle('downloads:dismiss', (_event, id: unknown) => downloadActivities.dismiss(typeof id === 'string' ? id : ''))
+  diagnosticHandle('downloads:clearFinished', () => downloadActivities.clearFinished())
+  diagnosticHandle('device:getState', () => readDeviceState())
+  diagnosticHandle('device:authorize', () => beginDeviceAuthorization())
+  diagnosticHandle('device:cancelAuthorization', () => cancelDeviceAuthorization())
+  diagnosticHandle('device:disconnectLocal', () => disconnectDeviceLocally())
+  diagnosticHandle('device:refreshUsage', () => refreshDeviceUsage())
+  diagnosticHandle('device:getAiPreferences', () => readBeginnerAiPreferences())
+  diagnosticHandle('device:saveAiPreferences', (_event, preferences: BeginnerAiPreferences) => saveBeginnerAiPreferences(preferences))
+  diagnosticHandle('device:listModels', (_event, force?: boolean) => listBeginnerModels(force === true))
+  diagnosticHandle('device:openSite', (_event, relativePath?: string) => openConfiguredDeviceSite(relativePath))
+  diagnosticHandle('remote:getState', () => remoteClient?.getState() ?? { status: 'disabled', enabled: false })
+  diagnosticHandle('remote:start', () => startRemoteClientIfPossible(true))
+  diagnosticHandle('remote:stop', () => stopRemoteClient(true))
+  diagnosticHandle('mcp-bridge:getState', () => mcpBridgeState())
+  diagnosticHandle('mcp-bridge:setEnabled', (_event, enabled: unknown) => setMcpBridgeEnabledFromSettings(enabled === true))
+  diagnosticHandle('image-studio:getSettings', () => requireImageStudio().getSettings())
+  diagnosticHandle('image-studio:saveSettings', (_event, value) => requireImageStudio().saveSettings(value))
+  diagnosticHandle('image-studio:capabilities', () => requireImageStudio().capabilities())
+  diagnosticHandle('image-studio:generate', (_event, value: ImageGenerationRequest) => runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(value)))
+  diagnosticHandle('image-studio:process', (_event, operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options) => runDiagnosticOperation('image-studio', operation, 'Image processing', () => requireImageStudio().process(operation, dataUrl, options), { inputBytes: Buffer.byteLength(dataUrl, 'utf8') }))
+  diagnosticHandle('image-studio:history', () => requireImageStudio().history())
+  diagnosticHandle('image-studio:saveAsset', async (_event, dataUrl: string, suggestedName: string) => {
     if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) throw new Error('图片数据格式无效')
     const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
     if (!match) throw new Error('只支持 PNG、JPEG 或 WebP 图片')
@@ -7026,7 +7336,7 @@ function registerIpc(): void {
     await fs.writeFile(result.filePath, Buffer.from(match[2], 'base64'))
     return result.filePath
   })
-  ipcMain.handle('image-studio:saveToProject', async (_event, dataUrl: string, suggestedName: string) => {
+  diagnosticHandle('image-studio:saveToProject', async (_event, dataUrl: string, suggestedName: string) => {
     const project = requireProject()
     if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) throw new Error('图片数据格式无效')
     const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
@@ -7044,49 +7354,49 @@ function registerIpc(): void {
     await fs.writeFile(target, Buffer.from(match[2], 'base64'))
     return relativePath
   })
-  ipcMain.handle('window:minimize', (event) => (BrowserWindow.fromWebContents(event.sender) ?? mainWindow)?.minimize())
-  ipcMain.handle('window:maximize', (event) => {
+  diagnosticHandle('window:minimize', (event) => (BrowserWindow.fromWebContents(event.sender) ?? mainWindow)?.minimize())
+  diagnosticHandle('window:maximize', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
     if (window?.isMaximized()) window.unmaximize()
     else window?.maximize()
   })
-  ipcMain.handle('window:close', (event) => {
+  diagnosticHandle('window:close', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (window && window !== mainWindow) return window.close()
     return handleWindowClose()
   })
-  ipcMain.handle('window:openDetached', (_event, view: unknown, title: unknown) => {
+  diagnosticHandle('window:openDetached', (_event, view: unknown, title: unknown) => {
     const target = typeof view === 'string' ? view : ''
     if (!sidebarViewIds.has(target as SidebarViewId) && !/^group:\d{1,3}$/.test(target)) throw new Error('Unsupported detached window target')
     const window = createDetachedWindow(target as DetachedWindowTarget, typeof title === 'string' ? title : '')
     return { alwaysOnTop: window.isAlwaysOnTop() }
   })
-  ipcMain.handle('window:getDetachedState', (event) => {
+  diagnosticHandle('window:getDetachedState', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || !isDetachedWindow(window)) return null
     return { alwaysOnTop: window.isAlwaysOnTop() }
   })
-  ipcMain.handle('window:setDetachedAlwaysOnTop', (event, alwaysOnTop: unknown) => {
+  diagnosticHandle('window:setDetachedAlwaysOnTop', (event, alwaysOnTop: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || !isDetachedWindow(window)) throw new Error('This window cannot be pinned')
     window.setAlwaysOnTop(alwaysOnTop === true, 'floating')
     return { alwaysOnTop: window.isAlwaysOnTop() }
   })
 
-  ipcMain.handle('blockbench:show', (_event, bounds: BlockbenchBounds) => {
+  diagnosticHandle('blockbench:show', (_event, bounds: BlockbenchBounds) => {
     const bridge = requireBlockbench()
     bridge.setBounds(bounds)
     bridge.show()
   })
-  ipcMain.handle('blockbench:hide', () => requireBlockbench().hide())
-  ipcMain.handle('blockbench:getState', () => {
+  diagnosticHandle('blockbench:hide', () => requireBlockbench().hide())
+  diagnosticHandle('blockbench:getState', () => {
     const status = requireBlockbench().getStatus()
     return { ...status, status: status.phase, connected: status.phase === 'ready' }
   })
-  ipcMain.handle('blockbench:openProject', () =>
+  diagnosticHandle('blockbench:openProject', () =>
     requireBlockbench().executeAction({ type: 'run-command', command: 'open-project' })
   )
-  ipcMain.handle('blockbench:openYsm', async () => {
+  diagnosticHandle('blockbench:openYsm', async () => {
     const project = requireProject()
     if (runsForProject(project.path).length) throw new Error('项目正在执行任务，请稍后打开模型')
     const result = await dialog.showOpenDialog(mainWindow!, { title: '打开 YSM 源模型（ysm.json 或未加密 ZIP）', properties: ['openFile'], filters: [{ name: 'YSM 模型源文件', extensions: ['json', 'zip', 'ysm'] }] })
@@ -7096,11 +7406,11 @@ function registerIpc(): void {
     await requireBlockbenchForProject(project).loadSourceDocument(document)
     return { name: document.name, animations: document.animations.length }
   })
-  ipcMain.handle('blockbench:saveProject', () =>
+  diagnosticHandle('blockbench:saveProject', () =>
     requireBlockbench().executeAction({ type: 'run-command', command: 'save-project-dialog' })
   )
-  ipcMain.handle('blockbench:setTheme', (_event, theme: 'light' | 'dark') => requireBlockbench().setTheme(theme))
-  ipcMain.handle('blockbench:runAction', (_event, action: string) => {
+  diagnosticHandle('blockbench:setTheme', (_event, theme: 'light' | 'dark', preset: unknown, custom: unknown) => requireBlockbench().setTheme(theme, normalizeThemePreset(preset), normalizeCustomThemeColors(custom)))
+  diagnosticHandle('blockbench:runAction', (_event, action: string) => {
     const mapping: Record<string, BlockbenchCommand> = {
       undo: 'undo',
       redo: 'redo',
@@ -7115,94 +7425,94 @@ function registerIpc(): void {
     if (!command) throw new Error('Unsupported Blockbench toolbar action')
     return requireBlockbench().executeAction({ type: 'run-command', command })
   })
-  ipcMain.handle('blockbench:execute', (_event, action: BlockbenchAction) => requireBlockbench().executeAction(action))
-  ipcMain.handle('blockbench:executeActions', (_event, actions: BlockbenchAction[], expectedRevision?: string) =>
+  diagnosticHandle('blockbench:execute', (_event, action: BlockbenchAction) => requireBlockbench().executeAction(action))
+  diagnosticHandle('blockbench:executeActions', (_event, actions: BlockbenchAction[], expectedRevision?: string) =>
     requireBlockbench().executeActions(actions, undefined, expectedRevision)
   )
-  ipcMain.handle('blockbench:projectState', () => requireBlockbench().getProjectState())
-  ipcMain.handle('blockbench:validate', () => requireBlockbench().validateProject())
-  ipcMain.handle('blockbench:captureViews', (_event, request: BlockbenchCaptureRequest) => requireBlockbench().captureViews(request))
-  ipcMain.handle('blockbench:setAssetMetadata', (_event, metadata: BlockbenchAssetMetadata) => requireBlockbench().setAssetMetadata(metadata))
-  ipcMain.handle('blockbench:saveAssetBundle', (_event, request: BlockbenchAssetSaveRequest) => requireBlockbench().saveAssetBundle(request))
-  ipcMain.handle('blockbench:history', () => requireBlockbench().listHistory())
-  ipcMain.handle('blockbench:createCheckpoint', (_event, label?: string) => requireBlockbench().createCheckpoint(label))
-  ipcMain.handle('blockbench:restoreHistory', (_event, id: string) => requireBlockbench().restoreHistory(id))
-  ipcMain.handle('asset-intent:compile', (_event, intent: unknown) => compileAssetIntent(intent))
-  ipcMain.handle('asset-intent:preview', (_event, intent: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
+  diagnosticHandle('blockbench:projectState', () => requireBlockbench().getProjectState())
+  diagnosticHandle('blockbench:validate', () => requireBlockbench().validateProject())
+  diagnosticHandle('blockbench:captureViews', (_event, request: BlockbenchCaptureRequest) => requireBlockbench().captureViews(request))
+  diagnosticHandle('blockbench:setAssetMetadata', (_event, metadata: BlockbenchAssetMetadata) => requireBlockbench().setAssetMetadata(metadata))
+  diagnosticHandle('blockbench:saveAssetBundle', (_event, request: BlockbenchAssetSaveRequest) => requireBlockbench().saveAssetBundle(request))
+  diagnosticHandle('blockbench:history', () => requireBlockbench().listHistory())
+  diagnosticHandle('blockbench:createCheckpoint', (_event, label?: string) => requireBlockbench().createCheckpoint(label))
+  diagnosticHandle('blockbench:restoreHistory', (_event, id: string) => requireBlockbench().restoreHistory(id))
+  diagnosticHandle('asset-intent:compile', (_event, intent: unknown) => compileAssetIntent(intent))
+  diagnosticHandle('asset-intent:preview', (_event, intent: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
     previewAssetIntentCandidate(requireBlockbench(), intent, request, undefined, expectedRevision)
   )
-  ipcMain.handle('asset-intent:apply', async (_event, intent: unknown, expectedRevision?: string) => {
+  diagnosticHandle('asset-intent:apply', async (_event, intent: unknown, expectedRevision?: string) => {
     const candidate = compileAssetIntent(intent)
     if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
     const execution = await requireBlockbench().executeCandidateActions(candidate.actions, undefined, expectedRevision)
     return {...candidate, execution}
   })
-  ipcMain.handle('asset-refinement:compile', async (_event, refinement: unknown) => compileAssetRefinementForBridge(requireBlockbench(), refinement))
-  ipcMain.handle('asset-refinement:preview', (_event, refinement: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
+  diagnosticHandle('asset-refinement:compile', async (_event, refinement: unknown) => compileAssetRefinementForBridge(requireBlockbench(), refinement))
+  diagnosticHandle('asset-refinement:preview', (_event, refinement: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
     previewAssetRefinementCandidate(requireBlockbench(), refinement, request, undefined, expectedRevision)
   )
-  ipcMain.handle('asset-refinement:apply', async (_event, refinement: unknown, expectedRevision?: string) => {
+  diagnosticHandle('asset-refinement:apply', async (_event, refinement: unknown, expectedRevision?: string) => {
     return applyAssetRefinementCandidate(requireBlockbench(), refinement, undefined, expectedRevision)
   })
-  ipcMain.handle('advanced-asset:compile', (_event, program: unknown, variantId = 'base') => compileAdvancedAsset(program, variantId))
-  ipcMain.handle('advanced-asset:preview', (_event, program: unknown, request: BlockbenchCaptureRequest, options: AdvancedAssetPreviewOptions, expectedRevision?: string) =>
+  diagnosticHandle('advanced-asset:compile', (_event, program: unknown, variantId = 'base') => compileAdvancedAsset(program, variantId))
+  diagnosticHandle('advanced-asset:preview', (_event, program: unknown, request: BlockbenchCaptureRequest, options: AdvancedAssetPreviewOptions, expectedRevision?: string) =>
     previewAdvancedAssetComparison(requireBlockbench(), program, request, options, undefined, expectedRevision)
   )
-  ipcMain.handle('advanced-asset:apply', async (_event, program: unknown, variantId = 'base', expectedRevision?: string) => {
+  diagnosticHandle('advanced-asset:apply', async (_event, program: unknown, variantId = 'base', expectedRevision?: string) => {
     const candidate = compileAdvancedAsset(program, variantId)
     if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
     const execution = await requireBlockbench().executeCandidateActions(candidate.actions, undefined, expectedRevision)
     return {...candidate, execution}
   })
-  ipcMain.handle('reference-asset:compile', (_event, program: unknown) => compileReferenceImageAsset(program))
-  ipcMain.handle('reference-asset:preview', (_event, program: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
+  diagnosticHandle('reference-asset:compile', (_event, program: unknown) => compileReferenceImageAsset(program))
+  diagnosticHandle('reference-asset:preview', (_event, program: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
     previewReferenceImageCandidate(requireBlockbench(), program, request, undefined, expectedRevision)
   )
-  ipcMain.handle('reference-asset:apply', async (_event, program: unknown, expectedRevision?: string) => {
+  diagnosticHandle('reference-asset:apply', async (_event, program: unknown, expectedRevision?: string) => {
     const candidate = await compileReferenceImageAsset(program)
     const execution = await requireBlockbench().executeCandidateActions(candidate.actions, undefined, expectedRevision)
     return {...candidate, execution}
   })
-  ipcMain.handle('asset-visual-review:current', async (_event, request: BlockbenchCaptureRequest) => {
+  diagnosticHandle('asset-visual-review:current', async (_event, request: BlockbenchCaptureRequest) => {
     const capture = await requireBlockbench().captureViews(request)
     return {...capture, review: await reviewAssetCaptures(capture.captures)}
   })
 
-  ipcMain.handle('minecraft:getState', () => requireMinecraftRuntime().refresh())
-  ipcMain.handle('minecraft:prepare', () => invokeMinecraftOperation(() => requireMinecraftRuntime().prepare()))
-  ipcMain.handle('minecraft:cancelPreparation', async () => {
+  diagnosticHandle('minecraft:getState', () => requireMinecraftRuntime().refresh())
+  diagnosticHandle('minecraft:prepare', () => invokeMinecraftOperation(() => requireMinecraftRuntime().prepare()))
+  diagnosticHandle('minecraft:cancelPreparation', async () => {
     const projectPath = requireMinecraftRuntime().getState().projectPath ?? requireProject().path
     await cancelTrackedMinecraftPreparation(projectPath)
     return requireMinecraftRuntime().getState()
   })
-  ipcMain.handle('minecraft:restartPreparation', async () => {
+  diagnosticHandle('minecraft:restartPreparation', async () => {
     const projectPath = requireMinecraftRuntime().getState().projectPath ?? requireProject().path
     await restartTrackedMinecraftPreparation(projectPath)
     return requireMinecraftRuntime().getState()
   })
-  ipcMain.handle('minecraft:buildProject', async (_event, projectPath?: string) => {
+  diagnosticHandle('minecraft:buildProject', async (_event, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return invokeMinecraftOperation(() => aiProjectContext.run(project, () => requireMinecraftRuntime().buildProject()))
   })
-  ipcMain.handle('minecraft:launch', (_event, options: MinecraftLaunchOptions) =>
+  diagnosticHandle('minecraft:launch', (_event, options: MinecraftLaunchOptions) =>
     invokeMinecraftOperation(() => requireMinecraftRuntime().launch(options))
   )
-  ipcMain.handle('minecraft:testLaunch', (_event, options: MinecraftLaunchOptions) =>
+  diagnosticHandle('minecraft:testLaunch', (_event, options: MinecraftLaunchOptions) =>
     invokeMinecraftOperation(() => requireMinecraftRuntime().testLaunch(options))
   )
-  ipcMain.handle('minecraft:headlessSmokeTest', async () => {
+  diagnosticHandle('minecraft:headlessSmokeTest', async () => {
     const project = requireProject()
     if (!isJavaLoader(project.loader)) throw new Error(`${platformLabel(project.loader)} 不支持 HeadlessMC 无头冒烟测试`)
     return runHeadlessMinecraftSmoke(project, undefined, { stableWindowMs: 20_000, offline: true })
   })
-  ipcMain.handle('minecraft:openHeadlessMcLogin', async () => {
+  diagnosticHandle('minecraft:openHeadlessMcLogin', async () => {
     const project = requireProject()
     if (!isJavaLoader(project.loader)) throw new Error(`${platformLabel(project.loader)} 不支持 HeadlessMC 无头冒烟测试`)
     const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
     return requireHeadlessMc().openLoginConsole(javaPath)
   })
-  ipcMain.handle('minecraft:stop', async () => {
+  diagnosticHandle('minecraft:stop', async () => {
     await headlessMcService?.stop()
     const projectPath = requireMinecraftRuntime().getState().projectPath ?? currentProject?.path
     const state = await requireMinecraftRuntime().stop()
@@ -7212,11 +7522,11 @@ function registerIpc(): void {
     }
     return state
   })
-  ipcMain.handle('minecraft:syncProjectMod', () => requireMinecraftRuntime().syncProjectMod())
-  ipcMain.handle('minecraft:syncModpack', () => requireMinecraftRuntime().syncModpack())
-  ipcMain.handle('minecraft:listMods', () => requireMinecraftRuntime().listMods())
-  ipcMain.handle('minecraft:removeMod', (_event, name: string) => requireMinecraftRuntime().removeMod(name))
-  ipcMain.handle('minecraft:importMods', async () => {
+  diagnosticHandle('minecraft:syncProjectMod', () => requireMinecraftRuntime().syncProjectMod())
+  diagnosticHandle('minecraft:syncModpack', () => requireMinecraftRuntime().syncModpack())
+  diagnosticHandle('minecraft:listMods', () => requireMinecraftRuntime().listMods())
+  diagnosticHandle('minecraft:removeMod', (_event, name: string) => requireMinecraftRuntime().removeMod(name))
+  diagnosticHandle('minecraft:importMods', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Minecraft Mods', extensions: ['jar'] }]
@@ -7225,17 +7535,17 @@ function registerIpc(): void {
     return requireMinecraftRuntime().importMods(result.filePaths)
   })
 
-  ipcMain.handle('mappings:search', (_event, version: string, query: string, limit?: number) =>
+  diagnosticHandle('mappings:search', (_event, version: string, query: string, limit?: number) =>
     requireMappings().search(version, query, limit)
   )
-  ipcMain.handle('mappings:getClass', (_event, version: string, className: string, memberQuery?: string) =>
+  diagnosticHandle('mappings:getClass', (_event, version: string, className: string, memberQuery?: string) =>
     requireMappings().getClass(version, className, memberQuery)
   )
-  ipcMain.handle('mappings:openSource', (_event, version: string) => {
+  diagnosticHandle('mappings:openSource', (_event, version: string) => {
     if (!/^[0-9A-Za-z._-]{1,40}$/.test(version)) throw new Error('无效的 Minecraft Mappings 版本')
     return shell.openExternal(`https://mappings.dev/${version}/index.html`)
   })
-  ipcMain.handle('mappings:openLoaderDocs', (_event, loader: LoaderKind) => {
+  diagnosticHandle('mappings:openLoaderDocs', (_event, loader: LoaderKind) => {
     const urls: Record<LoaderKind, string> = {
       paper: 'https://docs.papermc.io/paper/dev/',
       spigot: 'https://hub.spigotmc.org/javadocs/spigot/',
@@ -7253,7 +7563,7 @@ function registerIpc(): void {
     return shell.openExternal(urls[loader])
   })
 
-  ipcMain.handle('project:inspectExisting', async (_event, sourceType: 'folder' | 'zip' = 'folder') => {
+  diagnosticHandle('project:inspectExisting', async (_event, sourceType: 'folder' | 'zip' = 'folder') => {
     const result = sourceType === 'zip'
       ? await dialog.showOpenDialog(mainWindow!, {
           properties: ['openFile'],
@@ -7268,11 +7578,11 @@ function registerIpc(): void {
     return (await analyzeExistingProject(sourcePath)).analysis
   })
 
-  ipcMain.handle('project:listLoaderVersions', (_event, refresh = false) =>
+  diagnosticHandle('project:listLoaderVersions', (_event, refresh = false) =>
     Promise.all([requireLoaderCatalog().list(Boolean(refresh)), requireLoaderCatalog().listPlugins(Boolean(refresh))]).then(options => options.flat())
   )
 
-  ipcMain.handle('project:adoptExisting', async (_event, input: ExistingProjectAdoptInput) => {
+  diagnosticHandle('project:adoptExisting', async (_event, input: ExistingProjectAdoptInput) => {
     assertProjectSwitchAllowed()
     if (!input || typeof input.sourcePath !== 'string') throw new Error('导入参数无效')
     const legacyConversion = await convertLegacyModtoolProject(input.sourcePath)
@@ -7370,7 +7680,7 @@ function registerIpc(): void {
     return project
   })
 
-  ipcMain.handle('project:createDraft', async (_event, message: string) => {
+  diagnosticHandle('project:createDraft', async (_event, message: string) => {
     assertProjectSwitchAllowed()
     if (typeof message !== 'string' || !message.trim() || message.length > 100_000) throw new Error('请先描述你的想法')
     const project = await createDraftProject(app.getPath('documents'), message)
@@ -7378,7 +7688,7 @@ function registerIpc(): void {
     await rememberRecentProject(project)
     return project
   })
-  ipcMain.handle('project:recordDraftMessage', async (_event, message: string, projectPath: string) => {
+  diagnosticHandle('project:recordDraftMessage', async (_event, message: string, projectPath: string) => {
     if (typeof message !== 'string' || message.length > 100_000 || typeof projectPath !== 'string') throw new Error('项目需求无效')
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在')
@@ -7388,7 +7698,7 @@ function registerIpc(): void {
     await rememberRecentProject(updated)
     return updated
   })
-  ipcMain.handle('project:initializeDraft', async (_event, projectPath: string) => {
+  diagnosticHandle('project:initializeDraft', async (_event, projectPath: string) => {
     if (typeof projectPath !== 'string' || !projectPath.trim()) throw new Error('项目路径无效')
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在')
@@ -7405,7 +7715,7 @@ function registerIpc(): void {
     return updated
   })
 
-  ipcMain.handle('project:create', async (_event, input: ProjectCreateInput) => {
+  diagnosticHandle('project:create', async (_event, input: ProjectCreateInput) => {
     assertProjectSwitchAllowed()
     if (!input || !(PROJECT_PLATFORMS as readonly string[]).includes(input.loader)) throw new Error('不支持的项目平台')
     const kind = isServerPluginPlatform(input.loader) ? 'server-plugin' : input.kind === 'modpack' ? 'modpack' : 'mod'
@@ -7451,7 +7761,7 @@ function registerIpc(): void {
     return project
   })
 
-  ipcMain.handle('project:rename', async (_event, input: ProjectRenameInput) => {
+  diagnosticHandle('project:rename', async (_event, input: ProjectRenameInput) => {
     const requestedPath = typeof input?.projectPath === 'string' ? input.projectPath.trim() : ''
     const project = requestedPath ? await readProjectInfo(path.resolve(requestedPath)) : currentProject
     if (!project) throw new Error('未找到要重命名的 ModMind 项目')
@@ -7459,7 +7769,7 @@ function registerIpc(): void {
     return renameProjectRecord(project, input)
   })
 
-  ipcMain.handle('project:open', async () => {
+  diagnosticHandle('project:open', async () => {
     assertProjectSwitchAllowed()
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
@@ -7472,7 +7782,7 @@ function registerIpc(): void {
       return currentProject
   })
 
-  ipcMain.handle('project:openRecent', async (_event, projectPath: string) => {
+  diagnosticHandle('project:openRecent', async (_event, projectPath: string) => {
     if (typeof projectPath !== 'string' || !projectPath.trim()) throw new Error('项目路径无效')
     const resolvedProjectPath = path.resolve(projectPath)
     assertProjectSwitchAllowed()
@@ -7485,20 +7795,56 @@ function registerIpc(): void {
       return currentProject
   })
 
-  ipcMain.handle('project:listRecent', () => readRecentProjects())
-  ipcMain.handle('project:removeRecent', async (_event, projectPath: string) => {
+  diagnosticHandle('project:listRecent', () => readRecentProjects())
+  diagnosticHandle('project:removeRecent', async (_event, projectPath: string) => {
     const key = path.resolve(projectPath).toLowerCase()
     const recent = (await readRecentProjects()).filter((entry) => path.resolve(entry.path).toLowerCase() !== key)
     await writeRecentProjects(recent)
     return recent
   })
-  ipcMain.handle('project:delete', (_event, projectPath: string) => deleteProjectDirectory(projectPath))
-  ipcMain.handle('project:deletePermanent', (_event, projectPath: string) => permanentlyDeleteProjectDirectory(projectPath))
+  diagnosticHandle('project:delete', (_event, projectPath: string) => deleteProjectDirectory(projectPath))
+  diagnosticHandle('project:deletePermanent', (_event, projectPath: string) => permanentlyDeleteProjectDirectory(projectPath))
 
-  ipcMain.handle('project:current', () => currentProject)
-  ipcMain.handle('modpack:get', () => readModpackManifest(requireProject()))
-  ipcMain.handle('modpack:getServerPackManifest', () => readServerPackManifest(requireProject()))
-  ipcMain.handle('modpack:addServerPackMods', async () => {
+  diagnosticHandle('project:current', () => currentProject)
+  diagnosticHandle('modpack:get', () => readModpackManifest(requireProject()))
+  const packImportControllers = new Map<string, AbortController>()
+  diagnosticHandle('modpack:importStatus', async () => {
+    const state = await readCurseForgePackState(requireProject().path)
+    const report = await fs.readFile(path.join(requireProject().path, '.modmind/import/artifact-report.json'), 'utf8').then(text => JSON.parse(text) as { warnings: string[] }).catch(() => ({ warnings: [] }))
+    return state ? { total: state.files.length, installed: state.files.filter(file => file.status === 'installed').length,
+      compatibilityWarnings: report.warnings,
+      requiredPending: state.files.filter(file => file.required && file.status !== 'installed').length,
+      failures: state.files.filter(file => file.status !== 'installed').map(file => ({ projectId: file.projectID, fileId: file.fileID, path: file.file?.path, required: file.required, error: file.error })) } : null
+  })
+  diagnosticHandle('modpack:cancelImport', () => { packImportControllers.get(requireProject().path)?.abort(); return undefined })
+  diagnosticHandle('modpack:resumeImport', async () => {
+    const project = requireProject()
+    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
+    if (packImportControllers.has(project.path)) throw new Error('整合包依赖正在安装')
+    const manifest = await readModpackManifest(project)
+    const state = await readCurseForgePackState(project.path)
+    if (!state || !manifest.source) throw new Error('缺少原始导入记录，请重新导入原整合包安装包')
+    const controller = new AbortController()
+    packImportControllers.set(project.path, controller)
+    const activity = downloadActivities.start({ label: `补齐整合包 · ${project.name}`, detail: '正在核对原清单文件' })
+    try {
+      const result = await installCurseForgePack(project.path, modpackOverridesRoot(project, manifest), state.files, {
+        resolve: curseForgePackResolver(curseForgeProviderKey, path.join(app.getPath('userData'), 'pack-metadata-cache')), cacheDirectory: path.join(app.getPath('userData'), 'pack-download-cache'), signal: controller.signal,
+        trackDownloadActivities: false, onProgress: progress => downloadActivities.update(activity, { detail: modpackAdoptionProgressDetail(progress) })
+      })
+      const updated = await adoptExternalModpack(project, { ...manifest.source, unresolvedDependencies: result.unresolvedDependencyCount || undefined })
+      await auditImportedPackArtifacts(project)
+      if (result.unresolvedDependencyCount) downloadActivities.fail(activity, new Error(`${result.unresolvedDependencyCount} 个必需文件未完成：${result.warnings.slice(0, 3).join('；')}`))
+      else downloadActivities.complete(activity, '所有必需文件已安装并校验')
+      return updated
+    } catch (error) {
+      await adoptExternalModpack(project, manifest.source)
+      downloadActivities.fail(activity, error)
+      throw error
+    } finally { packImportControllers.delete(project.path) }
+  })
+  diagnosticHandle('modpack:getServerPackManifest', () => readServerPackManifest(requireProject()))
+  diagnosticHandle('modpack:addServerPackMods', async () => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     const selected = await dialog.showOpenDialog(mainWindow!, {
@@ -7509,12 +7855,12 @@ function registerIpc(): void {
     if (selected.canceled || !selected.filePaths.length) return null
     return addServerPackMods(project, selected.filePaths)
   })
-  ipcMain.handle('modpack:removeServerPackMod', async (_event, fileName: unknown) => {
+  diagnosticHandle('modpack:removeServerPackMod', async (_event, fileName: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     return removeServerPackMod(project, typeof fileName === 'string' ? fileName : '')
   })
-  ipcMain.handle('modpack:exportServerPack', async () => {
+  diagnosticHandle('modpack:exportServerPack', async () => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     const selected = await dialog.showSaveDialog(mainWindow!, {
@@ -7527,7 +7873,7 @@ function registerIpc(): void {
     await fs.writeFile(selected.filePath, archive)
     return selected.filePath
   })
-  ipcMain.handle('modpack:importMods', async () => {
+  diagnosticHandle('modpack:importMods', async () => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -7537,12 +7883,28 @@ function registerIpc(): void {
     if (result.canceled || !result.filePaths.length) return readModpackManifest(project)
     return addModpackFiles(project, result.filePaths)
   })
-  ipcMain.handle('modpack:removeMod', (_event, fileName: string) => removeModpackFile(requireProject(), fileName))
-  ipcMain.handle('modpack:createModule', async (_event, value: string) => {
+  diagnosticHandle('modpack:removeMod', (_event, fileName: string) => removeModpackFile(requireProject(), fileName))
+  diagnosticHandle('modpack:importModule', async (_event, mode: 'copy' | 'link') => {
+    const pack = requireProject()
+    if (!isModpackProject(pack)) throw new Error('当前项目不是整合包')
+    if (mode !== 'copy' && mode !== 'link') throw new Error('请选择复制或直接使用原项目')
+    const selected = await dialog.showOpenDialog(mainWindow!, { title: '导入已有模组项目', properties: ['openDirectory'] })
+    if (selected.canceled || !selected.filePaths.length) return null
+    const root = selected.filePaths[0]
+    let source = await readProjectInfo(root)
+    if (!source) {
+      const { analysis } = await analyzeExistingProject(root)
+      if (analysis.kind !== 'complete') throw new Error('请选择完整的模组源码项目；已编译的 JAR 可通过“导入 Mod”添加')
+      source = { ...analysis.inferred, path: root, createdAt: new Date().toISOString() }
+    }
+    return importModpackModule(pack, source, mode)
+  })
+  diagnosticHandle('modpack:createModule', async (_event, value: string) => {
     const pack = requireProject()
     if (!isModpackProject(pack)) throw new Error('当前项目不是整合包')
     const name = validateProjectNameInput(value)
     const namespace = slugify(name)
+    if ((await readModpackManifest(pack)).modules.some(module => module.namespace === namespace)) throw new Error('同名自制 Mod 已存在')
     const relativePath = `modules/${namespace}`
     const modulePath = path.join(pack.path, ...relativePath.split('/'))
     if (await pathExists(modulePath)) throw new Error('同名自制 Mod 已存在')
@@ -7571,28 +7933,26 @@ function registerIpc(): void {
       throw error
     }
   })
-  ipcMain.handle('modpack:updateModuleSide', async (_event, namespace: unknown, side: unknown) => {
+  diagnosticHandle('modpack:updateModuleSide', async (_event, namespace: unknown, side: unknown) => {
     const pack = requireProject()
     if (!isModpackProject(pack)) throw new Error('current project is not a modpack')
     if (typeof namespace !== 'string' || !['client', 'server', 'both', 'unknown'].includes(String(side))) throw new Error('invalid self-made mod side')
     return updateModpackModuleSide(pack, namespace, side as ModpackModuleSide)
   })
-  ipcMain.handle('modpack:openModule', async (_event, namespace: string) => {
+  diagnosticHandle('modpack:openModule', async (_event, namespace: string) => {
     const pack = requireProject()
     const manifest = await readModpackManifest(pack)
     const module = manifest.modules.find((entry) => entry.namespace === namespace)
     if (!module) throw new Error('找不到自制 Mod')
-    const root = path.resolve(pack.path, ...module.path.split('/'))
-    if (!root.startsWith(`${path.resolve(pack.path)}${path.sep}`)) throw new Error('自制 Mod 路径无效')
-    const project = await readProjectInfo(root)
-    if (!project) throw new Error('自制 Mod 工程文件已缺失')
+    const project = await readModpackModuleProject(pack, module)
+    if (!await pathExists(path.join(project.path, currentProjectManifest))) throw new Error('自制 Mod 工程文件已缺失')
     currentProject = project
     await rememberRecentProject(project)
     return project
   })
-  ipcMain.handle('modpack:sync', () => requireMinecraftRuntime().syncModpack())
-  ipcMain.handle('modpack:listContent', (_event, refresh?: unknown) => listModpackContent(requireProject(), refresh === true))
-  ipcMain.handle('modpack:importContent', async (_event, kind: ModpackContentKind, scope?: ModpackContentScope) => {
+  diagnosticHandle('modpack:sync', () => requireMinecraftRuntime().syncModpack())
+  diagnosticHandle('modpack:listContent', (_event, refresh?: unknown) => listModpackContent(requireProject(), refresh === true))
+  diagnosticHandle('modpack:importContent', async (_event, kind: ModpackContentKind, scope?: ModpackContentScope) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     const world = kind === 'worlds'
@@ -7603,16 +7963,16 @@ function registerIpc(): void {
     if (result.canceled) return null
     return importModpackContent(project, kind, result.filePaths, scope)
   })
-  ipcMain.handle('modpack:downloadContent', (_event, input: ModpackContentDownloadInput) => {
+  diagnosticHandle('modpack:downloadContent', (_event, input: ModpackContentDownloadInput) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     return downloadModpackContent(project, input)
   })
-  ipcMain.handle('modpack:removeContent', (_event, id: string) => removeModpackContent(requireProject(), id))
-  ipcMain.handle('modpack:readLock', async () => readModpackLock(requireProject()))
-  ipcMain.handle('modpack:auditLock', async () => auditModpackLock(requireProject()))
-  ipcMain.handle('modpack:providers', () => requireModProviderRegistry().list().map((id) => ({ id, label: id === 'modrinth' ? 'Modrinth' : 'CurseForge', configured: true, supportsDependencies: true })))
-  ipcMain.handle('modpack:recommendProviders', async (): Promise<ModpackSearchResponse[]> => {
+  diagnosticHandle('modpack:removeContent', (_event, id: string) => removeModpackContent(requireProject(), id))
+  diagnosticHandle('modpack:readLock', async () => readModpackLock(requireProject()))
+  diagnosticHandle('modpack:auditLock', async () => auditModpackLock(requireProject()))
+  diagnosticHandle('modpack:providers', () => requireModProviderRegistry().list().map((id) => ({ id, label: id === 'modrinth' ? 'Modrinth' : 'CurseForge', configured: true, supportsDependencies: true })))
+  diagnosticHandle('modpack:recommendProviders', async (): Promise<ModpackSearchResponse[]> => {
     const project = requireProject()
     if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 平台搜索')
     const results = await requireModProviderRegistry().search({ query: '', minecraftVersion: project.minecraftVersion, loader: project.loader, limit: 12, index: 'downloads' })
@@ -7623,12 +7983,12 @@ function registerIpc(): void {
       hits: result.hits.map((hit) => ({ provider: hit.provider, projectId: hit.projectId, slug: hit.slug, name: hit.name, summary: hit.summary, projectUrl: hit.projectUrl, downloads: hit.downloads, clientSide: hit.clientSide, serverSide: hit.serverSide, ...(hit.iconUrl ? { iconUrl: hit.iconUrl } : {}), ...(hit.updatedAt ? { updatedAt: hit.updatedAt } : {}) }))
     }))
   })
-  ipcMain.handle('modpack:recommendMcmod', async () => {
+  diagnosticHandle('modpack:recommendMcmod', async () => {
     const project = requireProject()
     if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持模组推荐')
     return mcmodService.recommendations(12)
   })
-  ipcMain.handle('modpack:searchProviders', async (_event, rawQuery: unknown, rawProviders?: unknown): Promise<ModpackSearchResponse[]> => {
+  diagnosticHandle('modpack:searchProviders', async (_event, rawQuery: unknown, rawProviders?: unknown): Promise<ModpackSearchResponse[]> => {
     const project = requireProject()
     if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 平台搜索')
     const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 120) : ''
@@ -7644,7 +8004,7 @@ function registerIpc(): void {
       hits: result.hits.map((hit) => ({ provider: hit.provider, projectId: hit.projectId, slug: hit.slug, name: hit.name, summary: hit.summary, projectUrl: hit.projectUrl, downloads: hit.downloads, clientSide: hit.clientSide, serverSide: hit.serverSide, ...(hit.iconUrl ? { iconUrl: hit.iconUrl } : {}), ...(hit.updatedAt ? { updatedAt: hit.updatedAt } : {}) }))
     }))
   })
-  ipcMain.handle('modpack:listProviderFiles', async (_event, rawProvider: unknown, rawProjectId: unknown): Promise<ModpackFileOption[]> => {
+  diagnosticHandle('modpack:listProviderFiles', async (_event, rawProvider: unknown, rawProjectId: unknown): Promise<ModpackFileOption[]> => {
     const project = requireProject()
     if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 平台下载')
     if (rawProvider !== 'modrinth' && rawProvider !== 'curseforge') throw new Error('不支持的 Mod 平台')
@@ -7652,7 +8012,7 @@ function registerIpc(): void {
     const files = await requireModProviderRegistry().versions(rawProvider, rawProjectId, { minecraftVersion: project.minecraftVersion, loader: project.loader })
     return files.map((file) => ({ provider: file.provider, projectId: file.projectId, versionId: file.versionId, versionName: file.versionName, filename: file.filename, side: file.side, ...(file.size !== undefined ? { size: file.size } : {}), ...(file.publishedAt ? { publishedAt: file.publishedAt } : {}) }))
   })
-  ipcMain.handle('modpack:installProviderFile', async (_event, rawProvider: unknown, rawProjectId: unknown, rawVersionId: unknown) => {
+  diagnosticHandle('modpack:installProviderFile', async (_event, rawProvider: unknown, rawProjectId: unknown, rawVersionId: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 下载')
     if (rawProvider !== 'modrinth' && rawProvider !== 'curseforge') throw new Error('不支持的 Mod 平台')
@@ -7674,7 +8034,7 @@ function registerIpc(): void {
       await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
     }
   })
-  ipcMain.handle('modpack:previewMigration', async (event, input: unknown) => {
+  diagnosticHandle('modpack:previewMigration', async (event, input: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     if (!input || typeof input !== 'object') throw new Error('迁移目标无效')
@@ -7685,7 +8045,7 @@ function registerIpc(): void {
       if (!event.sender.isDestroyed()) event.sender.send('modpack:migrationProgress', progress)
     }, mcmodService)
   })
-  ipcMain.handle('modpack:selectMigrationJar', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:selectMigrationJar', async (_event, input: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     if (!input || typeof input !== 'object') throw new Error('迁移目标无效')
@@ -7696,7 +8056,7 @@ function registerIpc(): void {
     if (selected.canceled || !selected.filePaths[0]) return null
     return inspectModpackMigrationJar(selected.filePaths[0], value.loader)
   })
-  ipcMain.handle('modpack:createMigration', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:createMigration', async (_event, input: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     if (!input || typeof input !== 'object') throw new Error('迁移方案无效')
@@ -7708,18 +8068,18 @@ function registerIpc(): void {
     const target = await requireLoaderCatalog().resolve(value.loader, value.minecraftVersion.trim())
     return withMinecraftResourceLock(() => applyModpackMigrationInPlace(project, target, { ...(value as ModpackMigrationCreateInput), mode: value.mode === 'direct' ? 'direct' : 'backup' }))
   })
-  ipcMain.handle('modpack:migrationHistory', () => {
+  diagnosticHandle('modpack:migrationHistory', () => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     return listModpackMigrationRecords(project)
   })
-  ipcMain.handle('modpack:undoMigration', async (_event, migrationId: unknown) => {
+  diagnosticHandle('modpack:undoMigration', async (_event, migrationId: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
     assertProjectMutationAllowed(project.path, '撤销迁移')
     return withMinecraftResourceLock(() => undoModpackMigration(project, validateMigrationId(migrationId)))
   })
-  ipcMain.handle('modpack:plan', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:plan', async (_event, input: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     if (!input || typeof input !== 'object') throw new Error('modpack concept must be an object')
@@ -7727,7 +8087,7 @@ function registerIpc(): void {
     await saveManualModRequirements(project, plan.manualRequired ?? [])
     return plan
   })
-  ipcMain.handle('modpack:applyPlan', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:applyPlan', async (_event, input: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     if (!input || typeof input !== 'object') throw new Error('modpack plan must be an object')
@@ -7738,25 +8098,25 @@ function registerIpc(): void {
     if (expected !== undefined && (typeof expected !== 'string' || path.resolve(expected).toLowerCase() !== path.resolve(project.path).toLowerCase())) throw new Error('FTB request belongs to a different project')
     return { ...project }
   }
-  ipcMain.handle('modpack:readFtbQuestBook', (_event, projectPath: unknown) => readFtbQuestBook(ftbProject(projectPath)))
-  ipcMain.handle('modpack:listFtbQuestBackups', (_event, projectPath: unknown) => listFtbQuestBackups(ftbProject(projectPath)))
-  ipcMain.handle('modpack:restoreFtbQuestBackup', (_event, projectPath: unknown, id: unknown, baseline: unknown) => {
+  diagnosticHandle('modpack:readFtbQuestBook', (_event, projectPath: unknown) => readFtbQuestBook(ftbProject(projectPath)))
+  diagnosticHandle('modpack:listFtbQuestBackups', (_event, projectPath: unknown) => listFtbQuestBackups(ftbProject(projectPath)))
+  diagnosticHandle('modpack:restoreFtbQuestBackup', (_event, projectPath: unknown, id: unknown, baseline: unknown) => {
     if (typeof id !== 'string' || typeof baseline !== 'string') throw new Error('Invalid backup request')
     return restoreFtbQuestBackup(ftbProject(projectPath), id, baseline)
   })
-  ipcMain.handle('modpack:ftbQuestIcon', (_event, input: unknown, projectPath: unknown) => resolveFtbQuestIcon(ftbProject(projectPath), input))
-  ipcMain.handle('modpack:inspectFtbQuestIcon', (_event, input: unknown, projectPath: unknown, remote: unknown) => inspectFtbQuestIcon(ftbProject(projectPath), input, remote === true))
-  ipcMain.handle('modpack:refreshFtbQuestResources', (_event, projectPath: unknown, input: unknown) => refreshFtbQuestResources(ftbProject(projectPath), input))
-  ipcMain.handle('modpack:ftbQuestItemNames', (_event, itemIds: unknown, projectPath: unknown) => resolveFtbQuestItemNames(ftbProject(projectPath), Array.isArray(itemIds) ? itemIds.filter((id): id is string => typeof id === 'string') : []))
-  ipcMain.handle('modpack:ftbQuestDependencyTexture', (_event, projectPath: unknown) => resolveFtbQuestDependencyTexture(ftbProject(projectPath)))
-  ipcMain.handle('modpack:ftbQuestShapes', (_event, projectPath: unknown) => resolveFtbQuestShapes(ftbProject(projectPath)))
-  ipcMain.handle('modpack:saveFtbQuestBook', (_event, input: unknown, projectPath: unknown) => {
+  diagnosticHandle('modpack:ftbQuestIcon', (_event, input: unknown, projectPath: unknown) => resolveFtbQuestIcon(ftbProject(projectPath), input))
+  diagnosticHandle('modpack:inspectFtbQuestIcon', (_event, input: unknown, projectPath: unknown, remote: unknown) => inspectFtbQuestIcon(ftbProject(projectPath), input, remote === true))
+  diagnosticHandle('modpack:refreshFtbQuestResources', (_event, projectPath: unknown, input: unknown) => refreshFtbQuestResources(ftbProject(projectPath), input))
+  diagnosticHandle('modpack:ftbQuestItemNames', (_event, itemIds: unknown, projectPath: unknown) => resolveFtbQuestItemNames(ftbProject(projectPath), Array.isArray(itemIds) ? itemIds.filter((id): id is string => typeof id === 'string') : []))
+  diagnosticHandle('modpack:ftbQuestDependencyTexture', (_event, projectPath: unknown) => resolveFtbQuestDependencyTexture(ftbProject(projectPath)))
+  diagnosticHandle('modpack:ftbQuestShapes', (_event, projectPath: unknown) => resolveFtbQuestShapes(ftbProject(projectPath)))
+  diagnosticHandle('modpack:saveFtbQuestBook', (_event, input: unknown, projectPath: unknown) => {
     if (!input || typeof input !== 'object') throw new Error('invalid FTB Quests book')
     return saveFtbQuestBook(ftbProject(projectPath), input as Parameters<typeof saveFtbQuestBook>[1])
   })
-  ipcMain.handle('modpack:writeFtbQuest', (_event, input: unknown) => writeFtbQuestChapter(requireProject(), input as Parameters<typeof writeFtbQuestChapter>[1]))
-  ipcMain.handle('modpack:writePatchouliBook', (_event, input: unknown) => writePatchouliBook(requireProject(), input as Parameters<typeof writePatchouliBook>[1]))
-  ipcMain.handle('modpack:configModIdentities', (_event, projectPath: string) => {
+  diagnosticHandle('modpack:writeFtbQuest', (_event, input: unknown) => writeFtbQuestChapter(requireProject(), input as Parameters<typeof writeFtbQuestChapter>[1]))
+  diagnosticHandle('modpack:writePatchouliBook', (_event, input: unknown) => writePatchouliBook(requireProject(), input as Parameters<typeof writePatchouliBook>[1]))
+  diagnosticHandle('modpack:configModIdentities', (_event, projectPath: string) => {
     const project = requireProject()
     if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
     return modpackConfigIdentities(project)
@@ -7766,24 +8126,24 @@ function registerIpc(): void {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('modpack:modsChanged', projectPath)
     }
   })
-  ipcMain.handle('modpack:contentFeatures', (_event, projectPath: string) => {
+  diagnosticHandle('modpack:contentFeatures', (_event, projectPath: string) => {
     const project = requireProject()
     if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
     return modpackContentFeatures(project)
   })
-  ipcMain.handle('modpack:contentProjectPath', (_event, contentPath: unknown) => {
+  diagnosticHandle('modpack:contentProjectPath', (_event, contentPath: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     if (typeof contentPath !== 'string') throw new Error('content path must be a string')
     return modpackContentProjectPath(project, contentPath)
   })
-  ipcMain.handle('modpack:getKeybinds', () => {
+  diagnosticHandle('modpack:getKeybinds', () => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     return readKeybindState(project)
   })
-  ipcMain.handle('modpack:applyKeybindPreset', (_event, input: unknown, allowConflicts?: boolean) => applyKeybindPreset(requireProject(), input as Parameters<typeof applyKeybindPreset>[1], Boolean(allowConflicts)))
-  ipcMain.handle('modpack:buildServerPack', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:applyKeybindPreset', (_event, input: unknown, allowConflicts?: boolean) => applyKeybindPreset(requireProject(), input as Parameters<typeof applyKeybindPreset>[1], Boolean(allowConflicts)))
+  diagnosticHandle('modpack:buildServerPack', async (_event, input: unknown) => {
     if (localServerManager?.isBusy()) throw new Error('请先停止服务端再同步服务端包')
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
@@ -7842,7 +8202,7 @@ function registerIpc(): void {
       localServerManager?.clearOperationProgress()
     }
   })
-  ipcMain.handle('modpack:installServerRuntime', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:installServerRuntime', async (_event, input: unknown) => {
     if (localServerManager?.isBusy()) throw new Error('请先停止服务端再安装运行时')
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
@@ -7888,7 +8248,7 @@ function registerIpc(): void {
       localServerManager?.clearOperationProgress()
     }
   })
-  ipcMain.handle('modpack:verifyServerJoin', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:verifyServerJoin', async (_event, input: unknown) => {
     if (localServerManager?.isBusy()) throw new Error('请先停止现有服务端再运行隔离联机验证')
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
@@ -7941,7 +8301,7 @@ function registerIpc(): void {
       localServerManager?.clearOperationProgress()
     }
   })
-  ipcMain.handle('modpack:runServerScenario', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:runServerScenario', async (_event, input: unknown) => {
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
     if (!Array.isArray(value.steps) || !value.steps.length) throw new Error('server scenario requires at least one step')
@@ -7959,30 +8319,39 @@ function registerIpc(): void {
   })
   registerServerPluginIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(localServerManager?.isBusy() || runsForProject(requireProject().path).length) })
   registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), blockbench: requireBlockbench })
-  ipcMain.handle('modpack:getServerState', () => {
+  diagnosticHandle('local-test:getState', () => localTestService?.getState())
+  diagnosticHandle('local-test:start', (_event, options: LocalTestOptions) => {
+    if (!localTestService) throw new Error('本机测试服务不可用')
+    return localTestService.start(options)
+  })
+  diagnosticHandle('local-test:stop', () => localTestService?.stop())
+  diagnosticHandle('modpack:getServerState', () => {
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     return localServerManager.getState()
   })
-  ipcMain.handle('modpack:startServer', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:startServer', async (_event, input: unknown) => {
+    if (localTestService?.isBusy()) throw new Error('请先停止当前测试')
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
     return localServerManager.start({ port: typeof value.port === 'number' ? value.port : undefined, acceptEula: true, onlineMode: value.onlineMode === true })
   })
-  ipcMain.handle('modpack:stopServer', () => {
+  diagnosticHandle('modpack:stopServer', async () => {
+    await localTestService?.stop()
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     return localServerManager.stop()
   })
-  ipcMain.handle('modpack:restartServer', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:restartServer', async (_event, input: unknown) => {
+    if (localTestService?.isBusy()) throw new Error('请先停止当前测试')
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
     return localServerManager.restart({ port: typeof value.port === 'number' ? value.port : undefined, acceptEula: true, onlineMode: value.onlineMode === true })
   })
-  ipcMain.handle('modpack:sendServerCommand', (_event, command: unknown) => {
+  diagnosticHandle('modpack:sendServerCommand', (_event, command: unknown) => {
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     return localServerManager.sendCommand(typeof command === 'string' ? command : '')
   })
-  ipcMain.handle('modpack:listOptimizationProfiles', () => BUILTIN_OPTIMIZATION_PROFILES)
-  ipcMain.handle('modpack:applyOptimizationProfile', async (_event, input: unknown) => {
+  diagnosticHandle('modpack:listOptimizationProfiles', () => BUILTIN_OPTIMIZATION_PROFILES)
+  diagnosticHandle('modpack:applyOptimizationProfile', async (_event, input: unknown) => {
     const project = requireProject()
     if (!isModpackProject(project)) throw new Error('current project is not a modpack')
     if (!input || typeof input !== 'object') throw new Error('optimization profile input must be an object')
@@ -7993,27 +8362,27 @@ function registerIpc(): void {
     if (!profile || typeof profile !== 'object') throw new Error(`optimization profile not found: ${profileId}`)
     return applyOptimizationProfile(requireModProviderRegistry(), project, profile as Parameters<typeof applyOptimizationProfile>[2])
   })
-  ipcMain.handle('modpack:listManualMods', () => readManualModRequirements(requireProject()))
-  ipcMain.handle('modpack:searchMcmod', (_event, query: string) => mcmodService.search(typeof query === 'string' ? query : '', 20))
-  ipcMain.handle('modpack:listMcmodFiles', (_event, projectId: string) => mcmodService.listFiles(typeof projectId === 'string' ? projectId : ''))
-  ipcMain.handle('modpack:beginMcmodDownload', (event, projectId: string, fileKey: string) => {
+  diagnosticHandle('modpack:listManualMods', () => readManualModRequirements(requireProject()))
+  diagnosticHandle('modpack:searchMcmod', (_event, query: string) => mcmodService.search(typeof query === 'string' ? query : '', 20))
+  diagnosticHandle('modpack:listMcmodFiles', (_event, projectId: string) => mcmodService.listFiles(typeof projectId === 'string' ? projectId : ''))
+  diagnosticHandle('modpack:beginMcmodDownload', (event, projectId: string, fileKey: string) => {
     if (!mainWindow || event.sender.id !== mainWindow.webContents.id) throw new Error('MC百科下载只能由当前客户端窗口发起')
     return mcmodService.beginDownload(requireProject(), projectId, fileKey)
   })
-  ipcMain.handle('modpack:refreshMcmodCaptcha', (event, sessionId: string) => {
+  diagnosticHandle('modpack:refreshMcmodCaptcha', (event, sessionId: string) => {
     if (!mainWindow || event.sender.id !== mainWindow.webContents.id) throw new Error('验证码只能由当前客户端窗口刷新')
     return mcmodService.refreshCaptcha(requireProject(), sessionId)
   })
-  ipcMain.handle('modpack:submitMcmodCaptcha', (event, sessionId: string, captcha: string) => {
+  diagnosticHandle('modpack:submitMcmodCaptcha', (event, sessionId: string, captcha: string) => {
     if (!mainWindow || event.sender.id !== mainWindow.webContents.id) throw new Error('验证码只能由当前客户端窗口提交')
     return mcmodService.submitCaptcha(requireProject(), sessionId, captcha)
   })
-  ipcMain.handle('project:listFiles', async (_event, projectPath?: string) => {
+  diagnosticHandle('project:listFiles', async (_event, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return (await listDirectory(project.path)).filter((node) => !isToolDataDirectory(node.name))
   })
-  ipcMain.handle('project:listImageAssets', async (): Promise<ProjectImageAsset[]> => {
+  diagnosticHandle('project:listImageAssets', async (): Promise<ProjectImageAsset[]> => {
     const root = requireProject().path
     const flatten = (nodes: FileNode[]): FileNode[] => nodes.flatMap((node) => node.type === 'directory' ? flatten(node.children ?? []) : [node])
     const files = flatten(await listDirectory(root)).filter((node) => /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(node.path))
@@ -8024,7 +8393,7 @@ function registerIpc(): void {
     }
     return assets
   })
-  ipcMain.handle('project:readImageAsset', async (_event, relativePath: string): Promise<string> => {
+  diagnosticHandle('project:readImageAsset', async (_event, relativePath: string): Promise<string> => {
     const normalized = normalizeReadablePath(relativePath)
     if (!/\.(?:png|jpe?g|webp|gif|bmp)$/i.test(normalized)) throw new Error('只能读取图片资源作为参考图')
     const target = resolveProjectPath(normalized)
@@ -8033,7 +8402,7 @@ function registerIpc(): void {
     const mime = /\.jpe?g$/i.test(normalized) ? 'image/jpeg' : /\.webp$/i.test(normalized) ? 'image/webp' : /\.gif$/i.test(normalized) ? 'image/gif' : /\.bmp$/i.test(normalized) ? 'image/bmp' : 'image/png'
     return `data:${mime};base64,${(await fs.readFile(target)).toString('base64')}`
   })
-  ipcMain.handle('project:readFile', async (_event, relativePath: string, projectPath?: string) => {
+  diagnosticHandle('project:readFile', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const target = resolveProjectPathFor(project, normalizeReadablePath(relativePath, project))
@@ -8045,53 +8414,53 @@ function registerIpc(): void {
   })
   // Workbench data is committed through a revisioned, checksummed store. The
   // project JSON remains as a compatibility copy; it is never the sole copy.
-  ipcMain.handle('project:readWorkbenchData', async (_event, relativePath: string, projectPath?: string) => {
+  diagnosticHandle('project:readWorkbenchData', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return workbenchDataStore.read(project.path, relativePath)
   })
-  ipcMain.handle('project:writeWorkbenchData', async (_event, relativePath: string, content: string, projectPath?: string) => {
+  diagnosticHandle('project:writeWorkbenchData', async (_event, relativePath: string, content: string, projectPath?: string) => {
     if (typeof content !== 'string') throw new Error('工作台对话数据无效')
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return workbenchDataStore.write(project.path, relativePath, content)
   })
-  ipcMain.handle('conversations:list', async (_event, projectPath: string, surface?: AiSurface, includeArchived?: boolean) => {
+  diagnosticHandle('conversations:list', async (_event, projectPath: string, surface?: AiSurface, includeArchived?: boolean) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.list(project.path, surface, includeArchived === true)
   })
-  ipcMain.handle('conversations:read', async (_event, projectPath: string, conversationId: string) => {
+  diagnosticHandle('conversations:read', async (_event, projectPath: string, conversationId: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.read(project.path, conversationId)
   })
-  ipcMain.handle('conversations:create', async (_event, projectPath: string, input) => {
+  diagnosticHandle('conversations:create', async (_event, projectPath: string, input) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.create(project.path, input)
   })
-  ipcMain.handle('conversations:saveView', async (_event, projectPath: string, conversationId: string, generation: number, view, title?: string) => {
+  diagnosticHandle('conversations:saveView', async (_event, projectPath: string, conversationId: string, generation: number, view, title?: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.saveView(project.path, conversationId, generation, view, title)
   })
-  ipcMain.handle('conversations:eventsSince', async (_event, projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => {
+  diagnosticHandle('conversations:eventsSince', async (_event, projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.eventsSince(project.path, conversationId, generation, afterSequence, limit)
   })
-  ipcMain.handle('conversations:fork', async (_event, projectPath: string, input) => {
+  diagnosticHandle('conversations:fork', async (_event, projectPath: string, input) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.fork(project.path, input)
   })
-  ipcMain.handle('conversations:archive', async (_event, projectPath: string, conversationId: string, archived: boolean) => {
+  diagnosticHandle('conversations:archive', async (_event, projectPath: string, conversationId: string, archived: boolean) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.archive(project.path, conversationId, archived === true)
   })
-  ipcMain.handle('conversations:delete', async (_event, projectPath: string, conversationId: string) => {
+  diagnosticHandle('conversations:delete', async (_event, projectPath: string, conversationId: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const document = await conversationStore.read(project.path, conversationId)
@@ -8102,8 +8471,8 @@ function registerIpc(): void {
     }
     return conversationStore.delete(project.path, conversationId)
   })
-  ipcMain.handle('conversations:flush', () => conversationStore.flush())
-  ipcMain.handle('project:writeFile', async (_event, relativePath: string, content: string, projectPath?: string) => {
+  diagnosticHandle('conversations:flush', () => conversationStore.flush())
+  diagnosticHandle('project:writeFile', async (_event, relativePath: string, content: string, projectPath?: string) => {
     if (typeof content !== 'string' || content.length > 2 * 1024 * 1024) throw new Error('文件内容超过 2 MB 编辑上限')
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
@@ -8112,21 +8481,12 @@ function registerIpc(): void {
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.writeFile(target, content, 'utf8')
   })
-  ipcMain.handle('project:captureIdea', async (_event, prompt: string, projectPath?: string) => {
+  diagnosticHandle('project:captureIdea', async (_event, prompt: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('鎸囧畾鐨勯」鐩笉瀛樺湪鎴栨棤鏁')
-    const target = path.join(project.path, 'docs', 'idea.md')
-    const existing = await fs.readFile(target, 'utf8').catch(() => '')
-    const request = prompt.trim()
-    if (!request) throw new Error('开发需求不能为空')
-    const initial = `# Mod idea\n\n${request}\n\n## Project target\n\n- Loader: ${project.loader}\n- Minecraft: ${project.minecraftVersion}\n- Namespace: ${project.namespace}\n`
-    const content = existing.trim() && !existing.includes('Describe the feature in ModMind')
-      ? `${existing.trimEnd()}\n\n---\n\n## Development request ${new Date().toLocaleString('zh-CN')}\n\n${request}\n`
-      : initial
-    await fs.mkdir(path.dirname(target), { recursive: true })
-    await fs.writeFile(target, content, 'utf8')
+    await captureCreationRequest(project, prompt)
   })
-  ipcMain.handle('project:createFile', async (_event, relativePath: string, content = '', projectPath?: string) => {
+  diagnosticHandle('project:createFile', async (_event, relativePath: string, content = '', projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
@@ -8136,7 +8496,7 @@ function registerIpc(): void {
     await fs.writeFile(target, content, 'utf8')
     return { project, path: normalized }
   })
-  ipcMain.handle('project:createDirectory', async (_event, relativePath: string, projectPath?: string) => {
+  diagnosticHandle('project:createDirectory', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
@@ -8145,7 +8505,7 @@ function registerIpc(): void {
     await fs.mkdir(target, { recursive: true })
     return { project, path: normalized }
   })
-  ipcMain.handle('project:renamePath', async (_event, from: string, to: string, projectPath?: string) => {
+  diagnosticHandle('project:renamePath', async (_event, from: string, to: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const source = resolveProjectPathFor(project, normalizeReadablePath(from, project))
@@ -8156,7 +8516,7 @@ function registerIpc(): void {
     await fs.rename(source, destination)
     return { project, path: path.relative(project.path, destination).replaceAll('\\', '/') }
   })
-  ipcMain.handle('project:deletePath', async (_event, relativePath: string, projectPath?: string) => {
+  diagnosticHandle('project:deletePath', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
@@ -8167,7 +8527,7 @@ function registerIpc(): void {
       failure.code = 'TRASH_UNAVAILABLE'; failure.cause = error; throw failure
     }
   })
-  ipcMain.handle('project:deletePathPermanent', async (_event, relativePath: string, projectPath?: string) => {
+  diagnosticHandle('project:deletePathPermanent', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
@@ -8176,7 +8536,7 @@ function registerIpc(): void {
   })
   // The generic delete path refuses everything under .modmind; workbench data
   // cleanup needs a narrow exception for exactly the files ModMind owns.
-  ipcMain.handle('project:deleteWorkbenchData', async (_event, relativePath: string, projectPath?: string) => {
+  diagnosticHandle('project:deleteWorkbenchData', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project).replaceAll('\\', '/')
@@ -8193,13 +8553,13 @@ function registerIpc(): void {
     if (workbenchDocument) return workbenchDataStore.delete(project.path, `.modmind/${scoped}`)
     await fs.rm(resolveProjectPathFor(project, `.modmind/${scoped}`), { recursive: true, force: true })
   })
-  ipcMain.handle('project:reveal', async (_event, relativePath = '', projectPath?: string) => {
+  diagnosticHandle('project:reveal', async (_event, relativePath = '', projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = relativePath ? normalizeReadablePath(relativePath, project) : ''
     shell.showItemInFolder(resolveProjectPathFor(project, normalized))
   })
-  ipcMain.handle('project:hasExportArtifact', async (_event, projectPath?: string) => {
+  diagnosticHandle('project:hasExportArtifact', async (_event, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     if (project.kind === 'server-plugin') return findPluginArtifact(project).then(() => true).catch(() => false)
@@ -8221,7 +8581,7 @@ function registerIpc(): void {
     }
     return false
   })
-  ipcMain.handle('project:exportArtifact', async () => {
+  diagnosticHandle('project:exportArtifact', async () => {
     const project = requireProject()
     if (project.kind === 'server-plugin') {
       await buildProjectWithLock()
@@ -8285,8 +8645,8 @@ function registerIpc(): void {
     await requireReleaseService().markExported()
     return result.filePath
   })
-  ipcMain.handle('project:prepareIde', () => prepareProjectIde(requireProject()))
-  ipcMain.handle('project:openIde', async () => {
+  diagnosticHandle('project:prepareIde', () => prepareProjectIde(requireProject()))
+  diagnosticHandle('project:openIde', async () => {
     const project = requireProject()
     await prepareProjectIde(project)
     const result = await new Promise<{ error?: Error }>((resolve) => {
@@ -8303,10 +8663,10 @@ function registerIpc(): void {
       throw new Error('未检测到 VS Code 命令行，已在文件管理器中打开项目；安装 VS Code 后运行 “Shell Command: Install code command in PATH”')
     }
   })
-  ipcMain.handle('project:previewMigration', (_event, input: ProjectMigrationInput) => previewProjectMigration(input))
-  ipcMain.handle('project:migrate', (_event, input: ProjectMigrationInput) => migrateProject(input))
+  diagnosticHandle('project:previewMigration', (_event, input: ProjectMigrationInput) => previewProjectMigration(input))
+  diagnosticHandle('project:migrate', (_event, input: ProjectMigrationInput) => migrateProject(input))
 
-  ipcMain.handle('build:preflight', async (event, projectPath?: string): Promise<PreflightResult> => {
+  diagnosticHandle('build:preflight', async (event, projectPath?: string): Promise<PreflightResult> => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const progress = (item: PipelineEvent, wait?: number): Promise<void> => sendBuildProgress(event, {...item, projectPath: project.path}, wait)
@@ -8333,12 +8693,12 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('snapshots:create', async (_event, label: string, projectPath?: string): Promise<SnapshotInfo> => {
+  diagnosticHandle('snapshots:create', async (_event, label: string, projectPath?: string): Promise<SnapshotInfo> => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return createProjectSnapshot(label.trim() || '手动快照', {}, project)
   })
-  ipcMain.handle('snapshots:list', async (_event, projectPath?: string): Promise<SnapshotInfo[]> => {
+  diagnosticHandle('snapshots:list', async (_event, projectPath?: string): Promise<SnapshotInfo[]> => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const root = path.join(project.path, projectDataDirectory(project), 'snapshots')
@@ -8355,39 +8715,39 @@ function registerIpc(): void {
     }
     return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   })
-  ipcMain.handle('snapshots:restore', (_event, id: string, projectPath?: string): Promise<SnapshotRestoreResult> => restoreProjectSnapshot(id, projectPath))
-  ipcMain.handle('snapshots:delete', (_event, id: string, projectPath?: string): Promise<SnapshotInfo[]> => deleteProjectSnapshot(id, projectPath))
+  diagnosticHandle('snapshots:restore', (_event, id: string, projectPath?: string): Promise<SnapshotRestoreResult> => restoreProjectSnapshot(id, projectPath))
+  diagnosticHandle('snapshots:delete', (_event, id: string, projectPath?: string): Promise<SnapshotInfo[]> => deleteProjectSnapshot(id, projectPath))
 
-  ipcMain.handle('relationships:list', () => requireAddonRelationshipService().list())
-  ipcMain.handle('relationships:providers', () => requireAddonRelationshipService().providers())
-  ipcMain.handle('relationships:recommendations', () => requireAddonRelationshipService().recommendations())
-  ipcMain.handle('relationships:search', (_event, query: unknown, providers?: unknown) => {
+  diagnosticHandle('relationships:list', () => requireAddonRelationshipService().list())
+  diagnosticHandle('relationships:providers', () => requireAddonRelationshipService().providers())
+  diagnosticHandle('relationships:recommendations', () => requireAddonRelationshipService().recommendations())
+  diagnosticHandle('relationships:search', (_event, query: unknown, providers?: unknown) => {
     const selected = Array.isArray(providers) ? providers.filter((entry): entry is 'modrinth' | 'curseforge' | 'mcmod' => entry === 'modrinth' || entry === 'curseforge' || entry === 'mcmod') : undefined
     return requireAddonRelationshipService().search(typeof query === 'string' ? query : '', selected)
   })
-  ipcMain.handle('relationships:versions', (_event, provider: unknown, projectId: unknown) => {
+  diagnosticHandle('relationships:versions', (_event, provider: unknown, projectId: unknown) => {
     if (provider === 'mcmod' && typeof projectId === 'string') return requireAddonRelationshipService().versions(provider, projectId)
     if ((provider !== 'modrinth' && provider !== 'curseforge') || typeof projectId !== 'string') throw new Error('模组平台或项目 ID 无效')
     return requireAddonRelationshipService().versions(provider, projectId)
   })
-  ipcMain.handle('relationships:installPlatform', (_event, input: AddonPlatformInstallInput) => {
+  diagnosticHandle('relationships:installPlatform', (_event, input: AddonPlatformInstallInput) => {
     if (!input || (input.provider !== 'modrinth' && input.provider !== 'curseforge') || typeof input.projectId !== 'string' || !['required', 'optional', 'test'].includes(String(input.role))) throw new Error('平台目标参数无效')
     return requireAddonRelationshipService().installPlatform(input)
   })
-  ipcMain.handle('relationships:beginMcmodDownload', (_event, projectId: unknown, fileKey: unknown) => {
+  diagnosticHandle('relationships:beginMcmodDownload', (_event, projectId: unknown, fileKey: unknown) => {
     if (typeof projectId !== 'string' || typeof fileKey !== 'string') throw new Error('MC百科文件参数无效')
     return requireAddonRelationshipService().beginMcmodDownload(projectId, fileKey)
   })
-  ipcMain.handle('relationships:refreshMcmodCaptcha', (_event, sessionId: unknown) => {
+  diagnosticHandle('relationships:refreshMcmodCaptcha', (_event, sessionId: unknown) => {
     if (typeof sessionId !== 'string') throw new Error('MC百科验证码会话无效')
     return requireAddonRelationshipService().refreshMcmodCaptcha(sessionId)
   })
-  ipcMain.handle('relationships:submitMcmodCaptcha', (_event, sessionId: unknown, captcha: unknown, role: unknown) => {
+  diagnosticHandle('relationships:submitMcmodCaptcha', (_event, sessionId: unknown, captcha: unknown, role: unknown) => {
     if (typeof sessionId !== 'string' || typeof captcha !== 'string' || !['required', 'optional', 'test'].includes(String(role))) throw new Error('MC百科验证码参数无效')
     return requireAddonRelationshipService().submitMcmodCaptcha(sessionId, captcha, role as AddonRelationshipRole)
   })
-  ipcMain.handle('relationships:prepare', (_event, input: AddonPrepareInput) => requireAddonRelationshipService().prepare(normalizeAddonPrepareInput(input && typeof input === 'object' ? input : {})))
-  ipcMain.handle('relationships:beginImport', async () => {
+  diagnosticHandle('relationships:prepare', (_event, input: AddonPrepareInput) => requireAddonRelationshipService().prepare(normalizeAddonPrepareInput(input && typeof input === 'object' ? input : {})))
+  diagnosticHandle('relationships:beginImport', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       title: '导入目标模组 JAR',
       properties: ['openFile', 'multiSelections'],
@@ -8396,14 +8756,14 @@ function registerIpc(): void {
     if (result.canceled || !result.filePaths.length) return null
     return requireAddonRelationshipService().beginImport(result.filePaths)
   })
-  ipcMain.handle('relationships:confirmImport', (_event, batchId: unknown, selections: unknown) => {
+  diagnosticHandle('relationships:confirmImport', (_event, batchId: unknown, selections: unknown) => {
     if (typeof batchId !== 'string' || !Array.isArray(selections)) throw new Error('批量导入确认无效')
     return requireAddonRelationshipService().confirmImport(batchId, selections as AddonImportSelection[])
   })
-  ipcMain.handle('relationships:cancelImport', (_event, batchId: unknown) => {
+  diagnosticHandle('relationships:cancelImport', (_event, batchId: unknown) => {
     if (typeof batchId === 'string') requireAddonRelationshipService().cancelImport(batchId)
   })
-  ipcMain.handle('relationships:linkProject', async () => {
+  diagnosticHandle('relationships:linkProject', async () => {
     const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择另一个 ModMind 模组项目', properties: ['openDirectory'] })
     if (selected.canceled || !selected.filePaths[0]) return null
     const target = await readProjectInfo(selected.filePaths[0])
@@ -8413,7 +8773,7 @@ function registerIpc(): void {
       return requireAddonRelationshipService().linkProject(target, artifact)
     }))
   })
-  ipcMain.handle('relationships:importSource', async (_event, relationshipId: unknown, sourceType: unknown) => {
+  diagnosticHandle('relationships:importSource', async (_event, relationshipId: unknown, sourceType: unknown) => {
     if (typeof relationshipId !== 'string' || (sourceType !== 'archive' && sourceType !== 'folder')) throw new Error('源码导入参数无效')
     const selected = await dialog.showOpenDialog(mainWindow!, sourceType === 'folder'
       ? { title: '选择目标模组源码目录', properties: ['openDirectory'] }
@@ -8421,86 +8781,86 @@ function registerIpc(): void {
     if (selected.canceled || !selected.filePaths[0]) return null
     return requireAddonRelationshipService().importSource(relationshipId, selected.filePaths[0])
   })
-  ipcMain.handle('relationships:setRole', (_event, relationshipId: unknown, role: unknown) => {
+  diagnosticHandle('relationships:setRole', (_event, relationshipId: unknown, role: unknown) => {
     if (typeof relationshipId !== 'string' || !['required', 'optional', 'test'].includes(String(role))) throw new Error('联动关系参数无效')
     return requireAddonRelationshipService().setRole(relationshipId, role as AddonRelationshipRole)
   })
-  ipcMain.handle('relationships:remove', (_event, relationshipId: unknown) => {
+  diagnosticHandle('relationships:remove', (_event, relationshipId: unknown) => {
     if (typeof relationshipId !== 'string') throw new Error('联动关系 ID 无效')
     return requireAddonRelationshipService().remove(relationshipId)
   })
-  ipcMain.handle('relationships:audit', () => requireAddonRelationshipService().audit())
+  diagnosticHandle('relationships:audit', () => requireAddonRelationshipService().audit())
 
-  ipcMain.handle('dependencies:search', (_event, query: string, offset?: number) => requireDependencyService().search(query, offset))
-  ipcMain.handle('dependencies:versions', (_event, projectId: string) => requireDependencyService().versions(projectId))
-  ipcMain.handle('dependencies:list', () => requireDependencyService().list())
-  ipcMain.handle('dependencies:install', (_event, input) => requireDependencyService().install(input))
-  ipcMain.handle('dependencies:installMaven', (_event, input) => requireDependencyService().installMaven(input))
-  ipcMain.handle('dependencies:audit', () => requireDependencyService().audit())
-  ipcMain.handle('dependencies:remove', (_event, projectId: string) => requireDependencyService().remove(projectId))
+  diagnosticHandle('dependencies:search', (_event, query: string, offset?: number) => requireDependencyService().search(query, offset))
+  diagnosticHandle('dependencies:versions', (_event, projectId: string) => requireDependencyService().versions(projectId))
+  diagnosticHandle('dependencies:list', () => requireDependencyService().list())
+  diagnosticHandle('dependencies:install', (_event, input) => requireDependencyService().install(input))
+  diagnosticHandle('dependencies:installMaven', (_event, input) => requireDependencyService().installMaven(input))
+  diagnosticHandle('dependencies:audit', () => requireDependencyService().audit())
+  diagnosticHandle('dependencies:remove', (_event, projectId: string) => requireDependencyService().remove(projectId))
 
-  ipcMain.handle('git:status', () => requireGitService().status())
-  ipcMain.handle('git:initialize', () => requireGitService().initialize())
-  ipcMain.handle('git:diff', (_event, relativePath?: string) => requireGitService().diff(relativePath))
-  ipcMain.handle('git:commit', (_event, input: GitCommitInput) => requireGitService().commit(input))
-  ipcMain.handle('git:createBranch', (_event, name: string) => requireGitService().createBranch(name))
-  ipcMain.handle('git:listRemotes', () => requireGitService().listRemotes())
-  ipcMain.handle('git:addRemote', (_event, name: string, url: string) => requireGitService().addRemote(name, url))
-  ipcMain.handle('git:removeRemote', (_event, name: string) => requireGitService().removeRemote(name))
-  ipcMain.handle('git:fetch', (_event, remote?: string) => requireGitService().fetch(remote))
-  ipcMain.handle('git:pull', (_event, remote?: string, branch?: string) => requireGitService().pull(remote, branch))
-  ipcMain.handle('git:push', (_event, remote?: string, branch?: string) => requireGitService().push(remote, branch))
-  ipcMain.handle('git:merge', (_event, branch: string) => requireGitService().merge(branch))
-  ipcMain.handle('git:rebase', (_event, branch: string) => requireGitService().rebase(branch))
-  ipcMain.handle('git:pullRequestUrl', async (_event, remote?: string) => {
+  diagnosticHandle('git:status', () => requireGitService().status())
+  diagnosticHandle('git:initialize', () => requireGitService().initialize())
+  diagnosticHandle('git:diff', (_event, relativePath?: string) => requireGitService().diff(relativePath))
+  diagnosticHandle('git:commit', (_event, input: GitCommitInput) => requireGitService().commit(input))
+  diagnosticHandle('git:createBranch', (_event, name: string) => requireGitService().createBranch(name))
+  diagnosticHandle('git:listRemotes', () => requireGitService().listRemotes())
+  diagnosticHandle('git:addRemote', (_event, name: string, url: string) => requireGitService().addRemote(name, url))
+  diagnosticHandle('git:removeRemote', (_event, name: string) => requireGitService().removeRemote(name))
+  diagnosticHandle('git:fetch', (_event, remote?: string) => requireGitService().fetch(remote))
+  diagnosticHandle('git:pull', (_event, remote?: string, branch?: string) => requireGitService().pull(remote, branch))
+  diagnosticHandle('git:push', (_event, remote?: string, branch?: string) => requireGitService().push(remote, branch))
+  diagnosticHandle('git:merge', (_event, branch: string) => requireGitService().merge(branch))
+  diagnosticHandle('git:rebase', (_event, branch: string) => requireGitService().rebase(branch))
+  diagnosticHandle('git:pullRequestUrl', async (_event, remote?: string) => {
     const url = await requireGitService().pullRequestUrl(remote)
     await shell.openExternal(url)
     return url
   })
 
-  ipcMain.handle('content:create', (_event, input: ContentCreateInput) => requireContentService().create(input))
-  ipcMain.handle('content:importAudio', async (_event, input: AudioImportInput) => {
+  diagnosticHandle('content:create', (_event, input: ContentCreateInput) => requireContentService().create(input))
+  diagnosticHandle('content:importAudio', async (_event, input: AudioImportInput) => {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openFile'], filters: [{ name: 'Audio', extensions: ['ogg', 'mp3', 'wav', 'flac', 'm4a'] }] })
     if (result.canceled || !result.filePaths[0]) return null
     return requireContentService().importAudio(result.filePaths[0], input)
   })
-  ipcMain.handle('content:validate', () => requireContentService().validate())
+  diagnosticHandle('content:validate', () => requireContentService().validate())
 
-  ipcMain.handle('tests:runMatrix', async (event, targets: TestTarget[]): Promise<TestMatrixResult> => {
+  diagnosticHandle('tests:runMatrix', async (event, targets: TestTarget[]): Promise<TestMatrixResult> => {
     requireProject()
     return runDiagnosticOperation('tests', 'matrix', 'Project test matrix', () => runProjectTestMatrix(targets, undefined, (target, completed, total) => {
       if (!event.sender.isDestroyed()) event.sender.send('tests:progress', { target, completed, total })
     }), { targets })
   })
-  ipcMain.handle('tests:generateWorkflow', () => generateGithubWorkflow(requireProject()))
+  diagnosticHandle('tests:generateWorkflow', () => generateGithubWorkflow(requireProject()))
 
-  ipcMain.handle('release:getSettings', () => requireReleaseService().getSettings())
-  ipcMain.handle('release:saveSettings', async (_event, settings: ReleaseSettings) => {
+  diagnosticHandle('release:getSettings', () => requireReleaseService().getSettings())
+  diagnosticHandle('release:saveSettings', async (_event, settings: ReleaseSettings) => {
     const saved = await requireReleaseService().saveSettings(settings)
     const providerSecrets = await readReleaseSecrets()
     curseForgeProviderKey = providerSecrets.curseForgeToken || process.env.MODMIND_CURSEFORGE_API_KEY || '$2a$10$BB17.sSejQebcTN01XAqmeXbucdfzq/nIKXylaKLpQHtHLrREVPku'
     modProviderRegistry = null
     return saved
   })
-  ipcMain.handle('release:prepareExport', () => requireReleaseService().prepareExport())
-  ipcMain.handle('release:markExported', () => requireReleaseService().markExported())
-  ipcMain.handle('release:suggestSummary', () => generateAiReleaseSummary())
-  ipcMain.handle('release:preflight', () => requireReleaseService().preflight())
-  ipcMain.handle('release:publish', (_event, input: ReleasePublishInput) => runDiagnosticOperation('release', 'publish', 'Project release', () => requireReleaseService().publish(input), { targets: input.targets }))
+  diagnosticHandle('release:prepareExport', () => requireReleaseService().prepareExport())
+  diagnosticHandle('release:markExported', () => requireReleaseService().markExported())
+  diagnosticHandle('release:suggestSummary', () => generateAiReleaseSummary())
+  diagnosticHandle('release:preflight', () => requireReleaseService().preflight())
+  diagnosticHandle('release:publish', (_event, input: ReleasePublishInput) => runDiagnosticOperation('release', 'publish', 'Project release', () => requireReleaseService().publish(input), { targets: input.targets }))
 
   // Controlled JAR decompilation (受控反编译): results live in the userData cache, never in project sources.
   const decompileCacheRoot = (): string => path.join(app.getPath('userData'), 'decompile')
   const activeDecompileRuns = new Map<string, AbortController>()
-  ipcMain.handle('decompile:pickJar', async () => {
-    const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择要分析的 Mod JAR', properties: ['openFile'], filters: [{ name: 'Minecraft Mod JAR', extensions: ['jar'] }] })
+  diagnosticHandle('decompile:pickJar', async () => {
+    const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择模组或服务端插件 JAR', properties: ['openFile'], filters: [{ name: 'Minecraft Mod / Server Plugin JAR', extensions: ['jar'] }] })
     if (selected.canceled || !selected.filePaths[0]) return null
     return selected.filePaths[0]
   })
-  ipcMain.handle('decompile:inspect', (_event, jarPath: unknown) => runDiagnosticOperation('decompile', 'inspect', 'JAR decompile inspection', async () => {
+  diagnosticHandle('decompile:inspect', (_event, jarPath: unknown) => runDiagnosticOperation('decompile', 'inspect', 'JAR decompile inspection', async () => {
     if (typeof jarPath !== 'string' || !jarPath.trim()) throw new Error('缺少 JAR 路径')
     return inspectForDecompilation(jarPath.trim(), { cacheRoot: decompileCacheRoot() })
   }, { jarPath }))
-  ipcMain.handle('decompile:start', (_event, input: unknown) => runDiagnosticOperation('decompile', 'start', 'Controlled JAR decompilation', async () => {
+  diagnosticHandle('decompile:start', (_event, input: unknown) => runDiagnosticOperation('decompile', 'start', 'Controlled JAR decompilation', async () => {
     if (!input || typeof input !== 'object') throw new Error('反编译请求无效')
     const value = input as Partial<DecompileRunRequest>
     if (typeof value.jarPath !== 'string' || !value.jarPath.trim()) throw new Error('缺少 JAR 路径')
@@ -8528,21 +8888,21 @@ function registerIpc(): void {
       activeDecompileRuns.delete(request.jarPath)
     }
   }))
-  ipcMain.handle('decompile:cancel', (_event, jarPath: unknown) => {
+  diagnosticHandle('decompile:cancel', (_event, jarPath: unknown) => {
     if (typeof jarPath !== 'string') throw new Error('缺少 JAR 路径')
     activeDecompileRuns.get(jarPath)?.abort()
     return true
   })
-  ipcMain.handle('decompile:listFiles', (_event, sourceSha256: unknown) => runDiagnosticOperation('decompile', 'listFiles', 'List decompiled sources', async () => {
+  diagnosticHandle('decompile:listFiles', (_event, sourceSha256: unknown) => runDiagnosticOperation('decompile', 'listFiles', 'List decompiled sources', async () => {
     if (typeof sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('非法的缓存键')
     return listCachedSourceFiles(decompileCacheRoot(), sourceSha256)
   }))
-  ipcMain.handle('decompile:readFile', (_event, sourceSha256: unknown, relativePath: unknown) => runDiagnosticOperation('decompile', 'readFile', 'Read decompiled source', async () => {
+  diagnosticHandle('decompile:readFile', (_event, sourceSha256: unknown, relativePath: unknown) => runDiagnosticOperation('decompile', 'readFile', 'Read decompiled source', async () => {
     if (typeof sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('非法的缓存键')
     if (typeof relativePath !== 'string') throw new Error('缺少文件路径')
     return readCachedSourceFile(decompileCacheRoot(), sourceSha256, relativePath)
   }))
-  ipcMain.handle('decompile:scanReferences', (_event, jarPath: unknown, knownPackages: unknown) => runDiagnosticOperation('decompile', 'scanReferences', 'Class reference scan', async () => {
+  diagnosticHandle('decompile:scanReferences', (_event, jarPath: unknown, knownPackages: unknown) => runDiagnosticOperation('decompile', 'scanReferences', 'Class reference scan', async () => {
     if (typeof jarPath !== 'string' || !jarPath.trim()) throw new Error('缺少 JAR 路径')
     const known = Array.isArray(knownPackages)
       ? knownPackages.filter((entry): entry is { modId: string; packages: string[] } =>
@@ -8550,10 +8910,10 @@ function registerIpc(): void {
       : []
     return scanReferencesForJar(jarPath.trim(), known)
   }))
-  ipcMain.handle('decompile:getTerms', (_event, sourceFileName: unknown) => {
+  diagnosticHandle('decompile:getTerms', (_event, sourceFileName: unknown) => {
     return { version: DECOMPILE_TERMS_VERSION, title: DECOMPILE_TERMS_TITLE, sections: DECOMPILE_TERMS_SECTIONS, rendered: renderDecompileTerms(typeof sourceFileName === 'string' ? sourceFileName : 'mod.jar') }
   })
-  ipcMain.handle('decompile:createModuleFromJar', (_event, input: unknown) => runDiagnosticOperation('decompile', 'createModuleFromJar', 'Export decompiled sources as self-made module', async () => {
+  diagnosticHandle('decompile:createModuleFromJar', (_event, input: unknown) => runDiagnosticOperation('decompile', 'createModuleFromJar', 'Export decompiled sources as self-made module', async () => {
     const pack = requireProject()
     if (!isModpackProject(pack)) throw new Error('只有整合包项目可以把反编译结果转为自制模组')
     assertProjectMutationAllowed(pack.path, '从反编译源码创建自制模组')
@@ -8584,7 +8944,7 @@ function registerIpc(): void {
     diagnosticJournal.record({ subsystem: 'decompile', operation: 'create-module', phase: 'success', level: 'info', message: `已从反编译源码创建自制模组 ${created.namespace}（来源 ${provenance.sourceFileName}，条款 v${DECOMPILE_TERMS_VERSION}，${origin === 'ai-action' ? 'AI 发起' : '用户发起'}）`, data: { namespace: created.namespace, fileCount: created.fileCount } })
     return created
   }))
-  ipcMain.handle('decompile:createProjectFromJar', (_event, input: unknown) => runDiagnosticOperation('decompile', 'createProjectFromJar', 'Create ModMind project from decompiled sources', async () => {
+  diagnosticHandle('decompile:createProjectFromJar', (_event, input: unknown) => runDiagnosticOperation('decompile', 'createProjectFromJar', 'Create ModMind project from decompiled sources', async () => {
     assertProjectSwitchAllowed()
     if (!input || typeof input !== 'object') throw new Error('项目创建请求无效')
     const value = input as Record<string, unknown>
@@ -8596,10 +8956,12 @@ function registerIpc(): void {
     if (!terms || terms.termsVersion !== DECOMPILE_TERMS_VERSION) throw new Error(`需要接受当前版本（${DECOMPILE_TERMS_VERSION}）的反编译源码使用条款后才能创建项目`)
     if (terms.acknowledged !== true) throw new Error('未确认使用条款')
     const loader = value.loader
-    if (!isJavaLoader(loader)) throw new Error('反编译项目目前仅支持 Fabric、Quilt、Forge 和 NeoForge')
+    if (!isJavaLoader(loader) && !isServerPluginPlatform(loader)) throw new Error('反编译项目仅支持 Java 模组或服务端插件平台')
+    const provenance = await readDecompileProvenanceForExport(decompileCacheRoot(), sourceSha256)
+    validateDecompiledProjectTarget(provenance, loader)
     const name = validateProjectNameInput(typeof value.name === 'string' ? value.name : '')
     const minecraftVersion = typeof value.minecraftVersion === 'string' ? value.minecraftVersion.trim() : ''
-    if (!/^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$/.test(minecraftVersion)) throw new Error('Minecraft 版本格式无效')
+    if (!(loader === 'velocity' ? /^[34]\.\d+\.\d+(?:-SNAPSHOT)?$/ : /^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$/).test(minecraftVersion)) throw new Error('Minecraft 或代理 API 版本格式无效')
     const compatibility = await requireLoaderCatalog().resolve(loader, minecraftVersion)
     const destination = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
     if (destination.canceled || !destination.filePaths[0]) return null
@@ -8620,7 +8982,7 @@ function registerIpc(): void {
       projectVersion: CURRENT_PROJECT_VERSION,
       toolDataDirectory: '.modmind'
     }
-    const provenance = await readDecompileProvenanceForExport(decompileCacheRoot(), sourceSha256)
+    if (isServerPluginPlatform(loader)) project.kind = 'server-plugin'
     let seededFileCount = 0
     await fs.mkdir(projectPath)
     try {
@@ -8638,6 +9000,7 @@ function registerIpc(): void {
         }
       })
       seededFileCount = seeded.fileCount
+      if (provenance.plugin) await restoreDecompiledPluginProject(project, provenance, path.join(decompileCacheRoot(), 'jars', sourceSha256, 'resources'))
     } catch (error) {
       await fs.rm(projectPath, { recursive: true, force: true }).catch(() => undefined)
       throw error
@@ -8650,7 +9013,7 @@ function registerIpc(): void {
     return project
   }))
 
-  ipcMain.handle('settings:revealSecret', async (_event, key: string) => {
+  diagnosticHandle('settings:revealSecret', async (_event, key: string) => {
     switch (key) {
       case 'codex': case 'claude': return (await readSettings()).externalAgents?.[key]?.apiKey ?? ''
       case 'image': return requireImageStudio().revealApiKey()
@@ -8659,23 +9022,32 @@ function registerIpc(): void {
       default: throw new Error('未知凭证类型')
     }
   })
-  ipcMain.handle('settings:getAgent', async () => {
+  diagnosticHandle('settings:getAgent', async () => {
     const settings = await readSettings()
     return publicAgentSettings(settings)
   })
-  ipcMain.handle('settings:saveAgent', async (_event, settings: AgentSettings) => {
+  diagnosticHandle('settings:pickBackground', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow!
+    const result = await dialog.showOpenDialog(owner, { title: '选择背景图片或视频', properties: ['openFile'], filters: [
+      { name: '图片或视频', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm'] },
+      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }, { name: '视频', extensions: ['mp4', 'webm'] }
+    ] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return importBackgroundMedia(result.filePaths[0], path.join(app.getPath('userData'), 'appearance-media'))
+  })
+  diagnosticHandle('settings:saveAgent', async (_event, settings: AgentSettings) => {
     const saved = await saveAgentSettings(settings)
     setNetworkProxy(saved.networkProxyUrl ?? '')
     return publicAgentSettings(saved)
   })
-  ipcMain.handle('settings:listAgentModels', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => listAvailableAgentModels(kind, configuration))
-  ipcMain.handle('settings:scanGradle', () => scanGradleInstallations())
-  ipcMain.handle('settings:scanJavaHomes', () => scanConfiguredJavaHomes())
-  ipcMain.handle('settings:probeJavaHome', (_event, home: unknown) => {
+  diagnosticHandle('settings:listAgentModels', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => listAvailableAgentModels(kind, configuration))
+  diagnosticHandle('settings:scanGradle', () => scanGradleInstallations())
+  diagnosticHandle('settings:scanJavaHomes', () => scanConfiguredJavaHomes())
+  diagnosticHandle('settings:probeJavaHome', (_event, home: unknown) => {
     if (typeof home !== 'string' || !home.trim()) throw new Error('缺少要检测的 Java 路径')
     return probeJavaHomeInfo(home)
   })
-  ipcMain.handle('settings:pickJavaHome', async () => {
+  diagnosticHandle('settings:pickJavaHome', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       title: '选择 JDK 或 Java 运行时目录',
       properties: ['openDirectory']
@@ -8709,6 +9081,8 @@ function registerIpc(): void {
       rendererError = new Error(typeof errorValue.message === 'string' ? errorValue.message : 'Renderer error')
       if (typeof errorValue.name === 'string') rendererError.name = errorValue.name
       if (typeof errorValue.stack === 'string') rendererError.stack = errorValue.stack
+      if (typeof errorValue.componentStack === 'string') Object.assign(rendererError, { componentStack: errorValue.componentStack })
+      if (errorValue.details !== undefined) Object.assign(rendererError, { details: errorValue.details })
     }
     diagnosticJournal.record({
       subsystem,
@@ -8717,23 +9091,23 @@ function registerIpc(): void {
       level,
       message,
       ...(typeof value.durationMs === 'number' ? { durationMs: value.durationMs } : {}),
-      ...(value.data !== undefined ? { data: value.data } : {}),
+      data: { detail: value.data, webContentsId: _event.sender.id, osProcessId: _event.sender.getOSProcessId() },
       ...(rendererError ? { error: rendererError } : {})
     })
   })
-  ipcMain.handle('diagnostics:exportLogs', (_event, input: unknown) => {
+  diagnosticHandle('diagnostics:exportLogs', (_event, input: unknown) => {
     const pages = Array.isArray(input) ? input as DiagnosticPageSnapshot[] : []
     return exportDiagnosticLogs(pages)
   })
-  ipcMain.handle('remote-build:gitee:getSettings', () => readGiteeBuildSettings().then((settings) => ({ ...settings, token: '' })))
-  ipcMain.handle('remote-build:gitee:saveSettings', (_event, settings: GiteeBuildSettings) => saveGiteeBuildSettings(settings))
-  ipcMain.handle('remote-build:gitee:validate', async (_event, settings?: GiteeBuildSettings) => runDiagnosticOperation('gitee', 'validate', 'Gitee connection validation', async () => {
+  diagnosticHandle('remote-build:gitee:getSettings', () => readGiteeBuildSettings().then((settings) => ({ ...settings, token: '' })))
+  diagnosticHandle('remote-build:gitee:saveSettings', (_event, settings: GiteeBuildSettings) => saveGiteeBuildSettings(settings))
+  diagnosticHandle('remote-build:gitee:validate', async (_event, settings?: GiteeBuildSettings) => runDiagnosticOperation('gitee', 'validate', 'Gitee connection validation', async () => {
     const stored = await readGiteeBuildSettings()
     const input = settings ? { ...stored, ...settings, token: settings.token?.trim() || stored.token } : stored
     return requireGiteeBuildService().validate(input)
   }))
-  ipcMain.handle('remote-build:gitee:trigger', () => runDiagnosticOperation('gitee', 'trigger', 'Gitee remote build', () => requireGiteeBuildService().trigger()))
-  ipcMain.handle('external-agents:detect', async () => {
+  diagnosticHandle('remote-build:gitee:trigger', () => runDiagnosticOperation('gitee', 'trigger', 'Gitee remote build', () => requireGiteeBuildService().trigger()))
+  diagnosticHandle('external-agents:detect', async () => {
     const settings = await readSettings()
     return Promise.all([
       detectExternalAgent('codex', {
@@ -8743,7 +9117,7 @@ function registerIpc(): void {
       detectExternalAgent('claude', {executables: [settings.externalAgents?.claude?.executable ?? '']})
     ])
   })
-  ipcMain.handle('external-agents:configure', async (_event, kind: ExternalAgentKind, configuration: NonNullable<AgentSettings['externalAgents']>[ExternalAgentKind]) => {
+  diagnosticHandle('external-agents:configure', async (_event, kind: ExternalAgentKind, configuration: NonNullable<AgentSettings['externalAgents']>[ExternalAgentKind]) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
     const settings = await readSettings()
     const existingConfiguration = settings.externalAgents?.[kind]
@@ -8760,12 +9134,14 @@ function registerIpc(): void {
     const saved = await saveAgentSettings(next)
     return configureExternalAgentProvider(kind, saved)
   })
-  ipcMain.handle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
+  diagnosticHandle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
     const project = aiProjectContext.getStore() ?? currentProject
-    return project ? readExternalAgentHistory(project, kind) : ''
+    if (!project) return ''
+    const environment = kind === 'claude' ? await externalAgentRunEnvironment(kind, await readSettings()) : undefined
+    return readExternalAgentHistory(project, kind, 'workspace', kind === 'claude' ? claudeSessionHome(environment ?? process.env) : undefined)
   })
-  ipcMain.handle('external-agents:install', async (_event, kind: ExternalAgentKind) => {
+  diagnosticHandle('external-agents:install', async (_event, kind: ExternalAgentKind) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
     if (kind === 'codex') {
       const executable = await ensureManagedCodexRuntime({rootDir: app.getPath('userData')})
@@ -8783,11 +9159,11 @@ function registerIpc(): void {
     }
     return downloadActivities.run({ label: `安装 ${externalAgentLabel(kind)}`, detail: '正在通过系统包管理器下载安装' }, () => installExternalAgent(kind))
   })
-  ipcMain.handle('external-agents:openDocs', (_event, kind: ExternalAgentKind) => {
+  diagnosticHandle('external-agents:openDocs', (_event, kind: ExternalAgentKind) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
     return shell.openExternal(externalAgentDocsUrl(kind))
   })
-  ipcMain.handle('external-agents:launch', async (_event, kind: ExternalAgentKind) => {
+  diagnosticHandle('external-agents:launch', async (_event, kind: ExternalAgentKind) => {
     if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
     const project = requireProject()
     const settings = await readSettings()
@@ -8803,7 +9179,7 @@ function registerIpc(): void {
     }
     await launchExternalAgent(kind, project, executable, env, settings.codexApprovalMode)
   })
-  ipcMain.handle('beginner-codex:prepare', async (event, projectPath?: string) => {
+  diagnosticHandle('beginner-codex:prepare', async (event, projectPath?: string) => {
     const routedProjectPath = typeof projectPath === 'string' && projectPath.trim() ? path.resolve(projectPath) : undefined
     const project = routedProjectPath ? await readProjectInfo(routedProjectPath) : currentProject
     if (!project) throw new Error('请先创建或打开项目')
@@ -8833,12 +9209,17 @@ function registerIpc(): void {
       clearPreparedCodexCredentials()
     }
   })
-  ipcMain.handle('ai:pickAttachments', (_event, kind: AiAttachmentSelectionKind) => {
+  diagnosticHandle('ai:pickAttachments', (_event, kind: AiAttachmentSelectionKind, projectPath?: string) => {
     if (kind !== 'files' && kind !== 'directory') throw new Error('附件选择类型无效')
-    return pickAiAttachments(kind)
+    return pickAiAttachments(kind, projectPath)
   })
-  ipcMain.handle('ai:validateAttachments', (_event, attachments: AiAttachment[], projectPath?: string) => validateAiAttachments(attachments, projectPath))
-  ipcMain.handle('ai:createCode', async (event, prompt: string, sessionId?: string, backend?: AgentSettings['codingBackend'], executionProfile?: AiExecutionProfile, options?: AiCreateCodeOptions) => {
+  diagnosticHandle('ai:importAttachments', async (_event, sources: AiAttachmentSource[], projectPath?: string) => {
+    const project = await attachmentProject(projectPath)
+    const copied = await importAiAttachmentSources(project.path, sources)
+    return validateAiAttachments(copied, project.path)
+  })
+  diagnosticHandle('ai:validateAttachments', (_event, attachments: AiAttachment[], projectPath?: string) => validateAiAttachments(attachments, projectPath))
+  diagnosticHandle('ai:createCode', async (event, prompt: string, sessionId?: string, backend?: AgentSettings['codingBackend'], executionProfile?: AiExecutionProfile, options?: AiCreateCodeOptions) => {
     if (false) {
       aiCancelRequests.delete(event.sender.id)
       const error = new Error('AI 编程已停止')
@@ -8904,7 +9285,7 @@ function registerIpc(): void {
     }
 
   })
-  ipcMain.handle('ai:cancelCode', async (event, sessionId?: string, projectPath?: string): Promise<AiCancellationResult> => {
+  diagnosticHandle('ai:cancelCode', async (event, sessionId?: string, projectPath?: string): Promise<AiCancellationResult> => {
     const inspirationCancellation = Boolean(sessionId?.startsWith('inspiration-'))
     const switchKey = !inspirationCancellation && projectPath ? aiProjectKey(projectPath) : undefined
     const activeSwitch = switchKey ? activeAiBackendSwitches.get(switchKey) : undefined
@@ -8949,14 +9330,14 @@ function registerIpc(): void {
     })
     return result
   })
-  ipcMain.handle('ai:clearQuotaCredentials', () => clearPreparedCodexCredentials())
-  ipcMain.handle('ai:getRecovery', (_event, projectPath?: string) => getAiRecoveryInfo(projectPath))
-  ipcMain.handle('ai:getProjectTaskState', async (_event, projectPath?: string): Promise<AiProjectTaskState> => {
+  diagnosticHandle('ai:clearQuotaCredentials', () => clearPreparedCodexCredentials())
+  diagnosticHandle('ai:getRecovery', (_event, projectPath?: string) => getAiRecoveryInfo(projectPath))
+  diagnosticHandle('ai:getProjectTaskState', async (_event, projectPath?: string): Promise<AiProjectTaskState> => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效 ModMind 项目')
     return aiProjectTaskState(project.path)
   })
-  ipcMain.handle('ai:resumeRecovery', async (event, projectPath?: string, conversationId?: string) => {
+  diagnosticHandle('ai:resumeRecovery', async (event, projectPath?: string, conversationId?: string, features?: WorkbenchFeatures) => {
     if (false) {
       aiCancelRequests.delete(event.sender.id)
       const error = new Error('AI 编程已停止')
@@ -8967,6 +9348,7 @@ function registerIpc(): void {
     if (!project) throw new Error('继续任务所属的项目不存在或已不再有效')
     const recovery = await readActiveAiTask(project)
     if (!recovery) throw new Error('没有找到可继续的 AI 任务')
+    if (features !== undefined) recovery.workbenchFeatures = normalizeWorkbenchFeatures(features)
     if (conversationId !== undefined && aiConversationIdForSession(recovery) !== conversationId) throw new Error('该未完成任务属于另一个对话，请切换到原对话继续')
     const executionProfile = recovery.executionProfile === 'beginner-unlimited' ? 'beginner-unlimited' : 'standard'
     const backend = recovery.backend === 'quota' || recovery.backend === 'codex' || recovery.backend === 'claude' ? recovery.backend : 'codex'
@@ -8985,7 +9367,7 @@ function registerIpc(): void {
     }
 
   })
-  ipcMain.handle('ai:switchBackend', async (event, requestedBackend: AgentSettings['codingBackend'], projectPath?: string, sessionScope?: string, switchId?: number): Promise<AiBackendSwitchResult> => {
+  diagnosticHandle('ai:switchBackend', async (event, requestedBackend: AgentSettings['codingBackend'], projectPath?: string, sessionScope?: string, switchId?: number): Promise<AiBackendSwitchResult> => {
     if (!['quota', 'codex', 'claude'].includes(requestedBackend)) throw new Error('不支持的 AI 内核')
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或无效')
@@ -9105,16 +9487,16 @@ function registerIpc(): void {
       if (activeAiBackendSwitches.get(key) === activeSwitch) activeAiBackendSwitches.delete(key)
     }
   })
-  ipcMain.handle('ai:restoreRecovery', () => restoreAiRecovery())
+  diagnosticHandle('ai:restoreRecovery', () => restoreAiRecovery())
 
   // --- 用户插件系统 ---------------------------------------------------------
-  ipcMain.handle('plugins:list', async () => {
+  diagnosticHandle('plugins:list', async () => {
     const service = getPluginService()
     if (!service) return { plugins: [] }
     await waitForPluginRegistry()
     return service.getSnapshot()
   })
-  ipcMain.handle('plugins:setEnabled', (_event, pluginId: string, enabled: boolean) => {
+  diagnosticHandle('plugins:setEnabled', (_event, pluginId: string, enabled: boolean) => {
     const service = getPluginService()
     if (!service) throw new Error('插件系统未初始化')
     service.setEnabled(String(pluginId), Boolean(enabled))
@@ -9122,67 +9504,67 @@ function registerIpc(): void {
     broadcastPluginSnapshot(service.getSnapshot())
     return service.getSnapshot()
   })
-  ipcMain.handle('plugins:importZip', async (_event, scope?: 'global' | 'project') => importPluginZipInteractive(scope === 'project' && currentProject ? 'project' : 'global'))
-  ipcMain.handle('plugins:reload', async () => refreshPluginRegistry(true))
-  ipcMain.handle('plugins:openDirectory', async () => {
+  diagnosticHandle('plugins:importZip', async (_event, scope?: 'global' | 'project') => importPluginZipInteractive(scope === 'project' && currentProject ? 'project' : 'global'))
+  diagnosticHandle('plugins:reload', async () => refreshPluginRegistry(true))
+  diagnosticHandle('plugins:openDirectory', async () => {
     const target = path.join(app.getPath('userData'), 'plugins')
     await fs.mkdir(target, { recursive: true })
     await shell.openPath(target)
   })
-  ipcMain.handle('plugins:exportDoc', async (_event, content: unknown) => {
+  diagnosticHandle('plugins:exportDoc', async (_event, content: unknown) => {
     if (typeof content !== 'string' || !content.trim()) throw new Error('文档内容为空')
     const target = path.join(app.getPath('downloads'), 'ModMind插件开发文档.md')
     await fs.writeFile(target, content, 'utf8')
     return target
   })
-  ipcMain.handle('plugins:invokeTool', async (_event, pluginId: string, toolName: string, input: unknown) => {
+  diagnosticHandle('plugins:invokeTool', async (_event, pluginId: string, toolName: string, input: unknown) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.callTool(String(pluginId), String(toolName), input)
   })
-  ipcMain.handle('plugins:activate', async (_event, pluginId: string) => {
+  diagnosticHandle('plugins:activate', async (_event, pluginId: string) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.activate(String(pluginId))
   })
-  ipcMain.handle('plugins:restart', async (_event, pluginId: string) => {
+  diagnosticHandle('plugins:restart', async (_event, pluginId: string) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.restart(String(pluginId))
   })
-  ipcMain.handle('plugins:diagnostics', (_event, pluginId: string) => {
+  diagnosticHandle('plugins:diagnostics', (_event, pluginId: string) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.getDiagnostics(String(pluginId))
   })
-  ipcMain.handle('plugins:clearDiagnostics', (_event, pluginId: string) => {
+  diagnosticHandle('plugins:clearDiagnostics', (_event, pluginId: string) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.clearDiagnostics(String(pluginId))
   })
-  ipcMain.handle('plugins:recordLog', (_event, pluginId: string, source: unknown, level: unknown, message: unknown) => {
+  diagnosticHandle('plugins:recordLog', (_event, pluginId: string, source: unknown, level: unknown, message: unknown) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     const normalizedSource = source === 'panel' || source === 'overlay' ? source : 'host'
     const normalizedLevel = level === 'warn' || level === 'error' ? level : 'info'
     runtime.recordLog(String(pluginId), normalizedSource, normalizedLevel, String(message ?? '').slice(0, 10_000))
   })
-  ipcMain.handle('plugins:handleContextOp', async (_event, pluginId: string, op: string, args: Record<string, unknown>) => {
+  diagnosticHandle('plugins:handleContextOp', async (_event, pluginId: string, op: string, args: Record<string, unknown>) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.handleContextOp(String(pluginId), String(op), args ?? {})
   })
-  ipcMain.handle('plugins:getProjectInfo', async (_event, pluginId: string) => {
+  diagnosticHandle('plugins:getProjectInfo', async (_event, pluginId: string) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.handleContextOp(String(pluginId), 'projectInfo', {})
   })
-  ipcMain.handle('plugins:copyToClipboard', async (_event, pluginId: string, text: string) => {
+  diagnosticHandle('plugins:copyToClipboard', async (_event, pluginId: string, text: string) => {
     const runtime = getPluginRuntime()
     if (!runtime) throw new Error('插件系统未初始化')
     return runtime.handleContextOp(String(pluginId), 'clipboardWrite', { text })
   })
-  ipcMain.handle('plugins:export', async (_event, pluginId: string) => {
+  diagnosticHandle('plugins:export', async (_event, pluginId: string) => {
     const service = getPluginService()
     if (!service) throw new Error('插件系统未初始化')
     const result = await dialog.showSaveDialog({
@@ -9194,27 +9576,27 @@ function registerIpc(): void {
     await service.exportZip(String(pluginId), result.filePath)
     return result.filePath
   })
-  ipcMain.handle('plugins:delete', async (_event, pluginId: string) => {
+  diagnosticHandle('plugins:delete', async (_event, pluginId: string) => {
     const service = getPluginService()
     if (!service) throw new Error('插件系统未初始化')
     await service.deletePlugin(String(pluginId))
     await refreshPluginRegistry()
     return service.getSnapshot()
   })
-  ipcMain.handle('plugins:getOverlayWindows', () => pluginOverlayWindowStates())
-  ipcMain.handle('plugins:setOverlayVisible', (_event, pluginId: string, visible: boolean) => setPluginOverlayVisibility(String(pluginId), visible === true))
+  diagnosticHandle('plugins:getOverlayWindows', () => pluginOverlayWindowStates())
+  diagnosticHandle('plugins:setOverlayVisible', (_event, pluginId: string, visible: boolean) => setPluginOverlayVisibility(String(pluginId), visible === true))
   ipcMain.on('plugins:workbenchResult', (event, response: import('../shared/plugins').PluginWorkbenchResult) => {
     pluginChatBridge.respond(event.sender.id, response)
   })
-  ipcMain.handle('plugins:openOverlayWindow', (_event, pluginId: string) => {
+  diagnosticHandle('plugins:openOverlayWindow', (_event, pluginId: string) => {
     const normalizedId = String(pluginId)
     createPluginOverlayWindow(normalizedId)
     return pluginOverlayWindowState(normalizedId)
   })
-  ipcMain.handle('plugins:closeOverlayWindow', (_event, pluginId: string) => {
+  diagnosticHandle('plugins:closeOverlayWindow', (_event, pluginId: string) => {
     return setPluginOverlayVisibility(String(pluginId), true)
   })
-  ipcMain.handle('plugins:setOverlayAlwaysOnTop', (_event, pluginId: string, alwaysOnTop: unknown) => {
+  diagnosticHandle('plugins:setOverlayAlwaysOnTop', (_event, pluginId: string, alwaysOnTop: unknown) => {
     const normalizedId = String(pluginId)
     const window = pluginOverlayWindows.get(normalizedId)
     if (!window || window.isDestroyed()) throw new Error('悬浮窗口未打开')
@@ -9225,9 +9607,26 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return
+  protocol.handle('modmind-media', request => serveBackgroundMedia(request, path.join(app.getPath('userData'), 'appearance-media')))
+  let expectedSampleAt = Date.now() + 30_000
+  const metricsTimer = setInterval(() => {
+    const now = Date.now()
+    try {
+      diagnosticJournal.record({ subsystem: 'process', operation: 'metrics', message: 'Process resource sample', data: {
+        eventLoopDelayMs: Math.max(0, now - expectedSampleAt), memory: process.memoryUsage(),
+        freeSystemMemory: os.freemem(), processes: app.getAppMetrics().map(metric => ({ pid: metric.pid, type: metric.type, cpu: metric.cpu, memory: metric.memory }))
+      } })
+    } catch (error) {
+      diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'metrics', message: 'Process metrics unavailable', error })
+    }
+    expectedSampleAt = now + 30_000
+  }, 30_000)
+  metricsTimer.unref()
+  app.once('quit', () => clearInterval(metricsTimer))
   if (process.platform === 'darwin') process.env.PATH = desktopProcessEnvironment().PATH
   installConsoleDiagnosticCapture()
-  diagnosticJournal.record({
+  diagnosticJournal.recordCritical({
     subsystem: 'app',
     operation: 'startup',
     phase: 'ready',

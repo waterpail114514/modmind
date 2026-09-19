@@ -14,6 +14,20 @@ function relationship(id: string, role: 'required' | 'optional'): AddonRelations
 }
 
 describe('add-on descriptor synchronization', () => {
+  it('preserves an explicit published range while refreshing the development lock', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'addon-range-')); roots.push(root)
+    const target = path.join(root, 'src/main/resources/META-INF/neoforge.mods.toml')
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, 'modLoader="javafml"\n[[mods]]\nmodId="addon"\nversion="1"\n')
+    const project: ProjectInfo = { name: 'Addon', path: root, loader: 'neoforge', minecraftVersion: '1.21.1', namespace: 'addon', createdAt: '' }
+    const old = relationship('engine', 'required')
+    await syncAddonDescriptor(project, [old])
+    await fs.writeFile(target, (await fs.readFile(target, 'utf8')).replace('[1.2.3]', '[1.2.3,2.0)'))
+    await syncAddonDescriptor(project, [{ ...old, version: '1.3.0' }, { ...old, id: 'legacy' }], [old])
+    const text = await fs.readFile(target, 'utf8')
+    expect(text).toContain('versionRange="[1.2.3,2.0)"')
+    expect(text.match(/modId="engine"/g)).toHaveLength(1)
+  })
   it('updates Fabric required and optional relationships while preserving manual entries', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-addon-descriptor-'))
     roots.push(root)

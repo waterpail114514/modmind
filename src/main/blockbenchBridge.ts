@@ -1,7 +1,11 @@
+import { blockbenchThemeColors, getThemePalette, normalizeThemePreset, normalizeCustomThemeColors, type ThemePreset, type CustomThemeColors } from '../shared/appTheme'
+import { scrollbarStyles } from '../shared/scrollbars'
 import { promises as fs } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { diagnosticJournal } from './diagnosticLog'
+import { DiagnosticOperations } from './diagnosticOperations'
 import { BrowserWindow, WebContentsView, type Rectangle } from 'electron'
 import {
   BLOCKBENCH_FORMATS,
@@ -1054,8 +1058,11 @@ export class BlockbenchBridge {
   private attached = false
   private destroyed = false
   private theme: 'light' | 'dark' = 'light'
+  private themePreset: ThemePreset = 'neutral'
+  private customThemeColors: CustomThemeColors = {}
   private actionQueue: Promise<void> = Promise.resolve()
   private readonly checkpoints: StoredBlockbenchCheckpoint[] = []
+  private readonly diagnosticOperations = new DiagnosticOperations(diagnosticJournal)
 
   constructor(options: BlockbenchBridgeOptions) {
     this.window = options.window
@@ -1170,11 +1177,13 @@ export class BlockbenchBridge {
     this.view.setBounds(validateBounds(bounds))
   }
 
-  async setTheme(theme: 'light' | 'dark'): Promise<void> {
+  async setTheme(theme: 'light' | 'dark', preset?: ThemePreset, custom?: CustomThemeColors): Promise<void> {
     this.assertAlive()
     if (theme !== 'light' && theme !== 'dark') throw new Error('Invalid Blockbench theme')
     this.theme = theme
-    this.view.setBackgroundColor(theme === 'dark' ? '#1c1d20' : '#f3f4f6')
+    this.themePreset = normalizeThemePreset(preset)
+    this.customThemeColors = normalizeCustomThemeColors(custom)
+    this.view.setBackgroundColor(getThemePalette(this.themePreset, theme, this.customThemeColors).canvas)
     if (this.status.phase === 'ready') await this.applyTheme()
   }
 
@@ -1663,7 +1672,9 @@ export class BlockbenchBridge {
   ): Promise<PageActionResult> {
     const encoded = Buffer.from(JSON.stringify(action), 'utf8').toString('base64')
     const script = `(async()=>{const action=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(${JSON.stringify(encoded)}),c=>c.charCodeAt(0))));return (${PAGE_DISPATCHER})(action)})()`
-    const result: unknown = await this.view.webContents.executeJavaScript(script, true)
+    const result: unknown = await this.diagnosticOperations.run('blockbench', action.type,
+      { webContentsId: this.view.webContents.id, osProcessId: this.view.webContents.getOSProcessId() },
+      () => this.view.webContents.executeJavaScript(script, true))
     if (!isRecord(result) || typeof result.message !== 'string') {
       throw new Error('Blockbench returned an invalid action result')
     }
@@ -1694,55 +1705,7 @@ export class BlockbenchBridge {
   }
 
   private async applyTheme(): Promise<void> {
-    const palettes = {
-      light: {
-        back: '#ffffff',
-        dark: '#f3f4f6',
-        border: '#dfe1e5',
-        ui: '#f7f8fa',
-        accent: '#1677e8',
-        button: '#ffffff',
-        selected: '#dcecff',
-        elevated: '#ffffff',
-        frame: '#f3f4f6',
-        text: '#34373d',
-        light: '#202226',
-        accent_text: '#ffffff',
-        bright_ui_text: '#34373d',
-        subtle_text: '#747881',
-        bright_ui: '#ffffff',
-        bright_border: '#b9bec7',
-        grid: '#d8dce2',
-        wireframe: '#5a7795',
-        checkerboard: '#e3e6ea',
-        menu_separator: '#c5c9d0',
-        guidelines: 'rgba(70, 88, 105, 0.35)'
-      },
-      dark: {
-        back: '#202125',
-        dark: '#1c1d20',
-        border: '#3b3e45',
-        ui: '#242529',
-        accent: '#2679d8',
-        button: '#2b2d32',
-        selected: '#35485b',
-        elevated: '#2b2d32',
-        frame: '#1c1d20',
-        text: '#e7e7eb',
-        light: '#f4f5f7',
-        accent_text: '#ffffff',
-        bright_ui_text: '#e7e7eb',
-        subtle_text: '#aeb0b8',
-        bright_ui: '#373a42',
-        bright_border: '#5a5e67',
-        grid: '#3b3e45',
-        wireframe: '#79b5e5',
-        checkerboard: '#18191c',
-        menu_separator: '#555a64',
-        guidelines: 'rgba(174, 182, 189, 0.35)'
-      }
-    } as const
-    const palette = palettes[this.theme]
+    const palette = blockbenchThemeColors(this.themePreset, this.theme, this.customThemeColors)
     const css = Object.entries(palette)
       .map(([name, value]) => `--color-${name}: ${value} !important;`)
       .join('')
@@ -1754,7 +1717,7 @@ export class BlockbenchBridge {
         style.id = id;
         document.head.appendChild(style);
       }
-      style.textContent = ${JSON.stringify(`body { ${css} } #corner_logo { display: none !important; }`)};
+      style.textContent = ${JSON.stringify(`body { ${css} } #corner_logo { display: none !important; }` + scrollbarStyles('var(--color-subtle_text)'))};
       document.documentElement.style.colorScheme = ${JSON.stringify(this.theme)};
       document.body.dataset.modmindTheme = ${JSON.stringify(this.theme)};
       document.body.classList.toggle('light_mode', ${this.theme === 'light'});
@@ -1795,10 +1758,46 @@ export class BlockbenchBridge {
   }
 
   private bindLifecycleEvents(): void {
+    const contents = this.view.webContents
+    let lastProcessId = 0
+    const consoleSignatures = new Map<string, number>()
+    let suppressed = 0
+    let intervalStarted = Date.now()
+    const context = (): Record<string, unknown> => ({ webContentsId: contents.id, osProcessId: lastProcessId, pendingOperations: this.diagnosticOperations.snapshot() })
+    contents.on('dom-ready', () => {
+      lastProcessId = contents.getOSProcessId()
+      void contents.executeJavaScript(`(() => {
+        if (globalThis.__modmindDiagnosticsInstalled) return;
+        globalThis.__modmindDiagnosticsInstalled = true;
+        const report = (kind, message) => console.error('[ModMind page diagnostic] ' + kind + ': ' + String(message).slice(0, 8000));
+        window.addEventListener('error', e => report('window-error', e.error?.stack || e.message));
+        window.addEventListener('unhandledrejection', e => report('unhandled-rejection', e.reason?.stack || e.reason));
+        document.addEventListener('webglcontextlost', () => report('webgl-context-lost', 'Graphics context lost'), true);
+        document.addEventListener('webglcontextrestored', () => console.warn('[ModMind page diagnostic] webgl-context-restored'), true);
+      })()`).catch(error => diagnosticJournal.record({ subsystem: 'blockbench', operation: 'diagnostic-hooks', message: 'Unable to install page diagnostics', error }))
+    })
+    contents.on('console-message', (_event, level, message, line, sourceId) => {
+      if (level < 2) return
+      if (Date.now() - intervalStarted >= 60_000) {
+        if (suppressed) diagnosticJournal.record({ subsystem: 'blockbench', operation: 'console-suppressed', level: 'warning', message: `${suppressed} repeated console messages suppressed`, data: context() })
+        consoleSignatures.clear()
+        suppressed = 0
+        intervalStarted = Date.now()
+      }
+      const signature = `${level}:${sourceId}:${line}:${message.slice(0, 200)}`
+      const count = consoleSignatures.get(signature) ?? 0
+      if (count >= 3 || (!count && consoleSignatures.size >= 100)) { suppressed += 1; return }
+      consoleSignatures.set(signature, count + 1)
+      diagnosticJournal.record({ subsystem: 'blockbench', operation: 'console', level: level >= 3 ? 'error' : 'warning', message: message.slice(0, 8000), data: { ...context(), line, sourceId } })
+    })
+    contents.on('unresponsive', () => diagnosticJournal.recordCritical({ subsystem: 'blockbench', operation: 'renderer', phase: 'unresponsive', level: 'error', message: 'Blockbench renderer became unresponsive', data: context() }))
+    contents.on('responsive', () => diagnosticJournal.recordCritical({ subsystem: 'blockbench', operation: 'renderer', phase: 'responsive', message: 'Blockbench renderer recovered', data: context() }))
     this.view.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+      if (code !== -3) diagnosticJournal.record({ subsystem: 'blockbench', operation: 'load', level: 'error', message: description, data: { ...context(), code, url: _url, isMainFrame } })
       if (isMainFrame && code !== -3) this.setStatus('error', description)
     })
     this.view.webContents.on('render-process-gone', (_event, details) => {
+      diagnosticJournal.recordCritical({ subsystem: 'blockbench', operation: 'renderer', phase: 'gone', level: details.reason === 'clean-exit' ? 'info' : 'error', message: `Blockbench renderer stopped: ${details.reason}`, data: { ...context(), ...details, destroyed: this.destroyed, suppressedConsoleMessages: suppressed } })
       this.setStatus('error', `Blockbench renderer stopped: ${details.reason}`)
     })
   }

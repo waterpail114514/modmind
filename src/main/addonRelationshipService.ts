@@ -22,6 +22,7 @@ import { isJavaLoader } from '../shared/projectPlatform'
 import { applyManagedDependencies, readManagedDependencies } from './dependencyService'
 import { fetchJsonWithRetry } from './networkRequest'
 import { syncAddonDescriptor } from './addonDescriptors'
+import { ensureProjectIdentity } from './projectIdentity'
 import { descriptorPath } from './projectTemplates'
 import { inspectModJar, type InspectedModJar } from './jarInspection'
 import { planMods, type ModpackPlan, type PlannedMod } from './modpackPlanner'
@@ -800,6 +801,21 @@ export class AddonRelationshipService {
     if (!isJavaLoader(target.loader) || target.kind === 'modpack') throw new Error('只能关联另一个 Java 模组项目')
     if (path.resolve(target.path) === path.resolve(project.path)) throw new Error('项目不能依赖自己')
     if (target.loader !== project.loader || target.minecraftVersion !== project.minecraftVersion) throw new Error('关联项目必须使用相同的 Minecraft 版本和加载器')
+    const visited = new Set<string>()
+    const identityPath = (value: string): string => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value)
+    const inspectLinks = async (node: ProjectInfo): Promise<void> => {
+      const key = identityPath(node.path)
+      if (key === identityPath(project.path) || node.projectId && project.projectId && node.projectId === project.projectId) throw new Error('检测到项目循环依赖或复制项目身份冲突')
+      if (visited.has(key)) return
+      visited.add(key)
+      for (const link of (await readAddonRelationships(node)).relationships) {
+        if (link.provider !== 'modmind-project' || !link.linkedProjectPath) continue
+        if (identityPath(link.linkedProjectPath) === identityPath(project.path)) throw new Error('检测到项目循环依赖')
+        const child = await this.options.readProject(link.linkedProjectPath)
+        if (child) await inspectLinks(child)
+      }
+    }
+    await inspectLinks(target)
     const targetRelationships = await readAddonRelationships(target).catch(() => emptyManifest(target))
     if (targetRelationships.relationships.some((entry) => entry.provider === 'modmind-project' && entry.linkedProjectPath && path.resolve(entry.linkedProjectPath) === path.resolve(project.path))) {
       throw new Error('两个 ModMind 项目不能互相依赖')
@@ -820,7 +836,18 @@ export class AddonRelationshipService {
     const fileName = safeFileName(`modmind-linked-${target.namespace}.jar`)
     const previousManifestBytes = await fs.readFile(manifestPath(project)).catch(() => null)
     const current = await readAddonRelationships(project)
-    const id = `modmind-project:${createHash('sha256').update(path.resolve(target.path).toLowerCase()).digest('hex').slice(0, 20)}`
+    const linkedProjectId = await ensureProjectIdentity(target)
+    const id = `modmind-project:${linkedProjectId}`
+    for (const entry of current.relationships) {
+      if (entry.provider !== 'modmind-project' || entry.linkedProjectId !== linkedProjectId || !entry.linkedProjectPath || identityPath(entry.linkedProjectPath) === identityPath(target.path)) continue
+      if (await this.options.readProject(entry.linkedProjectPath)) throw new Error('原路径仍存在同身份项目；请明确移除旧关联，或为副本创建独立身份后关联')
+    }
+    if (current.relationships.some(entry => entry.provider === 'modmind-project' && entry.linkedProjectId && entry.linkedProjectId !== linkedProjectId && entry.modIds.some(modId => inspection.profile.modIds.includes(modId)))) {
+      throw new Error('另一个项目身份已提供相同 Mod ID；请先解除冲突关联')
+    }
+    const replacedIds = new Set(current.relationships.filter(entry => entry.provider === 'modmind-project' && (
+      entry.linkedProjectId === linkedProjectId || entry.id === id || entry.modIds.some(modId => inspection.profile.modIds.includes(modId))
+    )).map(entry => entry.id))
     const relationship: AddonRelationship = {
       id,
       role: 'required',
@@ -832,6 +859,8 @@ export class AddonRelationshipService {
       fileName,
       relativePath: `libs/modmind/${fileName}`,
       linkedProjectPath: target.path,
+      linkedProjectId,
+      compatibilityRange: current.relationships.find(entry => replacedIds.has(entry.id) && entry.compatibilityRange)?.compatibilityRange,
       ...(Object.keys(platformLinks).length ? { platformLinks } : {}),
       installedAt: new Date().toISOString(),
       environment: 'both',
@@ -839,8 +868,8 @@ export class AddonRelationshipService {
       dependencies: inspection.dependencies,
       api: { ...inspection.profile, sourceKind: 'project', sourcePath: target.path, sourceMatched: true }
     }
-    const ownedBefore = current.relationships.filter((entry) => entry.id === id || entry.parentRelationshipIds?.includes(id))
-    const retained = current.relationships.filter((entry) => entry.id !== id && !entry.parentRelationshipIds?.includes(id))
+    const ownedBefore = current.relationships.filter((entry) => replacedIds.has(entry.id) || entry.parentRelationshipIds?.some(parent => replacedIds.has(parent)))
+    const retained = current.relationships.filter((entry) => !replacedIds.has(entry.id) && !entry.parentRelationshipIds?.some(parent => replacedIds.has(parent)))
     const occupiedRelationships = new Map(retained.flatMap((entry) => entry.modIds.map((modId) => [modId, entry] as const)))
     relationship.modIds.forEach((modId) => occupiedRelationships.set(modId, relationship))
     const stagedRelationships: Array<{ relationship: AddonRelationship; source: string; sha512: string }> = [{ relationship, source: artifactPath, sha512: inspection.sha512 }]
@@ -876,7 +905,8 @@ export class AddonRelationshipService {
     const descriptorBytes = await fs.readFile(descriptorTarget).catch(() => null)
     const previousDependencies = await readManagedDependencies(project)
     const ownedDependencyIds = new Set(ownedBefore.map((entry) => entry.id))
-    const dependencies = previousDependencies.filter((entry) => !entry.relationshipId || !ownedDependencyIds.has(entry.relationshipId))
+    const replacedPaths = new Set(stagedRelationships.map(entry => entry.relationship.relativePath.toLowerCase()))
+    const dependencies = previousDependencies.filter((entry) => (!entry.relationshipId || !ownedDependencyIds.has(entry.relationshipId)) && !replacedPaths.has(entry.relativePath?.toLowerCase() ?? ''))
     for (const staged of stagedRelationships) {
       dependencies.push({
         projectId: staged.relationship.id,

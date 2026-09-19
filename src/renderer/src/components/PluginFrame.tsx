@@ -1,5 +1,11 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useRef } from 'react'
 import { isPluginPanelMessage, type PluginLogSource, type PluginRecord } from '../../../shared/plugins'
+import { useAppAppearance } from '../theme'
+import { themeCssVariables } from '../../../shared/appTheme'
+import { scrollbarStyles } from '../../../shared/scrollbars'
+
+const scrollbarStyle = scrollbarStyles()
 
 interface PluginFrameProps {
   plugin: PluginRecord
@@ -14,6 +20,11 @@ interface PluginFrameProps {
 /** Shared sandbox and host bridge for normal panels and persistent overlays. */
 export function PluginFrame({ plugin, entry, theme, surface, className, onReady, onError }: PluginFrameProps): JSX.Element {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const appearance = useAppAppearance()
+  const palette = useMemo(() => themeCssVariables(appearance.themePreset, theme, appearance.customThemeColors), [appearance.themePreset, appearance.customThemeColors, theme])
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage({ type: 'themeChanged', theme, palette, themePreset: appearance.themePreset, scrollbarStyle }, '*')
+  }, [theme, palette, appearance.themePreset])
   const source = useMemo(
     () => `modmind-plugin://${plugin.manifest.id}/${entry}?revision=${plugin.revision ?? 0}`,
     [entry, plugin.manifest.id, plugin.revision]
@@ -28,9 +39,9 @@ export function PluginFrame({ plugin, entry, theme, surface, className, onReady,
       if (data.type === 'ready') {
         onReady?.()
         void window.modmind.plugins.getProjectInfo(plugin.manifest.id).then((project) => {
-          respond({ type: 'hostInfo', hostInfo: { pluginId: plugin.manifest.id, panelVersion: 1, theme, surface, project } })
+          respond({ type: 'hostInfo', hostInfo: { pluginId: plugin.manifest.id, panelVersion: 1, theme, palette, themePreset: appearance.themePreset, scrollbarStyle, surface, project } })
         }).catch(() => {
-          respond({ type: 'hostInfo', hostInfo: { pluginId: plugin.manifest.id, panelVersion: 1, theme, surface, project: null } })
+          respond({ type: 'hostInfo', hostInfo: { pluginId: plugin.manifest.id, panelVersion: 1, theme, palette, themePreset: appearance.themePreset, scrollbarStyle, surface, project: null } })
         })
         return
       }
@@ -42,7 +53,7 @@ export function PluginFrame({ plugin, entry, theme, surface, className, onReady,
 
       const complete = (requestId: string, operation: Promise<unknown>): void => {
         void operation.then((result) => respond({ type: 'result', requestId, ok: true, result })).catch((cause: unknown) => {
-          const message = cause instanceof Error ? cause.message : String(cause)
+          const message = reportClientFailure(cause)
           respond({ type: 'result', requestId, ok: false, error: message })
         })
       }
@@ -67,7 +78,7 @@ export function PluginFrame({ plugin, entry, theme, surface, className, onReady,
     }
     window.addEventListener('message', listener)
     return () => window.removeEventListener('message', listener)
-  }, [onError, onReady, plugin.manifest.id, surface, theme])
+  }, [onError, onReady, plugin.manifest.id, surface, theme, palette, appearance.themePreset])
 
   return (
     <iframe

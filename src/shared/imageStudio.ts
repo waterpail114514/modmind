@@ -64,6 +64,8 @@ export interface ImageGenerationResult {
   hosted: boolean
   credits: number
   revisedPrompt?: string
+  /** A later request failed; assets contains the images already generated. */
+  error?: string
 }
 
 export interface ImageHistoryItem extends Omit<ImageAsset, 'dataUrl'> {

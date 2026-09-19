@@ -59,7 +59,7 @@ describe('extractClaudeTokenUsage', () => {
         usage: { input_tokens: 1_500, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 2_500, output_tokens: 900 }
       }
     })
-    expect(usage).toEqual({ inputTokens: 1_500, cachedInputTokens: 52_500, outputTokens: 900, contextWindow: 200_000 })
+    expect(usage).toEqual({ inputTokens: 1_500, cachedInputTokens: 52_500, outputTokens: 900 })
   })
 
   it('leaves the context window unknown for unrecognized models', () => {
@@ -74,5 +74,11 @@ describe('extractClaudeTokenUsage', () => {
     expect(extractClaudeTokenUsage({ type: 'assistant', message: { usage: {} } })).toBeUndefined()
     expect(extractClaudeTokenUsage(null)).toBeUndefined()
     expect(extractClaudeTokenUsage({ type: 'result', message: { model: 'claude-opus-4' } })).toBeUndefined()
+  })
+
+  it('uses the CLI context window without assuming every Claude model has 200k', () => {
+    expect(extractClaudeTokenUsage({ type: 'result', usage: { input_tokens: 10 }, modelUsage: {
+      'claude-test': { contextWindow: 1_000_000 }
+    } })).toMatchObject({ contextWindow: 1_000_000 })
   })
 })

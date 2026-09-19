@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -29,7 +30,7 @@ import type {
 import type { ProjectInfo } from '../../../shared/types'
 import { useConfirmDialog } from './InteractionDialogs'
 
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+function errorMessage(error: unknown): string { return reportClientFailure(error) }
 function formatBytes(value: number): string { return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(value / 1024)} KB` }
 function roleLabel(role: AddonRelationshipRole): string { return role === 'required' ? '必须安装' : role === 'optional' ? '可选联动' : '仅测试' }
 function providerLabel(provider: AddonRelationship['provider'] | AddonSearchProvider): string {
@@ -237,7 +238,7 @@ export default function AddonRelationshipsWorkspace({ project, beginner, onFiles
 
   return <div className={`addon-relationships-page ${beginner ? 'beginner' : 'advanced'}`}>
     <header className="content-toolbar addon-relationships-toolbar">
-      <div><h1>{beginner ? '联动模组' : '前置与联动'}</h1><p>{project.loader} · Minecraft {project.minecraftVersion}</p></div>
+      <h1 className="visually-hidden">{beginner ? '联动模组' : '前置与联动'}</h1>
       <div className="addon-toolbar-actions">
         {!beginner ? <button className="secondary-button compact" disabled={Boolean(busy)} onClick={() => void audit()}>{busy === 'audit' ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}检查</button> : null}
         <button className="secondary-button compact" disabled={Boolean(busy)} onClick={() => void beginImport()}>{busy === 'import' ? <LoaderCircle className="spin" size={14} /> : <FileArchive size={14} />}导入 JAR</button>

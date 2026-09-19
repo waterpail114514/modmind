@@ -3,7 +3,16 @@ name: minecraft-mod-development
 description: Implement complete Minecraft Java Edition mod features across Fabric, Quilt, Forge, and NeoForge. Use for new items, blocks, entities, screens, networking, world generation, commands, gameplay systems, data packs, registrations, ordinary dependencies, or cross-cutting feature work in a Java mod project.
 ---
 
+When testing a player-facing feature, distinguish build, actual client loading, interaction, visuals and independent-server behavior. Use available ModMind test capabilities, never a protocol bot as proof of modded rendering or custom networking. Keep test control mods out of exported artifacts. For automated GUI/player testing consult `headless-minecraft-testing` only when needed. Record repeated failures and current requirements with `modmind_creation_context` when available.
+
 # Minecraft Mod Development
+
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
+For repeated GUI or interaction failures, read [player-experience.md](references/player-experience.md). Ordinary localized edits do not require this reference or a full gameplay cycle.
 
 Build the feature as a coherent slice across code, registration, data, resources, and user-visible behavior.
 

@@ -1,0 +1,143 @@
+/* Compatibility names resolve to the central semantic palette. No component owns colors. */
+:root {
+  --text: var(--theme-text);
+  --muted: var(--theme-muted);
+  --line: var(--theme-line);
+  --surface: var(--theme-surface);
+  --surface-alt: var(--theme-panel);
+  --mm-background: var(--theme-canvas);
+  --mm-sidebar: var(--theme-panel);
+  --mm-raised: var(--theme-raised);
+  --mm-inset: var(--theme-inset);
+  --mm-accent: var(--theme-accent);
+  --mm-accent-strong: var(--theme-action-hover);
+  --mm-accent-wash: var(--theme-selected);
+  --action-fill: var(--theme-action);
+  --action-hover: var(--theme-action-hover);
+  --focus-stroke: var(--theme-focus);
+  --focus-fill: var(--theme-inset);
+  --selection-fill: var(--theme-selection);
+  --mm-success: var(--theme-success);
+  --mm-success-wash: var(--theme-success-bg);
+  --mm-warning: var(--theme-warning);
+  --mm-warning-wash: var(--theme-warning-bg);
+  --mm-danger: var(--theme-danger);
+  --mm-danger-wash: var(--theme-danger-bg);
+  --dark-bg: var(--theme-canvas);
+  --dark-surface: var(--theme-surface);
+  --dark-raised: var(--theme-raised);
+  --dark-border: var(--theme-line);
+  --dark-field: var(--theme-surface);
+  --dark-text: var(--theme-text);
+  --dark-muted: var(--theme-muted);
+  --agent-fill-1: var(--theme-canvas);
+  --agent-fill-2: var(--theme-panel);
+  --agent-fill-3: var(--theme-line);
+  --agent-text-1: var(--theme-text);
+  --agent-text-2: var(--theme-text);
+  --agent-text-3: var(--theme-muted);
+  --agent-primary: var(--theme-action);
+  --agent-surface: var(--theme-surface);
+  --ftb-accent: var(--theme-accent);
+  --ftb-accent-soft: var(--theme-selected);
+  --ftb-surface: var(--theme-surface);
+  --ftb-surface-alt: var(--theme-panel);
+  --ftb-border: var(--theme-line);
+  --ftb-text: var(--theme-text);
+  --ftb-muted: var(--theme-muted);
+  --ftb-canvas: var(--theme-canvas);
+  --ftb-panel: var(--theme-surface);
+  --welcome-text: var(--theme-text);
+  --welcome-muted: var(--theme-muted);
+  --welcome-line: var(--theme-line);
+  --welcome-hover: var(--theme-panel);
+  --inspiration-text: var(--theme-text);
+  --studio-canvas: var(--theme-canvas);
+  --studio-card: var(--theme-surface);
+  --studio-edge: var(--theme-line);
+  --hover: var(--theme-panel);
+  --accent: var(--theme-accent);
+  --accent-soft: var(--theme-selected);
+  --bg: var(--theme-canvas);
+  --mm-shadow: 0 4px 16px color-mix(in srgb, var(--theme-shadow) 8%, transparent);
+  --mm-shadow-float: 0 10px 30px color-mix(in srgb, var(--theme-shadow) 18%, transparent);
+  --studio-tint: transparent;
+}
+/* Shared neutral surfaces. Blue identifies an action or selection, never a focus frame. */
+:root, .app-shell {
+  color: var(--text);
+}
+.app-shell :where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), select, textarea) {
+  color: var(--theme-text); background-color: var(--theme-surface); border: 1px solid var(--theme-line); border-radius: 6px;
+}
+.app-shell input:is([type='checkbox'], [type='radio'], [type='range']) { accent-color: var(--theme-action); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.titlebar, .main-content, .project-launcher, .production-page, .modpack-workspace, .standard-page, .settings-page, .empty-state) { background: var(--mm-background); color: var(--text); border-color: var(--line); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .sidebar { background: var(--mm-sidebar); border-color: var(--line); backdrop-filter: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.titlebar-name, .sidebar-nav button, .project-switcher, .new-project-side) { color: var(--text); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.project-switcher, .new-project-side) { background: transparent; border-color: var(--line); box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .sidebar .sidebar-nav :is(.sidebar-nav-item.active, .sidebar-nav-item[aria-current='page']) { background: var(--mm-accent-wash); color: var(--text); box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .sidebar .sidebar-nav :is(.sidebar-nav-item.active, .sidebar-nav-item[aria-current='page']) > svg { color: var(--mm-accent); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .settings-page .settings-section { background: transparent; border-color: var(--line); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.content-toolbar, .mc-test-header, .production-tabs, .resource-pack-toolbar, .resource-pack-body, .image-workflow-library, .image-workflow-sidebar, .image-process-tools, .image-workflow-results, .ftb-quest-chapters, .ftb-quest-panel-title, .ftb-quest-canvas-heading, .plugin-search-results, .dialog, .interaction-dialog, .ftb-quest-book) { background: var(--surface); color: var(--text); border-color: var(--line); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.secondary-button, .field-label > input, .field-label > select, .field-label > textarea, .resource-pack-toolbar select) { color: var(--text); background: var(--surface); border-color: var(--line); box-shadow: none; }
+/* Content browsers are working canvases, not full-page white cards. */
+.app-shell:is(.dark-mode, :not(.dark-mode)) .resource-pack-workspace,
+.app-shell:is(.dark-mode, :not(.dark-mode)) .resource-pack-workspace :is(.resource-pack-toolbar, .resource-pack-body, .resource-pack-editor, .resource-pack-editor-heading, .pack-content-file-info, .pack-content-edit-actions, .resource-pack-empty, .pack-content-download-panel) {
+  background: var(--mm-background); color: var(--text); border-color: var(--line);
+}
+.app-shell:is(.dark-mode, :not(.dark-mode)) .resource-pack-workspace .resource-pack-files { background: var(--mm-sidebar); border-color: var(--line); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .resource-pack-workspace .resource-pack-file.active { background: var(--mm-accent-wash); color: var(--text); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.primary-button, .send-button, .agent-primary-button, .agent-send-button, .image-studio-tabs button.active, .beginner-reasoning-control button.active) { background: var(--action-fill); color: var(--theme-on-action); border-color: transparent; box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.toggle.on, .expert-mode-toggle input:checked + .expert-mode-track, .switch-control input:checked + span) { background: var(--action-fill); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .secondary-button.danger { color: var(--mm-danger); border-color: var(--line); }
+@media (hover: hover) and (pointer: fine) {
+  .app-shell:is(.dark-mode, :not(.dark-mode)) :is(.primary-button, .send-button, .agent-primary-button, .agent-send-button):hover:not(:disabled) { background: var(--action-hover); box-shadow: none; }
+  .app-shell:is(.dark-mode, :not(.dark-mode)) .secondary-button:hover:not(:disabled) { background: var(--surface-alt); }
+}
+.app-shell:is(.dark-mode, :not(.dark-mode)) .agent-workbench {
+  background: var(--mm-background);
+}
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.ftb-quest-node, .react-flow__node-workflow, .image-workflow-node) { background: var(--surface); border-color: var(--line); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .react-flow__node-workflow:is(:hover, .selected) { border-color: var(--focus-stroke); box-shadow: 0 1px 4px color-mix(in srgb, var(--theme-shadow) 9.41%, transparent); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.ftb-quest-chapter-list button.selected, .ftb-quest-book-tile.expanded) { color: var(--text); background: var(--mm-accent-wash); border-color: transparent; box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.image-workflow-canvas, .image-workflow-layout, .ftb-quest-canvas) { background: var(--mm-background); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.ftb-quest-health:not(.error), .ftb-quest-message:not(.error), .production-ready) { color: var(--muted); background: transparent; border-color: var(--line); box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .ftb-quest-canvas-heading :is(strong, h2, h3, input) { color: var(--text); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .react-flow__node-quest.selected .ftb-quest-node { border-color: var(--focus-stroke); box-shadow: 0 1px 4px color-mix(in srgb, var(--theme-shadow) 9.41%, transparent); filter: none; }
+.app-shell .react-flow { --xy-node-boxshadow-selected: 0 0 0 1px var(--focus-stroke); --xy-node-boxshadow-hover: 0 1px 4px color-mix(in srgb, var(--theme-shadow) 9.41%, transparent); }
+
+/* Pointer focus is quiet; keyboard focus uses a neutral underline instead of a frame. */
+.app-shell :focus, .ftb-ctx-menu :focus { outline: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(button, summary, a, [role='button'], [role='tab']):focus-visible,
+.app-shell:is(.dark-mode, :not(.dark-mode)) [tabindex]:not(input):not(textarea):not(select):focus-visible {
+  outline: none; box-shadow: inset 0 -2px 0 var(--focus-stroke);
+}
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(input, select, textarea):focus { outline: none; border-color: var(--focus-stroke); box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(input, select, textarea):focus-visible { outline: none; box-shadow: inset 0 -1px 0 var(--focus-stroke); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.settings-search, .project-search, .modpack-list-search, .keybind-search, .third-party-search, .mapping-search-box, .agent-composer, .inspiration-composer):focus-within { outline: none; border-color: var(--focus-stroke); box-shadow: none; }
+.app-shell :is(.settings-search, .project-search, .modpack-list-search, .keybind-search, .third-party-search, .mapping-search-box, .agent-composer, .inspiration-composer) :is(input, textarea):focus-visible { box-shadow: none; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .expert-mode-toggle input:focus-visible + .expert-mode-track,
+.app-shell:is(.dark-mode, :not(.dark-mode)) .switch-control input:focus-visible + span { outline: none; box-shadow: 0 2px 0 var(--focus-stroke); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.primary-button, .send-button, .agent-primary-button, .agent-send-button):focus-visible { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--theme-on-action) 70%, transparent); }
+.app-shell .monaco-editor :focus { outline: none; box-shadow: none; }
+.ftb-ctx-menu { background: var(--surface); color: var(--text); border-color: var(--line); }
+.ftb-ctx-menu button { color: inherit; }
+.ftb-ctx-menu button:focus-visible { outline: none; background: var(--focus-fill); box-shadow: inset 0 -2px 0 var(--focus-stroke); }
+.app-shell ::selection { color: var(--text); background: var(--selection-fill); }
+@media (forced-colors: active) {
+  .app-shell :focus-visible { outline: 1px solid CanvasText; outline-offset: 2px; }
+}
+
+.theme-preset-row { margin-bottom: 18px; }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.danger-button, .primary-button.decompile-danger-confirm), .app-shell .window-control.close:hover { background: var(--theme-danger-action); color: var(--theme-on-action); border-color: var(--theme-danger-action); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) .primary-button.decompile-danger-confirm:hover { background: var(--theme-danger-action); }
+.theme-preset-options { display: flex; gap: 6px; flex-wrap: wrap; }
+.theme-preset-options button { min-height: 34px; padding: 6px 13px; border: 1px solid var(--theme-line); border-radius: 6px; color: var(--theme-text); background: var(--theme-surface); cursor: pointer; font: inherit; font-size: 13px; }
+.theme-preset-options button[aria-pressed='true'] { border-color: transparent; background: var(--theme-selected); color: var(--theme-accent); }
+.theme-preset-options button:hover { background: var(--theme-panel); }
+.app-shell .server-console-output, .app-shell .log-section pre { background: var(--theme-console); color: var(--theme-console-text); }
+.app-shell .server-console-gutter, .app-shell .server-console-empty { color: var(--theme-console-muted); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) button.agent-send-button:disabled { background: var(--theme-inset); color: var(--theme-muted); }
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(.external-agent-reasoning-control button.active, .agent-segmented button.active) { background: var(--theme-action); color: var(--theme-on-action); }
+.app-shell .react-flow { --xy-background-color: var(--theme-canvas); --xy-background-pattern-dots-color: var(--theme-grid); --xy-minimap-background-color: var(--theme-panel); --xy-minimap-mask-background-color: color-mix(in srgb, var(--theme-canvas) 70%, transparent); --xy-minimap-node-background-color: var(--theme-strong-line); --xy-controls-button-background-color: var(--theme-surface); --xy-controls-button-color: var(--theme-text); --xy-controls-button-border-color: var(--theme-line); }
+@container (max-width: 600px) { .theme-preset-row { flex-wrap: wrap; } }

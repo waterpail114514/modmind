@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CircleAlert, FileCode2, Keyboard, LoaderCircle, MousePointer2, Plus, RefreshCw, RotateCcw, Save, Search, X } from 'lucide-react'
 import type { ModpackKeybindState, ProjectInfo } from '../../../shared/types'
@@ -20,7 +21,7 @@ const bindingLabels: Record<string, string> = {
   'key.mouse.left': '鼠标左键', 'key.mouse.right': '鼠标右键', 'key.mouse.middle': '鼠标中键', 'key.mouse.4': '鼠标侧键 1', 'key.mouse.5': '鼠标侧键 2'
 }
 
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+function errorMessage(error: unknown): string { return reportClientFailure(error) }
 
 function actionLabel(action: string): string {
   return action.replace(/^key_/, '').split(/[._-]/).filter(Boolean).map((part) => part.length <= 3 ? part.toUpperCase() : `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`).join(' ')
@@ -167,7 +168,7 @@ export default function ModpackKeybindWorkspace({ project, onOpenRaw }: { projec
 
   return <div className="keybind-workspace">
     <header className="content-toolbar keybind-toolbar">
-      <div><h1>玩家预设</h1><p>当前 `options.txt` 中的键位</p></div>
+      <h1 className="visually-hidden">玩家预设</h1>
       <div className="keybind-toolbar-actions"><span className={conflicts.length ? 'keybind-conflict-count warning' : 'keybind-conflict-count'}>{conflicts.length ? <AlertTriangle size={14} /> : <Keyboard size={14} />}{conflicts.length ? `${conflicts.length} 组冲突` : '无冲突'}</span><button className="icon-button" type="button" title="重新读取键位" aria-label="重新读取键位" disabled={Boolean(busy)} onClick={() => void load()}>{busy === 'load' ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}</button><button className="secondary-button compact" type="button" disabled={!state?.path} onClick={() => state && onOpenRaw(state.path)}><FileCode2 size={14} />原文</button><button className="primary-button compact" type="button" disabled={!changedActions.length || Boolean(busy)} onClick={() => void save()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}保存 {changedActions.length || ''}</button></div>
     </header>
 

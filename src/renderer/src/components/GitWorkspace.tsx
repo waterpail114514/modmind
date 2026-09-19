@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useState } from 'react'
 import {
   Check,
@@ -19,7 +20,7 @@ import type { ProjectInfo } from '../../../shared/types'
 import { useConfirmDialog } from './InteractionDialogs'
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return reportClientFailure(error)
 }
 
 function changeLabel(index: string, worktree: string): string {

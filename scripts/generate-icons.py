@@ -1,4 +1,4 @@
-"""Compatibility entry point for the transparent pixel-art generator."""
+"""Compatibility entry point for the SVG-based logo asset generator."""
 from pathlib import Path
 import subprocess
 root = Path(__file__).resolve().parents[1]

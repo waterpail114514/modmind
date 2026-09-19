@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PluginService } from './pluginService'
+import { createPluginPanelHtml } from '../shared/pluginUi'
 
 vi.mock('./bedrockAddon', () => ({
   createStoredZip: (entries: Array<{ name: string; data: Buffer }>) => Buffer.concat(entries.map((e) => e.data))
@@ -172,6 +173,7 @@ describe('PluginService', () => {
     const written = JSON.parse(await fs.readFile(path.join(directory, 'plugin.json'), 'utf8')) as { backend?: { entry?: string } }
     expect(written.backend?.entry).toBe('backend/main.mjs')
     await expect(fs.access(path.join(directory, 'panel', 'index.html'))).resolves.toBeUndefined()
+    expect(await fs.readFile(path.join(directory, 'panel', 'index.html'), 'utf8')).toBe(createPluginPanelHtml('My New Plugin'))
     await expect(fs.access(path.join(directory, 'backend', 'main.mjs'))).resolves.toBeUndefined()
     expect(await fs.readFile(path.join(directory, 'backend', 'main.mjs'), 'utf8')).toContain('async "greet"(input)')
     expect(service.getPlugin('my-new-plugin')).toBeTruthy()

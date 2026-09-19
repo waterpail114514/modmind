@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { SecretInput } from './SecretInput'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -68,7 +69,7 @@ const defaultRelease = (project: ProjectInfo): ReleaseSettings => ({
 })
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return reportClientFailure(error)
 }
 
 function compactNumber(value: number): string {
@@ -544,10 +545,7 @@ function ModpackDeliveryPane({ project }: { project: ProjectInfo }): React.JSX.E
   }
 
   return <div className="production-page">
-    <header className="content-toolbar">
-      <div><h1>交付</h1><p>{project.loader} · Minecraft {project.minecraftVersion} · Modrinth 整合包</p></div>
-      <span className="production-ready"><GitBranch size={14} />整合包归档</span>
-    </header>
+    <h1 className="visually-hidden">交付</h1>
     <section className="production-pane modpack-delivery-pane">
       <div><h2>版本与导出</h2><p>当前版本用于本次 .mrpack；成功导出后才更新到下一版本</p></div>
       <div className="release-form modpack-release-form">
@@ -570,10 +568,7 @@ export default function ProductionWorkspace({ project, onFilesChanged }: { proje
   if (project.kind === 'modpack') return <ModpackDeliveryPane project={project} />
 
   return <div className="production-page">
-    <header className="content-toolbar">
-      <div><h1>生产中心</h1><p>{project.loader} · Minecraft {project.minecraftVersion}</p></div>
-      <span className="production-ready"><GitBranch size={14} />交付工具链</span>
-    </header>
+    <h1 className="visually-hidden">生产中心</h1>
     <nav className="production-tabs" aria-label="生产中心">
       {([['dependencies', '依赖'], ['content', '内容'], ['tests', '测试矩阵'], ['release', '发布']] as Array<[ProductionTab, string]>).map(([id, label]) => <button className={tab === id ? 'active' : ''} key={id} onClick={() => setTab(id)}>{label}</button>)}
     </nav>

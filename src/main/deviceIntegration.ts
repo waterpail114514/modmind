@@ -1,4 +1,5 @@
 import type { AiModelInfo, AppVersionCheckResult, DeviceKeyStatus, DeviceUsage } from '../shared/types'
+import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
 
 export const DEFAULT_DEVICE_MODEL = 'gpt-5.6-sol'
@@ -165,6 +166,39 @@ export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: 
     quotaSyncedAt: typeof data.quotaSyncedAt === 'string' ? data.quotaSyncedAt : null,
     checkedAt: typeof data.checkedAt === 'string' ? data.checkedAt : new Date().toISOString()
   }
+}
+
+/** Request fresh image credentials with the account credential, never an image key. */
+export async function requestDeviceImageLease(
+  credentials: { siteUrl: string; apiKey: string; username: string },
+  signal: AbortSignal,
+  fetcher: FetchLike = fetch
+): Promise<{ baseUrl: string; apiKey: string }> {
+  const site = normalizeSiteUrl(credentials.siteUrl)
+  let response: Response
+  try {
+    response = await fetcher(`${site}/api/device/image-lease`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.apiKey}`, 'Idempotency-Key': randomUUID() },
+      body: JSON.stringify({ username: credentials.username, timestamp: new Date().toISOString() }),
+      signal
+    })
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new DeviceApiError('图片授权失败：无法连接账号服务，尚未调用生图接口', 0)
+  }
+  const payload: unknown = await response.json().catch(() => null)
+  const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+  if (!response.ok || root.success === false) {
+    const detail = apiErrorMessage(payload, '账号服务未返回可读错误')
+    const recovery = response.status === 401 ? '；请重新连接 ModMind 账号，或在网页端重新同步接入凭证' : ''
+    throw new DeviceApiError(`图片授权失败（HTTP ${response.status}）：${detail}${recovery}。尚未调用生图接口`, response.status)
+  }
+  const data = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root
+  const baseUrl = typeof data.baseUrl === 'string' && data.baseUrl.trim() ? normalizeRelayBaseUrl(data.baseUrl) : ''
+  const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : ''
+  if (!baseUrl || !apiKey) throw new DeviceApiError('图片授权失败：响应缺少临时 Key 或 Base URL，尚未调用生图接口', response.status)
+  return { baseUrl, apiKey }
 }
 
 export async function sendDeviceFastMode(

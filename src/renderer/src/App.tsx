@@ -1,3 +1,6 @@
+import { useAiAttachments } from './useAiAttachments'
+import { readWorkbenchFeatureSelection, type WorkbenchFeatures } from '../../shared/workbenchFeatures'
+import { reportClientFailure } from './lib/clientFailure'
 import { editorLanguage } from './lib/editorLanguage'
 import { useModpackContentFeatures } from './lib/useModpackContentFeatures'
 import { SecretInput } from './components/SecretInput'
@@ -5,13 +8,18 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useReducer, useRef
 import type { ReactNode, SetStateAction } from 'react'
 import { memo } from 'react'
 import { marked } from 'marked'
-import { Virtuoso } from 'react-virtuoso'
+import ConversationTimeline from './components/WorkbenchConversation'
 import ChatWelcome from './components/ChatWelcome'
 import MinimalProjectStart from './components/MinimalProjectStart'
-import { discussionPrompt, engineeringHandoffPrompt, workbenchFlowBackend, workbenchFlowOptions } from '../../shared/workbenchFlow'
+import QuickGameTestDialog from './components/QuickGameTestDialog'
+import { discussionPrompt, engineeringHandoffPrompt, shouldAutoStartDraft, workbenchFlowBackend, workbenchFlowOptions } from '../../shared/workbenchFlow'
 import { missingDraftDetails } from '../../shared/draftProject'
 import { splitDiscussionChoices } from '../../shared/discussionChoices'
 import SettingsSections from './components/SettingsSections'
+import MoreActions from './components/MoreActions'
+import { normalizeAppearance } from '../../shared/appTheme'
+import AppearanceSettings from './components/AppearanceSettings'
+import { applyAppearance } from './theme'
 import { verifySettingsSave } from './settingsSaveResult'
 import { recoveryBelongsToConversation } from '../../shared/aiSession'
 import { INSPIRATION_FOLLOWUPS_INSTRUCTION, splitInspirationFollowups } from './inspirationFollowups'
@@ -102,7 +110,6 @@ import type {
   DetectedJavaHome,
   JavaPreferences,
   InspirationChatMessage,
-  JavaLoaderKind,
   LoaderKind,
   LoaderVersionOption,
   PipelineEvent,
@@ -123,7 +130,7 @@ import type {
   DetachedWindowTarget
 } from '../../shared/types'
 import type { MappingClassDetail, MappingClassResult } from '../../shared/mappings'
-import type { DecompileInspectResult, DecompileProgressEvent } from '../../shared/decompile'
+import { decompileTargetPlatforms, type DecompilePlatform, type DecompileInspectResult, type DecompileProgressEvent } from '../../shared/decompile'
 import type { DecompileTermsPayload } from '../../shared/decompileModuleExport'
 import type { GiteeBuildResult, GiteeBuildSettings, GiteeBuildValidation } from '../../shared/production'
 import type { ImageStudioSettings } from '../../shared/imageStudio'
@@ -174,7 +181,8 @@ import {
 import { inspirationConversationTitle, normalizeStoredInspirationMessages, persistInspirationHistory, type InspirationConversation } from './inspirationStorage'
 import { isAiOperationalStatusText, isUsableAiAnswer } from '../../shared/aiOutput'
 import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
-import appLogo from './assets/logo.png'
+import appLogo from './assets/logo-wordmark.svg'
+import appLogoDark from './assets/logo-wordmark-dark.svg'
 
 const MonacoCodeEditor = lazy(() => import('./components/MonacoCodeEditor'))
 
@@ -368,7 +376,7 @@ const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: st
 const MAX_AUTO_REPAIR_ROUNDS = 3
 
 const initialSettings: AgentSettings = {
-  codingBackend: 'codex',
+  codingBackend: 'quota',
   allowBuildScriptChanges: true,
   preferLocalGradle: false,
   gradleExecutable: '',
@@ -516,7 +524,7 @@ function formatDate(value: string): string {
 }
 
 function errorMessage(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
+  return (reportClientFailure(error))
     .replace(/blocked\s+by\s+policy/gi, '服务限制')
     .replace(/content\s+policy/gi, '服务限制')
     .replace(/policy\s+violation/gi, '服务限制')
@@ -524,7 +532,12 @@ function errorMessage(error: unknown): string {
 }
 
 function aiFailureMessage(error: unknown): string {
-  return describeAiFailureForUser(errorMessage(error))
+  reportClientFailure(error)
+  return describeAiFailureForUser(rawErrorMessage(error))
+}
+
+function rawErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function isEditablePath(relativePath: string): boolean {
@@ -534,13 +547,13 @@ function isEditablePath(relativePath: string): boolean {
 }
 
 function shouldOfferAiRecovery(error: unknown): boolean {
-  const message = errorMessage(error)
+  const message = rawErrorMessage(error)
   if (/(?:^|\D)(?:401|402|403|404|429|500|502|503|504)(?:\D|$)|API Key|timed out|timeout|stream disconnected|connection (?:reset|closed|refused)|ECONNRESET|ETIMEDOUT|ENOTFOUND|线路繁忙|连接中断|响应超时|会话.{0,20}拒绝|凭证已失效|额度不足|模型接口或所选模型不存在/i.test(message)) return true
   return /recovery snapshot was preserved|safety stop|interrupted|Review Agent rejected completion|Mandatory workflow incomplete|连续 .*没有任何操作|切换线路后重试|中断|安全停止|恢复快照/i.test(message)
 }
 
 function isWorkflowAuditRejection(error: unknown): boolean {
-  return /Review Agent rejected completion|Mandatory workflow incomplete|ModMind 完成检查未通过|审计|工作流未完成/i.test(errorMessage(error))
+  return /Review Agent rejected completion|Mandatory workflow incomplete|ModMind 完成检查未通过|审计|工作流未完成/i.test(rawErrorMessage(error))
 }
 
 function FileTree({
@@ -676,7 +689,7 @@ function ProjectLauncher({
         </button>
         <button className="project-launcher-action" type="button" onClick={onImportModJar}>
           <span className="project-launcher-icon adopt"><Binary size={19} /></span>
-          <span><strong>接管现成模组</strong><small>识别 JAR 的加载器与 Minecraft 版本，反编译后直接创建 ModMind 项目</small></span>
+          <span><strong>接管模组或插件</strong><small>支持模组和服务端插件 JAR，识别平台并反编译为 ModMind 项目</small></span>
           <ChevronRight size={17} />
         </button>
       </div>
@@ -811,7 +824,7 @@ function AdoptModJarDialog({
   onAdopted: (project: ProjectInfo) => void
 }): React.JSX.Element {
   const [name, setName] = useState(inspection.displayName?.trim() || inspection.fileName.replace(/\.jar$/i, ''))
-  const [loader, setLoader] = useState<JavaLoaderKind>(inspection.loader ?? 'fabric')
+  const [loader, setLoader] = useState<DecompilePlatform>(inspection.loader ?? 'fabric')
   const [minecraftVersion, setMinecraftVersion] = useState(inspection.minecraftVersions[0] ?? '')
   const [stage, setStage] = useState<'confirm' | 'terms'>('confirm')
   const [terms, setTerms] = useState<DecompileTermsPayload | null>(null)
@@ -866,10 +879,10 @@ function AdoptModJarDialog({
   }
 
   const reasons = [
-    `已识别 ${platformLabel(loader)} 模组描述文件`,
-    inspection.minecraftVersions.length
+    `已识别 ${platformLabel(loader)} ${inspection.plugin ? "插件" : "模组"}描述文件`,
+    !inspection.plugin && inspection.minecraftVersions.length
       ? `已自动识别 Minecraft ${inspection.minecraftVersions.join(' / ')}`
-      : '未能自动识别 Minecraft 版本，请手动确认',
+      : inspection.plugin ? '请确认目标 Minecraft / 代理 API 版本' : '未能自动识别 Minecraft 版本，请手动确认',
     ...inspection.warnings
   ]
 
@@ -877,11 +890,11 @@ function AdoptModJarDialog({
     <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}>
       <div className="dialog adopt-dialog mod-jar-adopt-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <div><h2>接管现成模组</h2><p>{inspection.filePath}</p></div>
+          <div><h2>接管模组或插件</h2><p>{inspection.filePath}</p></div>
           <button className="icon-button" title="关闭" disabled={busy} onClick={onClose}><X size={17} /></button>
         </div>
         <div className="adopt-detection">
-          <span className="adopt-kind complete">JAR 模组</span>
+          <span className="adopt-kind complete">{inspection.plugin ? "JAR 服务端插件" : "JAR 模组"}</span>
           <div><strong>{inspection.classCount} 个类</strong><small>{platformLabel(loader)} · {sizeLabel} · sha256 {inspection.sha256.slice(0, 12)}…</small></div>
         </div>
         {busy ? <div className="adapter-note"><LoaderCircle className="spin" size={16} /><p><strong>正在反编译</strong><span>{progress?.message ?? '正在准备受控反编译环境'}</span></p></div> : null}
@@ -889,13 +902,13 @@ function AdoptModJarDialog({
           <div className="adopt-reasons">{reasons.map((reason) => <p key={reason}>{reason}</p>)}</div>
           <div className="adopt-fields">
             <label className="field-label">项目名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
-            <label className="field-label">Minecraft 版本
-              <input list={`decompile-versions-${inspection.sha256.slice(0, 8)}`} value={minecraftVersion} onChange={(event) => setMinecraftVersion(event.target.value)} placeholder="例如：1.21.1" />
+            <label className="field-label">{loader === 'velocity' ? '代理 API 版本' : 'Minecraft 版本'}
+              <input list={`decompile-versions-${inspection.sha256.slice(0, 8)}`} value={minecraftVersion} onChange={(event) => setMinecraftVersion(event.target.value)} placeholder={loader === 'velocity' ? '例如：3.4.0-SNAPSHOT' : '例如：1.21.1'} />
               <datalist id={`decompile-versions-${inspection.sha256.slice(0, 8)}`}>{inspection.minecraftVersions.map((version) => <option key={version} value={version} />)}</datalist>
             </label>
-            <label className="field-label">加载器<select value={loader} onChange={(event) => setLoader(event.target.value as JavaLoaderKind)}><option value="fabric">Fabric</option><option value="quilt">Quilt</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option></select></label>
+            <label className="field-label">{inspection.plugin ? '插件平台' : '加载器'}<select value={loader} onChange={(event) => setLoader(event.target.value as DecompilePlatform)}>{decompileTargetPlatforms(inspection.plugin).map(platform => <option key={platform} value={platform}>{platformLabel(platform)}</option>)}</select></label>
           </div>
-          <div className="adopt-files"><span>检测到的模组文件</span><code>{inspection.fileName}</code></div>
+          <div className="adopt-files"><span>检测到的 JAR 文件</span><code>{inspection.fileName}</code></div>
         </> : terms ? <>
           <div className="decompile-terms-body">
             {terms.sections.map((section) => <section key={section.heading}><h4>{section.heading}</h4>{section.body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>)}
@@ -942,9 +955,9 @@ function ExistingImportPicker({ onClose, onSelect }: { onClose: () => void; onSe
 }
 
 function ProjectInspectionDialog({ kind }: { kind: 'project' | 'mod' }): React.JSX.Element {
-  const title = kind === 'mod' ? '接管现成模组' : '接管现有项目'
+  const title = kind === 'mod' ? '接管模组或插件' : '接管现有项目'
   const detail = kind === 'mod'
-    ? '正在读取 JAR 描述文件、识别加载器与 Minecraft 版本，请稍候…'
+    ? '正在读取 JAR 描述文件、识别模组或插件平台，请稍候…'
     : '正在扫描文件、读取构建配置并识别项目类型，请稍候…'
   return (
     <div className="modal-backdrop" role="presentation">
@@ -954,7 +967,7 @@ function ProjectInspectionDialog({ kind }: { kind: 'project' | 'mod' }): React.J
         </div>
         <div className="inspection-status" role="status">
           <LoaderCircle className="spin" size={22} />
-          <div><strong>{kind === 'mod' ? '正在识别模组' : '正在识别项目'}</strong><span>{detail}</span></div>
+          <div><strong>{kind === 'mod' ? '正在识别 JAR' : '正在识别项目'}</strong><span>{detail}</span></div>
         </div>
       </div>
     </div>
@@ -1019,6 +1032,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<AiAttachment[]>([])
   const [busy, setBusy] = useState(false)
+  const attachmentInput = useAiAttachments({ attachments, onChange: setAttachments, projectPath: project.path, conversationId: activeConversationId, disabled: busy || !visible || !hydrated })
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
   const [persistenceWarning, setPersistenceWarning] = useState('')
   const [attachmentReplayWarning, setAttachmentReplayWarning] = useState('')
@@ -1276,7 +1290,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
 
   const send = async (value = draft): Promise<void> => {
     const requestedContent = value.trim()
-    if ((!requestedContent && !attachments.length) || busy) return
+    if ((!requestedContent && !attachments.length) || busy || attachmentInput.isBusy()) return
     const content = requestedContent || '请分析我上传的附件'
     setAttachmentReplayWarning('')
     const attachmentContext = formatAiAttachmentContext(attachments)
@@ -1305,7 +1319,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       : (!resumeSession && messages.length ? inspirationConversationHandoff(messages) : '')
     const fallbackHandoff = inspirationConversationHandoff(baseMessages)
     let inspirationPrompt = `${serverPluginContext(project, true)}\nAnswer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
-    const fallbackInspirationPrompt = `The native session is unavailable. Continue from this complete visible conversation history without repeating completed work. Answer in Simplified Chinese and do not modify files.\n\n${fallbackHandoff ? `VISIBLE CONVERSATION HISTORY\n${fallbackHandoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
+    const fallbackInspirationPrompt = `Use this visible conversation history when continuing without native history without repeating completed work. Answer in Simplified Chinese and do not modify files.\n\n${fallbackHandoff ? `VISIBLE CONVERSATION HISTORY\n${fallbackHandoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
     const attachmentKeys = attachments.map((attachment) => `${attachment.path}:${attachment.size}`)
     const dedupeKey = aiPromptFingerprint(content, attachmentKeys)
     if (editIndex !== null) {
@@ -1455,7 +1469,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       </header>
       <div className="inspiration-layout">
         <section className="inspiration-chat">
-          {visibleInspirationRows.length ? <Virtuoso key={activeConversationId} className="inspiration-messages" data={visibleInspirationRows} computeItemKey={(_index, row) => row.id} initialTopMostItemIndex={Math.max(0, visibleInspirationRows.length - 1)} followOutput={busy ? 'auto' : 'smooth'} increaseViewportBy={400} components={{ Footer: () => busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null }} itemContent={(_virtualIndex, row) => {
+          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" rows={visibleInspirationRows} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
               if (row.kind === 'tool-group') return <InspirationStepGroup items={row.items} key={row.id} />
               const { message } = row
               const answer = splitInspirationFollowups(message.content)
@@ -1468,9 +1482,10 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
               </div>
             }} /> : hydrated ? <ChatWelcome key={`${project.path}:${activeConversationId}`} mode="inspiration" modpack={project.kind === 'modpack'} serverPlugin={project.kind === 'server-plugin'} disabled={busy} onSelect={(prompt) => { setDraft(prompt); document.querySelector<HTMLTextAreaElement>('.inspiration-page:not([hidden]) textarea')?.focus() }} /> : <div className="inspiration-loading" role="status">正在载入对话…</div>}
           <div className="inspiration-compose-area">
-          <div className="inspiration-composer">
+          <div className={`inspiration-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...attachmentInput.handlers}>
+            {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
             <textarea value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} aria-label="灵感提问" placeholder="一个念头、一个问题，都可以从这里开始…" />
-             <div className="inspiration-composer-actions"><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy} onError={(error) => { if (uiMode !== 'advanced') updateActiveMessages((current) => [...current, { role: 'assistant', content: `无法添加附件：${errorMessage(error)}`, status: 'error' }]) }} />{busy ? <button className="secondary-button compact" type="button" onClick={cancelInspiration}><X size={14} />暂停任务</button> : null}<button className="send-button" title="发送" disabled={busy || (!draft.trim() && !attachments.length)} onClick={() => void send()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button></div>
+             <div className="inspiration-composer-actions"><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy} controller={attachmentInput} />{busy ? <button className="secondary-button compact" type="button" onClick={cancelInspiration}><X size={14} />暂停任务</button> : null}<button className="send-button" title="发送" disabled={busy || attachmentInput.busy || (!draft.trim() && !attachments.length)} onClick={() => void send()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button></div>
           </div>
           <div className="inspiration-compose-note"><span title={project.path}>{project.name}</span><span>讨论想法 · 不改动项目</span></div>
           </div>
@@ -1692,6 +1707,8 @@ export default function App(): React.JSX.Element {
   const uiModeRef = useRef<UiMode>(uiMode)
   uiModeRef.current = uiMode
   const [project, setProject] = useState<ProjectInfo | null>(null)
+  const [quickTestProject, setQuickTestProject] = useState<ProjectInfo | null>(null)
+  useEffect(() => { setQuickTestProject(null) }, [project?.path])
   const [recentProjects, setRecentProjects] = useState<ProjectInfo[]>([])
   const [projectLauncherOpen, setProjectLauncherOpen] = useState(() => !isDetachedWindow)
   const [minimalProjectMenuOpen, setMinimalProjectMenuOpen] = useState(false)
@@ -1840,7 +1857,9 @@ export default function App(): React.JSX.Element {
       setActiveWorkbenchConversationId(fork.id)
       if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
       setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? view)
-      setNotice('已从此处创建新的对话分支；原对话仍保留')
+      setNotice(fork.parent?.nativeMode === 'visible-history-rebuild' && settingsRef.current.codingBackend === 'claude'
+        ? '已从聊天记录重建分支；原对话仍保留，Claude 先前的工具执行上下文不会完整继承'
+        : '已从此处创建新的对话分支；原对话仍保留')
     } catch (error) {
       setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
       sessionResetConversationIdsRef.current.add(conversationId)
@@ -1862,13 +1881,32 @@ export default function App(): React.JSX.Element {
   const [migrationPreview, setMigrationPreview] = useState<ProjectMigrationPreview | null>(null)
   const [migrationBusy, setMigrationBusy] = useState(false)
   const [settings, setSettings] = useState<AgentSettings>(initialSettings)
+  const [workbenchFeatures, setWorkbenchFeatures] = useState<WorkbenchFeatures>(() => {
+    try { return readWorkbenchFeatureSelection(localStorage.getItem('modmind.workbenchFeatures')) }
+    catch { return readWorkbenchFeatureSelection(null) }
+  })
+  const changeWorkbenchFeatures = (value: WorkbenchFeatures): void => {
+    setWorkbenchFeatures(value)
+    try { localStorage.setItem('modmind.workbenchFeatures', JSON.stringify(value)) } catch { /* Keep the current selection even when storage is unavailable. */ }
+  }
+  useLayoutEffect(() => { applyAppearance(normalizeAppearance(settings)) }, [settings.darkMode, settings.themePreset, settings.customThemeColors, settings.background])
+  useEffect(() => window.modmind.settings.onAppearanceChanged(appearance => {
+    if (settingsSavePendingRef.current > 0) return
+    setSettings(previous => ({ ...previous, ...appearance }))
+    applyAppearance(appearance)
+  }), [])
   const [networkProxyDraft, setNetworkProxyDraft] = useState(initialSettings.networkProxyUrl)
+  const [networkProxySaving, setNetworkProxySaving] = useState(false)
+  const [networkProxyFeedback, setNetworkProxyFeedback] = useState('')
+  const networkProxyDirtyRef = useRef(false)
+  const [settingsFeedback, setSettingsFeedback] = useState('')
   const settingsRef = useRef<AgentSettings>(initialSettings)
   settingsRef.current = settings
   const settingsMutationRef = useRef(0)
   const settingsSaveTailRef = useRef(Promise.resolve())
+  const settingsSavePendingRef = useRef(0)
   useEffect(() => {
-    setNetworkProxyDraft(settings.networkProxyUrl ?? '')
+    if (!networkProxyDirtyRef.current) setNetworkProxyDraft(settings.networkProxyUrl ?? '')
   }, [settings.networkProxyUrl])
   const [runningBackend, setRunningBackend] = useState<CodingBackend | undefined>(undefined)
   const [switchingBackend, setSwitchingBackend] = useState<CodingBackend | null>(null)
@@ -1887,6 +1925,9 @@ export default function App(): React.JSX.Element {
   const [imageModelsLoading, setImageModelsLoading] = useState(false)
   const [imageModelsError, setImageModelsError] = useState('')
   const [imageApiKey, setImageApiKey] = useState('')
+  const [imageSettingsSaving, setImageSettingsSaving] = useState(false)
+  const imageSettingsSavingRef = useRef(false)
+  const [imageSettingsFeedback, setImageSettingsFeedback] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('modmind-sidebar-collapsed') === 'true' } catch { return false }
   })
@@ -1894,6 +1935,16 @@ export default function App(): React.JSX.Element {
     try { localStorage.setItem('modmind-sidebar-collapsed', String(sidebarCollapsed)) } catch { /* Storage may be unavailable. */ }
   }, [sidebarCollapsed])
   const [sidebarOrders, setSidebarOrders] = useState<Record<string, string[]>>({})
+  const [collapsedSidebarGroups, setCollapsedSidebarGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem('modmind-sidebar-collapsed-groups:v1') ?? '{}')
+      return value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')) : {}
+    } catch { return {} }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('modmind-sidebar-collapsed-groups:v1', JSON.stringify(collapsedSidebarGroups)) } catch { /* Keep navigation usable without storage. */ }
+  }, [collapsedSidebarGroups])
   const [sidebarGroupOrder, setSidebarGroupOrder] = useState<string[]>([])
   const [detachedSidebarItemIds, setDetachedSidebarItemIds] = useState<Set<ViewId>>(() => new Set())
   const [detachedSidebarGroupKeys, setDetachedSidebarGroupKeys] = useState<Set<string>>(() => new Set())
@@ -2027,7 +2078,7 @@ export default function App(): React.JSX.Element {
   }, [uiMode])
 
   useLayoutEffect(() => {
-    const element = mainContentRef.current
+    const element = mainContentRef.current?.querySelector<HTMLElement>('.settings-scroll-area') ?? mainContentRef.current
     if (!element) return
     const key = `${project?.path ?? 'launcher'}:${view}`
     element.scrollTop = viewScrollPositionsRef.current[key] ?? 0
@@ -2039,7 +2090,7 @@ export default function App(): React.JSX.Element {
   }, [project?.path, projectLauncherOpen, view])
 
   const navigateToView = (nextView: ViewId): void => {
-    const element = mainContentRef.current
+    const element = mainContentRef.current?.querySelector<HTMLElement>('.settings-scroll-area') ?? mainContentRef.current
     if (element) {
       const key = `${project?.path ?? 'launcher'}:${view}`
       viewScrollPositionsRef.current[key] = element.scrollTop
@@ -2950,7 +3001,7 @@ export default function App(): React.JSX.Element {
       settingsRef.current = { ...settingsRef.current, codingBackend: event.backend }
       setSettings((current) => ({ ...current, codingBackend: event.backend }))
       setRunningBackend(event.backend)
-      setNotice(`已切换到 ${event.backend === 'quota' ? '智能引擎' : event.backend === 'codex' ? 'Codex' : 'Claude Code'}，正在继续当前任务`)
+      setNotice(`已切换到 ${event.backend === 'quota' ? 'ModMind' : event.backend === 'codex' ? 'Codex' : 'Claude Code'}，正在继续当前任务`)
     })
     return () => {
       removeBuildListener()
@@ -3046,7 +3097,7 @@ export default function App(): React.JSX.Element {
     setAiOutputStatus('running')
     setAiTimeline((current) => reduceWorkbenchProgress(current, { id: `recovery-${Date.now()}`, runId: `recovery-${taskProjectPath}`, stage: 'planning', title: '正在继续任务', detail: '从保存的检查点恢复并重新验证', status: 'running', time: new Date().toISOString() }, humanizeActivity))
     try {
-      const result = await window.modmind.ai.resumeRecovery(taskProjectPath, activeWorkbenchConversationId)
+      const result = await window.modmind.ai.resumeRecovery(taskProjectPath, activeWorkbenchConversationId, uiMode === 'advanced' ? workbenchFeatures : undefined)
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       storeProjectPlan(taskProjectPath, result)
       await refreshFilesFor(taskProjectPath)
@@ -3476,6 +3527,7 @@ export default function App(): React.JSX.Element {
     const submittedPrompt = initialPrompt ?? (phase === 'engineering' ? '开始制作' : prompt)
     if ((!submittedPrompt.trim() && !aiAttachments.length) || !project || savingAiPreferences || cancelAiPromiseRef.current || draftPreparingRef.current) return
     let taskProject = project
+    let automaticHandoff = false
     let discussion = phase === 'discussion' || (uiMode === 'beginner' || Boolean(project.draft)) && phase !== 'engineering'
     const taskProjectPath = project.path
     if (!aiOutputHistoryKey || aiHistoryLoadedKey !== aiOutputHistoryKey || workbenchPersistenceState === 'loading' || workbenchPersistenceState === 'error') {
@@ -3503,9 +3555,13 @@ export default function App(): React.JSX.Element {
       setDraftPreparing(true)
       try {
         taskProject = await window.modmind.project.recordDraftMessage(submittedPrompt, taskProjectPath)
-        if (phase === 'engineering') {
+        automaticHandoff = uiMode === 'beginner' && shouldAutoStartDraft(taskProject, submittedPrompt)
+        if (phase === 'engineering' || automaticHandoff) {
           if (missingDraftDetails(taskProject).length) discussion = true
-          else taskProject = await window.modmind.project.initializeDraft(taskProjectPath)
+          else {
+            taskProject = await window.modmind.project.initializeDraft(taskProjectPath)
+            discussion = false
+          }
         }
         if (!isForegroundProject(taskProjectPath)) return
         setProject(taskProject)
@@ -3544,8 +3600,8 @@ export default function App(): React.JSX.Element {
     const repeated = isRepeatedAiPrompt(requestPrompt, taskPromptHistory)
     let promptForAgent = isRewind
       ? `用户已重置对话上下文。项目文件保持当前状态，并且是判断现状的唯一依据。${dialogueContext ? `\n\n保留的最近对话：\n${dialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
-      : repeated ? AI_CONTINUATION_PROMPT : requestPrompt
-    let fallbackPromptForAgent = `原生会话已不可用。请基于以下完整可见对话继续，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n完整可见对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
+      : requestPrompt
+    let fallbackPromptForAgent = `以下为备用的可见对话记录。需要从文字历史接续时使用，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n完整可见对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
     if (editIndex >= 0) {
       const source = activeConversation
       const selected = aiTimelineRef.current[editIndex]
@@ -3567,11 +3623,11 @@ export default function App(): React.JSX.Element {
       }
     }
     if (discussion) {
-      promptForAgent = discussionPrompt(requestPrompt, fallbackDialogueContext, taskProject)
+      promptForAgent = discussionPrompt(requestPrompt, fallbackDialogueContext, taskProject, uiMode === 'beginner')
       fallbackPromptForAgent = promptForAgent
-    } else if (phase === 'engineering') {
+    } else if (phase === 'engineering' || automaticHandoff) {
       const handoffAttachments = baseTimeline.flatMap(item => item.kind === 'user' ? item.replay?.attachments ?? [] : [])
-      promptForAgent = engineeringHandoffPrompt(`${fallbackDialogueContext}${formatAiAttachmentContext(handoffAttachments)}\n\n用户本次选择：\n${submittedPrompt}`)
+      promptForAgent = engineeringHandoffPrompt(`${fallbackDialogueContext}${formatAiAttachmentContext(handoffAttachments)}\n\n用户本次选择：\n${requestPrompt}`, automaticHandoff)
       fallbackPromptForAgent = promptForAgent
     }
     const sessionId = `${discussion ? 'discussion' : 'coding'}-${Date.now()}`
@@ -3647,7 +3703,7 @@ export default function App(): React.JSX.Element {
     try {
       if (usesQuota) await window.modmind.beginnerCodex.prepare(taskProjectPath)
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
-      if (!discussion) await window.modmind.project.captureIdea(phase === 'engineering' ? promptForAgent : requestPrompt, taskProjectPath)
+      if (!discussion) await window.modmind.project.captureIdea(phase === 'engineering' || automaticHandoff ? promptForAgent : requestPrompt, taskProjectPath)
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       await refreshFilesFor(taskProjectPath)
       await refreshExportArtifactFor(taskProjectPath)
@@ -3699,7 +3755,7 @@ export default function App(): React.JSX.Element {
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { ...workbenchFlowOptions(discussion), ...(discussion ? { inspirationQuestion: idea } : {}), sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: fallbackPromptForAgent, conversationId: activeConversation.id, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
+        { ...workbenchFlowOptions(discussion), ...(uiMode === 'advanced' ? { workbenchFeatures } : {}), ...(discussion ? { inspirationQuestion: idea } : {}), sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: fallbackPromptForAgent, conversationId: activeConversation.id, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
       )
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       storeProjectPlan(taskProjectPath, plan)
@@ -3944,7 +4000,7 @@ export default function App(): React.JSX.Element {
           sessionId,
           selectedBackend,
           usesQuota ? 'beginner-unlimited' : 'standard',
-          { surface: 'workspace', projectPath: taskProjectPath, runId: `repair-${runToken}` }
+          { surface: 'workspace', projectPath: taskProjectPath, runId: `repair-${runToken}`, ...(uiMode === 'advanced' ? { workbenchFeatures } : {}) }
         )
         if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
         storeProjectPlan(taskProjectPath, result)
@@ -4088,13 +4144,15 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const saveSettingsPatch = async (patch: Partial<AgentSettings>): Promise<void> => {
+  const saveSettingsPatch = async (patch: Partial<AgentSettings>): Promise<boolean> => {
     const previous = settingsRef.current
     const next = { ...previous, ...patch }
     const mutation = settingsMutationRef.current + 1
     settingsMutationRef.current = mutation
     settingsRef.current = next
     setSettings(next)
+    setSettingsFeedback('正在保存偏好…')
+    settingsSavePendingRef.current += 1
     const save = settingsSaveTailRef.current.catch(() => undefined).then(() => window.modmind.settings.saveAgent(next))
     settingsSaveTailRef.current = save.then(() => undefined).catch(() => undefined)
     try {
@@ -4103,15 +4161,33 @@ export default function App(): React.JSX.Element {
       if (settingsMutationRef.current === mutation) {
         settingsRef.current = saved
         setSettings(saved)
-        setNotice('设置已保存')
+        setSettingsFeedback('偏好已保存')
       }
+      return true
     } catch (error) {
       if (settingsMutationRef.current === mutation) {
         settingsRef.current = previous
         setSettings(previous)
         setNotice(`配置保存失败：${errorMessage(error)}`)
+        setSettingsFeedback('偏好保存失败，请重试')
       }
+      return false
+    } finally {
+      settingsSavePendingRef.current -= 1
     }
+  }
+
+  const saveNetworkProxy = async (): Promise<void> => {
+    if (networkProxySaving) return
+    setNetworkProxySaving(true)
+    setNetworkProxyFeedback('正在保存…')
+    const saved = await saveSettingsPatch({ networkProxyUrl: networkProxyDraft })
+    if (saved) {
+      networkProxyDirtyRef.current = false
+      setNetworkProxyDraft(settingsRef.current.networkProxyUrl ?? '')
+    }
+    setNetworkProxyFeedback(saved ? '代理配置已保存' : '保存失败，输入已保留，请重试')
+    setNetworkProxySaving(false)
   }
 
   const scanJavaHomes = (): void => {
@@ -4189,14 +4265,28 @@ export default function App(): React.JSX.Element {
   }, [view])
 
   const saveImageSettings = async (patch: Partial<ImageStudioSettings> & { apiKey?: string; clearApiKey?: boolean }): Promise<void> => {
+    if (imageSettingsSavingRef.current) return
+    imageSettingsSavingRef.current = true
+    setImageSettingsSaving(true)
+    setImageSettingsFeedback('正在保存…')
+    const modelOnly = patch.model !== undefined && patch.apiKey === undefined && !patch.clearApiKey
     try {
-      const next = { ...imageStudioSettings, ...patch }
-      setImageStudioSettings(await window.modmind.imageStudio.saveSettings({ ...next, apiKey: patch.apiKey ?? imageApiKey, clearApiKey: patch.clearApiKey }))
+      // A model change must not commit an unfinished API address or key.
+      const base = modelOnly || patch.clearApiKey ? await window.modmind.imageStudio.getSettings() : imageStudioSettings
+      const saved = await window.modmind.imageStudio.saveSettings({ ...base, ...patch, apiKey: modelOnly ? '' : patch.apiKey ?? imageApiKey })
+      setImageStudioSettings(current => modelOnly ? { ...current, model: saved.model, hasStoredKey: saved.hasStoredKey } : saved)
       if (patch.apiKey !== undefined) setImageApiKey('')
-      setNotice('图像服务设置已保存')
-      await refreshImageModels()
+      const apiDraftPending = modelOnly && (imageStudioSettings.baseUrl !== base.baseUrl || Boolean(imageApiKey))
+      const message = modelOnly ? `图片模型已自动保存${apiDraftPending ? '；自定义 API 尚未保存' : ''}` : '图像服务配置已保存'
+      if (!modelOnly) setNotice(message)
+      setImageSettingsFeedback(message)
+      if (!modelOnly) void refreshImageModels()
     } catch (error) {
       setNotice(`图像服务设置保存失败：${errorMessage(error)}`)
+      setImageSettingsFeedback('保存失败，请重试；当前设置未更改')
+    } finally {
+      imageSettingsSavingRef.current = false
+      setImageSettingsSaving(false)
     }
   }
 
@@ -4211,12 +4301,14 @@ export default function App(): React.JSX.Element {
     const next = { ...beginnerAiPreferences, ...patch }
     setBeginnerAiPreferences(next)
     setSavingAiPreferences(true)
+    setSettingsFeedback('正在保存 AI 偏好…')
     try {
       setBeginnerAiPreferences(await window.modmind.device.saveAiPreferences(next))
-      setNotice('智能引擎设置已保存')
+      setSettingsFeedback('AI 偏好已保存')
     } catch (error) {
       setBeginnerAiPreferences(previous)
-      setNotice(`智能引擎设置保存失败：${errorMessage(error)}`)
+      setNotice(`ModMind 设置保存失败：${errorMessage(error)}`)
+      setSettingsFeedback('AI 偏好保存失败，请重试')
     } finally {
       setSavingAiPreferences(false)
     }
@@ -4295,7 +4387,7 @@ export default function App(): React.JSX.Element {
         }
         setAiRecovery(null)
         if (result.result) storeProjectPlan(taskProjectPath, result.result)
-        if (result.status === 'idle') setNotice(`已切换到 ${backend === 'quota' ? '智能引擎' : backend === 'codex' ? 'Codex' : 'Claude Code'}`)
+        if (result.status === 'idle') setNotice(`已切换到 ${backend === 'quota' ? 'ModMind' : backend === 'codex' ? 'Codex' : 'Claude Code'}`)
       })
       .catch(async (error) => {
         const taskState = await window.modmind.ai.getProjectTaskState(taskProjectPath).catch(() => null)
@@ -4456,7 +4548,9 @@ export default function App(): React.JSX.Element {
   const javaProject = !project || isJavaLoader(project.loader)
   const modpackProject = project?.kind === 'modpack'
   const pluginProject = project?.kind === 'server-plugin'
-  const showFeatureBeta = (id: ViewId): boolean => id === 'modpack-resourcepacks' || (pluginProject && !['workspace', 'inspiration', 'plugins'].includes(id))
+  // Beta follows the feature, not the project mode; shared tools keep their normal status.
+  const showFeatureBeta = (id: ViewId): boolean => id === 'modpack-resourcepacks'
+    || (pluginProject && ['relationships', 'modpack-server', 'build', 'snapshots'].includes(id))
   const workspacePromptHeading = modpackProject ? '描述整合包的下一步' : '描述你想要的 Mod'
   const workspacePromptDescription = modpackProject
     ? 'AI 会读取当前整合包，并直接修改任务、配置、资源或脚本'
@@ -4491,12 +4585,17 @@ export default function App(): React.JSX.Element {
 
       if (pluginProject) return [
         { label: '创作', items: [{ id: 'workspace' as const, label: '工作台', icon: MessageSquareText }, { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb }] },
-        { label: '工具', items: [{ id: 'relationships' as const, label: '依赖与联动', icon: Link2 }, { id: 'code' as const, label: '代码', icon: Code2 }, { id: 'modpack-server' as const, label: '本机服务端', icon: Server }, { id: 'build' as const, label: '构建与导出', icon: Hammer }, { id: 'snapshots' as const, label: '版本迁移', icon: ArrowRightLeft }] },
-        { label: '项目', items: [{ id: 'settings' as const, label: '设置', icon: Settings }] }
+        { label: '工具', items: [{ id: 'relationships' as const, label: '依赖与联动', icon: Link2 }, { id: 'code' as const, label: '代码', icon: Code2 }, { id: 'decompile' as const, label: '反编译', icon: Binary }, { id: 'modpack-server' as const, label: '测试', icon: Server }, { id: 'build' as const, label: '构建与导出', icon: Hammer }, { id: 'snapshots' as const, label: '版本迁移', icon: ArrowRightLeft }] },
+        { label: '项目', items: [{ id: 'settings' as const, label: '设置', icon: Settings }] },
+        { label: '资源', items: [
+          { id: 'image-studio' as const, label: '图像工坊', icon: WandSparkles },
+          { id: 'blockbench' as const, label: '模型', icon: Box },
+          { id: 'modpack-resourcepacks' as const, label: '资源包', icon: Image }
+        ] }
       ]
       if (modpackProject) {
         return [
-          { label: '整合包', items: [
+          { label: '创作', items: [
             { id: 'workspace' as const, label: '整合包创作', icon: MessageSquareText },
             { id: 'modpack-manifest' as const, label: '文件清单', icon: Archive },
             { id: 'modpack-mod-list' as const, label: '模组列表', icon: List },
@@ -4522,9 +4621,8 @@ export default function App(): React.JSX.Element {
             { id: 'modpack-migration' as const, label: '版本迁移', icon: ArrowRightLeft },
             { id: 'decompile' as const, label: '反编译', icon: Binary },
             { id: 'modpack-automation' as const, label: '依赖与优化', icon: Gauge },
-            { id: 'modpack-server' as const, label: '本机服务端', icon: Server },
-            { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 },
-            { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb }
+            { id: 'modpack-server' as const, label: '测试', icon: Server },
+            { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 }
           ] },
           { label: '项目', items: [
             { id: 'production' as const, label: '版本与导出', icon: CloudUpload },
@@ -4554,7 +4652,7 @@ export default function App(): React.JSX.Element {
           { id: 'modpack-server-content' as const, label: '服务端配置', icon: ServerCog },
           { id: 'modpack-files' as const, label: '文件工作台', icon: FolderOpen },
           { id: 'modpack-automation' as const, label: '依赖与优化', icon: Gauge },
-          { id: 'modpack-server' as const, label: '本机服务端', icon: Server },
+          { id: 'modpack-server' as const, label: '测试', icon: Server },
           { id: 'minecraft' as const, label: '游戏测试', icon: Gamepad2 },
           { id: 'inspiration' as const, label: '灵感台', icon: Lightbulb }
         ] : [
@@ -4675,7 +4773,7 @@ export default function App(): React.JSX.Element {
     decompile: '反编译',
     plugins: '管理插件',
     'modpack-automation': '依赖与优化',
-    'modpack-server': '服务端测试',
+    'modpack-server': '测试',
     minecraft: '游戏测试',
     'image-studio': '图像工坊',
     blockbench: '模型',
@@ -4754,10 +4852,10 @@ export default function App(): React.JSX.Element {
     items: (() => {
       const mapped = group.items
         .filter(item => item.id === 'ftb-quests' ? contentFeatures.ftbQuests : item.id === 'patchouli' ? contentFeatures.patchouli : true)
-        .filter((item) => uiMode !== 'beginner' || item.id !== 'image-studio')
+        .filter((item) => uiMode !== 'beginner' || pluginProject || item.id !== 'image-studio')
         .map((item) => ({ ...item, label: navLabelMap[item.id] || item.label }))
       if (uiMode === 'beginner' && modpackProject && !mapped.some((item) => item.id === 'modpack-server')) {
-        mapped.push({ id: 'modpack-server' as const, label: '服务端测试', icon: Server })
+        mapped.push({ id: 'modpack-server' as const, label: '测试', icon: Server })
       }
       if (!modpackProject || uiMode === 'beginner' || groupIndex !== 0) return mapped
       const primary = mapped.find((item) => item.id === 'workspace')
@@ -4802,6 +4900,18 @@ export default function App(): React.JSX.Element {
     return leftIndex - rightIndex
   })
   const detachedGroup = initialDetachedGroup ? orderedVisibleNavGroups.find((group) => group.groupKey === initialDetachedGroup) : undefined
+  const sidebarGroupStorageKey = (key: string): string => `${navOrderStorageKey}:${key}`
+  const isSidebarGroupCollapsed = (group: (typeof orderedVisibleNavGroups)[number]): boolean => {
+    if (sidebarCollapsed || initialDetachedGroup) return false
+    return collapsedSidebarGroups[sidebarGroupStorageKey(group.groupKey)]
+      ?? (['内容', '运行'].includes(group.label) && !group.items.some(item => item.id === view))
+  }
+  useEffect(() => {
+    const activeGroup = orderedVisibleNavGroups.find(group => group.items.some(item => item.id === view))
+    if (!activeGroup) return
+    const key = sidebarGroupStorageKey(activeGroup.groupKey)
+    setCollapsedSidebarGroups(current => current[key] ? { ...current, [key]: false } : current)
+  }, [view, navOrderStorageKey])
   const detachedWindowTitle = navLabelMap[view] ?? 'ModMind'
 
   useEffect(() => {
@@ -5032,7 +5142,7 @@ export default function App(): React.JSX.Element {
   if (false && initialDetachedGroup) {
     return <div className={`app-shell ${settings.darkMode ? 'dark-mode' : ''} detached-window detached-group-window-shell mode-${uiMode}`}>
       <header className="titlebar detached-titlebar">
-        <div className="titlebar-name"><img src={appLogo} alt="" />{detachedGroup?.label ?? 'ModMind'}</div>
+        <div className="titlebar-name"><img src={settings.darkMode ? appLogoDark : appLogo} alt="ModMind" draggable={false} />{detachedGroup?.label}</div>
         <div className="titlebar-actions">
           <button className={`detached-pin ${detachedAlwaysOnTop ? 'active' : ''}`} type="button" title={detachedAlwaysOnTop ? '取消窗口置顶' : '窗口置顶'} aria-label={detachedAlwaysOnTop ? '取消窗口置顶' : '窗口置顶'} aria-pressed={detachedAlwaysOnTop} onClick={toggleDetachedAlwaysOnTop}>{detachedAlwaysOnTop ? <Pin size={14} /> : <PinOff size={14} />}</button>
           <span className="titlebar-divider" />
@@ -5051,7 +5161,7 @@ export default function App(): React.JSX.Element {
     <div className={`app-shell ${settings.darkMode ? 'dark-mode' : ''} ${uiMode === 'beginner' ? 'beginner-mode' : ''} ${isDetachedWindow ? 'detached-window' : ''} ${initialDetachedGroup ? 'detached-group-window-shell' : ''} mode-transition mode-${uiMode}`}>
       {!isDetachedWindow ? <PluginOverlayLayer snapshot={pluginSnapshot} theme={settings.darkMode ? 'dark' : 'light'} /> : null}
       {isDetachedWindow ? <header className="titlebar detached-titlebar">
-        <div className="titlebar-name">{initialDetachedGroup ? detachedGroup?.label ?? '' : <><img src={appLogo} alt="" />{detachedWindowTitle}</>}</div>
+        <div className="titlebar-name">{initialDetachedGroup ? detachedGroup?.label ?? '' : <><img src={settings.darkMode ? appLogoDark : appLogo} alt="ModMind" draggable={false} />{detachedWindowTitle === 'ModMind' ? null : detachedWindowTitle}</>}</div>
         <div className="titlebar-actions">
           <button className={`detached-pin ${detachedAlwaysOnTop ? 'active' : ''}`} type="button" title={detachedAlwaysOnTop ? '取消窗口置顶' : '窗口置顶'} aria-label={detachedAlwaysOnTop ? '取消窗口置顶' : '窗口置顶'} aria-pressed={detachedAlwaysOnTop} onClick={toggleDetachedAlwaysOnTop}>{detachedAlwaysOnTop ? <Pin size={14} /> : <PinOff size={14} />}</button>
           <span className="titlebar-divider" />
@@ -5061,8 +5171,9 @@ export default function App(): React.JSX.Element {
         </div>
       </header> : null}
       {!isDetachedWindow ? <header className="titlebar">
-        <div className="titlebar-name"><img src={appLogo} alt="" />{uiMode === 'beginner' ? <div className="minimal-project-menu" ref={minimalProjectMenuRef}><button type="button" className="minimal-project-trigger" aria-expanded={minimalProjectMenuOpen} onClick={() => { setMinimalProjectMenuOpen(value => !value); void refreshRecentProjects() }}><span>{projectLauncherOpen ? '我的作品' : project?.name ?? 'ModMind'}</span><ChevronDown size={13} /></button>{minimalProjectMenuOpen ? <div className="minimal-project-dropdown"><button type="button" onClick={() => { setMinimalProjectMenuOpen(false); setProjectLauncherOpen(true); setView('workspace') }}><Plus size={15} />新建作品</button><button type="button" onClick={() => { setMinimalProjectMenuOpen(false); void openProject() }}><FolderOpen size={15} />打开项目</button>{recentProjects.map(recent => <button type="button" key={recent.path} onClick={() => { setMinimalProjectMenuOpen(false); void openRecentProject(recent) }}><FolderOpen size={14} /><span>{recent.name}</span></button>)}</div> : null}</div> : projectLauncherOpen ? 'ModMind' : project?.name ?? 'ModMind'}</div>
+        <div className="titlebar-name"><img src={settings.darkMode ? appLogoDark : appLogo} alt="ModMind" draggable={false} />{uiMode === 'beginner' ? <div className="minimal-project-menu" ref={minimalProjectMenuRef}><button type="button" className="minimal-project-trigger" aria-expanded={minimalProjectMenuOpen} onClick={() => { setMinimalProjectMenuOpen(value => !value); void refreshRecentProjects() }}><span>{projectLauncherOpen ? '我的作品' : project?.name ?? '选择项目'}</span><ChevronDown size={13} /></button>{minimalProjectMenuOpen ? <div className="minimal-project-dropdown"><button type="button" onClick={() => { setMinimalProjectMenuOpen(false); setProjectLauncherOpen(true); setView('workspace') }}><Plus size={15} />新建作品</button><button type="button" onClick={() => { setMinimalProjectMenuOpen(false); void openProject() }}><FolderOpen size={15} />打开项目</button>{recentProjects.map(recent => <button type="button" key={recent.path} onClick={() => { setMinimalProjectMenuOpen(false); void openRecentProject(recent) }}><FolderOpen size={14} /><span>{recent.name}</span></button>)}</div> : null}</div> : null}</div>
         <div className="titlebar-actions">
+          {uiMode === 'beginner' && project && !project.draft && !projectLauncherOpen ? <button className="hosted-titlebar-button" type="button" aria-label="测试" disabled={planning || building} onClick={() => setQuickTestProject(project)}><Gamepad2 size={14} /><span>测试</span></button> : null}
           <button className="hosted-titlebar-button" type="button" title="ModMind 账号与额度" onClick={() => setDeviceAccountOpen(true)}><UserRound size={14} /><span>{deviceState.status === 'connected' ? formatBalanceCents(deviceState.balanceCents) : '连接账号'}</span></button>
           <label className="expert-mode-toggle" title="开启后显示完整开发工具与设置"><span>专业模式</span><input type="checkbox" checked={uiMode === 'advanced'} onChange={(event) => selectUiMode(event.target.checked ? 'advanced' : 'beginner')} /><span className="expert-mode-track" aria-hidden="true" /></label>
           <button className="titlebar-icon titlebar-sidebar-toggle" title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} aria-expanded={!sidebarCollapsed} aria-controls="main-sidebar" onClick={() => setSidebarCollapsed((current) => !current)}><PanelLeft size={15} /></button>
@@ -5083,14 +5194,13 @@ export default function App(): React.JSX.Element {
 
       <div className="app-body">
         {(!isDetachedWindow || initialDetachedGroup) ? <aside id="main-sidebar" className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${initialDetachedGroup ? 'detached-group-sidebar' : ''}`}>
-          <div className="brand-row">
-            <img className="brand-mark" src={appLogo} alt="ModMind" />
-            <div><strong>ModMind</strong><span>Minecraft 创作工具</span></div>
-          </div>
-
           <nav aria-label="主导航" ref={sidebarNavRef} className="sidebar-nav" onDragOver={(event) => updateSidebarDragScroll(event.clientY)} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) stopSidebarDragScroll() }} onWheel={handleSidebarWheel}>
             {(initialDetachedGroup && detachedGroup ? [detachedGroup] : orderedVisibleNavGroups).map((group, index) => <div className="sidebar-nav-group" role="group" aria-label={group.label} data-sidebar-drag-key={`group:${group.groupKey}`} key={group.groupKey}>
-              <span
+              <button
+                type="button"
+                aria-expanded={!isSidebarGroupCollapsed(group)}
+                aria-controls={`sidebar-group-${group.groupKey}`}
+                onClick={() => setCollapsedSidebarGroups(current => ({ ...current, [sidebarGroupStorageKey(group.groupKey)]: !isSidebarGroupCollapsed(group) }))}
                 draggable
                 className={`nav-caption ${index ? 'settings-caption' : ''} ${sidebarDraggedGroupKey === group.groupKey ? 'dragging' : ''} ${sidebarGroupDropTargetKey === group.groupKey ? 'drop-target' : ''}`}
                 onDragStart={(event) => beginSidebarGroupDrag(event, group.groupKey)}
@@ -5100,6 +5210,7 @@ export default function App(): React.JSX.Element {
                   if (!draggedGroupKey && !draggedItem && !event.dataTransfer.types.includes('application/x-modmind-sidebar-item')) return
                   event.preventDefault()
                   event.dataTransfer.dropEffect = 'move'
+                  if (isSidebarGroupCollapsed(group)) setCollapsedSidebarGroups(current => ({ ...current, [sidebarGroupStorageKey(group.groupKey)]: false }))
                   if (draggedGroupKey) {
                     const bounds = event.currentTarget.getBoundingClientRect()
                     moveSidebarGroup(draggedGroupKey, group.groupKey, event.clientY > bounds.top + bounds.height / 2)
@@ -5121,7 +5232,8 @@ export default function App(): React.JSX.Element {
                   setSidebarGroupDropTargetKey(null)
                 }}
                 onDragEnd={finishSidebarDrag}
-              >{group.label}</span>
+              ><span>{group.label}</span><ChevronRight size={12} className={isSidebarGroupCollapsed(group) ? '' : 'expanded'} /></button>
+              <div id={`sidebar-group-${group.groupKey}`} className="sidebar-group-items" hidden={isSidebarGroupCollapsed(group)}>
               {group.items.map((item) => (
                 <button
                   key={item.id}
@@ -5163,6 +5275,7 @@ export default function App(): React.JSX.Element {
                   {item.id === 'build' && latestEvent ? <i className={`status-dot ${latestEvent.status}`} /> : null}
                 </button>
               ))}
+              </div>
             </div>)}
           </nav>
 
@@ -5271,6 +5384,8 @@ export default function App(): React.JSX.Element {
               switchingBackend={switchingBackend}
               onBackendChange={selectCodingBackend}
               onStart={() => void captureIdea()}
+              workbenchFeatures={workbenchFeatures}
+              onWorkbenchFeaturesChange={changeWorkbenchFeatures}
               onDiscussionChoice={choice => void captureIdea(choice.action, choice.prompt)}
               onCancel={cancelAi}
               onResume={() => void resumeInterruptedAi()}
@@ -5280,7 +5395,7 @@ export default function App(): React.JSX.Element {
               onExport={() => void exportArtifact()}
               onExportServerPack={() => void exportServerPack()}
               onExportLogs={() => void exportDiagnosticLogs()}
-              onTest={() => setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')}
+              onTest={() => uiMode === 'beginner' ? setQuickTestProject(project) : setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')}
               onAttachmentError={(error) => setNotice(`无法添加附件：${errorMessage(error)}`)}
               canExportArtifact={exportArtifactAvailable}
               building={building}
@@ -5337,7 +5452,7 @@ export default function App(): React.JSX.Element {
             {view === 'mappings' && project ? (
               <div className="mappings-page">
                 <div className="content-toolbar">
-                  <div><h1>Minecraft Mappings</h1><p>查询 {project.minecraftVersion} 的 Mojang、Yarn、Intermediary 与其他映射</p></div>
+                  <h1 className="visually-hidden">Minecraft Mappings</h1><span className="toolbar-context">Minecraft {project.minecraftVersion}</span>
                   <div className="toolbar-actions">
                     <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openLoaderDocs(project.loader)}><ExternalLink size={13} />{platformLabel(project.loader)} 文档</button>
                     <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openSource(project.minecraftVersion)}><ExternalLink size={13} />mappings.dev</button>
@@ -5442,7 +5557,7 @@ export default function App(): React.JSX.Element {
             {uiMode === 'advanced' && view === 'build' && project ? (
               <div className="standard-page">
                   <div className="content-toolbar">
-                    <div><h1>构建与测试</h1><p>{isJavaLoader(project.loader) ? '使用托管 Java 与 Gradle 生成可运行的 Mod JAR' : project.loader === 'bedrock' ? '校验行为包与资源包并生成可导入的 .mcaddon' : '校验网易 Mod SDK 工程并生成工作台归档'}</p></div>
+                    <h1 className="visually-hidden">构建与测试</h1><span className="toolbar-context">{platformLabel(project.loader)} · {project.minecraftVersion}</span>
                     <div className="toolbar-actions">
                       <button className="secondary-button" disabled={building || planning || !buildResult?.success} onClick={() => void exportArtifact()}><Download size={16} />{isJavaLoader(project.loader) ? '导出 Mod JAR' : project.loader === 'bedrock' ? '导出 .mcaddon' : '导出工作台归档'}</button>
                       {buildError ? (
@@ -5481,7 +5596,7 @@ export default function App(): React.JSX.Element {
             {view === 'snapshots' && project ? (
               <div className="standard-page">
                 <div className="content-toolbar">
-                  <div><h1>{project.kind === 'modpack' ? '版本' : '版本与迁移'}</h1><p>{platformLabel(project.loader)} · {project.minecraftVersion}{project.kind === 'modpack' ? ' · 整合包' : ''}</p></div>
+                  <h1 className="visually-hidden">版本与迁移</h1><span className="toolbar-context">{platformLabel(project.loader)} · {project.minecraftVersion}</span>
                   <button className="primary-button" onClick={() => void createSnapshot()}><Plus size={16} />创建快照</button>
                 </div>
                 {project.kind === 'server-plugin' ? <ServerPluginMigration project={project} onPlan={value => { setPrompt(value); setView('workspace') }} /> : project.kind !== 'modpack' && (isJavaLoader(project.loader) ? <section className="migration-band">
@@ -5565,14 +5680,14 @@ export default function App(): React.JSX.Element {
 
             {view === 'settings' ? (
               <div className="settings-page">
-                <div className="content-toolbar"><div><h1>设置</h1></div></div>
-                <SettingsSections>
+                <h1 className="visually-hidden">设置</h1>
+                <SettingsSections feedback={settingsFeedback}>
                 <section id="settings-approval" className="settings-section">
                   <div className="settings-heading"><h2>执行审批</h2></div>
                   <div className="settings-form"><label className="field-label" htmlFor="codex-approval-mode" style={{ gridColumn: '1 / -1' }}>Codex 审批模式
-                    <select id="codex-approval-mode" value={settings.codexApprovalMode ?? 'auto-review'} onChange={(event) => void saveSettingsPatch({ codexApprovalMode: event.target.value === 'yolo' ? 'yolo' : 'auto-review' })}>
-                      <option value="auto-review">自动审批（默认）</option>
-                      <option value="yolo">YOLO（免审批，无沙箱限制）</option>
+                    <select id="codex-approval-mode" value={settings.codexApprovalMode ?? 'yolo'} onChange={(event) => void saveSettingsPatch({ codexApprovalMode: event.target.value === 'yolo' ? 'yolo' : 'auto-review' })}>
+                      <option value="auto-review">自动审批</option>
+                      <option value="yolo">YOLO（默认，免审批，保留内部文件保护）</option>
                     </select>
                   </label></div>
                 </section>
@@ -5599,7 +5714,7 @@ export default function App(): React.JSX.Element {
                         const status = externalAgents.find((item) => item.kind === agent.kind)
                         const configured = settings.externalAgents?.[agent.kind]
                         return <div className="external-agent-row" key={agent.kind}>
-                          <div className="external-agent-name"><span className={`status-dot ${status?.installed ? 'success' : 'warning'}`} /><div><strong>{agent.label}</strong><p>{status?.installed ? `${status.version ?? '已检测到'} · ${configured?.baseUrl ? '已设置 ModMind 服务' : '使用本机原有配置'}` : externalAgentsReady ? '未检测到命令行工具' : '正在检测…'}</p></div></div>
+                          <div className="external-agent-name"><span className={`status-dot ${status?.installed && status.compatible !== false ? 'success' : 'warning'}`} /><div><strong>{agent.label}</strong><p>{status?.compatible === false ? status.detail : status?.installed ? `${status.version ?? '已检测到'} · ${configured?.baseUrl && configured.mode !== 'local' ? '已设置 ModMind 服务' : '使用本机登录与用户配置'}` : externalAgentsReady ? '未检测到命令行工具' : '正在检测…'}</p></div></div>
                           <div className="external-agent-row-actions">
                             <button className="secondary-button compact" type="button" onClick={() => { setEditingAgent(agent.kind); setAgentDraft({...configured, mode: configured?.mode ?? (agent.kind === 'claude' ? 'local' : 'hosted'), apiKey: ''}); setAvailableModels([]); setModelScanMessage('输入 API Key 后扫描') }}><Pencil size={14} />配置</button>
                             {status?.installed || configured?.executable ? <button className="icon-button" type="button" title={`打开 ${agent.label}`} onClick={() => void launchExternalAgent(agent.kind)}><TerminalSquare size={15} /></button> : <button className="icon-button" type="button" title={`安装 ${agent.label}`} disabled={!externalAgentsReady || installingAgents[agent.kind]} onClick={() => void installExternalAgent(agent.kind)}>{installingAgents[agent.kind] ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}</button>}
@@ -5674,19 +5789,20 @@ export default function App(): React.JSX.Element {
                  </section>
                  <section id="settings-image" className="settings-section image-settings-section">
                     <div className="settings-heading"><h2>图像服务</h2><p>图像工坊与 Agent 共用</p></div>
-                    {imageStudioSettings.hasStoredKey ? <div className="settings-actions"><button className="secondary-button compact" type="button" onClick={() => void clearImageApiKey()}>切换为额度图像服务</button></div> : null}
+                    {imageStudioSettings.hasStoredKey ? <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageSettingsSaving} onClick={() => void clearImageApiKey()}>切换为额度图像服务</button></div> : null}
                     <div className="image-service-form">
-                      <label className="field-label">图片模型<select value={imageStudioSettings.model} disabled={imageModelsLoading} onChange={(event) => setImageStudioSettings({ ...imageStudioSettings, model: event.target.value })}>{!imageModels.includes(imageStudioSettings.model) && <option value={imageStudioSettings.model}>{imageStudioSettings.model ? imageStudioSettings.model + '（当前设置）' : '请选择图片模型'}</option>}{imageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
-                      <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageModelsLoading} onClick={() => void refreshImageModels()}>{imageModelsLoading ? '正在加载模型…' : '刷新模型列表'}</button><button className="primary-button compact" type="button" onClick={() => void saveImageSettings({ apiKey: '' })}><Save size={14} />保存模型</button></div>
+                      <label className="field-label">图片模型<select value={imageStudioSettings.model} disabled={imageModelsLoading || imageSettingsSaving} onChange={(event) => void saveImageSettings({ model: event.target.value })}>{!imageModels.includes(imageStudioSettings.model) && <option value={imageStudioSettings.model}>{imageStudioSettings.model ? imageStudioSettings.model + '（当前设置）' : '请选择图片模型'}</option>}{imageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select><small>选择后自动保存</small></label>
+                      <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageModelsLoading || imageSettingsSaving} onClick={() => void refreshImageModels()}>{imageModelsLoading ? '正在加载模型…' : '刷新模型列表'}</button></div>
                     </div>
+                    <div className="settings-connection-status" role="status">{imageSettingsFeedback}</div>
                     {imageModelsError && <p role="alert">{imageModelsError}</p>}
                     <details>
                       <summary>自定义图像 API（可选）</summary>
                       <p>使用自己的服务时填写地址和 Key；保存 Key 后将改用自定义 API。</p>
                       <div className="image-service-form">
-                        <label className="field-label">Base URL<input value={imageStudioSettings.baseUrl} onChange={(event) => setImageStudioSettings({ ...imageStudioSettings, baseUrl: event.target.value })} /></label>
-                        <label className="field-label">图片 API Key<SecretInput secretKey="image" stored={imageStudioSettings.hasStoredKey} value={imageApiKey} onChange={(event) => setImageApiKey(event.target.value)} placeholder={imageStudioSettings.hasStoredKey ? '已安全保存，留空保持不变' : '输入自己的图片 API Key'} /></label>
-                        <div className="settings-actions"><span><ShieldCheck size={15} />{imageStudioSettings.hasStoredKey ? '已有加密凭证' : '当前未启用自定义 API'}</span><div className="settings-button-group">{imageStudioSettings.hasStoredKey ? <button className="secondary-button compact danger" type="button" onClick={() => void clearImageApiKey()}><Trash2 size={14} />删除已保存 Key</button> : null}<button className="primary-button compact" type="button" onClick={() => void saveImageSettings({ apiKey: imageApiKey })}><Save size={14} />保存自定义 API</button></div></div>
+                        <label className="field-label">Base URL<input value={imageStudioSettings.baseUrl} disabled={imageSettingsSaving} onChange={(event) => { setImageStudioSettings({ ...imageStudioSettings, baseUrl: event.target.value }); setImageSettingsFeedback('自定义 API 有未保存的修改') }} /></label>
+                        <label className="field-label">图片 API Key<SecretInput aria-label="图片 API Key" secretKey="image" stored={imageStudioSettings.hasStoredKey} value={imageApiKey} disabled={imageSettingsSaving} onChange={(event) => { setImageApiKey(event.target.value); setImageSettingsFeedback('自定义 API 有未保存的修改') }} placeholder={imageStudioSettings.hasStoredKey ? '已安全保存，留空保持不变' : '输入自己的图片 API Key'} /></label>
+                        <div className="settings-actions"><span><ShieldCheck size={15} />{imageStudioSettings.hasStoredKey ? '已有加密凭证' : '当前未启用自定义 API'}</span><div className="settings-button-group">{imageStudioSettings.hasStoredKey ? <button className="secondary-button compact danger" type="button" disabled={imageSettingsSaving} onClick={() => void clearImageApiKey()}><Trash2 size={14} />删除已保存 Key</button> : null}<button className="primary-button compact" type="button" disabled={imageSettingsSaving} onClick={() => void saveImageSettings({ apiKey: imageApiKey })}><Save size={14} />{imageSettingsSaving ? '正在保存…' : '保存自定义 API'}</button></div></div>
                       </div>
                       <p>保存地址和 Key 后，在上方刷新并选择该服务的模型。</p>
                     </details>
@@ -5736,19 +5852,20 @@ export default function App(): React.JSX.Element {
                 </section>
                 <section id="settings-network" className="settings-section">
                   <div className="settings-heading"><h2>网络</h2><p>下载代理</p></div>
-                  <label className="field-label">HTTP 代理地址<input value={networkProxyDraft} onChange={(event) => setNetworkProxyDraft(event.target.value)} onBlur={() => { if (networkProxyDraft !== (settingsRef.current.networkProxyUrl ?? '')) void saveSettingsPatch({ networkProxyUrl: networkProxyDraft }) }} placeholder="http://127.0.0.1:7890" /><small>留空为直连。不支持 SOCKS；MC百科、Gitee 等国内站点保持直连。</small></label>
+                  <form className="settings-connection-form" onSubmit={event => { event.preventDefault(); void saveNetworkProxy() }}>
+                    <label className="field-label">HTTP 代理地址<input value={networkProxyDraft} disabled={networkProxySaving} onChange={(event) => { networkProxyDirtyRef.current = true; setNetworkProxyDraft(event.target.value); setNetworkProxyFeedback('有未保存的修改') }} placeholder="http://127.0.0.1:7890" /><small>留空为直连。不支持 SOCKS；MC百科、Gitee 等国内站点保持直连。</small></label>
+                    <div className="settings-actions"><span className="settings-connection-status" role="status">{networkProxyFeedback || '修改后点击保存，或按 Enter'}</span><button className="secondary-button compact" type="submit" disabled={networkProxySaving || networkProxyDraft === (settings.networkProxyUrl ?? '')}>{networkProxySaving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{networkProxySaving ? '正在保存…' : '保存代理配置'}</button></div>
+                  </form>
                 </section>
                 <section id="settings-diagnostics" className="settings-section">
                   <div className="settings-heading"><h2>诊断日志</h2><p>导出启动、构建和崩溃日志，便于排查本机运行问题。不会包含已保存的 API Key 或 Token</p></div>
                   <div className="settings-actions"><span><TerminalSquare size={15} />包含应用事件、下载重试、Minecraft、构建、服务端日志和页面快照</span><button className="secondary-button" type="button" disabled={diagnosticExporting} onClick={() => void exportDiagnosticLogs()}>{diagnosticExporting ? <LoaderCircle className="spin" size={16} /> : <Archive size={16} />}导出诊断日志</button></div>
                 </section>
                 <section id="settings-appearance" className="settings-section">
-                  <div className="settings-heading"><h2>外观</h2></div>
-                  <div className="appearance-row"><div><strong>深色模式</strong></div><button className={`toggle ${settings.darkMode ? 'on' : ''}`} type="button" role="switch" aria-label="深色模式" aria-checked={settings.darkMode} onClick={() => void saveSettingsPatch({ darkMode: !settings.darkMode })}><span /></button></div>
+                  <AppearanceSettings settings={settings} onSave={saveSettingsPatch} />
                 </section>
-                <section id="settings-sidebar-order" className="settings-section">
-                  <div className="settings-heading"><h2>侧边栏顺序</h2><p>恢复功能和类型的默认排列顺序</p></div>
-                  <div className="settings-actions"><span>清除当前项目保存的拖拽排序</span><button className="secondary-button danger" type="button" onClick={() => void resetSidebarOrder()}><RotateCcw size={16} />恢复默认顺序</button></div>
+                <section id="settings-sidebar-order" className="settings-section settings-simple-section">
+                  <div className="appearance-row"><div><strong>侧边栏</strong></div><MoreActions label="侧边栏选项"><button type="button" onClick={() => void resetSidebarOrder()}><RotateCcw size={16} />恢复默认顺序</button></MoreActions></div>
                 </section>
                 <section id="settings-notifications" className="settings-section close-settings-section">
                   <div className="settings-heading"><h2>关闭与通知</h2></div>
@@ -5792,6 +5909,7 @@ export default function App(): React.JSX.Element {
       </div>
 
       <GlobalDownloadIndicator />
+      {quickTestProject && project?.path === quickTestProject.path ? <QuickGameTestDialog key={quickTestProject.path} project={quickTestProject} onClose={() => setQuickTestProject(null)} onExport={() => void exportArtifact()} /> : null}
       {showCreate ? <CreateProjectDialog onClose={() => setShowCreate(false)} onCreated={(created) => { if (uiMode === 'beginner' && beginnerStartupDraft.trim()) pendingBeginnerStartRef.current = { projectPath: created.path, prompt: beginnerStartupDraft }; setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
       {existingImportPicker ? <ExistingImportPicker onClose={() => setExistingImportPicker(false)} onSelect={(sourceType) => { setExistingImportPicker(false); void inspectExistingProject(sourceType) }} /> : null}

@@ -123,6 +123,24 @@ function clampQuality(value: unknown): ImageStudioQuality {
 
 function clampModeration(value: unknown): ImageStudioModeration { return value === 'low' ? 'low' : 'auto' }
 
+async function imageApiError(response: Response, apiKey: string): Promise<string> {
+  const raw = await response.text().catch(() => '')
+  let payload: unknown
+  try { payload = JSON.parse(raw) } catch { payload = raw }
+  const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+  const nested = root.error && typeof root.error === 'object' ? root.error as Record<string, unknown> : {}
+  const message = [nested.message, root.error, root.message, root.detail, typeof payload === 'string' ? payload : undefined]
+    .find((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+  const metadata = ['code', 'param', 'type'].flatMap((key) => {
+    const value = nested[key] ?? root[key]
+    return typeof value === 'string' && value.trim() ? [`${key}=${value.trim()}`] : []
+  })
+  let detail = [message?.trim(), ...metadata].filter(Boolean).join('；') || '上游未返回可读错误'
+  // Some providers echo authentication details in their error message.
+  if (apiKey) detail = detail.replaceAll(apiKey, '[REDACTED]')
+  return detail.replace(/\s+/g, ' ').slice(0, 2000)
+}
+
 async function removeSolidBackground(source: Buffer): Promise<Buffer> {
   const normalized = await sharp(source).ensureAlpha().png().toBuffer()
   const raw = await sharp(normalized).raw().toBuffer({ resolveWithObject: true })
@@ -229,16 +247,36 @@ export class ImageStudioService {
     const baseUrl = lease?.baseUrl ?? stored.baseUrl
     if (!baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) })
-    if (!response.ok) throw new Error(`无法读取图片模型列表（HTTP ${response.status}）`)
+    if (!response.ok) throw new Error(`无法读取图片模型列表（HTTP ${response.status}）：${await imageApiError(response, key)}`)
     const payload = await response.json() as { data?: Array<{ id?: unknown }> }
     const models = [...new Set((Array.isArray(payload.data) ? payload.data : []).map((item) => typeof item?.id === 'string' ? item.id.trim() : '').filter(Boolean))]
     return { models, sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
   }
 
   async generate(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
+    const count = Math.min(Math.max(Number.isInteger(request.count) ? request.count : 1, 1), 10)
+    let result: ImageGenerationResult | undefined
+    for (let index = 0; index < count; index += 1) {
+      try {
+        // Acquire a fresh hosted lease immediately before each single-image request.
+        const next = await this.generateSingle({ ...request, count: 1 })
+        if (!result) result = next
+        else {
+          result.assets.push(...next.assets)
+          result.credits += next.credits
+        }
+      } catch (error) {
+        if (!result) throw error
+        return { ...result, error: `已生成 ${index}/${count} 张，第 ${index + 1} 张失败，已停止后续生成：${error instanceof Error ? error.message : String(error)}` }
+      }
+    }
+    return result!
+  }
+
+  private async generateSingle(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
     const prompt = String(request.prompt ?? '').trim()
     if (!prompt || prompt.length > 32_000) throw new Error('请输入 1 到 32000 个字符的图片描述')
-    const count = Math.min(Math.max(Number.isInteger(request.count) ? request.count : 1, 1), 10)
+    const count = 1
     const stored = await this.readStored()
     const ownKey = await this.decryptKey(stored)
     const hosted = !ownKey
@@ -277,8 +315,8 @@ export class ImageStudioService {
       headers['Content-Type'] = 'application/json'
     }
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/${endpoint}`, { method: 'POST', headers, body: requestBody, signal: AbortSignal.timeout(300_000) })
+    if (!response.ok) throw new Error(`图片生成失败（HTTP ${response.status}）：${await imageApiError(response, apiKey)}`)
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null
-    if (!response.ok) throw new Error(`图片生成失败（HTTP ${response.status}）：${typeof payload?.error === 'string' ? payload.error : '上游未返回可读错误'}`)
     const parsed = await parseImagePayload(payload)
     if (!parsed.length) throw new Error('图片服务没有返回可用图片数据')
     const jobId = lease?.jobId ?? randomUUID()

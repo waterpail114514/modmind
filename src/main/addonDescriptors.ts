@@ -8,7 +8,8 @@ const START = '# MODMIND ADDON RELATIONSHIPS START'
 const END = '# MODMIND ADDON RELATIONSHIPS END'
 
 function direct(relationships: AddonRelationship[]): AddonRelationship[] {
-  return relationships.filter((entry) => !entry.automatic && entry.role !== 'test')
+  const seen = new Set<string>()
+  return relationships.filter((entry) => !entry.automatic && entry.role !== 'test').map(entry => ({ ...entry, modIds: entry.modIds.filter(id => { if (seen.has(id)) return false; seen.add(id); return true }) }))
 }
 
 function previousIds(relationships: AddonRelationship[]): Set<string> {
@@ -36,9 +37,12 @@ async function updateJsonDescriptor(target: string, project: ProjectInfo, relati
     const suggests = value.suggests && typeof value.suggests === 'object' && !Array.isArray(value.suggests) ? { ...value.suggests as Record<string, unknown> } : {}
     oldIds.forEach((id) => { delete depends[id]; delete suggests[id] })
     for (const relationship of direct(relationships)) {
-      const version = exactVersion(relationship.version)
       const targetMap = relationship.role === 'required' ? depends : suggests
-      for (const id of relationship.modIds) targetMap[id] = version
+      for (const id of relationship.modIds) {
+        const existing = (value.depends as Record<string, unknown> | undefined)?.[id] ?? (value.suggests as Record<string, unknown> | undefined)?.[id]
+        const old = previous.find(entry => entry.modIds.includes(id))
+        targetMap[id] = relationship.compatibilityRange ?? (typeof existing === 'string' && existing !== exactVersion(old?.version ?? relationship.version) ? existing : exactVersion(relationship.version))
+      }
     }
     value.depends = depends
     if (Object.keys(suggests).length) value.suggests = suggests
@@ -52,7 +56,12 @@ async function updateJsonDescriptor(target: string, project: ProjectInfo, relati
       return !(entry && typeof entry === 'object' && oldIds.has(String((entry as Record<string, unknown>).id ?? '')))
     })
     for (const relationship of direct(relationships).filter((entry) => entry.role === 'required')) {
-      for (const id of relationship.modIds) (loader.depends as unknown[]).push({ id, versions: exactVersion(relationship.version) })
+      for (const id of relationship.modIds) {
+        const existing = depends.find(entry => entry && typeof entry === 'object' && (entry as Record<string, unknown>).id === id) as Record<string, unknown> | undefined
+        const old = previous.find(entry => entry.modIds.includes(id))
+        const saved = existing?.versions
+        ;(loader.depends as unknown[]).push({ id, versions: relationship.compatibilityRange ?? (saved && saved !== exactVersion(old?.version ?? relationship.version) ? saved : exactVersion(relationship.version)) })
+      }
     }
     value.quilt_loader = loader
   } else {
@@ -63,7 +72,11 @@ async function updateJsonDescriptor(target: string, project: ProjectInfo, relati
     for (const relationship of direct(relationships).filter((entry) => entry.role === 'required')) {
       for (const id of relationship.modIds) {
         const version = exactVersion(relationship.version)
-        required.push(version === '*' ? id : `${id}@[${version}]`)
+        const old = previous.find(entry => entry.modIds.includes(id))
+        const existing = (Array.isArray(primary.requiredMods) ? primary.requiredMods : []).find(entry => typeof entry === 'string' && entry.startsWith(`${id}@`)) as string | undefined
+        const saved = existing?.slice(id.length + 1)
+        const range = relationship.compatibilityRange ?? (saved && saved !== `[${exactVersion(old?.version ?? relationship.version)}]` ? saved : version === '*' ? undefined : `[${version}]`)
+        required.push(range ? `${id}@${range}` : id)
       }
     }
     primary.requiredMods = required
@@ -71,18 +84,29 @@ async function updateJsonDescriptor(target: string, project: ProjectInfo, relati
   await fs.writeFile(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
 }
 
-async function updateTomlDescriptor(target: string, project: ProjectInfo, relationships: AddonRelationship[]): Promise<void> {
+async function updateTomlDescriptor(target: string, project: ProjectInfo, relationships: AddonRelationship[], previous: AddonRelationship[]): Promise<void> {
   const source = await fs.readFile(target, 'utf8')
   const withoutManaged = source.replace(/\n?# MODMIND ADDON RELATIONSHIPS START[\s\S]*?# MODMIND ADDON RELATIONSHIPS END\n?/g, '\n')
   const modernNeo = project.loader === 'neoforge' && target.endsWith('neoforge.mods.toml')
+  const existingRanges = new Map<string, string>()
+  for (const block of source.split(/(?=\[\[dependencies\.)/)) {
+    const owner = /^\[\[dependencies\.([^\]]+)\]\]/.exec(block)?.[1]
+    if (owner !== project.namespace && owner !== '${mod_id}') continue
+    const id = /^\s*modId\s*=\s*["']([^"']+)["']/m.exec(block)?.[1]
+    const range = /^\s*versionRange\s*=\s*["']([^"']+)["']/m.exec(block)?.[1]
+    if (id && range) existingRanges.set(id, range)
+  }
   const blocks = direct(relationships).flatMap((relationship) => relationship.modIds.map((id) => {
     const required = relationship.role === 'required'
     const version = exactVersion(relationship.version)
+    const existing = existingRanges.get(id)
+    const old = previous.find(entry => entry.modIds.includes(id))
+    const range = relationship.compatibilityRange ?? (existing && existing !== `[${exactVersion(old?.version ?? relationship.version)}]` ? existing : version === '*' ? undefined : `[${version}]`)
     return [
       `[[dependencies.${project.namespace}]]`,
       `modId=${tomlValue(id)}`,
       modernNeo ? `type=${tomlValue(required ? 'required' : 'optional')}` : `mandatory=${required}`,
-      ...(version === '*' ? [] : [`versionRange=${tomlValue(`[${version}]`)}`]),
+      ...(range ? [`versionRange=${tomlValue(range)}`] : []),
       'ordering="AFTER"',
       `side=${tomlValue(side(relationship.environment))}`
     ].join('\n')
@@ -95,6 +119,6 @@ export async function syncAddonDescriptor(project: ProjectInfo, relationships: A
   const relative = descriptorPath(project.loader, project.minecraftVersion)
   const target = path.join(project.path, ...relative.split('/'))
   if (relative.endsWith('.json') || relative.endsWith('mcmod.info')) await updateJsonDescriptor(target, project, relationships, previous)
-  else await updateTomlDescriptor(target, project, relationships)
+  else await updateTomlDescriptor(target, project, relationships, previous)
   return relative
 }

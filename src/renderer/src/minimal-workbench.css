@@ -4,11 +4,11 @@
 .agent-minimal .agent-workbench-title h1 { font-size: 13px; }
 .agent-minimal .agent-workbench-actions > :not(.agent-presentation-toggle) { display: none; }
 .agent-presentation-toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--agent-text-2); font-size: 11px; white-space: nowrap; cursor: pointer; }
-.agent-presentation-toggle input { appearance: none; position: relative; width: 26px; height: 16px; margin: 0; border: 0; border-radius: 999px; background: #c9cdd4; cursor: pointer; }
-.agent-presentation-toggle input::after { content: ''; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+.agent-presentation-toggle input { appearance: none; position: relative; width: 26px; height: 16px; margin: 0; border: 0; border-radius: 999px; background: var(--theme-inset); cursor: pointer; }
+.agent-presentation-toggle input::after { content: ''; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--theme-on-action); }
 .agent-presentation-toggle input:checked { background: var(--agent-primary); }
 .agent-presentation-toggle input:checked::after { left: 12px; }
-.agent-presentation-toggle input:focus-visible { outline: 2px solid var(--agent-primary); outline-offset: 3px; }
+.agent-presentation-toggle input:focus-visible { outline: none; outline-offset: 0; }
 .agent-minimal .agent-composer-stack, .agent-minimal .agent-conversation-row, .agent-minimal .agent-recovery-banner, .agent-minimal .chat-welcome { width: min(800px, calc(100% - 40px)); }
 .agent-minimal .agent-context-control, .agent-minimal .agent-mode-pill, .agent-minimal .agent-plan-bar, .agent-minimal .agent-settings-popover { display: none; }
 .agent-minimal .agent-composer-tools { flex: 1; flex-wrap: wrap; }
@@ -22,11 +22,11 @@
 .agent-minimal .minimal-recommendations .chat-welcome-label { font-size: 12px; }
 .agent-minimal .agent-composer > textarea { font-size: 15px; line-height: 22px; }
 .discussion-choice-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0 24px; }
-.discussion-choice-cards button { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border: 1px solid var(--agent-fill-3); border-radius: 12px; background: var(--agent-surface); color: var(--agent-text-2); box-shadow: 0 2px 8px #1d212908; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.discussion-choice-cards button { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border: 1px solid var(--agent-fill-3); border-radius: 12px; background: var(--agent-surface); color: var(--agent-text-2); box-shadow: 0 2px 8px color-mix(in srgb, var(--theme-shadow) 3.14%, transparent); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .discussion-choice-cards button span { overflow-wrap: anywhere; }
 .discussion-choice-cards button svg { flex-shrink: 0; color: var(--agent-text-3); }
 .discussion-choice-cards button:hover:not(:disabled) { background: var(--agent-fill-1); border-color: var(--agent-primary); }
-.discussion-choice-cards button:focus-visible { outline: 2px solid var(--agent-primary); outline-offset: 3px; }
+.discussion-choice-cards button:focus-visible { outline: none; outline-offset: 0; }
 .discussion-choice-cards button:disabled { opacity: .45; cursor: default; }
 @container (max-width: 600px) { .discussion-choice-cards { grid-template-columns: 1fr; gap: 8px; }.discussion-choice-cards button { min-height: 44px; } }
 .app-shell.beginner-mode:not(.detached-window) .sidebar { display: none; }
@@ -38,7 +38,7 @@
 .minimal-project-menu { position: relative; -webkit-app-region: no-drag; }
 .minimal-project-trigger { display: flex; align-items: center; gap: 7px; max-width: 260px; padding: 5px 8px; border: 0; color: inherit; background: transparent; font-size: 12px; cursor: pointer; }
 .minimal-project-trigger span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.minimal-project-dropdown { position: absolute; z-index: 60; left: 0; top: 30px; width: 270px; max-height: min(440px, calc(100dvh - 64px)); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px #0002; }
+.minimal-project-dropdown { position: absolute; z-index: 60; left: 0; top: 30px; width: 270px; max-height: min(440px, calc(100dvh - 64px)); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--theme-shadow) 13.33%, transparent); }
 .minimal-project-dropdown button { display: flex; width: 100%; gap: 8px; align-items: center; padding: 9px; border: 0; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; font-size: 12px; text-align: left; }
 .minimal-project-dropdown button:hover { background: var(--surface-alt); }
 .minimal-project-dropdown button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -48,7 +48,7 @@
 .minimal-quota-preferences label:has(select:disabled) { opacity: .5; }
 .minimal-quota-preferences select { appearance: none; width: 140px; max-width: 100%; height: 30px; padding: 0 26px 0 11px; border: 0; border-radius: 999px; color: inherit; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .minimal-quota-preferences .minimal-reasoning select { width: 104px; }
-.minimal-quota-preferences select:focus-visible { outline: 2px solid var(--agent-primary); outline-offset: 2px; }
+.minimal-quota-preferences select:focus-visible { outline: none; outline-offset: 0; }
 .minimal-quota-preferences select:disabled { cursor: default; }
 .minimal-quota-preferences option { color: var(--agent-text-1); background: var(--agent-surface); }
 .minimal-quota-preferences svg { position: absolute; right: 9px; top: 9px; pointer-events: none; }

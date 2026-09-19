@@ -1,3 +1,4 @@
+import { reportClientFailure } from './clientFailure'
 import { ftbIconKey } from '../../../shared/ftbIcon'
 import type { FtbQuestIconInspection } from '../../../shared/types'
 
@@ -19,7 +20,7 @@ export function requestFtbIcon(projectPath: string, scope: string, descriptor: u
         if (result.icon?.modelPreview) {
           const { renderFtbModel } = await import('./ftbModelPreview')
           try { return { ...result, icon: { ...result.icon, url: await renderFtbModel(result.icon.modelPreview) } } }
-          catch (error) { return { ...result, icon: null, reason: `Model preview failed: ${String(error)}` } }
+          catch (error) { return { ...result, icon: null, reason: `Model preview failed: ${reportClientFailure(error)}` } }
         }
         return result
       }

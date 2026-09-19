@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { CircleAlert, RotateCcw } from 'lucide-react'
+import { diagnosticErrorPayload } from '../../../shared/diagnostics'
 
 interface AppErrorBoundaryProps {
   children: ReactNode
@@ -18,10 +19,10 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     try {
-      window.dispatchEvent(new ErrorEvent('error', {
-        message: `React root error: ${error.message}`,
-        error: Object.assign(error, { componentStack: info.componentStack })
-      }))
+      window.modmind.diagnostics.reportError({
+        ...diagnosticErrorPayload(error),
+        componentStack: info.componentStack ?? undefined
+      }, 'react-root-error')
     } catch {
       // The fallback must remain available even when diagnostics are unavailable.
     }

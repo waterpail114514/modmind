@@ -2,6 +2,7 @@ import { mkdirSync, promises as fs, watch as fsWatch } from 'node:fs'
 import path from 'node:path'
 import { extractSevenZipArchive } from './sevenZipArchive'
 import { createStoredZip } from './bedrockAddon'
+import { createPluginPanelHtml } from '../shared/pluginUi'
 import {
   PLUGIN_MANIFEST_FILENAME,
   validatePluginManifest,
@@ -657,7 +658,7 @@ export class PluginService {
 
     if (wantsPanel) {
       await fs.mkdir(path.join(directory, 'panel'), { recursive: true })
-      await fs.writeFile(path.join(directory, 'panel', 'index.html'), PANEL_TEMPLATE_HTML.replace(/PLUGIN_NAME/g, escapeHtml(manifest.name)), 'utf8')
+      await fs.writeFile(path.join(directory, 'panel', 'index.html'), createPluginPanelHtml(manifest.name), 'utf8')
     }
     if (wantsBackend) {
       await fs.mkdir(path.join(directory, 'backend'), { recursive: true })
@@ -769,58 +770,6 @@ export class PluginService {
   }
 }
 
-const PANEL_TEMPLATE_HTML = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head><meta charset="UTF-8" /><title>PLUGIN_NAME</title>
-<style>
-* { box-sizing: border-box; }
-body { margin: 0; padding: 20px; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; color: var(--mm-text, inherit); }
-pre { white-space: pre-wrap; font-size: 12px; background: var(--mm-surface, rgba(128,128,128,.08)); padding: 10px; border-radius: 8px; min-height: 20px; }
-button { padding: 6px 14px; border-radius: 8px; border: 1px solid var(--mm-border, rgba(128,128,128,.4)); background: var(--mm-surface, rgba(128,128,128,.08)); color: var(--mm-text, inherit); cursor: pointer; }
-</style></head>
-<body>
-<h1 style="font-size:18px;margin-top:0">PLUGIN_NAME</h1>
-<button id="info">读取项目信息</button>
-<pre id="out">等待…</pre>
-<script>
-let seq = 0
-const pending = new Map()
-function request(payload) {
-  return new Promise((resolve, reject) => {
-    const requestId = 'r' + (++seq)
-    pending.set(requestId, { resolve, reject })
-    window.parent.postMessage({ ...payload, requestId }, '*')
-  })
-}
-window.addEventListener('message', (event) => {
-  const d = event.data
-  if (d && d.type === 'hostInfo') {
-    const dark = d.hostInfo?.theme === 'dark'
-    const values = dark
-      ? { '--mm-bg': '#1f2024', '--mm-text': '#f0f1f3', '--mm-border': '#484a50', '--mm-surface': '#2a2c31' }
-      : { '--mm-bg': '#ffffff', '--mm-text': '#1f2937', '--mm-border': '#d8dadd', '--mm-surface': '#f4f5f7' }
-    for (const [name, value] of Object.entries(values)) document.documentElement.style.setProperty(name, value)
-    return
-  }
-  if (d && d.type === 'result' && pending.has(d.requestId)) {
-    const e = pending.get(d.requestId)
-    pending.delete(d.requestId)
-    if (d.ok) e.resolve(d.result); else e.reject(new Error(d.error))
-  }
-})
-window.parent.postMessage({ type: 'ready' }, '*')
-document.getElementById('info').addEventListener('click', async () => {
-  try {
-    document.getElementById('out').textContent = JSON.stringify(await request({ type: 'getProjectInfo' }), null, 2)
-  } catch (error) {
-    document.getElementById('out').textContent = '失败：' + error.message
-  }
-})
-</script>
-</body>
-</html>
-`
-
 const BACKEND_TEMPLATE_MJS = `// PLUGIN_ID 后端入口。插件经用户确认后作为完全可信的 Node 扩展运行。
 // 宿主注入全局 modmindPlugin 对象。
 modmindPlugin.registerTools({
@@ -829,9 +778,6 @@ GENERATED_HANDLERS
 modmindPlugin.ctx.log.info('backend started, handlers: ' + JSON.stringify(HANDLER_NAMES))
 `
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string)
-}
 
 async function copyDirectory(source: string, destination: string): Promise<void> {
   await fs.mkdir(destination, { recursive: true })

@@ -2,6 +2,10 @@
 
 ## Roles
 
+For local project relocation, retain its stable project identity and refresh the location instead of adding a second relationship. Installed version/hash is the development lock; an explicit published compatibility range is a separate decision and must survive refresh. A lower bound does not prove every future release compatible.
+
+For work spanning a linked project or a data child project, register each actual target before editing using `modmind_creation_context` with `operation: target`, then repeat with artifact paths after editing. This records changes in their real project rather than attributing everything to the active editor. Record missing inputs and partial delivery; do not call an empty wrapper JAR the content pack. Existing prepared sources may be reused while target identity, version and hash still match; preparing a relationship need not mean downloading it again.
+
 - Required: the add-on cannot provide its promised behavior without the target. Declare and test it as required.
 - Optional: base startup and unrelated behavior must work without the target. Isolate class loading and conditional registration.
 - Test: use only for verification and never expose it as a published runtime requirement.

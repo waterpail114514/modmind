@@ -60,8 +60,8 @@ cd android-twa
 
 ## 图标与闪屏
 
-全部由 `logo.png` 通过 `sharp` 生成（自适应图标前景按安全区 66% 缩放）。换 logo 后
-重新执行 `node scripts/generate-icons.mjs` 即可。
+全部由仓库根目录的 `logo.svg` 导出 `logo.png` 后，通过 `sharp` 生成（自适应图标前景按安全区 66% 缩放）。换 logo 后
+在仓库根目录执行 `npm run assets:icons`，即可同步桌面、安装器、macOS 和 Android 图标。
 
 ## 对站点的前置要求
 

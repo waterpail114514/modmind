@@ -10,10 +10,11 @@ function ConversationFooter(): React.JSX.Element {
 
 const components = { Footer: ConversationFooter }
 
-export default function WorkbenchConversation<T extends { id: string }>({ rows, renderRow, footer }: {
+export default function WorkbenchConversation<T extends { id: string }>({ rows, renderRow, footer, surface = 'workbench' }: {
   rows: T[]
   renderRow: (row: T) => ReactNode
   footer?: ReactNode
+  surface?: 'workbench' | 'inspiration'
 }): React.JSX.Element {
   const [scroller, setScroller] = useState<HTMLElement | null>(null)
   const [following, setFollowing] = useState(true)
@@ -85,9 +86,9 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
   return <div className="agent-conversation-region">
     <FooterContext.Provider value={footer}>
       <Virtuoso
-        className="agent-conversation"
+        className={surface === 'inspiration' ? 'inspiration-messages' : 'agent-conversation'}
         tabIndex={0}
-        aria-label="工作台对话记录"
+        aria-label={surface === 'inspiration' ? '灵感台对话记录' : '工作台对话记录'}
         data={rows}
         computeItemKey={(_index, row) => row.id}
         initialTopMostItemIndex={rows.length - 1}
@@ -98,7 +99,7 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
         followOutput={() => followRef.current ? 'auto' : false}
         totalListHeightChanged={scrollToLatest}
         increaseViewportBy={400}
-        itemContent={(_index, row) => <div className="agent-conversation-row">{renderRow(row)}</div>}
+        itemContent={(_index, row) => <div className={surface === 'inspiration' ? 'inspiration-conversation-row' : 'agent-conversation-row'}>{renderRow(row)}</div>}
         components={components}
       />
     </FooterContext.Provider>

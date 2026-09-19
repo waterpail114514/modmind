@@ -1,7 +1,10 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useState } from 'react'
 import { GripHorizontal, PanelTopOpen, Pin, PinOff, X } from 'lucide-react'
 import type { PluginOverlayWindowState, PluginRecord } from '../../../shared/plugins'
 import { PluginFrame } from './PluginFrame'
+import { applyAppearance, useAppAppearance } from '../theme'
+import { normalizeAppearance } from '../../../shared/appTheme'
 
 function requestedPluginId(): string {
   const value = new URLSearchParams(window.location.search).get('pluginOverlay') ?? ''
@@ -13,7 +16,12 @@ export function ExternalPluginOverlayRoot(): JSX.Element {
   const [plugin, setPlugin] = useState<PluginRecord | null>(null)
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const theme: 'light' | 'dark' = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  const appearance = useAppAppearance()
+  const theme = appearance.darkMode ? 'dark' : 'light'
+  useEffect(() => {
+    void window.modmind.settings.getAgent().then(settings => applyAppearance(normalizeAppearance(settings))).catch(() => undefined)
+    return window.modmind.settings.onAppearanceChanged(applyAppearance)
+  }, [])
 
   useEffect(() => {
     const select = (plugins: PluginRecord[]): void => {
@@ -21,7 +29,7 @@ export function ExternalPluginOverlayRoot(): JSX.Element {
       setPlugin(next)
       if (!next) void window.modmind.app.close()
     }
-    void window.modmind.plugins.list().then((snapshot) => select(snapshot.plugins)).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+    void window.modmind.plugins.list().then((snapshot) => select(snapshot.plugins)).catch((cause: unknown) => setError(reportClientFailure(cause)))
     const unsubscribePlugins = window.modmind.plugins.onChanged((snapshot) => select(snapshot.plugins))
     void window.modmind.plugins.getOverlayWindows().then((states) => setAlwaysOnTop(states.find((state) => state.pluginId === pluginId)?.alwaysOnTop ?? false)).catch(() => undefined)
     const unsubscribeWindows = window.modmind.plugins.onOverlayWindowsChanged((states: PluginOverlayWindowState[]) => {

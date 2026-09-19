@@ -20,8 +20,10 @@ ui-check*.jpg
 /log/
 /modmind-mcp-open-source.zip
 /docs/*
+!/docs/diagnostics-audit-2026-09-16.zh-CN.md
 !/docs/plugin-development.zh-CN.md
 !/docs/fabric-api-test-policy.zh-CN.md
+!/docs/creation-experience-development-plan.zh-CN.md
 /modmind-mcp-open-source/
 /resources/server-pack-creator/.parts/
 /resources/server-pack-creator/*.partial

@@ -5,7 +5,14 @@ description: Create, inspect, update, reload, and verify trusted ModMind applica
 
 # ModMind Plugin Development
 
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
 Build against the ModMind plugin host contract and keep authority explicit. Read [plugin-contract.md](references/plugin-contract.md) before writing a manifest, panel, or backend.
+
+For panel or overlay UI work, also read [interface-design.md](references/interface-design.md). New scaffolds include the ModMind UI foundation; retain its theme bridge and reuse its controls. Backend-only changes do not need this reference.
 
 ## Rules
 
@@ -53,7 +60,7 @@ Apply the smallest coherent file set with `modmind_plugins_write_files`, then ca
 
 ### 5. Verify end to end
 
-Confirm the plugin reloads without runtime errors. For tools, refresh MCP tool discovery and verify the generated `modmind_plugin_<plugin-id>_<tool-name>` descriptor and a representative call. For panels, verify ready/hostInfo, request/result correlation, theme handling, and failure states. Verify denied capabilities remain unavailable when permissions are absent.
+Confirm the plugin reloads without runtime errors. For tools, refresh MCP tool discovery and verify the generated `modmind_plugin_<plugin-id>_<tool-name>` descriptor and a representative call. For panels, verify ready/hostInfo, request/result correlation, and the interface checks in the design reference, including live theme changes and failure/retry states. Verify denied capabilities remain unavailable when permissions are absent.
 
 Report plugin ID and kind, permissions, files changed, tools or panel messages, reload result, representative verification, and the backend trust implications.
 

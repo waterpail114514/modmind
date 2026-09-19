@@ -33,7 +33,7 @@ export function PluginPanelHost({ plugin, theme }: PluginPanelHostProps): JSX.El
       <div className="content-toolbar" style={{ flexShrink: 0 }}>
         <div>
           <h1><Puzzle size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />{plugin.manifest.name}</h1>
-          <p>{plugin.manifest.description} · v{plugin.manifest.version} · {plugin.scope === 'project' ? '项目级' : '全局'}</p>
+          <span className="visually-hidden">{plugin.manifest.description} · v{plugin.manifest.version} · {plugin.scope === 'project' ? '项目级' : '全局'}</span>
         </div>
         <button className="secondary-button compact" type="button" onClick={reload}>重新加载</button>
       </div>

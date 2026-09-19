@@ -1,0 +1,486 @@
+{
+  "source": "https://github.com/headlesshq/hmc-specifics/releases",
+  "checkedAt": "2026-09-15",
+  "entries": [
+    {
+      "minecraft": "1.16.5",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.16.5-2.4.0-fabric-release.jar",
+      "sha256": "6eda84518d58b05a24641c13a2a0a8bff7bb4fcdbc9e8e0a28dac3ba8289dede",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.16.5",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.16.5-2.4.0-lexforge-release.jar",
+      "sha256": "5c51030bb750d52ccaf384856a19b6b5f99d4af3b1134a77353f8684263f0ba0",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.17.1",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.17.1-2.4.0-fabric-release.jar",
+      "sha256": "742871ef294a4c641dce6941f767fcb35608818513e34dc167ea558210d8da3e",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.17.1",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.17.1-2.4.0-lexforge-release.jar",
+      "sha256": "d7a5813116f90068c33c52fe8aa68ea8608d4a10472f2fd813ac6600aed37670",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.18.2",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.18.2-2.4.0-fabric-release.jar",
+      "sha256": "4a129808667b6ef33fd87f3fa400d125349571c0cdd3728b702b0f1aeeb54426",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.18.2",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.18.2-2.4.0-lexforge-release.jar",
+      "sha256": "4399c14fddeb07819dd6499d52865a84fc00d3d7078cc0f3d34ef5261fe1c71c",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.19.4",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.19.4-2.4.0-fabric-release.jar",
+      "sha256": "26fdd715ad07007a983dbb7f859d335337b66b69f078e192b33a11d2c6ba357a",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.19.4",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.19.4-2.4.0-lexforge-release.jar",
+      "sha256": "aee6c086894b58c10e3a38c9c377111c850aed6e9a1aa07df688fa6eafe944a4",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.20.6",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.20.6-2.4.0-fabric-release.jar",
+      "sha256": "71673fab8a0edd6f300caf5aa6d7b764fd354222b7c357772a1ddf65a3f4972f",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.20.6",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.20.6-2.4.0-lexforge-release.jar",
+      "sha256": "6bd5d568d4a437c1b6a9267d5d5f7072993b742cbf2437613bfb87c454e0d763",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.20.6",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.20.6-2.4.0-neoforge-release.jar",
+      "sha256": "a28b04abe26784b5ba13f7286e678f2460964da19939bdca9352ed9ea8d5b63e",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21-2.4.0-fabric-release.jar",
+      "sha256": "7a70081f5250cae9127726ea59fbdb684904b74cb0e24fee187053f775cc282e",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21-2.4.0-lexforge-release.jar",
+      "sha256": "56c10f74169a654790df7af7b3f1a58c15164bf2e5dc27c4bb197d0f147b6318",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21-2.4.0-neoforge-release.jar",
+      "sha256": "781e7dace451646455a8faa777186eb1871eb49881b71f9addf62eeb5e35e96e",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.1",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.1-2.4.0-fabric-release.jar",
+      "sha256": "8cd0877b70bf5b54381b2f9091fe6a71caeaee35ef6eeaad1fa7044659bca7c5",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.1",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.1-2.4.0-lexforge-release.jar",
+      "sha256": "447488d650c209bbbc2d532e7be1a5ad30095fd3a2bde2389ca29efbbfc80a9f",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.1",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.1-2.4.0-neoforge-release.jar",
+      "sha256": "e821604248d9fdb43fbe217616ba62ac7fad22af8937570dc8b8010f2051de79",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.10",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.10-2.4.0-fabric-release.jar",
+      "sha256": "2170b5659aa16af5ac0c481b72be1dcffa59c3105b212bf89eefab58407fbed5",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.10",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.10-2.4.0-lexforge-release.jar",
+      "sha256": "877dd1a66d3920eaad8a56fc6a02249a700014c65db9bc798b6944e641e42804",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.10",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.10-2.4.0-neoforge-release.jar",
+      "sha256": "5a5e3fabb1ab70bee3837808935cc4f611092b1a0cc3d1859eca7c5497a801f1",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.11",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.11-2.4.0-fabric-release.jar",
+      "sha256": "cb7d1fc1621d536834094e3bd1e13d5c74c65dbef044124c5f81c1942dbcb320",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.11",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.11-2.4.0-lexforge-release.jar",
+      "sha256": "d00e0d1705ced77d0ea90e4c696b1ba2f439fce3b8fa22e7b3b654fe2dfd63c7",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.11",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.11-2.4.0-neoforge-release.jar",
+      "sha256": "c1666c379ace0f83b74f2d651f44759c1c1c390acb09e77a532e004a5d413e40",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.3",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.3-2.4.0-fabric-release.jar",
+      "sha256": "c6150a90abc0aedfab51c054297db921ead289afbf071070579ec756c4212f2f",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.3",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.3-2.4.0-lexforge-release.jar",
+      "sha256": "5fcb68659a540bbf42b42f497714bdba3e75b6a6bf642b22653ea180e8ddee26",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.3",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.3-2.4.0-neoforge-release.jar",
+      "sha256": "0095af3049d2a365a654390b8f637a8bfdccb808bef1c8a4ab8df5d41332903a",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.4",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.4-2.4.0-fabric-release.jar",
+      "sha256": "db2274474a1c99c992759a47615d5692118a3a18a77a7f5852957c9d7331aa43",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.4",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.4-2.4.0-lexforge-release.jar",
+      "sha256": "4a82eaf8219386ed829d36a44bba78c86710fd58338b2a68a376d7cb533be8a1",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.4",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.4-2.4.0-neoforge-release.jar",
+      "sha256": "6737428e755535e317c262ebf22bcb33dd46f3db0614fef5281cafd5332672c1",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.5",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.5-2.4.0-fabric-release.jar",
+      "sha256": "1f9d8370dabf1a4c15c20e7e27b4d4b0e72b991ebad786d6112094ff4575f848",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.5",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.5-2.4.0-lexforge-release.jar",
+      "sha256": "8e8084e71f58e724c729a7f8f278b2c1bfb308e18d102113bb6276a0784c1064",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.5",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.5-2.4.0-neoforge-release.jar",
+      "sha256": "12709d894f8f800e430908dc27fb04fbb0b0c11f62ceb1b6b31622c3cbddbfdf",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.6",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.6-2.4.0-fabric-release.jar",
+      "sha256": "62c117c055f2df19c787ae88616df2659db7071f0f7cdc738877dcae7826633d",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.6",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.6-2.4.0-lexforge-release.jar",
+      "sha256": "8ea1d9a9f436718f506c7382d34bf1dd63c4236bea7ef5819c2fd25f93bbdc41",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.6",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.6-2.4.0-neoforge-release.jar",
+      "sha256": "c778a2b26eb4aa56c4f8fddb72c870135a0196ba601b147cd7324a70ed2c769a",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.7",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.7-2.4.0-fabric-release.jar",
+      "sha256": "7e7571b017524a1b9c848d0ff77cbe1dbe258d7f2d58ad334fa325563f92b9ab",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.7",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.7-2.4.0-lexforge-release.jar",
+      "sha256": "65a0f46afe770ac5383582389a10c593d976dab1d08f6db118d0a830b438e940",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.7",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.7-2.4.0-neoforge-release.jar",
+      "sha256": "c778a2b26eb4aa56c4f8fddb72c870135a0196ba601b147cd7324a70ed2c769a",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.8",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.8-2.4.0-fabric-release.jar",
+      "sha256": "b18d3fd6821902c9094b1c0a31688cedf268ea800da44510ba53e17acd15cc32",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.8",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.8-2.4.0-lexforge-release.jar",
+      "sha256": "a7bf03b896a03661dc543299a48e115b3cbbc8d0115907828c850566055ba007",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.21.8",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-1.21.8-2.4.0-neoforge-release.jar",
+      "sha256": "41b549aadd411acbfe3207f1276f11da68ac71191e9709d74675f8e675548e53",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "26.1",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-26.1-2.4.0-fabric-release.jar",
+      "sha256": "d81456a494f88810603b5c1c38946a0dad7fd24f93c9ea649eb48937a8a0a7dc",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "26.1",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-26.1-2.4.0-lexforge-release.jar",
+      "sha256": "2fa05d461ecd07e31d466c950fb6f1f5f5726845f71da7ef21f6fe90c63f6908",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "26.1",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-26.1-2.4.0-neoforge-release.jar",
+      "sha256": "e756d0343a1d0c56f4b42bbd62a2d888269ae0572c5e6d166b377249b76194dd",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "26.1.1",
+      "loader": "fabric",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-26.1.1-2.4.0-fabric-release.jar",
+      "sha256": "d81456a494f88810603b5c1c38946a0dad7fd24f93c9ea649eb48937a8a0a7dc",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "26.1.1",
+      "loader": "forge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-26.1.1-2.4.0-lexforge-release.jar",
+      "sha256": "2fa05d461ecd07e31d466c950fb6f1f5f5726845f71da7ef21f6fe90c63f6908",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "26.1.1",
+      "loader": "neoforge",
+      "version": "2.4.0",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/2.4.0/hmc-specifics-26.1.1-2.4.0-neoforge-release.jar",
+      "sha256": "e756d0343a1d0c56f4b42bbd62a2d888269ae0572c5e6d166b377249b76194dd",
+      "inventory": true,
+      "key": true,
+      "evidence": "release-and-source"
+    },
+    {
+      "minecraft": "1.20.1",
+      "loader": "fabric",
+      "version": "1.2.2",
+      "url": "https://github.com/headlesshq/hmc-specifics/releases/download/v1.20.1-1.2.2/hmc-specifics-fabric-1.20.1-1.2.2.jar",
+      "sha256": "438dd5b189195aef05d1ff81dbc4484118da6ca3fc450a498019715d233d0e5d",
+      "inventory": false,
+      "key": false,
+      "evidence": "inspected-jar"
+    }
+  ]
+}

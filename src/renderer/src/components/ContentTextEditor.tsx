@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react'
 import { LoaderCircle, RotateCcw, Save } from 'lucide-react'
 import MonacoCodeEditor from './MonacoCodeEditor'
@@ -11,6 +12,9 @@ export default function ContentTextEditor({ projectPath, path, text, darkMode, e
   projectPath: string; path: string; text: string; darkMode: boolean; editorRef: MutableRefObject<ContentEditorHandle | null>
 }): React.JSX.Element {
   const key = contentDraftKey(projectPath, path)
+  // Keep the filesystem path out of the URI authority: host normalization changes
+  // drive/directory casing and prevents Monaco's script worker from finding it.
+  const modelPath = `modpack-content:///${encodeURIComponent(projectPath)}/${encodeURIComponent(path)}`
   const draft = useSyncExternalStore(subscribeContentDrafts, () => getContentDraft(key))
   const [saved, setSaved] = useState(text)
   const [saving, setSaving] = useState(false)
@@ -32,7 +36,7 @@ export default function ContentTextEditor({ projectPath, path, text, darkMode, e
       const written = await saveContentDraft(key, () => window.modmind.project.readFile(path, projectPath), value => window.modmind.project.writeFile(path, value, projectPath))
       if (written !== undefined) setSaved(written)
       return !getContentDraft(key)
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)); return false }
+    } catch (error) { setError(reportClientFailure(error)); return false }
     finally { savingRef.current = false; setSaving(false) }
   }
   useEffect(() => {
@@ -46,12 +50,12 @@ export default function ContentTextEditor({ projectPath, path, text, darkMode, e
     try {
       const latest = await window.modmind.project.readFile(path, projectPath)
       setSaved(latest); setContentDraft(key, undefined); setError('')
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { setError(reportClientFailure(error)) }
   }
   return <>
     <div className="pack-content-edit-actions"><span role="status">{saving ? '正在保存…' : draft ? '未保存 · 切换页面保留草稿' : '已保存'}</span><div className="resource-pack-actions"><button className="icon-button" title="重新载入文件" disabled={saving} onClick={() => void reload()}><RotateCcw size={15} /></button><button className="primary-button" disabled={saving || !draft} title="保存文件 (Ctrl+S / ⌘S)" onClick={() => void save()}>{saving ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />}保存文件</button></div></div>
     {error ? <div className="resource-pack-notice" role="alert">{error}</div> : null}
-    <div className="pack-content-text-preview"><MonacoCodeEditor path={`modpack-content://${encodeURIComponent(projectPath)}/${encodeURIComponent(path)}`} language={editorLanguage(path)} value={draft?.text ?? saved} darkMode={darkMode} readOnly={saving} onChange={value => setContentDraft(key, { base: draft?.base ?? saved, text: value })} onSave={() => void save()} /></div>
+    <div className="pack-content-text-preview"><MonacoCodeEditor path={modelPath} language={editorLanguage(path)} value={draft?.text ?? saved} darkMode={darkMode} readOnly={saving} onChange={value => setContentDraft(key, { base: draft?.base ?? saved, text: value })} onSave={() => void save()} /></div>
     {dialog}
   </>
 }

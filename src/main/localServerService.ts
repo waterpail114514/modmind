@@ -13,6 +13,7 @@ export interface LocalServerStartOptions {
   port?: number
   acceptEula?: boolean
   onlineMode?: boolean
+  localPlayerTest?: boolean
 }
 
 export interface LocalServerManagerOptions {
@@ -126,10 +127,10 @@ export class LocalServerManager {
     this.update({ operationProgress: undefined })
   }
 
-  async start(options: LocalServerStartOptions = {}): Promise<LocalServerState> {
+  async start(options: LocalServerStartOptions = {}, beforeStart?: (signal: AbortSignal) => Promise<void>): Promise<LocalServerState> {
     if (this.startPromise) return this.startPromise
     this.controller = new AbortController()
-    const pending = this.startInternal(options, this.controller.signal)
+    const pending = this.startInternal(options, this.controller.signal, beforeStart)
     this.startPromise = pending
     try {
       return await pending
@@ -138,7 +139,7 @@ export class LocalServerManager {
     }
   }
 
-  private async startInternal(options: LocalServerStartOptions, signal: AbortSignal): Promise<LocalServerState> {
+  private async startInternal(options: LocalServerStartOptions, signal: AbortSignal, beforeStart?: (signal: AbortSignal) => Promise<void>): Promise<LocalServerState> {
     const project = this.requireProject()
     if (this.process?.isRunning()) throw new Error('本机服务端已经在运行')
     let port = validPort(options.port)
@@ -150,13 +151,17 @@ export class LocalServerManager {
       if (project.kind === 'server-plugin') {
         await this.options.buildPlugin?.(project, signal)
         throwIfAborted(signal)
-        const prepared = await preparePluginServer(project, { javaPath: major => this.getJavaPath(project, major), cacheDirectory: this.options.cacheDirectory ?? path.join(project.path, '.modmind/server/cache'), signal, onProgress: (message, fraction) => this.setOperationProgress({ message, fraction }), onDownloadProgress: ({ downloaded, total, source }) => this.setOperationProgress({ message: `正在下载 ${source.label}`, downloaded, total, fraction: total ? downloaded / total : undefined }) })
+        const prepared = await preparePluginServer(project, { javaPath: major => this.getJavaPath(project, major), cacheDirectory: this.options.cacheDirectory ?? path.join(project.path, '.modmind/server/cache'), signal, onlineMode: options.localPlayerTest ? false : options.onlineMode === true, onProgress: (message, fraction) => this.setOperationProgress({ message, fraction }), onDownloadProgress: ({ downloaded, total, source }) => this.setOperationProgress({ message: `正在下载 ${source.label}`, downloaded, total, fraction: total ? downloaded / total : undefined }) })
         pack = prepared.pack; runtime = prepared.runtime; port = prepared.profile.port
+        if (options.localPlayerTest) {
+          if (prepared.profile.core === 'velocity') throw new Error('Velocity 测试需要配置后端世界服，请使用单独启动服务端')
+          await configureLocalServer(pack.root, port, false, true)
+        }
       } else {
         await preserveLegacyServerInstance(project.path, root)
         // Client access already includes EULA acceptance; keep an explicit false override.
         const acceptEula = options.acceptEula !== false
-        const built = await readExistingServerPack(project, root) ?? await buildServerPack(project, { outputDirectory: root, port, acceptEula, onlineMode: options.onlineMode === true })
+        const built = (options.localPlayerTest ? null : await readExistingServerPack(project, root)) ?? await buildServerPack(project, { outputDirectory: root, port, acceptEula, onlineMode: options.onlineMode === true })
         throwIfAborted(signal)
         const instanceRoot = path.join(project.path, '.modmind/server/instances/modpack')
         const deployment = await deployServerInstance(built.root, instanceRoot, signal)
@@ -168,6 +173,8 @@ export class LocalServerManager {
         throwIfAborted(signal)
         runtime = await installServerRuntime({ serverPack: pack, javaPath, signal, onDownloadProgress: ({ downloaded, total, source }) => this.setOperationProgress({ message: `正在下载 ${source.label}`, downloaded, total, fraction: total ? downloaded / total : undefined }) }, project)
       }
+      throwIfAborted(signal)
+      await beforeStart?.(signal)
       throwIfAborted(signal)
       this.update({ stage: 'starting', message: '正在启动本机服务端' })
       const server = new ServerProcess()

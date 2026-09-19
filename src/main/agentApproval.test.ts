@@ -5,9 +5,13 @@ import { fetchWithApprovalModelFallback, isAutomaticApprovalFailure } from './ag
 afterEach(() => vi.unstubAllGlobals())
 
 describe('approval policy', () => {
-  it('defaults old or invalid settings to automatic review and keeps YOLO read-only tasks restricted', () => {
-    for (const value of [undefined, null, '', 'never', {}]) expect(normalizeAgentApprovalMode(value)).toBe('auto-review')
-    expect(codexApprovalPolicy(false, 'yolo')).toMatchObject({ approvalPolicy: 'never', sandbox: 'danger-full-access' })
+  it('defaults old or invalid settings to YOLO and keeps read-only tasks restricted', () => {
+    for (const value of [undefined, null, '', 'never', {}, 'yolo']) expect(normalizeAgentApprovalMode(value)).toBe('yolo')
+    expect(normalizeAgentApprovalMode('auto-review')).toBe('auto-review')
+    expect(codexApprovalPolicy()).toMatchObject({ approvalPolicy: 'never', permissions: 'modmind-protected' })
+    expect(codexApprovalPolicy(false, 'auto-review')).toMatchObject({ approvalPolicy: { granular: { sandbox_approval: false, request_permissions: false } }, approvalsReviewer: 'auto_review', permissions: 'modmind-protected' })
+    expect(codexApprovalPolicy(true)).toMatchObject({ approvalPolicy: 'never', sandbox: 'read-only', approvalsReviewer: 'user' })
+    expect(codexApprovalPolicy(false, 'yolo')).toMatchObject({ approvalPolicy: 'never', permissions: 'modmind-protected' })
     expect(codexApprovalPolicy(true, 'yolo')).toMatchObject({ approvalPolicy: 'never', sandbox: 'read-only', approvalsReviewer: 'user' })
   })
 

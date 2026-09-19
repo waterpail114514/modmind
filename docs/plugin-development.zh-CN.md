@@ -131,7 +131,43 @@ window.parent.postMessage({ type: 'copyToClipboard', requestId, text: '...' }, '
 window.parent.postMessage({ type: 'log', level: 'info', message: '...' }, '*')
 ```
 
-宿主通过 `hostInfo.theme` 下发明暗主题。随附模板会据此设置 `--mm-bg`、`--mm-text`、`--mm-border`、`--mm-surface`；自定义面板也应在收到 `hostInfo` 后应用这些变量。
+宿主在初次连接时发送 `hostInfo`，通过 `hostInfo.theme`、`themePreset`、`palette` 和 `scrollbarStyle` 提供完整主题。后续发送 `themeChanged`，同名字段直接位于消息顶层。面板和悬浮窗都应处理两类消息，并检查 `event.source === window.parent`。iframe 不继承主应用 CSS；仅声明插件并不会自动应用宿主样式。
+
+## 插件界面规范与默认组件
+
+应用内脚手架和仓库中的可视化模板共用 `src/shared/pluginUi.ts`，提供无需框架或外部依赖的界面基础：紧凑工具栏、主次按钮、表单、列表、详情折叠、空状态、进度和错误反馈。主题变化只更新颜色与滚动条，保留草稿、选区和展开状态。无宿主配色时，使用从应用主题源生成的 ModMind 浅深色回退；不会维护另一份固定配色。
+
+```html
+<main class="mm-page">
+  <header class="mm-toolbar">
+    <div class="mm-heading"><h1>作品设置</h1><p class="mm-description">当前作品的基本信息</p></div>
+    <div class="mm-actions"><button class="mm-primary" type="submit" form="settings">保存</button></div>
+  </header>
+  <div class="mm-content">
+    <p class="mm-status" id="status" role="status" aria-live="polite"></p>
+    <form class="mm-form" id="settings">
+      <label class="mm-field">作品名称<input name="name" required /></label>
+      <details class="mm-details"><summary>高级设置</summary><!-- 按需展示 --></details>
+    </form>
+  </div>
+</main>
+```
+
+将此结构用于生成模板内，保留其主题样式和消息桥，并按插件实际能力接入保存处理。`mm-list` / `mm-row` 可用于 `dl` / `dt` / `dd` 信息列表，`mm-section` 分隔内容组，`mm-quiet` 表示低强调按钮。颜色引用 `--theme-*` 语义变量，避免写死。具体布局和验收规则见 [插件界面设计规范](../resources/codex-skills/modmind-plugin-development/references/interface-design.md)。
+
+模板内的 `window.ModMindUI.request(payload)` 提供请求配对、错误处理和 35 秒等待上限；`setStatus(element, state, message)` 提供行内状态反馈；`hostInfo` 保存初次宿主信息，收到后触发 `modmind:hostinfo` 事件。等待超时不代表宿主操作已取消；涉及写入时应先核对实际结果，再决定是否重试。不要将这个对象与后端的 `modmindPlugin.ctx` 混用。
+
+界面默认遵循以下原则：中性表面和细分隔线承载内容；每个当前任务有清晰主操作；低频操作和原始诊断按需展开；编辑保留来源、返回入口和草稿；状态用用户能理解的语言说明。图像、模型、桌宠等作品内容可以保留自身配色，界面控件仍跟随宿主。桌宠背景保持透明。
+
+AI 插件制作 skill 已引用同一设计规范。旧插件不会被强行改写；迁移时先读取现有源码，保留原功能，补上 `palette`、`themeChanged` 和共享滚动条处理，再逐步替换布局和控件。应用主题不会越过 iframe 边界覆盖第三方页面。
+
+仓库维护检查：
+
+- `npm run plugins:generate`：更新可复制的 HTML 模板；修改源文件后执行，不直接维护生成文件。
+- `npm run plugins:check`：检查模板是否同步、界面硬编码颜色、基础语义和主操作；已纳入 `theme:check` 和构建前检查。
+- `npm run plugins:smoke`：在隔离 Electron 中使用实际插件协议、CSP 和沙箱，检查主题切换、窄窗口、键盘、空状态、执行中、失败与重试，截图和报告写入 `test-results/plugin-ui/`。宿主数据及工具回复为测试数据，不调用用户插件后端。
+
+这些检查覆盖官方模板，不会自动认证所有第三方插件；具体插件仍需按设计规范检查实际功能与页面。
 
 ## 悬浮窗与对话 API
 

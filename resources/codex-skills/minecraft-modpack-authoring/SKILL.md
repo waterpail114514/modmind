@@ -5,6 +5,13 @@ description: Plan, assemble, configure, and verify Minecraft modpacks through Mo
 
 # Minecraft Modpack Authoring
 
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
+For verification, match the actual pack's mods, configs, scripts and resources on the test client and server. Startup and successful join do not prove progression. Select a short representative task/recipe/reward flow for changed content; do not run a full playthrough for a text-only edit. Query `modmind_test_session` capabilities before player automation. Keep test-only control mods out of exports, and report unavailable version or visual checks explicitly. Use `modmind_creation_context` for repeated failures, current constraints and evidence when available.
+
 Build a reproducible pack from a reviewed concept. Keep mod binaries, lock data, overrides, documentation, controls, and verification consistent.
 
 Read [content-acceptance.md](references/content-acceptance.md) before applying downloads or declaring the pack complete.
@@ -12,6 +19,9 @@ Read [content-acceptance.md](references/content-acceptance.md) before applying d
 ## Rules
 
 - Confirm with `modmind_project_info` that the active project is a modpack and record its Minecraft version and Loader.
+- Delegate self-authored mod implementation with `modmind_modpack_delegate_module`: first identify its namespace through `modmind_modpack_modules`, then provide concrete requirements, acceptance criteria and pack constraints. The module workbench owns Java development, dependency management and module testing in a separate context; do not load Java development skills or implement module source in the pack coordinator. Embedded and linked source projects are supported; linked work changes the original source. Review returned changes, evidence and remaining work before integrating. Do not treat an arbitrary third-party JAR as an editable source project or ask the user to repeat the request in another workbench.
+- After module source changes, `modmind_build_project` builds all registered modules and syncs the resulting JARs into the pack test instance. Build failure blocks delivery; select relevant runtime verification for changed gameplay. Compilation alone does not prove pack behavior.
+- Delegation returns a `taskId` immediately. Poll `modmind_modpack_module_task` with that ID and `waitSeconds: 20` until completed, failed or cancelled. Read every result before building or reporting completion. You may continue unrelated pack work while waiting; never edit/build the delegated module concurrently. Failed or cancelled tasks may have partial edits and do not imply rollback.
 - Use `modmind_set_intent` for an engineering task and `modmind_update_todo` for a multi-stage pack plan so progress reflects the real workflow.
 - Use ModMind managed download tools whenever they cover the requested resource. Do not replace them with browser, shell, or ad hoc downloads unless the matching tool actually fails; preserve that failure as evidence.
 - Separate planning from installation. Never reconstruct or simplify a returned plan before applying it.

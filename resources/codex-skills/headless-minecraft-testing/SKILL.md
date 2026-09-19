@@ -5,6 +5,11 @@ description: Plan, run, or diagnose managed and external headless Minecraft Java
 
 # Headless Minecraft Testing
 
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
 Prefer ModMind's managed isolated verification when it covers the requested check. Use an external HeadlessMC workflow only for a missing capability or an explicitly external CI setup.
 
 ## Choose the path
@@ -19,12 +24,15 @@ Read [references/integration-assessment.md](references/integration-assessment.md
 
 ## ModMind Route
 
+For an online test player, GUI/inventory interaction, permissions, or screenshot evidence, read [player-testing.md](references/player-testing.md). Probe the actual version's capabilities before starting; do not infer key or inventory support from menu support.
+
 - Use `modmind_test_matrix` when selecting explicit build, client, server, or GameTest targets.
 - Use `modmind_test_minecraft` for the managed isolated startup workflow.
+- Use `modmind_test_rendered` for a visible Java Mod or modpack startup check only when 真实界面测试 is checked. It builds/syncs, opens a real window for a bounded check, and stops its own client. It does not verify screenshots or gameplay. Use the player-session rendered path for supported interactive server tests.
 - Read `modmind_runtime_state` after launch, timeout, cancellation, or failure to capture current events and avoid stale conclusions.
 - Invoke `$minecraft-server-pack-testing` for modpack server construction, actual HeadlessMC join verification, or bounded console scenarios. Those tools provide stronger evidence than a generic mod smoke test.
 
-Only fall back to native HeadlessMC commands after the matching managed path is unavailable or fails, and preserve the managed failure in the report.
+Only consider an external HeadlessMC workflow when the current environment authorizes it and no feature switch forbids it. An unchecked ModMind feature is not a missing backend to replace. Preserve actual managed failures in the report and follow ModMind's managed-process boundary.
 
 ## Capture useful evidence
 

@@ -11,8 +11,8 @@ import type {
   DecompileReferenceReport,
   DecompileRunResult
 } from '../shared/decompile'
-import type { JavaLoaderKind, LoaderKind } from '../shared/types'
-import { inspectModJar } from './jarInspection'
+import type { LoaderKind } from '../shared/types'
+import { inspectDecompileJar } from './decompileJarInspection'
 import { classifyObfuscation, decompileJarWithVineflower, summarizeDecompiledTree } from './jarDecompileService'
 import { ensureYarnMappings, remapJarWithTinyRemapper, TINY_REMAPPER_VERSION, type YarnVersionEntry } from './jarRemapService'
 import {
@@ -59,7 +59,7 @@ export async function inspectForDecompilation(
   options: Pick<DecompilePipelineOptions, 'cacheRoot'>
 ): Promise<DecompileInspectResult> {
   if (path.extname(jarPath).toLowerCase() !== '.jar') throw new Error('只能分析 .jar 文件')
-  const inspected = await inspectModJar(jarPath)
+  const inspected = await inspectDecompileJar(jarPath)
   const sourceSha256 = inspected.sha256
   let extracted: string | null = null
   try {
@@ -69,15 +69,14 @@ export async function inspectForDecompilation(
     const hasClasses = classNamesFull.length > 0
     const intermediaryEvidence = await hasIntermediaryClassNames(extracted)
     const cached = Boolean(await readDecompileCacheEntry(options.cacheRoot, sourceSha256))
-    const loader = inspected.profile.loader === 'fabric' || inspected.profile.loader === 'quilt' || inspected.profile.loader === 'forge' || inspected.profile.loader === 'neoforge'
-      ? inspected.profile.loader
-      : undefined
+    const loader = inspected.profile.loader
     return {
       filePath: jarPath,
       fileName: inspected.fileName,
       size: inspected.size,
       sha256: sourceSha256,
       loader,
+      plugin: inspected.plugin,
       modId: inspected.profile.primaryModId,
       displayName: inspected.profile.displayName,
       version: inspected.profile.version,
@@ -156,7 +155,7 @@ export async function runDecompilation(request: DecompileRunRequest, options: De
   const sourceStat = await fs.stat(request.jarPath).catch(() => null)
   if (!sourceStat?.isFile()) throw new Error(`JAR 文件不存在：${request.jarPath}`)
   emit(options, '', 'hashing', '正在计算 JAR 哈希')
-  const inspected = await inspectModJar(request.jarPath)
+  const inspected = await inspectDecompileJar(request.jarPath)
   const sourceSha256 = inspected.sha256
   const cacheHit = await readDecompileCacheEntry(options.cacheRoot, sourceSha256)
   if (cacheHit?.provenance) {
@@ -218,6 +217,13 @@ export async function runDecompilation(request: DecompileRunRequest, options: De
       })
       const files = await summarizeDecompiledTree(path.join(staging.staging, DECOMPILE_OUTPUT_DIRECTORY), staging.staging)
       if (!files.length) throw new Error('反编译完成但没有生成任何源码文件；该 JAR 可能不包含 Java 字节码')
+      if (inspected.plugin) {
+        // Preserve resources from the original archive, independent of decompiler output.
+        await fs.cp(extracted, path.join(staging.staging, 'resources'), {
+          recursive: true,
+          filter: source => !/\.(?:class|java)$/i.test(source)
+        })
+      }
       emit(options, sourceSha256, 'finalizing', '正在写入受控缓存')
       const provenance: DecompileProvenance = {
         schemaVersion: 1,
@@ -229,6 +235,7 @@ export async function runDecompilation(request: DecompileRunRequest, options: De
         engine: 'vineflower',
         engineVersion: '1.11.1',
         engineArgs: [],
+        ...(inspected.plugin ? { plugin: inspected.plugin } : {}),
         ...(remapInfo ? { remap: remapInfo } : {}),
         obfuscationHint: classification.hint
       }
@@ -279,7 +286,7 @@ export async function listCachedSourceFiles(cacheRoot: string, sourceSha256: str
  * reflects what actually ships. Combines constant-pool scanning with manifest mod ids.
  */
 export async function scanReferencesForJar(jarPath: string, knownModPackages: Array<{ modId: string; packages: string[] }>): Promise<DecompileReferenceReport & { scannedClasses: number }> {
-  const inspected = await inspectModJar(jarPath)
+  const inspected = await inspectDecompileJar(jarPath)
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-decompile-ref-'))
   try {
     await extractZip(jarPath, { dir: temporary })

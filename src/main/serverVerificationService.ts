@@ -232,6 +232,8 @@ export class ServerProcess {
       while (expected.length && Date.now() < deadline) {
         if (signal) throwIfAborted(signal)
         const matched = expected.map(matchingLine).filter((value): value is string => Boolean(value))
+        const failure = this.entries.find(entry => entry.sequence > cursor && /\b(?:ERROR|FATAL)\b|[\w.]+Exception:/.test(entry.line))
+        if (failure) return { success: false, completed: index, failedStep: index + 1, evidence: [...evidence, failure.line], logPath: this.logPath }
         if (matched.length === expected.length) { evidence.push(...matched.map(value => `${index + 1}: ${value}`)); break }
         if (!this.isRunning()) return { success: false, completed: index, failedStep: index + 1, evidence, logPath: this.logPath }
         await new Promise((resolve) => setTimeout(resolve, 100))

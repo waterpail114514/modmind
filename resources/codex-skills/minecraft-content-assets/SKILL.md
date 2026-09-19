@@ -5,6 +5,13 @@ description: Create, integrate, and validate Minecraft mod content assets, inclu
 
 # Minecraft Content Assets
 
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
+For large batches or mirrored data/resources, read [bulk-content.md](references/bulk-content.md). Do not load it for a single recipe, translation or asset edit.
+
 Treat assets, data, and code references as one connected feature rather than isolated files.
 
 ## Workflow

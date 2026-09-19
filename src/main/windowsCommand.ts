@@ -8,7 +8,7 @@ export type WindowsCmdMode = '/c' | '/k'
 
 function quoteCommandPart(value: string): string {
   if (/^[A-Za-z0-9_./\\:=+@-]+$/.test(value)) return value
-  return `"${value.replaceAll('"', '\\"')}"`
+  return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
 }
 
 /** Build an explicit cmd.exe invocation with stable quoting for paths containing spaces. */

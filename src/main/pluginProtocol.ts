@@ -89,6 +89,7 @@ export function registerPluginProtocol(deps: PluginProtocolDeps): void {
 /** scheme 特权注册，必须在 app.ready 前调用一次。 */
 export function registerPluginProtocolScheme(): void {
   protocol.registerSchemesAsPrivileged([
+    { scheme: 'modmind-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
     {
       scheme: PLUGIN_PROTOCOL_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false }

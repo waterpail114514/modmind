@@ -14,7 +14,7 @@ async function generateForeground(dpi, size) {
   // Adaptive-icon layers are square canvases; the outer ~18% on each side may be
   // masked away by the launcher, so the logo only uses the central ~66%.
   const inner = Math.round(size * 0.66)
-  const logoPng = await sharp(logo).resize(inner, inner, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+  const logoPng = await sharp(logo).trim().resize(inner, inner, { fit: 'contain', kernel: 'lanczos3', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
   await sharp({ create: { width: size, height: size, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
     .composite([{ input: logoPng, gravity: 'center' }])
     .png()
@@ -23,11 +23,13 @@ async function generateForeground(dpi, size) {
 
 async function generateLauncher(dpi, size) {
   await sharp(logo)
-    .resize(size, size, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .trim()
+    .resize(size, size, { fit: 'contain', kernel: 'lanczos3', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toFile(join(resDir, `mipmap-${dpi}`, 'ic_launcher.png'))
   await sharp(logo)
-    .resize(size, size, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .trim()
+    .resize(size, size, { fit: 'contain', kernel: 'lanczos3', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .composite([{
       input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="#0B0F14" opacity="1"/></svg>`),
       blend: 'dest-in'

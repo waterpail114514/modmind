@@ -5,6 +5,11 @@ description: Assess, plan, apply, audit, and undo Minecraft modpack migrations a
 
 # Minecraft Modpack Migration
 
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
 Migrate the pack as a set of explicit decisions with recoverable state. Do not use the Java Mod source-port workflow for a whole modpack.
 
 Read [decision-policy.md](references/decision-policy.md) before constructing apply decisions.

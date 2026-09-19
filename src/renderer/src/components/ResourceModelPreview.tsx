@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -49,8 +50,8 @@ function ModelCanvas({ model }: { model: NonNullable<NonNullable<Preview['icon']
         reset.current = () => { controls!.reset(); draw() }
         observer = new ResizeObserver(resize); observer.observe(container); resize()
         release = cleanup
-      } catch (error) { cleanup(); setError(error instanceof Error ? error.message : String(error)) }
-    }).catch(error => { if (!cancelled) setError(String(error)) })
+      } catch (error) { cleanup(); setError(reportClientFailure(error)) }
+    }).catch(error => { if (!cancelled) setError(reportClientFailure(error)) })
     return () => { cancelled = true; reset.current = () => undefined; release?.() }
   }, [model])
   return <div className="resource-model-view">
@@ -66,7 +67,7 @@ export default function ResourceModelPreview({ projectPath, packId, file, revisi
   useEffect(() => {
     let active = true
     setResult(null); setError('')
-    void window.modmind.resourcePacks.previewModel(projectPath, packId, file).then(value => { if (active) setResult(value) }).catch(error => { if (active) setError(error instanceof Error ? error.message : String(error)) })
+    void window.modmind.resourcePacks.previewModel(projectPath, packId, file).then(value => { if (active) setResult(value) }).catch(error => { if (active) setError(reportClientFailure(error)) })
     return () => { active = false }
   }, [projectPath, packId, file, revision])
   const references = result?.localReferences ?? []

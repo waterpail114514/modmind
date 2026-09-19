@@ -1,5 +1,14 @@
 /** Shared contract for the controlled JAR decompilation feature (受控反编译). */
-import type { JavaLoaderKind } from './types'
+import type { JavaLoaderKind, ServerPluginPlatform } from './types'
+import type { PluginDescriptor } from './serverPlugin'
+
+export type DecompilePlatform = JavaLoaderKind | ServerPluginPlatform
+
+export function decompileTargetPlatforms(plugin?: PluginDescriptor): DecompilePlatform[] {
+  if (!plugin) return ['fabric', 'quilt', 'forge', 'neoforge']
+  if (plugin.platform === 'velocity') return ['velocity']
+  return [...(plugin.platform === 'paper' ? ['paper'] as const : ['spigot', 'paper'] as const), ...(plugin.foliaSupported ? ['folia'] as const : [])]
+}
 
 export type DecompileEngineId = 'vineflower'
 
@@ -26,6 +35,7 @@ export interface DecompileProvenance {
   engineVersion: string
   engineArgs: string[]
   remap?: DecompileRemapInfo
+  plugin?: PluginDescriptor
   obfuscationHint: DecompileObfuscationHint
   /** Controlled outputs are always read-only views; never project sources. */
   readOnly: true
@@ -44,7 +54,8 @@ export interface DecompileInspectResult {
   fileName: string
   size: number
   sha256: string
-  loader?: JavaLoaderKind
+  loader?: DecompilePlatform
+  plugin?: PluginDescriptor
   modId?: string
   displayName?: string
   version?: string

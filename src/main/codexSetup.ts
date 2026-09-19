@@ -7,6 +7,8 @@ import { retryTransientFileLock } from './fileLockRetry'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
+import { prepareCodexModelCatalog } from './codexModelCatalog'
+import { syncWorkbenchSkills } from './workbenchSkills'
 export { CODEX_RUNTIME_VERSION } from './runtimeTarget'
 const CODEX_ENV_KEY = 'MODMIND_THIRD_PARTY_API_KEY'
 const DOWNLOAD_ATTEMPTS_PER_SOURCE = 2
@@ -46,6 +48,7 @@ export interface PrepareCodexOptions {
   configSource?: 'device' | 'local-settings'
   existingExecutable?: string
   bundledSkillsDir?: string
+  bundledSkillNames?: readonly string[]
   imageToolsEnabled?: boolean
   rememberPrepared?: boolean
   onProgress?: (progress: CodexSetupProgress) => void
@@ -105,10 +108,11 @@ function validateConfig(value: unknown): CodexServerConfig {
   return {apiKey, baseUrl, model, reasoningEffort}
 }
 
-function codexConfigText(config: CodexServerConfig): string {
+function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): string {
   return [
     '# ModMind managed Codex provider',
     `model = ${JSON.stringify(config.model)}`,
+    ...(modelCatalogPath ? [`model_catalog_json = ${JSON.stringify(modelCatalogPath)}`] : []),
     `model_reasoning_effort = ${JSON.stringify(config.reasoningEffort)}`,
     'model_provider = "thirdparty"',
     '',
@@ -126,25 +130,21 @@ function codexConfigText(config: CodexServerConfig): string {
 }
 
 async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const desired = codexConfigText(config)
+  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model)
+  const desired = codexConfigText(config, catalog.path)
   const current = await fs.readFile(configPath, 'utf8').catch(() => '')
-  if (current === desired) return false
+  if (current === desired) return catalog.changed
   await fs.mkdir(path.dirname(configPath), {recursive: true})
   await fs.writeFile(configPath, desired, 'utf8')
   return true
 }
 
-async function syncBundledSkills(sourceDirectory: string | undefined, home: string): Promise<boolean> {
+async function syncBundledSkills(sourceDirectory: string | undefined, home: string, names?: readonly string[]): Promise<boolean> {
   if (!sourceDirectory) return false
   const sourceExists = await fs.stat(sourceDirectory).then((value) => value.isDirectory()).catch(() => false)
   if (!sourceExists) return false
-  const entries = await fs.readdir(sourceDirectory, { withFileTypes: true })
   const targetRoot = path.join(home, 'skills')
-  await fs.mkdir(targetRoot, { recursive: true })
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    await fs.cp(path.join(sourceDirectory, entry.name), path.join(targetRoot, entry.name), { recursive: true, force: true })
-  }
+  await syncWorkbenchSkills(sourceDirectory, targetRoot, names)
   return true
 }
 
@@ -226,7 +226,7 @@ export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexS
   const config = validateConfig(options.serverConfig)
   progress(options, {stage: 'configuring', title: '正在检查开发工具配置', detail: '正在比对本地配置并准备项目助手', status: 'running'})
   const configChanged = await writeCodexConfig(configPath, config)
-  const skillsSynced = await syncBundledSkills(options.bundledSkillsDir, home)
+  const skillsSynced = await syncBundledSkills(options.bundledSkillsDir, home, options.bundledSkillNames)
   if (!skillsSynced && options.bundledSkillsDir) {
     progress(options, {
       stage: 'configuring',

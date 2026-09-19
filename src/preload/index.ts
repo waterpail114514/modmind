@@ -1,38 +1,44 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSource } from '../shared/aiAttachments'
+import { diagnosticErrorPayload } from '../shared/diagnostics'
+import { presentClientResult } from '../shared/clientResult'
 import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
 import type {AdvancedAssetPreviewOptions, AdvancedAssetProgram, ReferenceImageAssetProgram} from '../shared/advancedAsset'
-import type { LocalServerEvent, LocalServerState, MinecraftLaunchOptions, MinecraftRuntimeEvent, MinecraftRuntimeState } from '../shared/minecraft'
+import type { LocalServerEvent, LocalServerState, LocalTestOptions, LocalTestState, MinecraftLaunchOptions, MinecraftRuntimeEvent, MinecraftRuntimeState } from '../shared/minecraft'
 import type { AddonImportSelection, AddonPlatformInstallInput, AddonPrepareInput, AddonRelationshipRole, AddonSearchProvider, AudioImportInput, ContentCreateInput, DependencyInstallInput, GitCommitInput, MavenDependencyInput, ReleasePublishInput, ReleaseSettings, TestTarget } from '../shared/production'
-import { isExpectedCancellation } from '../shared/diagnostics'
 
 const platformInfo = Object.freeze(ipcRenderer.sendSync('app:platformInfo')) as Readonly<import('../shared/platform').RuntimePlatformInfo>
 window.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.platform = platformInfo.os }, { once: true })
 
 const rawInvoke = ipcRenderer.invoke.bind(ipcRenderer)
 
-function rendererError(error: unknown): { name: string; message: string; stack?: string } {
-  if (error instanceof Error) return { name: error.name || 'Error', message: error.message || String(error), ...(error.stack ? { stack: error.stack } : {}) }
-  return { name: 'Error', message: String(error) }
-}
+const rendererError = diagnosticErrorPayload
 
 function sendRendererDiagnostic(payload: Record<string, unknown>): void {
-  ipcRenderer.send('diagnostics:rendererEvent', payload)
+  try { ipcRenderer.send('diagnostics:rendererEvent', payload) }
+  catch { /* Keep the original failure when a window is closing. */ }
 }
 
+const recentResultErrors = new Map<string, unknown>()
+function presentResult<T>(value: T, channel: string): T {
+  return presentClientResult(value, channel, (path, original) => {
+    if (recentResultErrors.get(path) === original) return
+    recentResultErrors.set(path, original)
+    if (recentResultErrors.size > 200) recentResultErrors.delete(recentResultErrors.keys().next().value!)
+    sendRendererDiagnostic({ subsystem: 'client', operation: channel, phase: 'error', level: 'error', message: 'Result error before user-facing translation', data: { path }, error: rendererError(original) })
+  })
+}
+
+// Main-process handlers own operation IDs and completion records, even if this renderer exits.
 const invoke: typeof ipcRenderer.invoke = async (channel, ...args) => {
-  const startedAt = Date.now()
-  sendRendererDiagnostic({ subsystem: 'ipc', operation: channel, phase: 'start', level: 'info', message: `IPC operation started: ${channel}` })
-  try {
-    const result = await rawInvoke(channel, ...args)
-    const durationMs = Date.now() - startedAt
-    sendRendererDiagnostic({ subsystem: 'ipc', operation: channel, phase: 'success', level: 'info', message: `IPC operation completed: ${channel}`, durationMs })
-    return result
-  } catch (error) {
-    const cancelled = isExpectedCancellation(error)
-    sendRendererDiagnostic({ subsystem: 'ipc', operation: channel, phase: cancelled ? 'cancelled' : 'error', level: cancelled ? 'warning' : 'error', message: `IPC operation ${cancelled ? 'cancelled' : 'failed'}: ${channel}`, durationMs: Date.now() - startedAt, error: rendererError(error) })
+  try { return presentResult(await rawInvoke(channel, ...args), channel) }
+  catch (error) {
+    // Main records the original exception before Electron strips its custom fields.
+    // Also retain transport failures that never reached a main-process handler.
+    sendRendererDiagnostic({ subsystem: 'ipc', operation: channel, phase: 'error', level: 'error', message: 'IPC request failed', error: rendererError(error) })
     throw error
   }
 }
@@ -85,7 +91,7 @@ const api: ModMindApi = {
     downloadUpdate: () => invoke('app:downloadUpdate'),
     installUpdate: () => invoke('app:installUpdate'),
     onUpdateState: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]): void => listener(state)
+      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]): void => listener(presentResult(state, 'app:updateState'))
       ipcRenderer.on('app:updateState', handler)
       return () => ipcRenderer.removeListener('app:updateState', handler)
     },
@@ -95,12 +101,12 @@ const api: ModMindApi = {
       return () => ipcRenderer.removeListener('app:openSettings', handler)
     },
     onOpenView: (listener: (view: SidebarViewId) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: SidebarViewId): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: SidebarViewId): void => listener(presentResult(value, 'app:openView'))
       ipcRenderer.on('app:openView', handler)
       return () => ipcRenderer.removeListener('app:openView', handler)
     },
     onDetachedWindowClosed: (listener: (target: DetachedWindowTarget) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, target: DetachedWindowTarget): void => listener(target)
+      const handler = (_event: Electron.IpcRendererEvent, target: DetachedWindowTarget): void => listener(presentResult(target, 'window:detachedClosed'))
       ipcRenderer.on('window:detachedClosed', handler)
       return () => ipcRenderer.removeListener('window:detachedClosed', handler)
     },
@@ -119,7 +125,7 @@ const api: ModMindApi = {
     dismiss: (id: string) => invoke('downloads:dismiss', id),
     clearFinished: () => invoke('downloads:clearFinished'),
     onChanged: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof listener>[0]): void => listener(snapshot)
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof listener>[0]): void => listener(presentResult(snapshot, 'downloads:changed'))
       ipcRenderer.on('downloads:changed', handler)
       return () => ipcRenderer.removeListener('downloads:changed', handler)
     }
@@ -162,13 +168,16 @@ const api: ModMindApi = {
     previewMigration: (input: ProjectMigrationInput) => invoke('project:previewMigration', input),
     migrate: (input: ProjectMigrationInput) => invoke('project:migrate', input),
     onChanged: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: ProjectInfo | null): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: ProjectInfo | null): void => listener(presentResult(value, 'project:changed'))
       ipcRenderer.on('project:changed', handler)
       return () => ipcRenderer.removeListener('project:changed', handler)
     }
   },
   modpack: {
     get: () => invoke('modpack:get'),
+    resumeImport: () => invoke('modpack:resumeImport'),
+    cancelImport: () => invoke('modpack:cancelImport'),
+    importStatus: () => invoke('modpack:importStatus'),
     getServerPackManifest: () => invoke('modpack:getServerPackManifest'),
     addServerPackMods: () => invoke('modpack:addServerPackMods'),
     removeServerPackMod: (fileName: string) => invoke('modpack:removeServerPackMod', fileName),
@@ -176,6 +185,7 @@ const api: ModMindApi = {
     importMods: () => invoke('modpack:importMods'),
     removeMod: (fileName: string) => invoke('modpack:removeMod', fileName),
     createModule: (name: string) => invoke('modpack:createModule', name),
+    importModule: (mode: 'copy' | 'link') => invoke('modpack:importModule', mode),
     updateModuleSide: (namespace: string, side: ModpackModuleSide) => invoke('modpack:updateModuleSide', namespace, side),
     openModule: (namespace: string) => invoke('modpack:openModule', namespace),
     sync: () => invoke('modpack:sync'),
@@ -183,7 +193,7 @@ const api: ModMindApi = {
     configModIdentities: root => invoke('modpack:configModIdentities', root),
     contentFeatures: root => invoke('modpack:contentFeatures', root),
     onModsChanged: listener => {
-      const handler = (_event: Electron.IpcRendererEvent, projectPath: string): void => listener(projectPath)
+      const handler = (_event: Electron.IpcRendererEvent, projectPath: string): void => listener(presentResult(projectPath, 'modpack:modsChanged'))
       ipcRenderer.on('modpack:modsChanged', handler)
       return () => ipcRenderer.removeListener('modpack:modsChanged', handler)
     },
@@ -206,7 +216,7 @@ const api: ModMindApi = {
     undoMigration: (migrationId) => invoke('modpack:undoMigration', migrationId),
     migrationHistory: () => invoke('modpack:migrationHistory'),
     onMigrationProgress: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]): void => listener(progress)
+      const handler = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]): void => listener(presentResult(progress, 'modpack:migrationProgress'))
       ipcRenderer.on('modpack:migrationProgress', handler)
       return () => ipcRenderer.removeListener('modpack:migrationProgress', handler)
     },
@@ -235,12 +245,12 @@ const api: ModMindApi = {
     restartServer: (input: unknown) => invoke('modpack:restartServer', input),
     sendServerCommand: (command: string) => invoke('modpack:sendServerCommand', command),
     onServerState: (listener: (state: LocalServerState) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: LocalServerState): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: LocalServerState): void => listener(presentResult(value, 'local-server:state'))
       ipcRenderer.on('local-server:state', handler)
       return () => ipcRenderer.removeListener('local-server:state', handler)
     },
     onServerEvent: (listener: (event: LocalServerEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: LocalServerEvent): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: LocalServerEvent): void => listener(presentResult(value, 'local-server:event'))
       ipcRenderer.on('local-server:event', handler)
       return () => ipcRenderer.removeListener('local-server:event', handler)
     },
@@ -256,7 +266,7 @@ const api: ModMindApi = {
   build: {
     preflight: (projectPath?: string) => invoke('build:preflight', projectPath),
     onProgress: (listener: (event: PipelineEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: PipelineEvent): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: PipelineEvent): void => listener(presentResult(value, 'build:progress'))
       ipcRenderer.on('build:progress', handler)
       return () => ipcRenderer.removeListener('build:progress', handler)
     }
@@ -268,9 +278,15 @@ const api: ModMindApi = {
     delete: (id: string, projectPath?: string) => invoke('snapshots:delete', id, projectPath)
   },
   settings: {
+    pickBackground: () => invoke('settings:pickBackground'),
     revealSecret: (key) => invoke('settings:revealSecret', key),
     getAgent: () => invoke('settings:getAgent'),
     saveAgent: (settings: AgentSettings) => invoke('settings:saveAgent', settings),
+    onAppearanceChanged: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, appearance: import('../shared/appTheme').AppAppearance): void => listener(appearance)
+      ipcRenderer.on('settings:appearance', handler)
+      return () => ipcRenderer.removeListener('settings:appearance', handler)
+    },
     listAgentModels: (kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => invoke('settings:listAgentModels', kind, configuration),
     scanGradle: () => invoke('settings:scanGradle'),
     scanJavaHomes: (): Promise<DetectedJavaHome[]> => invoke('settings:scanJavaHomes'),
@@ -278,6 +294,7 @@ const api: ModMindApi = {
     pickJavaHome: (): Promise<string | null> => invoke('settings:pickJavaHome')
   },
   diagnostics: {
+    reportError: (error, operation = 'page-error') => sendRendererDiagnostic({ subsystem: 'renderer', operation, phase: 'error', level: 'error', message: error.message, error }),
     exportLogs: (pages?: DiagnosticPageSnapshot[]) => invoke('diagnostics:exportLogs', pages)
   },
   device: {
@@ -291,7 +308,7 @@ const api: ModMindApi = {
     listModels: (force?: boolean) => invoke('device:listModels', force),
     openSite: (path?: string) => invoke('device:openSite', path),
     onState: (listener: (state: DeviceConnectionState) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: DeviceConnectionState): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: DeviceConnectionState): void => listener(presentResult(value, 'device:state'))
       ipcRenderer.on('device:state', handler)
       return () => ipcRenderer.removeListener('device:state', handler)
     }
@@ -301,7 +318,7 @@ const api: ModMindApi = {
     start: () => invoke('remote:start'),
     stop: () => invoke('remote:stop'),
     onState: (listener: (state: RemoteConnectionState) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: RemoteConnectionState): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: RemoteConnectionState): void => listener(presentResult(value, 'remote:state'))
       ipcRenderer.on('remote:state', handler)
       return () => ipcRenderer.removeListener('remote:state', handler)
     }
@@ -310,34 +327,44 @@ const api: ModMindApi = {
     getState: () => invoke('mcp-bridge:getState'),
     setEnabled: (enabled: boolean) => invoke('mcp-bridge:setEnabled', enabled),
     onState: (listener: (state: McpBridgeState) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: McpBridgeState): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: McpBridgeState): void => listener(presentResult(value, 'mcp-bridge:state'))
       ipcRenderer.on('mcp-bridge:state', handler)
       return () => ipcRenderer.removeListener('mcp-bridge:state', handler)
     }
   },
   ai: {
     createCode: (prompt: string, sessionId?: string, backend?: AgentSettings['codingBackend'], executionProfile?: AiExecutionProfile, options?: AiCreateCodeOptions) => invoke('ai:createCode', prompt, sessionId, backend, executionProfile, options),
-    pickAttachments: (kind) => invoke('ai:pickAttachments', kind),
+    pickAttachments: (kind, projectPath) => invoke('ai:pickAttachments', kind, projectPath),
+    importAttachments: async (files, projectPath) => {
+      if (!Array.isArray(files) || files.length > MAX_AI_ATTACHMENTS) throw new Error(`一次最多上传 ${MAX_AI_ATTACHMENTS} 个附件`)
+      const sources: AiAttachmentSource[] = await Promise.all(files.map(async (file) => {
+        const filePath = webUtils.getPathForFile(file)
+        if (filePath) return { path: filePath }
+        if (file.size > MAX_INLINE_ATTACHMENT_BYTES) throw new Error('粘贴的单个附件不能超过 32 MB，请保存为文件后拖入')
+        return { name: file.name || 'clipboard.png', bytes: new Uint8Array(await file.arrayBuffer()) }
+      }))
+      return invoke('ai:importAttachments', sources, projectPath)
+    },
     validateAttachments: (attachments, projectPath) => invoke('ai:validateAttachments', attachments, projectPath),
     cancelCode: (sessionId?: string, projectPath?: string) => invoke('ai:cancelCode', sessionId, projectPath),
     clearQuotaCredentials: () => invoke('ai:clearQuotaCredentials'),
     getRecovery: (projectPath?: string) => invoke('ai:getRecovery', projectPath),
     getProjectTaskState: (projectPath?: string) => invoke('ai:getProjectTaskState', projectPath),
-    resumeRecovery: (projectPath?: string, conversationId?: string) => invoke('ai:resumeRecovery', projectPath, conversationId),
+    resumeRecovery: (projectPath?: string, conversationId?: string, features?: import('../shared/workbenchFeatures').WorkbenchFeatures) => invoke('ai:resumeRecovery', projectPath, conversationId, features),
     switchBackend: (backend: AgentSettings['codingBackend'], projectPath?: string, sessionScope?: string, switchId?: number) => invoke('ai:switchBackend', backend, projectPath, sessionScope, switchId),
     onBackendReady: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(presentResult(value, 'ai:backendReady'))
       ipcRenderer.on('ai:backendReady', handler)
       return () => ipcRenderer.removeListener('ai:backendReady', handler)
     },
     restoreRecovery: () => invoke('ai:restoreRecovery'),
     onProgress: (listener: (event: PipelineEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: PipelineEvent): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: PipelineEvent): void => listener(presentResult(value, 'ai:progress'))
       ipcRenderer.on('ai:progress', handler)
       return () => ipcRenderer.removeListener('ai:progress', handler)
     },
     onOutput: (listener: (event: AiOutputEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: AiOutputEvent): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: AiOutputEvent): void => listener(presentResult(value, 'ai:output'))
       ipcRenderer.on('ai:output', handler)
       return () => ipcRenderer.removeListener('ai:output', handler)
     }
@@ -356,7 +383,7 @@ const api: ModMindApi = {
   beginnerCodex: {
     prepare: (projectPath?: string) => invoke('beginner-codex:prepare', projectPath),
     onProgress: (listener: (progress: BeginnerCodexProgress) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: BeginnerCodexProgress): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: BeginnerCodexProgress): void => listener(presentResult(value, 'beginner-codex:progress'))
       ipcRenderer.on('beginner-codex:progress', handler)
       return () => ipcRenderer.removeListener('beginner-codex:progress', handler)
     }
@@ -375,7 +402,7 @@ const api: ModMindApi = {
     openProject: () => invoke('blockbench:openProject'),
     openYsm: () => invoke('blockbench:openYsm'),
     saveProject: () => invoke('blockbench:saveProject'),
-    setTheme: (theme: 'light' | 'dark') => invoke('blockbench:setTheme', theme),
+    setTheme: (theme: 'light' | 'dark', preset?: import('../shared/appTheme').ThemePreset, custom?: import('../shared/appTheme').CustomThemeColors) => invoke('blockbench:setTheme', theme, preset, custom),
     runAction: (action: string) => invoke('blockbench:runAction', action),
     execute: (action: BlockbenchAction) => invoke('blockbench:execute', action),
     executeActions: (actions: BlockbenchAction[], expectedRevision?: string) => invoke('blockbench:executeActions', actions, expectedRevision),
@@ -389,7 +416,7 @@ const api: ModMindApi = {
     restoreHistory: (id: string) => invoke('blockbench:restoreHistory', id),
     getState: () => invoke('blockbench:getState'),
     onState: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(presentResult(value, 'blockbench:state'))
       ipcRenderer.on('blockbench:state', handler)
       void invoke('blockbench:getState').then(listener)
       return () => ipcRenderer.removeListener('blockbench:state', handler)
@@ -425,6 +452,16 @@ const api: ModMindApi = {
     openSource: (version: string) => invoke('mappings:openSource', version),
     openLoaderDocs: (loader) => invoke('mappings:openLoaderDocs', loader)
   },
+  localTest: {
+    getState: () => invoke('local-test:getState'),
+    start: (options: LocalTestOptions) => invoke('local-test:start', options),
+    stop: () => invoke('local-test:stop'),
+    onState: (listener: (state: LocalTestState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: LocalTestState): void => listener(presentResult(state, 'local-test:state'))
+      ipcRenderer.on('local-test:state', handler)
+      return () => ipcRenderer.removeListener('local-test:state', handler)
+    }
+  },
   minecraft: {
     getState: () => invoke('minecraft:getState'),
     prepare: () => invoke('minecraft:prepare'),
@@ -442,12 +479,12 @@ const api: ModMindApi = {
     removeMod: (name: string) => invoke('minecraft:removeMod', name),
     listMods: () => invoke('minecraft:listMods'),
     onState: (listener: (state: MinecraftRuntimeState) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: MinecraftRuntimeState): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: MinecraftRuntimeState): void => listener(presentResult(value, 'minecraft:state'))
       ipcRenderer.on('minecraft:state', handler)
       return () => ipcRenderer.removeListener('minecraft:state', handler)
     },
     onEvent: (listener: (event: MinecraftRuntimeEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: MinecraftRuntimeEvent): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: MinecraftRuntimeEvent): void => listener(presentResult(value, 'minecraft:event'))
       ipcRenderer.on('minecraft:event', handler)
       return () => ipcRenderer.removeListener('minecraft:event', handler)
     }
@@ -544,7 +581,7 @@ const api: ModMindApi = {
     readFile: (sourceSha256: string, relativePath: string) => invoke('decompile:readFile', sourceSha256, relativePath) as Promise<string>,
     scanReferences: (jarPath: string, knownPackages?: Array<{ modId: string; packages: string[] }>) => invoke('decompile:scanReferences', jarPath, knownPackages) as Promise<import('../shared/decompile').DecompileReferenceReport & { scannedClasses: number }>,
     onProgress: (listener: (event: import('../shared/decompile').DecompileProgressEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, value: import('../shared/decompile').DecompileProgressEvent): void => listener(value)
+      const handler = (_event: Electron.IpcRendererEvent, value: import('../shared/decompile').DecompileProgressEvent): void => listener(presentResult(value, 'decompile:event'))
       ipcRenderer.on('decompile:event', handler)
       return () => ipcRenderer.removeListener('decompile:event', handler)
     },
@@ -585,17 +622,17 @@ const api: ModMindApi = {
     closeOverlayWindow: (pluginId: string) => invoke('plugins:closeOverlayWindow', pluginId),
     setOverlayAlwaysOnTop: (pluginId: string, alwaysOnTop: boolean) => invoke('plugins:setOverlayAlwaysOnTop', pluginId, alwaysOnTop),
     onChanged: (listener: (snapshot: import('../shared/plugins').PluginSnapshot) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, snapshot: import('../shared/plugins').PluginSnapshot): void => listener(snapshot)
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: import('../shared/plugins').PluginSnapshot): void => listener(presentResult(snapshot, 'plugins:changed'))
       ipcRenderer.on('plugins:changed', handler)
       return () => ipcRenderer.removeListener('plugins:changed', handler)
     },
     onDiagnosticsChanged: (listener: (diagnostics: import('../shared/plugins').PluginDiagnostics) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, diagnostics: import('../shared/plugins').PluginDiagnostics): void => listener(diagnostics)
+      const handler = (_event: Electron.IpcRendererEvent, diagnostics: import('../shared/plugins').PluginDiagnostics): void => listener(presentResult(diagnostics, 'plugins:diagnostics'))
       ipcRenderer.on('plugins:diagnostics', handler)
       return () => ipcRenderer.removeListener('plugins:diagnostics', handler)
     },
     onOverlayWindowsChanged: (listener: (states: import('../shared/plugins').PluginOverlayWindowState[]) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, states: import('../shared/plugins').PluginOverlayWindowState[]): void => listener(states)
+      const handler = (_event: Electron.IpcRendererEvent, states: import('../shared/plugins').PluginOverlayWindowState[]): void => listener(presentResult(states, 'plugins:overlayWindowsChanged'))
       ipcRenderer.on('plugins:overlayWindowsChanged', handler)
       return () => ipcRenderer.removeListener('plugins:overlayWindowsChanged', handler)
     }

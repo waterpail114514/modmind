@@ -1,0 +1,54 @@
+.image-workflow-picker { position: relative; flex: 0 1 300px; min-width: 150px; max-width: 340px; color: var(--theme-text); }
+.image-workflow-picker-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 10px; border: 1px solid var(--theme-line); border-radius: 9px; background: var(--theme-surface); color: inherit; text-align: left; cursor: pointer; }
+.image-workflow-picker-trigger:hover:not(:disabled), .image-workflow-picker-trigger[aria-expanded="true"] { background: var(--theme-panel); border-color: var(--theme-accent); }
+.image-workflow-picker-trigger:disabled { opacity: .6; cursor: default; }
+.image-workflow-picker-icon { display: grid; flex: 0 0 30px; height: 30px; place-items: center; border-radius: 7px; background: var(--theme-panel); color: var(--theme-muted); }
+.image-workflow-picker-title { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 3px; }
+.image-workflow-picker-title > small { font-size: 10px; color: var(--theme-muted); }
+.image-workflow-name { display: block; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 1.5; }
+.image-workflow-name.is-overflowing { mask-image: linear-gradient(to right, black calc(100% - 28px), transparent); }
+.image-workflow-picker-trigger > svg { flex: 0 0 auto; color: var(--theme-muted); }
+.image-workflow-picker-trigger > svg.is-open { transform: rotate(180deg); }
+.image-workflow-picker-popover { position: absolute; z-index: 20; top: calc(100% + 8px); left: 0; width: min(360px, calc(100vw - 32px)); border: 1px solid var(--theme-line); border-radius: 12px; background: var(--theme-surface); box-shadow: 0 12px 36px color-mix(in srgb, var(--theme-shadow) 16%, transparent); overflow: hidden; }
+.image-workflow-picker-heading { display: flex; justify-content: space-between; padding: 13px 14px 9px; font-size: 11px; font-weight: 600; }
+.image-workflow-picker-heading small { color: var(--theme-muted); font-weight: 400; }
+.image-workflow-picker-list { padding: 4px 6px 7px; max-height: min(380px, 50vh); overflow: auto; overscroll-behavior: contain; }
+.image-workflow-picker-list > button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.image-workflow-picker-list > button:hover, .image-workflow-picker-list > button:focus-visible { background: var(--theme-panel); }
+.image-workflow-picker-list > button[aria-selected="true"] { background: var(--theme-selected); }
+.image-workflow-picker-thumbnail { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid var(--theme-line); border-radius: 6px; overflow: hidden; color: var(--theme-muted); background: var(--theme-canvas); }
+.image-workflow-picker-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.image-workflow-picker-option-text { flex: 1; min-width: 0; }
+.image-workflow-picker-option-text > small { display: block; margin-top: 3px; font-size: 10px; color: var(--theme-muted); }
+.image-workflow-picker-list .is-current { color: var(--theme-accent); flex-shrink: 0; }
+.image-workflow-picker-list .is-hidden { visibility: hidden; flex-shrink: 0; }
+.image-workflow-picker-footer { border-top: 1px solid var(--theme-line); padding: 10px 14px; color: var(--theme-muted); font-size: 10px; }
+.image-studio-page .image-workflow-picker button:focus-visible { outline: 2px solid var(--theme-accent); outline-offset: -2px; }
+.image-studio-page .react-flow__node-workflow:has(.image-workflow-node-output) { box-sizing: border-box; width: 224px; height: 242px; min-width: 224px; padding: 10px 12px; border-radius: 10px; }
+.image-studio-page .image-workflow-node-output { display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: 100%; height: 100%; min-width: 0; padding: 0; }
+.image-output-heading { display: flex; justify-content: space-between; align-items: center; min-height: 18px; gap: 8px; }
+.image-output-heading > span { font-size: 10px; color: var(--theme-muted); }
+.image-studio-page .image-output-preview { flex: 1; min-height: 0; height: auto; padding: 0; border-radius: 6px; overflow: hidden; background: var(--theme-canvas); }
+.image-studio-page .image-output-loading, .image-studio-page .image-output-error, .image-studio-page .image-output-cancelled { display: flex; flex: 1; min-height: 0; flex-direction: column; justify-content: center; align-items: center; gap: 9px; padding: 12px; border: 1px dashed var(--theme-line); border-radius: 6px; background: var(--theme-canvas); text-align: center; }
+.image-studio-page .image-output-loading > svg { color: var(--theme-accent); }
+.image-studio-page .image-output-cancelled { color: var(--theme-muted); }
+.image-studio-page .image-output-error > span, .image-studio-page .image-output-loading > span, .image-studio-page .image-output-cancelled > span { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-size: 10px; line-height: 1.5; color: var(--theme-muted); overflow-wrap: anywhere; }
+.image-studio-page .image-output-actions { min-height: 26px; margin: 0; align-items: center; }
+.image-output-actions > span { margin-right: auto; font-size: 10px; color: var(--theme-muted); font-variant-numeric: tabular-nums; }
+.image-output-actions.is-placeholder { visibility: hidden; }
+.image-studio-page .react-flow__node.selected { border-color: var(--theme-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent) 25%, transparent); }
+.image-workflow-run-progress { display: inline-flex; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+.image-workflow-run-progress > span { width: 5px; height: 5px; border-radius: 50%; background: var(--theme-accent); }
+.image-workflow-reveal { margin-left: 12px; padding: 3px 8px; border: 1px solid var(--theme-line); border-radius: 5px; background: var(--theme-surface); color: var(--theme-text); font-size: 11px; cursor: pointer; }
+@media (max-width: 900px) {
+  .image-studio-page .image-workflow-library { flex-wrap: wrap; }
+  .image-workflow-picker { flex: 1 1 220px; max-width: none; }
+  .image-studio-page .image-workflow-library-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
+@media (max-width: 580px) {
+  .image-workflow-picker { flex-basis: 100%; }
+  .image-studio-page .image-workflow-library-actions { width: 100%; margin-left: 0; justify-content: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .image-output-loading .spin { animation: none; }
+}

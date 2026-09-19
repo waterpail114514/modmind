@@ -95,6 +95,9 @@ export interface AddonRelationship {
   versionId?: string
   slug?: string
   linkedProjectPath?: string
+  linkedProjectId?: string
+  /** Published compatibility constraint; the installed version/hash remains an exact development lock. */
+  compatibilityRange?: string
   platformLinks?: Partial<Record<'modrinth' | 'curseforge', { projectId: string; slug?: string }>>
   sha256?: string
   automatic?: boolean

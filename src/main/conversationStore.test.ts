@@ -34,6 +34,22 @@ async function fixture(): Promise<{ project: string; userData: string; data: Wor
 }
 
 describe('ConversationStore', () => {
+  it('keeps first and last native attempts across reload and clears positions when replacing a thread', async () => {
+    const { project, store, userData } = await fixture()
+    await store.create(project, { id: 'ws-turns', surface: 'workspace' })
+    await store.appendUser(project, 'ws-turns', 0, 'user-turn', { prompt: 'test' })
+    await store.setNativeState(project, 'ws-turns', 0, 'quota', 'thread-a', 'first', 'user-turn')
+    await store.setNativeState(project, 'ws-turns', 0, 'quota', 'thread-a', 'retry', 'user-turn')
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData))
+    stores.push(reopened)
+    const before = await reopened.fork(project, { sourceConversationId: 'ws-turns', beforeTurnId: 'user-turn', backend: 'quota', view: {} })
+    expect(before.parent).toMatchObject({ nativeMode: 'native', nativeTurnId: 'first', boundary: 'before' })
+    const through = await reopened.fork(project, { sourceConversationId: 'ws-turns', throughTurnId: 'user-turn', backend: 'quota', view: {} })
+    expect(through.parent?.nativeTurnId).toBe('retry')
+    await store.setNativeState(project, 'ws-turns', 0, 'quota', 'replacement')
+    const rebuilt = await store.fork(project, { sourceConversationId: 'ws-turns', beforeTurnId: 'user-turn', backend: 'quota', view: {} })
+    expect(rebuilt.parent?.nativeMode).toBe('visible-history-rebuild')
+  })
   it('persists routed events in sequence and replays only missing events', async () => {
     const { project, store } = await fixture()
     await store.create(project, { id: 'ws-a', surface: 'workspace' })

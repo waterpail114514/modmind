@@ -1,3 +1,6 @@
+import MoreActions from './MoreActions'
+import { describeClientFailure } from '../../../shared/clientFailure'
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useState } from 'react'
 import { marked } from 'marked'
 import {
@@ -94,7 +97,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
         setDiagnostics(await window.modmind.plugins.activate(plugin.manifest.id))
       }
     } catch (error) {
-      setMessage(`失败：${error instanceof Error ? error.message : String(error)}`)
+      setMessage(`失败：${reportClientFailure(error)}`)
       setDiagnostics(await window.modmind.plugins.diagnostics(plugin.manifest.id).catch(() => null))
     } finally {
       setDeveloperBusy(false)
@@ -107,7 +110,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
     try {
       setDiagnostics(await window.modmind.plugins.restart(developerPlugin.manifest.id))
     } catch (error) {
-      setMessage(`失败：${error instanceof Error ? error.message : String(error)}`)
+      setMessage(`失败：${reportClientFailure(error)}`)
     } finally {
       setDeveloperBusy(false)
     }
@@ -122,7 +125,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
       setDocToast('已保存到「下载」文件夹')
       setTimeout(() => setDocDownloaded(false), 2500)
     } catch (error) {
-      setDocToast(`下载失败：${error instanceof Error ? error.message : String(error)}`)
+      setDocToast(`下载失败：${reportClientFailure(error)}`)
     } finally {
       setDocDownloading(false)
     }
@@ -136,7 +139,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
       setMessage(label)
       onRefresh()
     } catch (error) {
-      setMessage(`失败：${error instanceof Error ? error.message : String(error)}`)
+      setMessage(`失败：${reportClientFailure(error)}`)
     } finally {
       setBusy(false)
     }
@@ -150,29 +153,23 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
   return (
     <div className="settings-page plugins-page">
       <div className="content-toolbar">
-        <div>
-          <h1>插件</h1>
-          <p>管理完全可信的本机 Node 扩展与沙箱面板；保存文件即自动热重载</p>
-        </div>
-        <div className="plugins-toolbar-actions">
-          <button className="secondary-button compact" type="button" disabled={busy} onClick={() => void window.modmind.plugins.openDirectory()}>
+        <h1 className="visually-hidden">插件</h1>
+        <div className="plugins-toolbar-actions"><MoreActions label="插件管理更多操作"><button className="secondary-button compact" type="button" disabled={busy} onClick={() => void window.modmind.plugins.openDirectory()}>
             <FolderOpen size={14} /> 打开插件目录
-          </button>
+          </button><button className="icon-button" type="button" title="插件制作文档" onClick={() => setDocsOpen(true)}>
+              <BookOpen size={15} />
+            </button><button className="icon-button" type="button" title="重新扫描" disabled={busy} onClick={() => void runAction(async () => { await window.modmind.plugins.reload() }, '已重新扫描')}>
+              {busy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+            </button></MoreActions>
+
           <button className="secondary-button compact" type="button" disabled={busy || !hasProject} title={hasProject ? undefined : '打开项目后可安装到当前项目'} onClick={() => void runAction(async () => !('cancelled' in await window.modmind.plugins.importZip('project')), '已导入到当前项目')}>
             <PackagePlus size={14} /> 导入到项目
           </button>
           <button className="secondary-button compact" type="button" disabled={busy} onClick={() => void runAction(async () => !('cancelled' in await window.modmind.plugins.importZip('global')), '已导入到全局')}>
             <PackagePlus size={14} /> 导入到全局
           </button>
-          <span className="plugins-toolbar-divider" />
-          <span className="plugins-toolbar-icons">
-            <button className="icon-button" type="button" title="插件制作文档" onClick={() => setDocsOpen(true)}>
-              <BookOpen size={15} />
-            </button>
-            <button className="icon-button" type="button" title="重新扫描" disabled={busy} onClick={() => void runAction(async () => { await window.modmind.plugins.reload() }, '已重新扫描')}>
-              {busy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
-            </button>
-          </span>
+
+
         </div>
       </div>
 
@@ -227,7 +224,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
                   </label>
                 </header>
                 {plugin.error || plugin.runtimeError ? (
-                  <p className="plugin-card-error">{plugin.error ?? `后端启动失败：${plugin.runtimeError}`}</p>
+                  <p className="plugin-card-error">{describeClientFailure(plugin.error ?? plugin.runtimeError)}</p>
                 ) : (
                   <div className="plugin-card-tags">
                     {plugin.manifest.panel ? <span className="plugin-tag"><LayoutDashboard size={11} />面板</span> : null}
@@ -319,7 +316,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
               <button className="secondary-button compact" type="button" onClick={() => void window.modmind.plugins.openDirectory()}><FolderOpen size={14} />插件目录</button>
             </div>
 
-            {diagnostics?.error ? <div className="plugin-developer-error">{diagnostics.error}</div> : null}
+            {diagnostics?.error ? <div className="plugin-developer-error">{describeClientFailure(diagnostics.error)}</div> : null}
             <div className="plugin-developer-meta">
               <span>入口：{developerPlugin.manifest.backend?.entry ?? developerPlugin.manifest.overlay?.entry ?? developerPlugin.manifest.panel?.entry ?? '无'}</span>
               <span>权限：{developerPlugin.manifest.permissions.join(', ') || '无'}</span>

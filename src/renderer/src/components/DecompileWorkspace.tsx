@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
@@ -15,8 +16,8 @@ import {
   ShieldCheck,
   X
 } from 'lucide-react'
-import type { DecompileFileEntry, DecompileInspectResult, DecompileProgressEvent, DecompileReferenceReport, DecompileRunResult } from '../../../shared/decompile'
-import type { JavaLoaderKind, ProjectInfo } from '../../../shared/types'
+import { decompileTargetPlatforms, type DecompilePlatform, type DecompileFileEntry, type DecompileInspectResult, type DecompileProgressEvent, type DecompileReferenceReport, type DecompileRunResult } from '../../../shared/decompile'
+import type { ProjectInfo } from '../../../shared/types'
 import MonacoCodeEditor from './MonacoCodeEditor'
 
 interface HistoryItem {
@@ -44,7 +45,7 @@ function saveHistory(items: HistoryItem[]): void {
 }
 
 function errorMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason)
+  return reportClientFailure(reason)
 }
 
 function formatBytes(size: number): string {
@@ -132,7 +133,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
   const [searchResults, setSearchResults] = useState<Array<{ relativePath: string; line: number; text: string }> | null>(null)
   const [referenceReport, setReferenceReport] = useState<(DecompileReferenceReport & { scannedClasses: number }) | null>(null)
   const [mcVersionInput, setMcVersionInput] = useState('')
-  const [projectLoader, setProjectLoader] = useState<JavaLoaderKind>('fabric')
+  const [projectLoader, setProjectLoader] = useState<DecompilePlatform>('fabric')
   const [projectMinecraftVersion, setProjectMinecraftVersion] = useState('')
   const [skipRemap, setSkipRemap] = useState(false)
   const inspectedRef = useRef<DecompileInspectResult | null>(null)
@@ -199,7 +200,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
     setInspect(null)
     setError('')
     setInspecting(true)
-    setInspectionStatus('正在识别 JAR、读取模组描述和 Minecraft 版本…')
+    setInspectionStatus('正在识别 JAR、读取模组或插件描述与版本…')
     setFiles([])
     setSelectedFile(null)
     setFileContent('')
@@ -369,7 +370,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
       <aside className="decompile-sidebar">
         <div className="decompile-sidebar-header">
           <Binary size={17} />
-          <strong>受控反编译</strong>
+          <strong>反编译</strong>
         </div>
         <button className="primary-button decompile-pick" type="button" onClick={() => void pickJar()} disabled={running || inspecting}>
           {inspecting ? <Loader2 className="spin" size={16} /> : <FileSearch size={16} />}
@@ -416,11 +417,10 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
         ) : null}
         {!inspect && !running && !error ? (
           <div className="decompile-empty">
-            <Lock size={28} />
-            <h3>受控反编译工作区</h3>
-            <p>选择一个 Mod JAR，在应用内只读浏览其源码、验证前置依赖的真实 API 用法，或为版本迁移收集证据。</p>
-            <p className="muted">反编译结果保存在应用缓存中并标注来源与哈希；它们不是项目源码，也不会进入任何导出产物。</p>
-            <p className="muted">注意：原始注释与局部变量名在编译时已丢失，无法恢复；经过混淆的模组可读性有限。</p>
+            <FileCode2 size={28} strokeWidth={1.5} aria-hidden="true" />
+            <h3>查看 JAR 源码</h3>
+            <p>从左侧选择模组或服务端插件 JAR，<br />浏览源码、分析依赖。</p>
+            <p className="decompile-empty-hint">结果只读，可转换为独立项目继续编辑。</p>
           </div>
         ) : null}
         {obfuscationBanner}
@@ -443,7 +443,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
               {inspect.remapRecommended ? <label className="decompile-check"><input type="checkbox" checked={!skipRemap} onChange={(event) => setSkipRemap(!event.target.checked)} /> 先重映射为可读名称</label> : null}
               <input
                 className="decompile-mc-input"
-                placeholder="Minecraft 版本，如 1.21.1"
+                placeholder={inspect.loader === 'velocity' ? '代理 API 版本，如 3.4.0-SNAPSHOT' : 'Minecraft 版本，如 1.21.1'}
                 value={mcVersionInput}
                 onChange={(event) => setMcVersionInput(event.target.value)}
               />
@@ -453,7 +453,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
               <button className="secondary-button" type="button" onClick={() => void scanReferences()}>
                 <FileSearch size={14} /> 分析依赖引用
               </button>
-              {files.length && projectContext?.kind === 'modpack' ? (
+              {files.length && !inspect.plugin && projectContext?.kind === 'modpack' ? (
                 <button className="secondary-button" type="button" disabled={running} onClick={() => void openTermsDialog()} title="把反编译源码导出为整合包的自制模组模块">
                   <PackagePlus size={14} /> 转为自制模组
                 </button>
@@ -550,15 +550,12 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
               <small>{termsTarget === 'project' ? '会创建标准 ModMind 工程，并把反编译源码写入 src/main/java' : '将创建为整合包 modules/ 目录下的独立自制模组工程'}</small>
             </label>
             {termsTarget === 'project' ? <div className="adopt-fields">
-              <label className="field-label">Minecraft 版本
-                <input value={projectMinecraftVersion} onChange={(event) => setProjectMinecraftVersion(event.target.value)} placeholder="例如：1.21.1" />
+              <label className="field-label">{projectLoader === 'velocity' ? '代理 API 版本' : 'Minecraft 版本'}
+                <input value={projectMinecraftVersion} onChange={(event) => setProjectMinecraftVersion(event.target.value)} placeholder={projectLoader === 'velocity' ? '例如：3.4.0-SNAPSHOT' : '例如：1.21.1'} />
               </label>
-              <label className="field-label">加载器
-                <select value={projectLoader} onChange={(event) => setProjectLoader(event.target.value as JavaLoaderKind)}>
-                  <option value="fabric">Fabric</option>
-                  <option value="quilt">Quilt</option>
-                  <option value="forge">Forge</option>
-                  <option value="neoforge">NeoForge</option>
+              <label className="field-label">{inspect?.plugin ? '插件平台' : '加载器'}
+                <select value={projectLoader} onChange={(event) => setProjectLoader(event.target.value as DecompilePlatform)}>
+                  {decompileTargetPlatforms(inspect?.plugin).map(platform => <option key={platform} value={platform}>{platform}</option>)}
                 </select>
               </label>
             </div> : null}

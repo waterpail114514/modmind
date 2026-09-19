@@ -64,7 +64,7 @@ function normalizeDocument(value: unknown): ConversationDocument | null {
   const nativeTurns = entry.nativeTurns && typeof entry.nativeTurns === 'object' ? entry.nativeTurns : {}
   const view = entry.view && typeof entry.view === 'object' ? entry.view : {}
   const checkpointSequence = Number.isSafeInteger(entry.checkpointSequence) && Number(entry.checkpointSequence) >= 0 ? Number(entry.checkpointSequence) : 0
-  return { ...summary, schemaVersion: 2, lastSequence, checkpointSequence, events, view, native, nativeTurns, ...(entry.nativeForkPending ? { nativeForkPending: true } : {}) }
+  return { ...summary, schemaVersion: 2, lastSequence, checkpointSequence, events, view, native, nativeTurns, ...(entry.nativeTurnStarts ? { nativeTurnStarts: entry.nativeTurnStarts } : {}), ...(entry.nativeForkPending ? { nativeForkPending: true } : {}) }
 }
 
 function parseJournalLines(lines: string[], conversationId: string, generation: number): ConversationEventRecord[] {
@@ -205,7 +205,9 @@ export class ConversationStore {
     const now = new Date().toISOString()
     const sourceNative = input.backend ? source.native[input.backend] : undefined
     const branchTurnId = input.beforeTurnId ?? input.throughTurnId
-    const mappedNativeTurn = branchTurnId && input.backend ? source.nativeTurns[branchTurnId]?.[input.backend] : sourceNative?.lastTurnId
+    const mappedNativeTurn = branchTurnId && input.backend
+      ? (input.beforeTurnId ? source.nativeTurnStarts?.[branchTurnId]?.[input.backend] : undefined) ?? source.nativeTurns[branchTurnId]?.[input.backend]
+      : sourceNative?.lastTurnId
     const claudeAtHead = Boolean(input.throughTurnId && !input.beforeTurnId && input.throughTurnId === sourceNative?.lastModmindTurnId)
     const nativeMode = Boolean(sourceNative?.sessionId)
       && (input.backend === 'claude' ? !branchTurnId || claudeAtHead : !branchTurnId || Boolean(mappedNativeTurn))
@@ -217,7 +219,8 @@ export class ConversationStore {
       generation: source.generation + 1, lastSequence: 0, checkpointSequence: 0, events: [],
       view: forkView,
       native: sourceNative && nativeMode === 'native' && input.backend ? { [input.backend]: { ...sourceNative, ...(mappedNativeTurn ? { lastTurnId: mappedNativeTurn } : {}) } } : {},
-      nativeTurns: Object.fromEntries(Object.entries(source.nativeTurns).filter(([turnId]) => retainedTurnIds.has(turnId))),
+      nativeTurns: nativeMode === 'native' ? Object.fromEntries(Object.entries(source.nativeTurns).filter(([turnId]) => retainedTurnIds.has(turnId))) : {},
+      nativeTurnStarts: nativeMode === 'native' ? Object.fromEntries(Object.entries(source.nativeTurnStarts ?? {}).filter(([turnId]) => retainedTurnIds.has(turnId))) : {},
       ...(nativeMode === 'native' ? { nativeForkPending: true } : {}),
       parent: { conversationId: source.id, generation: source.generation,
         ...((input.beforeTurnId || input.throughTurnId) ? { turnId: input.beforeTurnId ?? input.throughTurnId } : {}),
@@ -242,7 +245,26 @@ export class ConversationStore {
     return this.update(projectPath, conversationId, (document) => {
       if (document.generation !== generation) return document
       const prior = document.native[backend]
-      return { ...document, nativeForkPending: false, updatedAt: new Date().toISOString(), native: { ...document.native, [backend]: { sessionId, ...(sessionHome || prior?.sessionHome ? { sessionHome: sessionHome ?? prior?.sessionHome } : {}), ...(modmindTurnId || prior?.lastModmindTurnId ? { lastModmindTurnId: modmindTurnId ?? prior?.lastModmindTurnId } : {}), ...(lastTurnId || prior?.lastTurnId ? { lastTurnId: lastTurnId ?? prior?.lastTurnId } : {}), updatedAt: new Date().toISOString() } }, nativeTurns: modmindTurnId && lastTurnId ? { ...document.nativeTurns, [modmindTurnId]: { ...document.nativeTurns[modmindTurnId], [backend]: lastTurnId } } : document.nativeTurns }
+      const changedThread = Boolean(prior && prior.sessionId !== sessionId && !document.nativeForkPending)
+      const withoutBackend = (values: ConversationDocument['nativeTurns']): ConversationDocument['nativeTurns'] =>
+        Object.fromEntries(Object.entries(values).map(([id, mappings]) => {
+          const next = { ...mappings }; delete next[backend]; return [id, next]
+        }))
+      const nativeTurns = changedThread ? withoutBackend(document.nativeTurns) : document.nativeTurns
+      const nativeTurnStarts = changedThread ? withoutBackend(document.nativeTurnStarts ?? {}) : document.nativeTurnStarts ?? {}
+      const retained = changedThread ? undefined : prior
+      return {
+        ...document, nativeForkPending: false, updatedAt: new Date().toISOString(),
+        native: { ...document.native, [backend]: {
+          sessionId,
+          ...(sessionHome || retained?.sessionHome ? { sessionHome: sessionHome ?? retained?.sessionHome } : {}),
+          ...(modmindTurnId || retained?.lastModmindTurnId ? { lastModmindTurnId: modmindTurnId ?? retained?.lastModmindTurnId } : {}),
+          ...(lastTurnId || retained?.lastTurnId ? { lastTurnId: lastTurnId ?? retained?.lastTurnId } : {}),
+          updatedAt: new Date().toISOString()
+        } },
+        nativeTurns: modmindTurnId && lastTurnId ? { ...nativeTurns, [modmindTurnId]: { ...nativeTurns[modmindTurnId], [backend]: lastTurnId } } : nativeTurns,
+        nativeTurnStarts: modmindTurnId && lastTurnId ? { ...nativeTurnStarts, [modmindTurnId]: { ...nativeTurnStarts[modmindTurnId], [backend]: nativeTurnStarts[modmindTurnId]?.[backend] ?? lastTurnId } } : nativeTurnStarts
+      }
     })
   }
   async flush(): Promise<void> {

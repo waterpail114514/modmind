@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Download, ExternalLink, Globe2, LoaderCircle, PackagePlus, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { McmodCaptchaChallenge, McmodFileInfo, McmodManualRequirement, McmodSearchResult, ModpackFileOption, ModpackProviderInfo, ModpackSearchHit, ProjectInfo } from '../../../shared/types'
@@ -8,7 +9,7 @@ type FileOption = ModpackFileOption | (McmodFileInfo & { provider: 'mcmod' })
 
 const providerLabels: Record<ProviderId, string> = { all: '全部平台', modrinth: 'Modrinth', curseforge: 'CurseForge', mcmod: 'MC 百科' }
 
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+function errorMessage(error: unknown): string { return reportClientFailure(error) }
 function formatBytes(value?: number): string {
   if (!value) return '大小未知'
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`
@@ -273,10 +274,7 @@ export default function ThirdPartyModsWorkspace({ project, visible }: { project:
   }
 
   return <div className="third-party-mods-page">
-    <header className="content-toolbar third-party-toolbar">
-      <div><span className="eyebrow">Mod 库</span><h1>模组下载</h1><p>在 Modrinth、CurseForge 和 MC 百科之间选择，结果会按当前版本与 Loader 过滤</p></div>
-      <span className="third-party-rate"><ShieldCheck size={14} />下载会写入锁定清单</span>
-    </header>
+    <h1 className="visually-hidden">模组下载</h1>
     <div className="third-party-layout">
       <aside className="third-party-browser">
         <div className="third-party-provider-tabs" role="tablist" aria-label="Mod 平台">

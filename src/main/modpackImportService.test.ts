@@ -17,6 +17,18 @@ afterEach(async () => {
 })
 
 describe('external modpack import', () => {
+  it('keeps newly downloaded files when the archive is copied to a different project root', async () => {
+    const bytes = Buffer.alloc(2048, 3)
+    const server = http.createServer((_request, response) => response.end(bytes))
+    servers.push(server)
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as { port: number }).port
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-import-separate-')); roots.push(root)
+    const target = path.join(root, 'project')
+    const inspection: ExternalModpackInspection = { root, format: 'modrinth', layout: 'archive', localModFiles: [], overrideFiles: [], unresolvedDependencyCount: 0, warnings: [], remoteFiles: [{ path: 'mods/a.jar', downloads: [`http://127.0.0.1:${port}/a.jar`], hashes: { sha1: createHash('sha1').update(bytes).digest('hex') } }] }
+    await expect(materializeExternalModpack(inspection, target, { trackDownloadActivities: false })).resolves.toMatchObject({ downloadedFiles: 1 })
+    await expect(fs.readFile(path.join(target, 'overrides/mods/a.jar'))).resolves.toEqual(bytes)
+  })
   it('does not steal a complete Gradle Mod project that happens to contain pack-like files', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-import-mod-'))
     roots.push(root)

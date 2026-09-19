@@ -24,8 +24,8 @@ export function missingDraftDetails(project: Pick<ProjectInfo, 'draft'>): string
   return [!target.kind && '作品类型（模组、整合包或服务端插件）', !target.minecraftVersion && 'Minecraft 或代理 API 版本', !target.loader && '加载器或游戏平台'].filter((value): value is string => Boolean(value))
 }
 
-export function draftProjectContext(project: Pick<ProjectInfo, 'name' | 'loader' | 'minecraftVersion' | 'draft'>): string {
+export function draftProjectContext(project: Pick<ProjectInfo, 'name' | 'loader' | 'minecraftVersion' | 'draft'>, autoStart = false): string {
   if (!project.draft) return `当前项目：${project.name}；Minecraft ${project.minecraftVersion}；加载器 ${project.loader}。不要重复询问已有的项目版本或加载器。`
   const target = project.draft.target
-  return `当前是仅保存对话的空壳项目，还没有源码、构建文件或已选定的默认版本。项目标识里的占位 loader 不是用户选择，不能据此推断平台。\n用户已明确的信息：类型 ${target.kind ?? '未确认'}；Minecraft ${target.minecraftVersion ?? '未确认'}；平台 ${target.loader ?? '未确认'}。\n尚缺：${missingDraftDetails(project).join('、') || '无，用户可点击开始制作生成工程'}。缺少时在回答中自然追问一次一个问题；请用户明确说出具体版本和平台名称。可以推荐但不能把建议当作用户的选择。不要要求用户新建目录或填写项目表单，也不要尝试生成工程。`
+  return `当前是仅保存对话的空壳项目，还没有源码、构建文件或已选定的默认版本。项目标识里的占位 loader 不是用户选择，不能据此推断平台。\n用户已明确的信息：类型 ${target.kind ?? '未确认'}；Minecraft ${target.minecraftVersion ?? '未确认'}；平台 ${target.loader ?? '未确认'}。\n尚缺：${missingDraftDetails(project).join('、') || (autoStart ? '无，确认后由应用自动生成工程并开始制作' : '无，用户可点击开始制作生成工程')}。缺少时在回答中自然追问一次一个问题；请用户明确说出具体版本和平台名称。可以推荐但不能把建议当作用户的选择。不要要求用户新建目录或填写项目表单，也不要尝试生成工程。`
 }

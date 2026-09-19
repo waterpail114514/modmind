@@ -17,7 +17,8 @@ it.each([false, undefined])('prepares an existing plugin test server with prior 
   const project: ProjectInfo = { name: 'Test', path: root, namespace: 'test', kind: 'server-plugin', loader: 'paper', minecraftVersion: '1.21.1', createdAt: '' }
   const initial = await readServerProfile(project)
   expect(initial.eulaAccepted).toBe(true)
-  const legacy = { ...initial, core: 'custom' as const, localJar: '.modmind/server/local/core.jar', port: 25580, onlineMode: false, eulaAccepted }
+  expect(initial.onlineMode).toBe(false)
+  const legacy = { ...initial, core: 'custom' as const, localJar: '.modmind/server/local/core.jar', port: 25580, onlineMode: true, eulaAccepted }
   const instance = path.join(root, '.modmind/server/instances/custom-1.21.1')
   await fs.mkdir(path.join(root, '.modmind/server/local'), { recursive: true })
   await fs.mkdir(path.join(root, 'build/libs'), { recursive: true })
@@ -30,7 +31,7 @@ it.each([false, undefined])('prepares an existing plugin test server with prior 
   ]))
   await fs.writeFile(path.join(instance, 'eula.txt'), 'eula=false\n')
 
-  const prepared = await preparePluginServer(project, { javaPath: async () => 'java', cacheDirectory: path.join(root, 'cache'), signal: new AbortController().signal, onProgress: () => undefined })
+  const prepared = await preparePluginServer(project, { javaPath: async () => 'java', cacheDirectory: path.join(root, 'cache'), signal: new AbortController().signal, onlineMode: false, onProgress: () => undefined })
 
   expect(prepared.profile).toMatchObject({ eulaAccepted: true, port: 25580, onlineMode: false })
   await expect(fs.readFile(path.join(prepared.pack.root, 'eula.txt'), 'utf8')).resolves.toBe('eula=true\n')
@@ -38,6 +39,7 @@ it.each([false, undefined])('prepares an existing plugin test server with prior 
   expect(properties).toContain('server-ip=127.0.0.1')
   expect(properties).toContain('server-port=25580')
   expect(properties).toContain('online-mode=false')
+  expect((await readServerProfile(project)).onlineMode).toBe(true)
   await saveServerProfile(project, { ...prepared.profile, eulaAccepted: false })
   expect(JSON.parse(await fs.readFile(path.join(root, '.modmind/server/profile.json'), 'utf8')).eulaAccepted).toBe(true)
 })

@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import {
   Archive,
@@ -181,11 +182,11 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
           setManifest(nextManifest)
           setServerPackManifest(nextServerPack)
         })
-        .catch((error) => { if (current) setNotice(error instanceof Error ? error.message : String(error)) })
+        .catch((error) => { if (current) setNotice(reportClientFailure(error)) })
     } else {
       setInitialLoading(true)
       void load(() => current)
-        .catch((error) => { if (current) setNotice(error instanceof Error ? error.message : String(error)) })
+        .catch((error) => { if (current) setNotice(reportClientFailure(error)) })
         .finally(() => { if (current) setInitialLoading(false) })
     }
     return () => { current = false }
@@ -224,9 +225,20 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     remote: items.filter((item) => item.delivery === 'remote').length,
     total: items.reduce((sum, item) => sum + (item.size ?? 0), 0)
   }), [items])
-  const filters = useMemo(() => inventoryMode
-    ? [...new Set(items.map(item => item.kind))].map(kind => ({ value: kind, label: sectionInfo[kind as ModpackContentSection]?.label ?? '任务文件' }))
-    : info.targets.filter(target => target.path).map(target => ({ value: target.path, label: target.label })), [inventoryMode, items, info.targets])
+  const filters = useMemo(() => {
+    if (inventoryMode) return [...new Set(items.map(item => item.kind))].map(kind => ({ value: kind, label: sectionInfo[kind as ModpackContentSection]?.label ?? '任务文件' }))
+    const values = new Map(info.targets.filter(target => target.path).map(target => [target.path, target.label]))
+    for (const item of items) {
+      if (item.path.startsWith('tacz/')) {
+        const group = item.path.split('/').slice(0, 2).join('/')
+        values.set(group, `TaCZ · ${group.slice(5)}`)
+      }
+      for (const [prefix, label] of [['config/openloader/data', 'OpenLoader 数据'], ['config/openloader/resources', 'OpenLoader 资源'], ['config/fancymenu', 'FancyMenu 配置']] as const) {
+        if (item.path.startsWith(`${prefix}/`)) values.set(prefix, label)
+      }
+    }
+    return [...values].map(([value, label]) => ({ value, label }))
+  }, [inventoryMode, items, info.targets])
   const associations = useMemo(() => new Map(items.map(item => [item.id, configModAssociation(item.path, modIdentities)])), [items, modIdentities])
   const modOptions = useMemo(() => {
     const counts = new Map<string, { mod: ModConfigIdentity; count: number }>()
@@ -263,7 +275,7 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
     if (busy) return
     setBusy(key)
     setNotice('')
-    void action().catch((error) => setNotice(error instanceof Error ? error.message : String(error))).finally(() => setBusy(''))
+    void action().catch((error) => setNotice(reportClientFailure(error))).finally(() => setBusy(''))
   }
 
   const addServerPackMods = (): void => run('server-mod-add', async () => {
@@ -358,21 +370,18 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
   })
 
   return <div className="resource-pack-workspace pack-content-workspace">
-    <header className="content-toolbar">
-      <div><h1>{info.label}</h1><p>{project.name} · {project.minecraftVersion}</p></div>
-      <div className="resource-pack-actions">
-        <button className="icon-button" title="刷新内容列表" disabled={Boolean(busy) || initialLoading} onClick={() => run('refresh', async () => { await load(() => true, true); setPreviewRevision(value => value + 1) })}><RefreshCw size={16} /></button>
-        {info.starters.length ? <label className="pack-content-create"><Plus size={15} /><select aria-label="新建文件" value="" disabled={Boolean(busy)} onChange={event => { const starter = info.starters.find(item => item.path === event.target.value); if (starter) onCreateFile(starter.path, starter.content?.(project)) }}><option value="" disabled>新建文件</option>{info.starters.map(starter => <option key={starter.path} value={starter.path}>{starter.label}</option>)}</select></label> : null}
-        <button className="secondary-button" disabled={Boolean(busy)} onClick={importLocal}><Upload size={15} />{section === 'worlds' ? '导入世界目录' : '导入文件'}</button>
-        <button className="secondary-button" aria-expanded={downloadOpen} aria-controls="pack-content-download" onClick={() => setDownloadOpen(value => !value)}><CloudDownload size={15} />从链接添加</button>
-      </div>
-    </header>
+    <h1 className="visually-hidden">{info.label}</h1>
     <div className="resource-pack-toolbar">
       <label>文件范围<select aria-label="文件范围" value={fileFilter} onChange={event => setFileFilter(event.target.value)}><option value="all">全部{inventoryMode ? '内容' : '文件'}</option>{filters.map(filter => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select></label>
       {supportsModFilter ? <label title={modsError || '根据已安装模组 ID 与配置文件名或目录名匹配；未匹配的文件仍可查看'}>关联模组<select aria-label="关联模组" value={modFilter} disabled={modsLoading || Boolean(modsError)} onChange={event => setModFilter(event.target.value)}><option value="all">{modsLoading ? '正在识别模组…' : modsError || '全部模组 / 配置'}</option>{modOptions.map(({ mod, count }) => <option key={mod.id} value={`mod:${mod.id}`}>{mod.name} ({mod.id}) · {count}</option>)}<option value="unassigned">未识别 / 共享配置 · {items.length - [...associations.values()].filter(Boolean).length}</option></select></label> : null}
       <span>{initialLoading ? '正在加载…' : `${filteredItems.length} 项内容`}</span>
       <span className="resource-pack-origin">{remote ? `${remote} 个远程来源 · ` : ''}{items.length ? formatBytes(total) : info.description}</span>
-      <div className="resource-pack-actions"><button className="secondary-button" onClick={() => void openCodeEditor(selectedItem && isEditableContent(selectedItem) ? selectedItem.path : undefined)}><FileCode2 size={15} />代码编辑器</button></div>
+      <div className="resource-pack-actions">
+        <button className="icon-button" title="刷新内容列表" disabled={Boolean(busy) || initialLoading} onClick={() => run('refresh', async () => { await load(() => true, true); setPreviewRevision(value => value + 1) })}><RefreshCw size={16} /></button>
+        {info.starters.length ? <label className="pack-content-create"><Plus size={15} /><select aria-label="新建文件" value="" disabled={Boolean(busy)} onChange={event => { const starter = info.starters.find(item => item.path === event.target.value); if (starter) onCreateFile(starter.path, starter.content?.(project)) }}><option value="" disabled>新建文件</option>{info.starters.map(starter => <option key={starter.path} value={starter.path}>{starter.label}</option>)}</select></label> : null}
+        <button className="secondary-button" disabled={Boolean(busy)} onClick={importLocal}><Upload size={15} />{section === 'worlds' ? '导入世界目录' : '导入文件'}</button>
+        <button className="secondary-button" aria-expanded={downloadOpen} aria-controls="pack-content-download" onClick={() => setDownloadOpen(value => !value)}><CloudDownload size={15} />从链接添加</button>
+      <button className="secondary-button" onClick={() => void openCodeEditor(selectedItem && isEditableContent(selectedItem) ? selectedItem.path : undefined)}><FileCode2 size={15} />代码编辑器</button></div>
     </div>
     {downloadOpen ? <section id="pack-content-download" className="pack-content-download-panel" aria-label="从链接添加内容">{downloadControls}</section> : null}
     {renderServerPackManager}
@@ -426,7 +435,7 @@ function ContentPreview({ projectPath, item, darkMode, revision, mod, editorRef 
       if (!current) return
       const value = image ? { image: await window.modmind.project.readImageAsset(path) } : { text: await window.modmind.project.readFile(path, projectPath) }
       if (current) setContent({ path, ...value })
-    })().catch(error => { if (current) setContent({ path: item.path, error: error instanceof Error ? error.message : String(error) }) })
+    })().catch(error => { if (current) setContent({ path: item.path, error: reportClientFailure(error) }) })
     return () => { current = false }
   }, [projectPath, item.path, item.size, image, text, oversized, revision])
   const ItemIcon = item.directory ? FolderOpen : contentVisual(item).Icon

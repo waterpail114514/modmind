@@ -80,7 +80,7 @@ export async function serverCoreBuilds(core: ServerCore, version: string, signal
 
 export function defaultServerProfile(project: ProjectInfo): ServerProfile {
   const core = isServerPluginPlatform(project.loader) ? project.loader : 'paper'
-  return { core, version: project.minecraftVersion.replace(/-SNAPSHOT$/, ''), javaVersion: javaFor(core, project.minecraftVersion), memoryMb: 2048, port: core === 'velocity' ? 25577 : 25565, onlineMode: true, eulaAccepted: true }
+  return { core, version: project.minecraftVersion.replace(/-SNAPSHOT$/, ''), javaVersion: javaFor(core, project.minecraftVersion), memoryMb: 2048, port: core === 'velocity' ? 25577 : 25565, onlineMode: false, eulaAccepted: true }
 }
 
 export function validateServerProfile(project: ProjectInfo, input: ServerProfile): ServerProfile {
@@ -132,6 +132,7 @@ export async function preparePluginServer(project: ProjectInfo, options: {
   javaPath: (major: number) => Promise<string>
   cacheDirectory: string
   signal: AbortSignal
+  onlineMode?: boolean
   onProgress: (message: string, fraction?: number) => void
   onDownloadProgress?: (progress: { source: DownloadSource; downloaded: number; total?: number }) => void
 }): Promise<{ pack: ServerPackResult; runtime: ServerRuntimeResult; profile: ServerProfile }> {
@@ -176,16 +177,18 @@ export async function preparePluginServer(project: ProjectInfo, options: {
     const deployment = await deployServerInstance(staged, instance, options.signal)
     if (deployment.conflicts.length) throw new Error(`运行文件存在本地修改，请检查：${deployment.conflicts.join(', ')}`)
   } finally { await fs.rm(staged, { recursive: true, force: true }) }
-  if (profile.core !== 'velocity') await configureLocalServer(instance, profile.port, profile.onlineMode, profile.eulaAccepted)
+  // Local test sessions can override legacy profile settings without rewriting the saved profile.
+  const onlineMode = options.onlineMode ?? profile.onlineMode
+  if (profile.core !== 'velocity') await configureLocalServer(instance, profile.port, onlineMode, profile.eulaAccepted)
   else {
     const target = path.join(instance, 'velocity.toml')
     const { parse, stringify } = await import('smol-toml')
     const config = parse(await fs.readFile(target, 'utf8').catch(() => ''))
     config.bind = `127.0.0.1:${profile.port}`
-    config['online-mode'] = profile.onlineMode
+    config['online-mode'] = onlineMode
     await fs.writeFile(target, stringify(config))
   }
   const javaPath = await options.javaPath(profile.javaVersion)
   throwIfAborted(options.signal)
-  return { profile, pack: { root: instance, manifestPath: path.join(instance, '.modmind-deployment.json'), copiedMods: [], skippedClientMods: [], warnings: [] }, runtime: { serverJar: path.join(instance, 'server.jar'), launchCommand: [javaPath, '-Xms512M', `-Xmx${profile.memoryMb}M`, '-jar', 'server.jar', ...(profile.core === 'velocity' ? [] : ['nogui'])], loader: project.loader, loaderVersion: profile.build ?? 'local' } }
+  return { profile: { ...profile, onlineMode }, pack: { root: instance, manifestPath: path.join(instance, '.modmind-deployment.json'), copiedMods: [], skippedClientMods: [], warnings: [] }, runtime: { serverJar: path.join(instance, 'server.jar'), launchCommand: [javaPath, '-Xms512M', `-Xmx${profile.memoryMb}M`, '-jar', 'server.jar', ...(profile.core === 'velocity' ? [] : ['nogui'])], loader: project.loader, loaderVersion: profile.build ?? 'local' } }
 }

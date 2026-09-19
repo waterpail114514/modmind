@@ -1,3 +1,5 @@
+import { reportClientFailure } from '../lib/clientFailure'
+import { isExpectedCancellation } from '../../../shared/diagnostics'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box,
@@ -67,7 +69,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
     setRepairOutput('')
     repairSessionRef.current = ''
     repairCancelledRef.current = false
-    void window.modmind.minecraft.getState().then(applyProjectState).catch((error: unknown) => setNotice(String(error)))
+    void window.modmind.minecraft.getState().then(applyProjectState).catch((error: unknown) => setNotice(reportClientFailure(error)))
     const removeState = window.modmind.minecraft.onState(applyProjectState)
     const removeEvent = window.modmind.minecraft.onEvent((event) => {
       if (event.projectPath && !sameProject(event.projectPath, projectPath)) return
@@ -115,8 +117,8 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
       await action()
       applyProjectState(await window.modmind.minecraft.getState())
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (!/(?:Minecraft|Agent|AI).*(?:取消|停止|cancel)/i.test(message)) setNotice(message)
+      const message = reportClientFailure(error)
+      if (!isExpectedCancellation(error)) setNotice(message)
     } finally {
       setBusy((current) => current === name ? '' : current)
     }
@@ -131,8 +133,8 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
         : await window.modmind.minecraft.restartPreparation()
       applyProjectState(next)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (!/Minecraft.*(?:取消|cancel)/i.test(message)) setNotice(message)
+      const message = reportClientFailure(error)
+      if (!isExpectedCancellation(error)) setNotice(message)
     } finally {
       setBusy((current) => current === name ? '' : current)
     }
@@ -195,7 +197,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
         try {
           await window.modmind.minecraft.buildProject(projectPath)
         } catch (error) {
-          failure = error instanceof Error ? error.message : String(error)
+          failure = reportClientFailure(error)
           if (round === 3) throw error
           setRepairOutput((current) => `${current}\n\n构建仍失败，错误已转交下一轮 AI 修复`)
           continue
@@ -242,8 +244,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
     <div className="mc-test-page">
       <header className="mc-test-header">
         <div className="mc-test-title">
-          <span className={`mc-test-icon ${state.running ? 'running' : ''}`}><Gamepad2 size={20} /></span>
-          <div><h1>Minecraft 测试</h1><p>{state.minecraftVersion || '项目版本'} · {state.loader ? state.loader === 'fabric' ? 'Fabric' : state.loader === 'quilt' ? 'Quilt' : state.loader === 'forge' ? 'Forge' : 'NeoForge' : 'Loader'} {state.loaderVersion || '待安装'}</p></div>
+          <h1 className="visually-hidden">Minecraft 测试</h1><span className="toolbar-context">{state.minecraftVersion || '项目版本'} · {state.loader ? state.loader === 'fabric' ? 'Fabric' : state.loader === 'quilt' ? 'Quilt' : state.loader === 'forge' ? 'Forge' : 'NeoForge' : 'Loader'} {state.loaderVersion || '待安装'}</span>
         </div>
         <div className="mc-test-actions">
           <button className="secondary-button" disabled={Boolean(busy) || state.running} onClick={() => void run('prepare', () => window.modmind.minecraft.prepare())}>

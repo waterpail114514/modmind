@@ -1,3 +1,5 @@
+import { useAppAppearance } from '../theme'
+import { reportClientFailure } from '../lib/clientFailure'
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
   Box,
@@ -51,7 +53,7 @@ type BlockbenchBridge = {
   hide: () => Promise<void> | void
   openProject: () => Promise<unknown>
   saveProject: () => Promise<unknown>
-  setTheme: (theme: 'light' | 'dark') => Promise<unknown>
+  setTheme: (theme: 'light' | 'dark', preset?: import('../../../shared/appTheme').ThemePreset, custom?: import('../../../shared/appTheme').CustomThemeColors) => Promise<unknown>
   runAction: (action: string) => Promise<unknown>
   projectState: () => Promise<BlockbenchProjectState>
   assetIntent: {
@@ -196,6 +198,7 @@ function mergeState(current: WorkspaceState, payload: BlockbenchStatePayload): W
 }
 
 export function BlockbenchWorkspace({ visible = true, darkMode = false, project, resourceTarget, onCloseResource, onDetachResource }: BlockbenchWorkspaceProps): React.JSX.Element {
+  const { themePreset, customThemeColors } = useAppAppearance()
   const viewportRef = useRef<HTMLDivElement>(null)
   const lastBoundsRef = useRef<string | null>(null)
   const bridge = useMemo(getBridge, [])
@@ -250,7 +253,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
     return removeStateListener
   }, [bridge])
 
-  useEffect(() => { if (bridge) void bridge.setTheme(darkMode ? 'dark' : 'light') }, [bridge, darkMode])
+  useEffect(() => { if (bridge) void bridge.setTheme(darkMode ? 'dark' : 'light', themePreset, customThemeColors) }, [bridge, darkMode, themePreset, customThemeColors])
 
   useEffect(() => {
     if (!bridge) return
@@ -296,7 +299,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
       const document = await bridge?.projectState().catch(() => null)
       if (document) setState(current => ({ ...current, projectName: document.project.name, dirty: !document.project.saved }))
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      setNotice(reportClientFailure(error))
     } finally {
       setPendingAction('')
     }
@@ -363,7 +366,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
     } catch (error) {
       setIntentCandidate(null)
       setAdvancedComparison(null)
-      setIntentMessage(error instanceof Error ? error.message : String(error))
+      setIntentMessage(reportClientFailure(error))
     } finally {
       setIntentBusy(false)
     }
@@ -404,7 +407,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
       setAdvancedComparison(null)
       setIntentMessage(`Accepted and saved ${String((saved as {projectRelativePath?: string}).projectRelativePath || `${slug}.bbmodel`)}`)
     } catch (error) {
-      setIntentMessage(error instanceof Error ? error.message : String(error))
+      setIntentMessage(reportClientFailure(error))
     } finally {
       setIntentBusy(false)
     }
@@ -413,7 +416,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
   const loadHistory = async (): Promise<void> => {
     if (!bridge) return
     setHistoryBusy(true)
-    try { setHistory(await bridge.history()) } catch (error) { setNotice(error instanceof Error ? error.message : String(error)) } finally { setHistoryBusy(false) }
+    try { setHistory(await bridge.history()) } catch (error) { setNotice(reportClientFailure(error)) } finally { setHistoryBusy(false) }
   }
 
   const toggleHistory = (): void => {
@@ -427,7 +430,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
     try {
       await bridge.createCheckpoint(`Manual checkpoint ${new Date().toLocaleTimeString()}`)
       setHistory(await bridge.history())
-    } catch (error) { setNotice(error instanceof Error ? error.message : String(error)) } finally { setHistoryBusy(false) }
+    } catch (error) { setNotice(reportClientFailure(error)) } finally { setHistoryBusy(false) }
   }
 
   const restoreHistory = async (id: string): Promise<void> => {
@@ -439,7 +442,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
       setIntentCandidate(null)
       setAdvancedComparison(null)
       setNotice('Blockbench checkpoint restored')
-    } catch (error) { setNotice(error instanceof Error ? error.message : String(error)) } finally { setHistoryBusy(false) }
+    } catch (error) { setNotice(reportClientFailure(error)) } finally { setHistoryBusy(false) }
   }
 
   const readReferenceFile = (event: ChangeEvent<HTMLInputElement>): void => {

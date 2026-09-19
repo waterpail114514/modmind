@@ -10,9 +10,11 @@ export interface DiagnosticError {
   name: string
   message: string
   stack?: string
+  componentStack?: string
   code?: string
   cause?: DiagnosticError
   errors?: DiagnosticError[]
+  details?: unknown
 }
 
 export interface DiagnosticEvent {
@@ -52,12 +54,21 @@ export interface DiagnosticJournalStatus {
   sessionId: string
   logFile?: string
   bufferedEvents: number
+  criticalFile?: string
+  pendingEvents: number
+  pendingBytes: number
+  oldestPendingAgeMs: number
+  droppedEvents: number
+  writeFailures: number
+  rotations: number
+  lastSuccessfulWriteAt?: string
   lastWriteError?: string
 }
 
 interface DiagnosticJournalOptions {
   maxFileBytes?: number
   maxBufferedEvents?: number
+  maxPendingBytes?: number
 }
 
 const DEFAULT_MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -75,10 +86,12 @@ function boundedText(value: string, limit = MAX_TEXT_LENGTH): string {
 
 export function redactDiagnosticText(value: string): string {
   return value
+    .replace(/("(?:authorization|cookie|set-cookie|api[-_]?key|access[-_]?token|refresh[-_]?token|token|password|secret|credential)"\s*:\s*)"(?:\\.|[^"\\])*"/gi, '$1"[REDACTED]"')
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s\r\n]+/gi, '$1[REDACTED]')
     .replace(/((?:authorization|cookie|set-cookie)\s*[:=]\s*)[^\r\n]+/gi, '$1[REDACTED]')
     .replace(/((?:api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|token|password|secret|cookie|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}\]]+)/gi, '$1[REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[A-Za-z0-9_-]{30,})\b/g, '[REDACTED_API_KEY]')
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@')
     .replace(/([?&](?:api[-_]?key|access[-_]?token|refresh[-_]?token|token|password|secret|code)=)[^&#\s]+/gi, '$1[REDACTED]')
@@ -111,7 +124,11 @@ function sanitizeValue(value: unknown, depth = 0, seen = new WeakSet<object>()):
 }
 
 function serializeError(error: unknown, depth = 0, seen = new WeakSet<object>()): DiagnosticError {
-  if (!(error instanceof Error)) return { name: 'Error', message: boundedText(String(error)) }
+  if (!(error instanceof Error)) return {
+    name: 'Error',
+    message: boundedText(error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error)),
+    ...(error && typeof error === 'object' ? { details: sanitizeValue(error, depth + 1, seen) } : {})
+  }
   if (seen.has(error)) return { name: error.name || 'Error', message: '[CIRCULAR ERROR]' }
   seen.add(error)
   const code = 'code' in error && typeof (error as Error & { code?: unknown }).code !== 'undefined'
@@ -119,13 +136,23 @@ function serializeError(error: unknown, depth = 0, seen = new WeakSet<object>())
     : undefined
   const cause = depth < 5 && 'cause' in error ? (error as Error & { cause?: unknown }).cause : undefined
   const errors = depth < 5 && error instanceof AggregateError ? error.errors.slice(0, 25).map((entry) => serializeError(entry, depth + 1, seen)) : undefined
+  // Provider SDKs attach status, request IDs, bodies and headers to Error objects.
+  // Preserve these fields as well as the standard, non-enumerable message/stack/cause.
+  const details = Object.fromEntries(Object.getOwnPropertyNames(error)
+    .filter(key => !['name', 'message', 'stack', 'cause', 'errors', 'componentStack'].includes(key))
+    .slice(0, MAX_OBJECT_KEYS).map(key => {
+      try { return [key, (error as unknown as Record<string, unknown>)[key]] }
+      catch { return [key, '[UNREADABLE]'] }
+    }))
   return {
     name: boundedText(error.name || 'Error', 200),
     message: boundedText(error.message || String(error)),
     ...(error.stack ? { stack: boundedText(error.stack, 96_000) } : {}),
+    ...('componentStack' in error && typeof error.componentStack === 'string' ? { componentStack: boundedText(error.componentStack, 32_000) } : {}),
     ...(code ? { code: boundedText(code, 200) } : {}),
     ...(cause !== undefined ? { cause: serializeError(cause, depth + 1, seen) } : {}),
-    ...(errors?.length ? { errors } : {})
+    ...(errors?.length ? { errors } : {}),
+    ...(Object.keys(details).length ? { details: sanitizeValue(details, depth + 1, seen) } : {})
   }
 }
 
@@ -140,6 +167,14 @@ export class DiagnosticJournal {
   private directory = ''
   private currentFile = ''
   private previousFile = ''
+  private criticalFile = ''
+  private readonly maxPendingBytes: number
+  private pendingWrites = new Map<string, { bytes: number; queuedAt: number }>()
+  private pendingBytes = 0
+  private droppedEvents = 0
+  private writeFailures = 0
+  private rotations = 0
+  private lastSuccessfulWriteAt = ''
   private writeChain = Promise.resolve()
   private buffered: DiagnosticEvent[] = []
   private pendingBeforeConfigure: DiagnosticEvent[] = []
@@ -149,22 +184,29 @@ export class DiagnosticJournal {
   constructor(options: DiagnosticJournalOptions = {}) {
     this.maxFileBytes = Math.max(256 * 1024, options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES)
     this.maxBufferedEvents = Math.max(100, options.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS)
+    this.maxPendingBytes = Math.max(64 * 1024, options.maxPendingBytes ?? 4 * 1024 * 1024)
   }
 
   configure(directory: string, contextProvider?: () => DiagnosticEvent['project']): void {
     this.directory = path.resolve(directory)
     this.currentFile = path.join(this.directory, 'diagnostic-events.jsonl')
     this.previousFile = path.join(this.directory, 'diagnostic-events.previous.jsonl')
+    this.criticalFile = path.join(this.directory, 'diagnostic-critical.jsonl')
     this.contextProvider = contextProvider
     const pending = this.pendingBeforeConfigure.splice(0)
-    for (const event of pending) this.queueWrite(event)
+    for (const event of pending) {
+      if (event.level === 'error' || event.level === 'warning' || event.subsystem === 'app' || event.subsystem === 'process') this.writeCritical(event)
+      this.queueWrite(event)
+    }
   }
 
   record(input: DiagnosticRecordInput): DiagnosticEvent {
     const event = this.createEvent(input)
     this.remember(event)
-    if (this.currentFile) this.queueWrite(event)
-    else this.pendingBeforeConfigure.push(event)
+    if (this.currentFile) {
+      if (event.level === 'error' || event.level === 'warning') this.writeCritical(event)
+      this.queueWrite(event)
+    } else this.rememberPending(event)
     return event
   }
 
@@ -172,32 +214,51 @@ export class DiagnosticJournal {
     const event = this.createEvent(input)
     this.remember(event)
     if (!this.currentFile) {
-      this.pendingBeforeConfigure.push(event)
+      this.rememberPending(event)
       return event
     }
+    this.writeCritical(event)
+    return event
+  }
+
+  private rememberPending(event: DiagnosticEvent): void {
+    this.pendingBeforeConfigure.push(event)
+    if (this.pendingBeforeConfigure.length > this.maxBufferedEvents) {
+      this.pendingBeforeConfigure.shift()
+      this.droppedEvents += 1
+    }
+  }
+
+  private writeCritical(event: DiagnosticEvent): void {
     const line = `${JSON.stringify(event)}\n`
     try {
       mkdirSync(this.directory, { recursive: true })
       let currentSize = 0
       try {
-        currentSize = statSync(this.currentFile).size
+        currentSize = statSync(this.criticalFile).size
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }
       if (currentSize + Buffer.byteLength(line) > this.maxFileBytes) {
-        rmSync(this.previousFile, { force: true })
+        const previous = path.join(this.directory, 'diagnostic-critical.previous.jsonl')
+        rmSync(previous, { force: true })
         try {
-          renameSync(this.currentFile, this.previousFile)
+          renameSync(this.criticalFile, previous)
+          this.rotations += 1
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
         }
       }
-      appendFileSync(this.currentFile, line, { encoding: 'utf8', mode: 0o600 })
-      this.lastWriteError = ''
+      appendFileSync(this.criticalFile, line, { encoding: 'utf8', mode: 0o600 })
+      this.lastSuccessfulWriteAt = new Date().toISOString()
     } catch (error) {
-      this.lastWriteError = boundedText(error instanceof Error ? error.message : String(error), 2_000)
+      this.noteWriteFailure(error)
     }
-    return event
+  }
+
+  private noteWriteFailure(error: unknown): void {
+    this.writeFailures += 1
+    this.lastWriteError = boundedText(error instanceof Error ? error.message : String(error), 2_000)
   }
 
   private createEvent(input: DiagnosticRecordInput): DiagnosticEvent {
@@ -252,6 +313,14 @@ export class DiagnosticJournal {
       sessionId: this.sessionId,
       ...(this.currentFile ? { logFile: this.currentFile } : {}),
       bufferedEvents: this.buffered.length,
+      ...(this.criticalFile ? { criticalFile: this.criticalFile } : {}),
+      pendingEvents: this.pendingWrites.size + this.pendingBeforeConfigure.length,
+      pendingBytes: this.pendingBytes,
+      oldestPendingAgeMs: this.pendingWrites.size ? Date.now() - this.pendingWrites.values().next().value!.queuedAt : 0,
+      droppedEvents: this.droppedEvents,
+      writeFailures: this.writeFailures,
+      rotations: this.rotations,
+      ...(this.lastSuccessfulWriteAt ? { lastSuccessfulWriteAt: this.lastSuccessfulWriteAt } : {}),
       ...(this.lastWriteError ? { lastWriteError: this.lastWriteError } : {})
     }
   }
@@ -262,20 +331,34 @@ export class DiagnosticJournal {
 
   private queueWrite(event: DiagnosticEvent): void {
     const line = `${JSON.stringify(event)}\n`
+    const bytes = Buffer.byteLength(line)
+    if (this.pendingBytes + bytes > this.maxPendingBytes) {
+      this.droppedEvents += 1
+      return
+    }
+    this.pendingBytes += bytes
+    this.pendingWrites.set(event.id, { bytes, queuedAt: Date.now() })
     this.writeChain = this.writeChain.then(async () => {
       try {
         await fs.mkdir(this.directory, { recursive: true })
-        const currentSize = await fs.stat(this.currentFile).then((stat) => stat.size).catch(() => 0)
+        const currentSize = await fs.stat(this.currentFile).then((stat) => stat.size).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+          return 0
+        })
         if (currentSize + Buffer.byteLength(line) > this.maxFileBytes) {
           await fs.rm(this.previousFile, { force: true })
           await fs.rename(this.currentFile, this.previousFile).catch(async (error: NodeJS.ErrnoException) => {
             if (error.code !== 'ENOENT') throw error
           })
+          this.rotations += 1
         }
         await fs.appendFile(this.currentFile, line, { encoding: 'utf8', mode: 0o600 })
-        this.lastWriteError = ''
+        this.lastSuccessfulWriteAt = new Date().toISOString()
       } catch (error) {
-        this.lastWriteError = boundedText(error instanceof Error ? error.message : String(error), 2_000)
+        this.noteWriteFailure(error)
+      } finally {
+        this.pendingBytes -= bytes
+        this.pendingWrites.delete(event.id)
       }
     })
   }

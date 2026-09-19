@@ -1,3 +1,4 @@
+import { validateRuntimeModArtifact } from './modpackArtifactValidation'
 import { spawnManaged, stopProcessTree } from './processTree'
 import { app, net } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
@@ -6,7 +7,6 @@ import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_pr
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
 import { Agent, interceptors } from 'undici'
 import { LaunchPrecheck, MinecraftFolder, Version, launch } from '@xmcl/core'
 import {
@@ -39,7 +39,7 @@ import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../shared/p
 import { findPluginArtifact } from './serverPluginService'
 import { buildMavenPlugin } from './mavenBuild'
 import { isForgeJavaProvisioningFailure, isGradleNetworkFailure } from './gradleFailure'
-import { readModpackManifest, syncModpackOverrides } from './modpackService'
+import { readModpackManifest, readModpackModuleProject, syncModpackOverrides, assertModpackDependenciesReady } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { buildJavaRangeForProject, gradleVersionForProject, javaRuntimeTargetForJavaVersion, javaRuntimeTargetForMinecraft, javaVersionForMinecraft } from './loaderCompatibility'
 import { buildBedrockAddon, buildNeteaseArchive } from './bedrockAddon'
@@ -239,7 +239,16 @@ function minecraftMavenHosts(attempt: number): string[] {
     : [MINECRAFT_MAVEN_HOSTS[1], MINECRAFT_MAVEN_HOSTS[0], MINECRAFT_MAVEN_HOSTS[2]]
 }
 
+export function multiplayerLaunchOptions(version: string, server: { ip: string; port: number }): { server?: typeof server; quickPlayMultiplayer?: string } {
+  const [major, minor] = version.split('.').map(Number)
+  return major > 1 || (major === 1 && minor >= 20)
+    ? { quickPlayMultiplayer: `${server.ip}:${server.port}` }
+    : { server }
+}
+
 interface MinecraftRuntimeOptions {
+  vanillaClient?: boolean
+  instanceDirectory?: string
   getProject: () => ProjectInfo | null
   onState: (state: MinecraftRuntimeState) => void
   onEvent: (event: MinecraftRuntimeEvent) => void
@@ -318,62 +327,11 @@ function summarizeMinecraftCrash(report: string): string {
   return [description, entrypoint, rootCause, ...modFrames, diagnostic].filter(Boolean).join('\n')
 }
 
-async function listExtractedFiles(root: string): Promise<string[]> {
-  const files: string[] = []
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-      const absolute = path.join(directory, entry.name)
-      if (entry.isDirectory()) await visit(absolute)
-      else if (entry.isFile()) files.push(path.relative(root, absolute).replaceAll('\\', '/'))
-    }
-  }
-  await visit(root)
-  return files
+async function validateModArtifact(filePath: string, loader: LoaderKind, displayPath = filePath, importedPack = false): Promise<void> {
+  await validateRuntimeModArtifact(filePath, loader, displayPath, importedPack)
 }
 
-/** Fabric API is a legal jar-in-jar: its compiled classes live in nested JARs. */
-async function containsCompiledClass(root: string, files: string[]): Promise<boolean> {
-  if (files.some((file) => file.endsWith('.class'))) return true
-  const nestedJars = files.filter((file) => /^META-INF\/jars\/[^/]+\.jar$/i.test(file))
-  for (const nested of nestedJars) {
-    const nestedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-nested-jar-'))
-    try {
-      await extractZip(path.join(root, nested), { dir: nestedRoot })
-      const nestedFiles = await listExtractedFiles(nestedRoot)
-      if (nestedFiles.some((file) => file.endsWith('.class'))) return true
-    } catch {
-      // A malformed nested archive is rejected by the loader; keep checking other entries.
-    } finally {
-      await fs.rm(nestedRoot, { recursive: true, force: true }).catch(() => undefined)
-    }
-  }
-  return false
-}
-
-async function validateModArtifact(filePath: string, loader: LoaderKind, displayPath = filePath): Promise<void> {
-  const stat = await fs.stat(filePath)
-  if (stat.size < 1_024) throw new Error('Mod JAR is implausibly small')
-  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-jar-'))
-  try {
-    await extractZip(filePath, { dir: temporaryRoot })
-    const files = await listExtractedFiles(temporaryRoot)
-    const descriptors = loader === 'fabric'
-      ? ['fabric.mod.json']
-      : loader === 'quilt' ? ['quilt.mod.json']
-        : loader === 'forge' ? ['META-INF/mods.toml', 'mcmod.info'] : ['META-INF/neoforge.mods.toml', 'META-INF/mods.toml']
-    if (!descriptors.some((descriptor) => files.includes(descriptor))) {
-      throw new Error(`Mod JAR does not contain a ${loader} descriptor`)
-    }
-    if (!(await containsCompiledClass(temporaryRoot, files))) throw new Error('Mod JAR does not contain compiled class files')
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
-    throw new Error(`Invalid Mod JAR "${path.basename(displayPath)}": ${detail}`)
-  } finally {
-    await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
-  }
-}
-
-async function replaceModArtifact(source: string, target: string, loader: LoaderKind): Promise<void> {
+async function replaceModArtifact(source: string, target: string, loader: LoaderKind, importedPack = false): Promise<void> {
   const pending = `${target}.pending`
   const backup = `${target}.backup`
 
@@ -381,7 +339,7 @@ async function replaceModArtifact(source: string, target: string, loader: Loader
   if (!(await exists(target)) && (await exists(backup))) await fs.rename(backup, target)
   await fs.rm(pending, { force: true })
   await fs.copyFile(source, pending)
-  await validateModArtifact(pending, loader, source)
+  await validateModArtifact(pending, loader, source, importedPack)
 
   let backedUp = false
   try {
@@ -753,6 +711,8 @@ async function readConfiguredLoaderApiVersion(project: ProjectInfo): Promise<str
 }
 
 export class MinecraftRuntimeManager {
+  private readonly vanillaClient: boolean
+  private readonly instanceDirectory?: string
   private readonly getProject: () => ProjectInfo | null
   private readonly onState: (state: MinecraftRuntimeState) => void
   private readonly onEvent: (event: MinecraftRuntimeEvent) => void
@@ -785,6 +745,8 @@ export class MinecraftRuntimeManager {
   }
 
   constructor(options: MinecraftRuntimeOptions) {
+    this.vanillaClient = options.vanillaClient === true
+    this.instanceDirectory = options.instanceDirectory
     this.getProject = options.getProject
     this.onState = options.onState
     this.onEvent = options.onEvent
@@ -964,7 +926,7 @@ export class MinecraftRuntimeManager {
 
   async launch(options: MinecraftLaunchOptions, signal?: AbortSignal): Promise<MinecraftRuntimeState> {
     const project = this.requireProject()
-    if (!isJavaLoader(project.loader)) {
+    if (!this.vanillaClient && !isJavaLoader(project.loader)) {
       throw new Error(project.loader === 'bedrock'
         ? '国际基岩版需要安装版 Minecraft 客户端；请先构建 .mcaddon 并导入游戏。自动本地部署将在后续设备集成中提供'
         : '网易版必须通过官方开发者工作台启动 PC 或手机测试，ModMind 不能绕过工作台与账号授权')
@@ -976,11 +938,11 @@ export class MinecraftRuntimeManager {
       throw new Error('最大内存需要在 1024-16384 MB 之间')
     }
 
-    if (project.kind !== 'modpack') {
+    if (!this.vanillaClient && project.kind !== 'modpack') {
       const syncedArtifact = path.join(this.modsRoot(project), projectArtifactName(project))
       if (!(await exists(syncedArtifact))) throw new Error('测试实例中没有已同步的项目 Mod，请先点击“构建并同步”')
       await validateModArtifact(syncedArtifact, project.loader)
-    } else {
+    } else if (!this.vanillaClient) {
       const manifest = await readModpackManifest(project)
       const synced = await fs.readFile(path.join(this.instanceRoot(project), 'modmind-pack-sync.json'), 'utf8')
         .then((value) => JSON.parse(value) as { files?: unknown })
@@ -993,6 +955,7 @@ export class MinecraftRuntimeManager {
     const metadata = await this.readMetadata(project)
     if (!metadata) throw new Error('Minecraft 测试实例尚未准备完成')
     const launchJavaPath = await this.resolveLaunchJava(project, metadata)
+    signal?.throwIfAborted()
 
     const instanceRoot = this.instanceRoot(project)
     await fs.mkdir(instanceRoot, { recursive: true })
@@ -1003,7 +966,10 @@ export class MinecraftRuntimeManager {
     let child: ChildProcess
     try {
       child = await launch({
-        spawn: (command, args, options) => spawnManaged(command, [...(args ?? [])], options ?? {}),
+        spawn: (command, args, options) => {
+          signal?.throwIfAborted()
+          return spawnManaged(command, [...(args ?? [])], options ?? {})
+        },
         gamePath: instanceRoot,
         resourcePath: this.resourceRoot(),
         version: metadata.loaderVersionId,
@@ -1016,6 +982,7 @@ export class MinecraftRuntimeManager {
         minMemory: Math.min(512, options.maxMemoryMb),
         maxMemory: options.maxMemoryMb,
         resolution: { width: options.width ?? 1280, height: options.height ?? 720 },
+        ...(options.server ? multiplayerLaunchOptions(project.minecraftVersion, options.server) : {}),
         extraExecOption: { cwd: instanceRoot, windowsHide: false }
       })
     } catch (error) {
@@ -1471,7 +1438,7 @@ export class MinecraftRuntimeManager {
     if (!isJavaLoader(project.loader)) throw new Error('Only Java Edition modpacks can use the local test instance')
     if (this.process && this.state.running) throw new Error('Stop the running Minecraft test instance before syncing the modpack')
 
-    const manifest = await readModpackManifest(project)
+    const manifest = await assertModpackDependenciesReady(project)
     const directory = this.modsRoot(project)
     const statePath = path.join(this.instanceRoot(project), 'modmind-pack-sync.json')
     const previous: { files?: unknown; overrides?: unknown } = await fs.readFile(statePath, 'utf8')
@@ -1501,8 +1468,8 @@ export class MinecraftRuntimeManager {
       reportSync(`正在校验整合包文件（${completedSteps}/${manifest.mods.length + manifest.modules.length}）`)
     }
     for (const module of manifest.modules) {
-      const root = path.resolve(project.path, ...module.path.split('/'))
-      if (!root.startsWith(`${path.resolve(project.path)}${path.sep}`)) throw new Error(`自制 Mod ${module.name} 的路径无效`)
+      const moduleProject = await readModpackModuleProject(project, module)
+      const root = moduleProject.path
       const output = path.join(root, 'build', 'libs')
       const findLatest = async (): Promise<{ source: string; stat: Awaited<ReturnType<typeof fs.stat>> } | undefined> => {
         const entries = await fs.readdir(output, { withFileTypes: true }).catch(() => [])
@@ -1516,7 +1483,6 @@ export class MinecraftRuntimeManager {
       }
       let latest = await findLatest()
       if (!latest) {
-        const moduleProject: ProjectInfo = { ...project, kind: 'mod', name: module.name, namespace: module.namespace, path: root }
         await this.authorizeBuild?.(moduleProject)
         if (!(await exists(path.join(root, 'build.gradle'))) && !(await exists(path.join(root, 'build.gradle.kts')))) {
           throw new Error(`自制 Mod ${module.name} 缺少 Gradle 构建文件`)
@@ -1547,10 +1513,10 @@ export class MinecraftRuntimeManager {
           throw error
         })
         if (targetHash && targetHash.size === entry.integrity.size && targetHash.sha256 === entry.integrity.sha256) {
-          if (!previouslySynced.has(entry.targetName.toLowerCase())) await validateModArtifact(entry.source, project.loader)
+          if (!previouslySynced.has(entry.targetName.toLowerCase())) await validateModArtifact(entry.source, project.loader, entry.source, true)
           written.push(entry.targetName)
         } else {
-          await replaceModArtifact(entry.source, path.join(staging, entry.targetName), project.loader)
+          await replaceModArtifact(entry.source, path.join(staging, entry.targetName), project.loader, true)
           written.push(entry.targetName)
           staged.push(entry.targetName)
         }
@@ -1723,9 +1689,8 @@ export class MinecraftRuntimeManager {
     if (!isJavaLoader(project.loader)) throw new Error('整合包必须使用 Java Edition Loader')
     const manifest = await readModpackManifest(project)
     for (const module of manifest.modules) {
-      const moduleRoot = path.resolve(project.path, ...module.path.split('/'))
-      if (!moduleRoot.startsWith(`${path.resolve(project.path)}${path.sep}`)) throw new Error(`自制 Mod ${module.name} 的路径无效`)
-      const moduleProject: ProjectInfo = { ...project, kind: 'mod', name: module.name, namespace: module.namespace, path: moduleRoot }
+      const moduleProject = await readModpackModuleProject(project, module)
+      const moduleRoot = moduleProject.path
       if (!(await exists(path.join(moduleRoot, 'build.gradle'))) && !(await exists(path.join(moduleRoot, 'build.gradle.kts')))) {
         throw new Error(`自制 Mod ${module.name} 缺少 Gradle 构建文件`)
       }
@@ -1907,6 +1872,7 @@ export class MinecraftRuntimeManager {
   }
 
   async listMods(): Promise<MinecraftManagedMod[]> {
+    if (this.vanillaClient) return []
     const project = this.requireProject()
     if (project.kind === 'server-plugin') return findPluginArtifact(project).then(artifact => [artifact]).catch(() => [])
     if (!isJavaLoader(project.loader)) {
@@ -1953,12 +1919,12 @@ export class MinecraftRuntimeManager {
   private async prepareInternal(signal?: AbortSignal, generation = this.prepareGeneration): Promise<MinecraftRuntimeState> {
     const project = this.requireProject()
     if (signal?.aborted) throw abortError()
-    if (!isJavaLoader(project.loader)) throw new Error(`${platformLabel(project.loader)} 必须使用对应官方客户端或开发者工作台测试`)
-    const configuredLoaderVersion = (await readConfiguredLoaderVersion(project)) ?? project.loaderVersion
+    if (!this.vanillaClient && !isJavaLoader(project.loader)) throw new Error(`${platformLabel(project.loader)} 必须使用对应官方客户端或开发者工作台测试`)
+    const configuredLoaderVersion = this.vanillaClient ? 'vanilla' : (await readConfiguredLoaderVersion(project)) ?? project.loaderVersion
     await fs.mkdir(this.instanceRoot(project), { recursive: true })
     await fs.mkdir(this.resourceRoot(), { recursive: true })
     if (signal?.aborted) throw abortError()
-    if (project.kind !== 'modpack' && (project.loader === 'fabric' || project.loader === 'quilt')) await this.ensureManagedLoaderApi(project)
+    if (!this.vanillaClient && project.kind !== 'modpack' && (project.loader === 'fabric' || project.loader === 'quilt')) await this.ensureManagedLoaderApi(project)
     const cached = await this.readMetadata(project)
     const cachedVersionJson = cached
       ? path.join(this.resourceRoot(), 'versions', cached.loaderVersionId, `${cached.loaderVersionId}.json`)
@@ -2090,8 +2056,11 @@ export class MinecraftRuntimeManager {
       })
       if (signal?.aborted) throw abortError()
 
-      this.emit('installing-loader', `正在安装 ${project.loader} Loader`)
-      if (project.loader === 'fabric') {
+      if (!this.vanillaClient) this.emit('installing-loader', `正在安装 ${project.loader} Loader`)
+      if (this.vanillaClient) {
+        loaderVersion = 'vanilla'
+        loaderVersionId = project.minecraftVersion
+      } else if (project.loader === 'fabric') {
         const loaders = await getFabricLoaders({ signal, fetch: (url, init) => domesticMinecraftFetch(`${BMCLAPI}/fabric-meta${new URL(url).pathname}`, init) })
         const loader = loaderVersion
           ? loaders.find((item) => item.version === loaderVersion)
@@ -2199,7 +2168,7 @@ export class MinecraftRuntimeManager {
       javaPath: metadata.javaPath,
       instancePath: this.instanceRoot(project),
       installed: true,
-      message: `Minecraft 与 ${project.loader} 已准备完成`,
+      message: this.vanillaClient ? 'Minecraft 原版客户端已准备完成' : `Minecraft 与 ${project.loader} 已准备完成`,
       mods: await this.listMods()
     })
     this.emit('idle', '测试实例准备完成')
@@ -2381,7 +2350,7 @@ export class MinecraftRuntimeManager {
   }
 
   private instanceRoot(project: ProjectInfo): string {
-    return path.join(project.path, projectDataDirectory(project), 'minecraft')
+    return this.instanceDirectory ?? path.join(project.path, projectDataDirectory(project), 'minecraft')
   }
 
   private modsRoot(project: ProjectInfo): string {

@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { parse as parseToml } from 'smol-toml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CODEX_RUNTIME_VERSION, clearPreparedCodexCredentials, getPreparedCodexEnvironment, getPreparedCodexExecutable, isManagedCodexVersion, managedCodexExecutablePath, managedCodexRuntimePath, prepareCodex, type CodexServerConfig } from './codexSetup'
 
@@ -132,6 +133,28 @@ describe('Codex beginner preparation', () => {
       await expect(fs.readFile(second.configPath, 'utf8')).resolves.toContain('model = "other-model"')
     } finally {
       await fs.rm(root, {recursive: true, force: true})
+    }
+  })
+
+  it('loads metadata before startup and removes the override when switching back to a native model', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-codex-metadata-'))
+    try {
+      const prepare = (model: string) => prepareCodex({ rootDir: root, serverConfig: { ...settings, model }, existingExecutable: 'C:\\codex.exe' })
+      const first = await prepare('google/gemini-2.5-pro')
+      const config = parseToml(await fs.readFile(first.configPath, 'utf8'))
+      const catalogPath = String(config.model_catalog_json)
+      expect(path.isAbsolute(catalogPath)).toBe(true)
+      expect(JSON.parse(await fs.readFile(catalogPath, 'utf8')).models.at(-1).slug).toBe('google/gemini-2.5-pro')
+      expect((await prepare('google/gemini-2.5-pro')).configChanged).toBe(false)
+      await fs.writeFile(catalogPath, '{broken')
+      expect((await prepare('google/gemini-2.5-pro')).configChanged).toBe(true)
+      const native = await prepare('gpt-5.4')
+      expect(native.configChanged).toBe(true)
+      expect(parseToml(await fs.readFile(native.configPath, 'utf8')).model_catalog_json).toBeUndefined()
+      // An already-running process may still be reading its previous catalog.
+      expect(JSON.parse(await fs.readFile(catalogPath, 'utf8')).models.at(-1).slug).toBe('google/gemini-2.5-pro')
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
     }
   })
 })

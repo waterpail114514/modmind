@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
-import { isModpackProject, readModpackManifest } from './modpackService'
+import { isModpackProject, readModpackManifest, readModpackModuleProject } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { descriptorPath } from './projectTemplates'
 import { inspectBedrockAddon, inspectNeteaseProject } from './bedrockAddon'
@@ -31,9 +31,8 @@ export async function inspectProjectPreflight(project: ProjectInfo, manifestName
         logs.push(`${present ? 'PASS' : 'FAIL'}  ${manifest.source?.layout === 'archive' ? 'overrides/' : ''}mods/${mod.fileName}`)
       }
       for (const module of manifest.modules) {
-        const root = path.resolve(project.path, ...module.path.split('/'))
-        const inside = root.startsWith(`${path.resolve(project.path)}${path.sep}`)
-        const build = inside && (await exists(path.join(root, 'build.gradle')) || await exists(path.join(root, 'build.gradle.kts')))
+        const root = (await readModpackModuleProject(project, module)).path
+        const build = await exists(path.join(root, 'build.gradle')) || await exists(path.join(root, 'build.gradle.kts'))
         logs.push(`${build ? 'PASS' : 'FAIL'}  ${module.path} Gradle project`)
         if (build) {
           const wrapper = ['gradlew', 'gradlew.bat', 'gradle/wrapper/gradle-wrapper.jar', 'gradle/wrapper/gradle-wrapper.properties']

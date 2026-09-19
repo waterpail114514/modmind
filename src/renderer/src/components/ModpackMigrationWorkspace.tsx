@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
@@ -72,7 +73,7 @@ const identityLabels: Record<ModpackMigrationModAssessment['identityEvidence'], 
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return reportClientFailure(error)
 }
 
 function candidateKey(candidate: ModpackMigrationCandidate): string {
@@ -249,7 +250,7 @@ export default function ModpackMigrationWorkspace({ project, onDecompile }: { pr
 
   return <div className="migration-workspace">
     <header className="content-toolbar migration-workspace-toolbar">
-      <div><h1>版本迁移</h1><p>{project.loader} {project.minecraftVersion}<ArrowRight size={14} />{assessment ? `${assessment.target.loader} ${assessment.target.minecraftVersion}` : '选择目标版本'}</p></div>
+      <h1 className="visually-hidden">版本迁移</h1><div className="toolbar-context">{project.loader} {project.minecraftVersion}<ArrowRight size={14} />{assessment ? `${assessment.target.loader} ${assessment.target.minecraftVersion}` : '选择目标版本'}</div>
       <div className="migration-execute-actions">
         <button className="primary-button" type="button" disabled={!assessment || Boolean(busy)} onClick={() => void createMigration('backup')}>{busy === 'create:backup' ? <LoaderCircle className="spin" size={16} /> : <FolderOutput size={16} />}备份并迁移</button>
         <button className="secondary-button" type="button" disabled={!assessment || Boolean(busy)} onClick={() => void createMigration('direct')}>{busy === 'create:direct' ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />}直接迁移</button>

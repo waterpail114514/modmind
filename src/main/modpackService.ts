@@ -7,7 +7,11 @@ import { isJavaLoader } from '../shared/projectPlatform'
 import { createStoredZip } from './bedrockAddon'
 import { MODPACK_LOCK_FILE, auditModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { isSafeModJarFileName, safeModJarFileName } from './modpackFilename'
-import { isRemoteModpackContent, readManagedModpackContent } from './modpackContentInventoryService'
+import { isRemoteModpackContent, readManagedModpackContent, registerImportedPackContent } from './modpackContentInventoryService'
+import { reconcileCurseForgePack } from './curseForgePackService'
+import { readImportedModrinthFiles } from './modpackImportService'
+import { resolveImportedModrinthIdentity } from './modrinthImportIdentity'
+import { validateRuntimeModArtifact } from './modpackArtifactValidation'
 import { excludesModsFromOverrides, modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
 
 export const MODPACK_MANIFEST = 'modmind.pack.json'
@@ -34,12 +38,14 @@ function normalizeModule(value: unknown): ModpackLocalModule | null {
     || typeof record.path !== 'string'
     || typeof record.createdAt !== 'string'
     || !/^[a-z0-9_]{1,64}$/.test(record.namespace)
-    || !/^modules\/[a-z0-9_]{1,64}$/.test(record.path.replaceAll('\\', '/'))
+    || (record.linked !== undefined && typeof record.linked !== 'boolean')
+    || (record.linked === true ? !path.isAbsolute(record.path) : !/^modules\/[a-z0-9_]{1,64}$/.test(record.path.replaceAll('\\', '/')))
   ) return null
   return {
     name: record.name.slice(0, 120),
     namespace: record.namespace,
     path: record.path.replaceAll('\\', '/'),
+    ...(record.linked === true ? { linked: true } : {}),
     createdAt: record.createdAt,
     side: ['client', 'server', 'both', 'unknown'].includes(String(record.side)) ? record.side as ModpackModuleSide : 'both'
   }
@@ -187,7 +193,94 @@ export async function adoptExternalModpack(project: ProjectInfo, source: Modpack
       const stat = await fs.stat(sourcePath)
       return stat.size >= 1_024 ? fileRecord(sourcePath, entry.name) : null
     }))).filter((entry): entry is ModpackManagedMod => Boolean(entry))
-  return writeModpackManifest(project, { ...createModpackManifest(project), mods: mods.sort((left, right) => left.fileName.localeCompare(right.fileName)), source })
+  const previous = await fs.access(manifestPath(project)).then(() => readModpackManifest(project), () => null)
+  await writeModpackManifest(project, { ...createModpackManifest(project), mods: mods.sort((left, right) => left.fileName.localeCompare(right.fileName)), modules: previous?.modules ?? [], source })
+  if (source.format === 'modrinth') await registerImportedModrinthFiles(project)
+  return reconcileImportedModpack(project)
+}
+
+async function registerImportedModrinthFiles(project: ProjectInfo): Promise<void> {
+  const files = await readImportedModrinthFiles(project.path)
+  if (!files.length) return
+  const manifest = await readModpackManifest(project)
+  const lock = await readModpackLock(project)
+  const content: Parameters<typeof registerImportedPackContent>[1] = []
+  for (const entry of files) {
+    const installed = path.join(modpackOverridesRoot(project, manifest), entry.path)
+    const hashes = await hashModrinthFile(installed)
+    if (Object.entries(entry.hashes).some(([algorithm, expected]) => hashes[algorithm as 'sha1' | 'sha512'] !== expected)) {
+      throw new Error(`导入来源校验失败：${entry.path}`)
+    }
+    if (!/^mods\/[^/]+\.jar$/i.test(entry.path)) {
+      // Register distributable packs; other files remain embedded overrides.
+      if (/^(?:resourcepacks|shaderpacks)\//i.test(entry.path)) content.push({ path: entry.path, sha1: hashes.sha1, size: hashes.size, sourceUrl: entry.downloads[0], scope: entry.side === 'client' ? 'client' : entry.side === 'server' ? 'server' : 'common' })
+      continue
+    }
+    // Only official CDN URLs establish a Modrinth project/version identity.
+    const identity = await resolveImportedModrinthIdentity(entry.downloads, hashes)
+    if (!identity) continue
+    const mod = manifest.mods.find(mod => mod.fileName === entry.path.slice(5))
+    if (!mod) continue
+    // Keep all bytes but avoid inventing an identity for ambiguous multi-file projects.
+    if (lock.mods.some(item => item.provider === 'modrinth' && item.projectId === identity.projectId && item.fileName !== mod.fileName)) continue
+    lock.mods = lock.mods.filter(item => item.fileName.toLowerCase() !== mod.fileName.toLowerCase())
+    lock.mods.push({ provider: 'modrinth', projectId: identity.projectId, versionId: identity.versionId, versionName: identity.versionName ?? mod.fileName, fileName: mod.fileName, sha256: mod.sha256, size: mod.size, side: entry.side ?? 'both', sources: entry.downloads, installedAt: mod.addedAt })
+  }
+  await writeModpackLock(project, lock)
+  await registerImportedPackContent(project, content)
+}
+
+export async function reconcileImportedModpack(project: ProjectInfo): Promise<ModpackManifest> {
+  const manifest = await readModpackManifest(project)
+  if (manifest.source?.format !== 'curseforge') return manifest
+  const state = await reconcileCurseForgePack(project.path, modpackOverridesRoot(project, manifest))
+  if (!state) return manifest
+  const unresolvedDependencies = state.files.filter(item => item.required && item.status !== 'installed').length
+  const source = { ...manifest.source, unresolvedDependencies: unresolvedDependencies || undefined }
+  const lock = await readModpackLock(project)
+  const importedProjects = new Set(state.files.map(item => String(item.projectID)))
+  lock.mods = lock.mods.filter(item => item.provider !== 'curseforge' || !importedProjects.has(item.projectId))
+  const content: Array<{ path: string; sha1: string; size: number; sourceUrl: string }> = []
+  for (const entry of state.files) {
+    if (entry.status !== 'installed' || !entry.file || !entry.installedPath) continue
+    if (!entry.installedPath.startsWith('mods/')) {
+      content.push({ path: entry.installedPath, sha1: entry.file.sha1, size: entry.file.size, sourceUrl: entry.file.downloads[0] })
+      continue
+    }
+    const fileName = entry.installedPath.slice(5)
+    let mod = manifest.mods.find(item => item.fileName === fileName)
+    if (!mod) {
+      mod = await fileRecord(path.join(modpackModsRoot(project, manifest), fileName), fileName)
+      manifest.mods.push(mod)
+    }
+    // A manually supplied exact replacement can have a translated filename.
+    // Remove only absent duplicate records for these same bytes.
+    for (const old of [...manifest.mods]) {
+      if (old.fileName !== fileName && old.sha256 === mod.sha256 && !await fs.access(path.join(modpackModsRoot(project, manifest), old.fileName)).then(() => true, () => false)) {
+        manifest.mods = manifest.mods.filter(item => item !== old)
+      }
+    }
+    lock.mods.push({ provider: 'curseforge', projectId: String(entry.projectID), versionId: String(entry.fileID), versionName: entry.file.path.split('/').pop()!, fileName, sha256: mod.sha256, size: mod.size, side: 'unknown', sources: entry.file.downloads, installedAt: mod.addedAt })
+  }
+  await writeModpackLock(project, lock)
+  await registerImportedPackContent(project, content)
+  return writeModpackManifest(project, { ...manifest, source })
+}
+
+export async function assertModpackDependenciesReady(project: ProjectInfo): Promise<ModpackManifest> {
+  const manifest = await reconcileImportedModpack(project)
+  if (manifest.source?.unresolvedDependencies) throw new Error(`整合包仍有 ${manifest.source.unresolvedDependencies} 个必需文件未完成；请在模组列表中继续安装或补入原清单指定的文件`)
+  return manifest
+}
+
+export async function auditImportedPackArtifacts(project: ProjectInfo): Promise<string[]> {
+  const manifest = await readModpackManifest(project)
+  const warnings: string[] = []
+  for (const mod of manifest.mods) warnings.push(...await validateRuntimeModArtifact(path.join(modpackModsRoot(project, manifest), mod.fileName), project.loader, mod.fileName, true))
+  const target = path.join(project.path, '.modmind', 'import', 'artifact-report.json')
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await fs.writeFile(target, JSON.stringify({ checked: manifest.mods.length, warnings }, null, 2), 'utf8')
+  return warnings
 }
 
 function safeJarFileName(filePath: string): string {
@@ -225,7 +318,8 @@ export async function addModpackFiles(project: ProjectInfo, sources: string[]): 
   }))
   const mods = new Map(manifest.mods.map((entry) => [entry.fileName.toLowerCase(), entry]))
   for (const entry of additions) mods.set(entry.fileName.toLowerCase(), entry)
-  return writeModpackManifest(project, { ...manifest, mods: [...mods.values()].sort((left, right) => left.fileName.localeCompare(right.fileName)) })
+  await writeModpackManifest(project, { ...manifest, mods: [...mods.values()].sort((left, right) => left.fileName.localeCompare(right.fileName)) })
+  return reconcileImportedModpack(project)
 }
 
 export async function removeModpackFile(project: ProjectInfo, fileName: string): Promise<ModpackManifest> {
@@ -238,7 +332,7 @@ export async function removeModpackFile(project: ProjectInfo, fileName: string):
   if (lock.mods.some((mod) => mod.fileName.toLowerCase() === normalizedFileName)) {
     await writeModpackLock(project, { ...lock, mods: lock.mods.filter((mod) => mod.fileName.toLowerCase() !== normalizedFileName) })
   }
-  return nextManifest
+  return nextManifest.source?.format === 'curseforge' ? reconcileImportedModpack(project) : nextManifest
 }
 
 export async function addModpackModule(project: ProjectInfo, module: ModpackLocalModule): Promise<ModpackManifest> {
@@ -330,9 +424,26 @@ function safeRelativeOverride(value: string): boolean {
   return Boolean(normalized) && !normalized.startsWith('/') && !normalized.includes('../') && normalized.split('/').every(Boolean)
 }
 
+export function resolveModpackModuleRoot(project: ProjectInfo, module: ModpackLocalModule): string {
+  if (!normalizeModule(module)) throw new Error(`自制 Mod ${module.name} 的路径无效`)
+  return module.linked ? path.resolve(module.path) : path.resolve(project.path, ...module.path.split('/'))
+}
+
+export async function readModpackModuleProject(project: ProjectInfo, module: ModpackLocalModule): Promise<ProjectInfo> {
+  const root = resolveModpackModuleRoot(project, module)
+  const metadata = await fs.readFile(path.join(root, 'modmind.project.json'), 'utf8').then(text => JSON.parse(text) as ProjectInfo).catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    if (module.linked) throw new Error(`找不到直接使用的模组项目：${root}`)
+    return null
+  })
+  if (metadata && (metadata.draft || (metadata.kind && metadata.kind !== 'mod') || metadata.loader !== project.loader || metadata.minecraftVersion !== project.minecraftVersion || metadata.namespace !== module.namespace)) {
+    throw new Error(`自制 Mod ${module.name} 的项目类型、标识或目标版本已改变，请重新添加匹配的项目`)
+  }
+  return { ...(metadata ?? project), kind: 'mod', name: module.name, namespace: module.namespace, path: root }
+}
+
 async function latestModuleJar(project: ProjectInfo, module: ModpackLocalModule): Promise<{ path: string; name: string } | null> {
-  const root = path.resolve(project.path, ...module.path.split('/'))
-  if (!root.startsWith(`${path.resolve(project.path)}${path.sep}`)) return null
+  const root = (await readModpackModuleProject(project, module)).path
   const output = path.join(root, 'build', 'libs')
   const entries = await fs.readdir(output, { withFileTypes: true }).catch(() => [])
   const candidates = await Promise.all(entries
@@ -363,8 +474,9 @@ export async function collectBuiltModpackModuleArtifacts(project: ProjectInfo): 
   return artifacts
 }
 
-const MAX_MODPACK_EXPORT_FILES = 10_000
-const MAX_MODPACK_EXPORT_BYTES = 256 * 1024 * 1024
+const MAX_MODPACK_EXPORT_FILES = 50_000
+// Large authored packs embed gun packs, models and audio in addition to remote mods.
+const MAX_MODPACK_EXPORT_BYTES = 1024 * 1024 * 1024
 
 interface ExportBudget { files: number; bytes: number }
 
@@ -393,7 +505,7 @@ function modrinthEnvironment(side: 'client' | 'server' | 'both' | 'unknown'): { 
 
 /** Builds a Modrinth pack archive with remote file records where a locked source is available. */
 export async function createModrinthPackArchive(project: ProjectInfo, release: { version?: string; summary?: string } = {}): Promise<Buffer> {
-  const manifest = await readModpackManifest(project)
+  const manifest = await assertModpackDependenciesReady(project)
   if (await fs.access(path.join(project.path, MODPACK_LOCK_FILE)).then(() => true).catch(() => false)) {
     const lockAudit = await auditModpackLock(project)
     if (!lockAudit.success) throw new Error(`整合包锁定清单审计失败，无法导出：${lockAudit.errors.join('; ')}`)

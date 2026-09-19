@@ -1,3 +1,4 @@
+import { reportClientFailure } from './lib/clientFailure'
 import type { InspirationChatMessage } from '../../shared/types'
 import { normalizeAiTurnReplay } from '../../shared/aiReplay'
 import { isAiOperationalStatusText } from '../../shared/aiOutput'
@@ -155,7 +156,7 @@ function minimalPayload(payload: InspirationStoragePayload): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return reportClientFailure(error)
 }
 
 /** Persists inspiration history without allowing browser storage failures to escape into React. */

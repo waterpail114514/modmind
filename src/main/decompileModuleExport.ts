@@ -36,7 +36,7 @@ export const DECOMPILE_TERMS_SECTIONS: Array<{ heading: string; body: string[] }
   {
     heading: '1. 反编译行为的性质',
     body: [
-      '你即将把一个第三方 Minecraft 模组 JAR 的反编译结果复制为一个新的本地源码工程。反编译产物是对原始字节码的机器还原：不含原作者的注释、不含局部变量名、可能包含还原错误，并且几乎不可能直接编译通过。',
+      '你即将把一个第三方 Minecraft 模组或服务端插件 JAR 的反编译结果复制为一个新的本地源码工程。反编译产物是对原始字节码的机器还原：不含原作者的注释、不含局部变量名、可能包含还原错误，并且几乎不可能直接编译通过。',
       '该产物在法律上通常被视为原作品的演绎件（derivative work）。它的著作权仍属于原作者；本功能不转移任何权利，也不授予任何新的许可。'
     ]
   },
@@ -157,6 +157,7 @@ async function copyTree(sourceRoot: string, targetRoot: string, include: (fileNa
  * the current build or when the acknowledgement payload is incomplete.
  */
 export async function createModuleFromDecompiledSources(input: CreateModuleFromDecompiledInput): Promise<CreatedModuleFromDecompiled> {
+  if (input.provenance.plugin) throw new Error('服务端插件不能作为整合包的自制模组导入，请创建服务端插件项目')
   if (!input.provenance?.readOnly || input.provenance.schemaVersion !== 1) throw new Error('反编译缓存记录无效，请重新执行反编译')
   const acknowledgement: DecompileTermsAcknowledgement = {
     ...input.acknowledgement,
@@ -226,6 +227,6 @@ export async function seedProjectFromDecompiledSources(input: SeedProjectFromDec
   await fs.writeFile(provenanceCopyPath, `${JSON.stringify({ ...input.provenance, exportedToProject: true }, null, 2)}\n`, 'utf8')
   const readmePath = path.join(projectRoot, 'README.md')
   const readme = await fs.readFile(readmePath, 'utf8').catch(() => '')
-  await fs.writeFile(readmePath, `${readme.trimEnd()}\n\n注意：src/main/java 中的源码来自第三方模组 ${input.jarName} 的受控反编译结果。请先阅读 docs/decompiled-sources-terms.md，并在发布前确认许可证与署名要求。\n`, 'utf8')
+  await fs.writeFile(readmePath, `${readme.trimEnd()}\n\n注意：src/main/java 中的源码来自第三方 JAR ${input.jarName} 的受控反编译结果。请先阅读 docs/decompiled-sources-terms.md，并在发布前确认许可证与署名要求。\n`, 'utf8')
   return { fileCount: copied, termsFilePath, acknowledgementPath, provenanceCopyPath }
 }

@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useRef, useState } from 'react'
 import type { InputHTMLAttributes } from 'react'
 import type { ModMindApi } from '../../../shared/types'
@@ -36,7 +37,7 @@ export function SecretInput({ secretKey, stored, value, onChange, ...props }: Pr
       setRevealed(secret)
       setVisible(true)
     } catch (error) {
-      if (request === generation.current) setError(error instanceof Error ? error.message : '读取失败')
+      if (request === generation.current) setError(reportClientFailure(error))
     } finally {
       if (request === generation.current) setBusy(false)
     }

@@ -6,7 +6,7 @@ import type { JavaLoaderKind, LoaderKind, ProjectInfo, ServerPackManifest } from
 import { managedJavaEnvironment } from './javaEnvironment'
 import { fetchJsonWithRetry } from './networkRequest'
 import { commitDirectory, preserveLegacyServerInstance } from './serverInstance'
-import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides } from './modpackService'
+import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides, assertModpackDependenciesReady } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { auditModpackLock, readModpackLock } from './modpackLockService'
 import { verifiedDownload, type DownloadSource } from './downloadService'
@@ -312,6 +312,7 @@ export function serverRuntimeDownloadDescription(project: Pick<ProjectInfo, 'loa
 
 export async function buildServerPack(project: ProjectInfo, options: ServerPackOptions): Promise<ServerPackResult> {
   if (project.kind !== 'modpack') throw new Error('a modpack project is required to build a server pack')
+  await assertModpackDependenciesReady(project)
   await preserveLegacyServerInstance(project.path, options.outputDirectory)
   if (options.engine === 'serverpackcreator') {
     const manifest = await readModpackManifest(project)

@@ -8,6 +8,7 @@ import {
   pollDeviceCode,
   queryDeviceUsage,
   requestDeviceCode,
+  requestDeviceImageLease,
   sendDeviceFastMode
 } from './deviceIntegration'
 
@@ -16,6 +17,44 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('device integration protocol', () => {
+  it.each([false, true])('requests fresh image credentials using the account credential (envelope=%s)', async (envelope) => {
+    let sequence = 0
+    const fetcher = vi.fn(async () => {
+      const data = { baseUrl: 'https://images.example.com/v1/', apiKey: `image-key-${++sequence}` }
+      return jsonResponse(envelope ? { success: true, data } : data)
+    })
+    const credentials = { siteUrl: 'https://site.example.com/', apiKey: 'account-key', username: 'someuser' }
+    for (const index of [1, 2]) {
+      await expect(requestDeviceImageLease(credentials, new AbortController().signal, fetcher))
+        .resolves.toEqual({ baseUrl: 'https://images.example.com/v1', apiKey: `image-key-${index}` })
+    }
+    const calls = (fetcher.mock.calls as unknown as Array<[string, RequestInit]>)
+    for (const [url, init] of calls) {
+      expect(url).toBe('https://site.example.com/api/device/image-lease')
+      expect(init).toMatchObject({ method: 'POST', headers: { Authorization: 'Bearer account-key', 'Content-Type': 'application/json' } })
+      expect(JSON.parse(String(init.body))).toEqual({ username: 'someuser', timestamp: expect.any(String) })
+    }
+    expect(new Headers(calls[0][1].headers).get('Idempotency-Key')).not.toBe(new Headers(calls[1][1].headers).get('Idempotency-Key'))
+  })
+
+  it('identifies rejected account credentials before any image API call', async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ error: { message: '接入凭证无效或已失效' } }, 401))
+    await expect(requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey: 'expired-account-key', username: 'someuser' }, new AbortController().signal, fetcher))
+      .rejects.toMatchObject({ name: 'DeviceApiError', status: 401, message: '图片授权失败（HTTP 401）：接入凭证无效或已失效；请重新连接 ModMind 账号，或在网页端重新同步接入凭证。尚未调用生图接口' })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { body: { success: false, message: '授权失败', data: { apiKey: 'stale-key', baseUrl: 'https://images.example.com' } }, status: 200, message: '授权失败' },
+    { body: { data: { baseUrl: 'https://images.example.com' } }, status: 200, message: '响应缺少临时 Key' },
+    { body: { error: '额度不足' }, status: 402, message: '额度不足' }
+  ])('rejects invalid image leases without treating them as account expiry ($message)', async ({ body, status, message }) => {
+    const fetcher = vi.fn(async () => jsonResponse(body, status))
+    const result = requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey: 'account-key', username: 'someuser' }, new AbortController().signal, fetcher)
+    await expect(result).rejects.toThrow(message)
+    await expect(result).rejects.not.toThrow('请重新连接')
+  })
+
   it('normalizes service URLs and enforces the configured deep-link origin', () => {
     expect(normalizeSiteUrl('https://site.example.com/')).toBe('https://site.example.com')
     expect(openAiV1BaseUrl('https://relay.example.com')).toBe('https://relay.example.com/v1')

@@ -5,7 +5,14 @@ description: Diagnose and repair Minecraft mod Gradle, Java runtime selection, c
 
 # Minecraft Build Repair
 
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
+
 Find the first causal failure, repair it, and use the next run to test the diagnosis rather than repeating speculative edits.
+
+When ModMind supplies evidence IDs, read the digest first and retrieve only relevant raw line ranges with `modmind_creation_context`. Preserve independent exceptions and the user's observed trigger. Repeated feedback after delivery is a new failure observation, not a continuation acknowledgement: compare the tested artifact with the prior hypothesis before editing again. Record the hypothesis and the check that can disprove it; compilation alone cannot establish gameplay repair.
 
 ## Workflow
 

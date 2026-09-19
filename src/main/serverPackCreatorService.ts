@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
-import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides } from './modpackService'
+import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides, assertModpackDependenciesReady } from './modpackService'
 import { commitDirectory } from './serverInstance'
 import { readModpackLock } from './modpackLockService'
 import { modpackModsRoot } from './modpackPaths'
@@ -150,7 +150,7 @@ async function listJarNames(root: string): Promise<string[]> {
 
 /** Materializes ModMind's split workspace layout as the client-instance layout expected upstream. */
 async function materializeClientInstance(project: ProjectInfo, root: string): Promise<Awaited<ReturnType<typeof readModpackManifest>>> {
-  const manifest = await readModpackManifest(project)
+  const manifest = await assertModpackDependenciesReady(project)
   const modsRoot = modpackModsRoot(project, manifest)
   await fs.mkdir(path.join(root, 'mods'), { recursive: true })
   for (const mod of manifest.mods) {

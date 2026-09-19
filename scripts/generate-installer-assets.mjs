@@ -47,11 +47,10 @@ async function renderBmp(width, height, background, layers, target) {
 }
 
 const sidebarIcon = await sharp(iconPath)
-  .resize(192, 192, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-  .extract({ left: 14, top: 0, width: 164, height: 192 })
+  .resize(156, 192, { fit: 'contain', kernel: 'lanczos3', background: { r: 0, g: 0, b: 0, alpha: 0 } })
   .png()
   .toBuffer()
-const headerIcon = await sharp(iconPath).trim().resize(48, 48, { fit: 'contain', kernel: 'nearest', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+const headerIcon = await sharp(iconPath).trim().resize(48, 48, { fit: 'contain', kernel: 'lanczos3', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
 const sidebarText = Buffer.from(`
   <svg width="164" height="314" xmlns="http://www.w3.org/2000/svg">
     <style>
@@ -74,7 +73,7 @@ const headerAccent = Buffer.from(`
 `)
 
 await renderBmp(164, 314, '#f1f2f4', [
-  { input: sidebarIcon, left: 0, top: 66 },
+  { input: sidebarIcon, left: 4, top: 66 },
   { input: sidebarText, left: 0, top: 0 }
 ], 'installer-sidebar.bmp')
 

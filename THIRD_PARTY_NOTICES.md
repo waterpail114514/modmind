@@ -33,6 +33,12 @@ upstream OrbitControls. Project: https://github.com/mrdoob/three.js
 Copyright © 2010-2025 three.js authors. Three.js is provided under the MIT
 License; the MIT permission and warranty text reproduced above applies.
 
+## PDF.js
+
+Read-only PDF text extraction uses Mozilla PDF.js (`pdfjs-dist` 4.10.38),
+licensed under Apache-2.0. Its license and bundled font/CMap notices are retained
+in the dependency distribution. Project: https://github.com/mozilla/pdf.js
+
 ## Gradle Wrapper
 
 ModMind bundles the unmodified Gradle Wrapper scripts and JAR from Gradle 9.2.1 so

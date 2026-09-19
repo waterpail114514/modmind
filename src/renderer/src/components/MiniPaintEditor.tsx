@@ -1,3 +1,7 @@
+import { useAppAppearance } from '../theme'
+import { miniPaintThemeColors } from '../../../shared/appTheme'
+import { scrollbarStyles } from '../../../shared/scrollbars'
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, Save } from 'lucide-react'
 import type { ImageAsset } from '../../../shared/imageStudio'
@@ -20,6 +24,7 @@ export default function MiniPaintEditor({ asset, darkMode, onError, onSave }: Mi
   const [ready, setReady] = useState(false)
   const [assetReady, setAssetReady] = useState(false)
   const [saving, setSaving] = useState(false)
+  const { themePreset, customThemeColors } = useAppAppearance()
   const exportRequest = useRef('')
   const source = useMemo(() => new URL('minipaint/index.html?lang=zh', window.location.href).toString(), [])
 
@@ -32,7 +37,7 @@ export default function MiniPaintEditor({ asset, darkMode, onError, onSave }: Mi
       const requestId = typeof event.data.requestId === 'string' ? event.data.requestId : ''
       if (event.data.type === 'exportResult' && requestId === exportRequest.current && typeof event.data.dataUrl === 'string') {
         exportRequest.current = ''
-        void onSave?.(event.data.dataUrl).catch(error => onError(error instanceof Error ? error.message : String(error))).finally(() => setSaving(false))
+        void onSave?.(event.data.dataUrl).catch(error => onError(reportClientFailure(error))).finally(() => setSaving(false))
         return
       }
       const currentOpen = pendingOpen.current
@@ -58,7 +63,7 @@ export default function MiniPaintEditor({ asset, darkMode, onError, onSave }: Mi
     }
   }, [onError, onSave])
 
-  useEffect(() => { if (ready) post({ type: 'theme', theme: darkMode ? 'dark' : 'light' }) }, [darkMode, ready])
+  useEffect(() => { if (ready) post({ type: 'theme', theme: darkMode ? 'dark' : 'light', palette: miniPaintThemeColors(themePreset, darkMode ? 'dark' : 'light', customThemeColors), scrollbarStyle: scrollbarStyles('var(--text-color-muted)') }) }, [darkMode, ready, themePreset, customThemeColors])
   useEffect(() => {
     if (!ready || !asset || loadedAssetId.current === asset.id) return
     const requestId = crypto.randomUUID()

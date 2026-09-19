@@ -1,0 +1,13 @@
+.workbench-feature-controls { display: flex; flex: 0 0 32px; }
+.workbench-feature-trigger { width: 32px; height: 32px; }
+.workbench-feature-trigger.active { color: var(--agent-primary); background: var(--agent-fill-2); }
+.agent-picker-menu.workbench-feature-menu { position: fixed; inset: auto; width: min(224px, calc(100vw - 24px)); box-sizing: border-box; margin: 0; padding: 5px; overflow-y: auto; }
+.workbench-feature-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; padding: 0 9px; color: var(--agent-text-3); font-size: 12px; }
+.workbench-feature-heading > span:last-child { font-variant-numeric: tabular-nums; }
+.agent-picker-menu.workbench-feature-menu > button { min-height: 38px; padding: 0 9px; gap: 10px; font-size: 13px; }
+.workbench-feature-menu > button > svg { flex-shrink: 0; color: var(--agent-text-3); }
+.workbench-feature-menu > button.selected { color: var(--agent-text-1); }
+.workbench-feature-menu > button > span:not(.workbench-feature-check) { flex: 1; min-width: 0; }
+.workbench-feature-check { display: grid; place-items: center; flex: 0 0 18px; width: 18px; height: 18px; color: var(--agent-primary); }
+.agent-picker-menu.workbench-feature-menu .workbench-feature-check svg { margin: 0; }
+.workbench-feature-menu > button:focus-visible { outline: 2px solid var(--agent-primary); outline-offset: -2px; }

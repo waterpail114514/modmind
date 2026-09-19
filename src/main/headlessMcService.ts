@@ -230,7 +230,7 @@ export class HeadlessMcService {
     }
   }
 
-  private async ensureLauncher(signal?: AbortSignal, onDownloadProgress?: HeadlessMcSmokeInput['onDownloadProgress']): Promise<string> {
+  async ensureLauncher(signal?: AbortSignal, onDownloadProgress?: HeadlessMcSmokeInput['onDownloadProgress']): Promise<string> {
     if (this.downloadPromise) return this.downloadPromise
     this.downloadPromise = this.ensureLauncherInternal(signal, onDownloadProgress).finally(() => { this.downloadPromise = null })
     return this.downloadPromise

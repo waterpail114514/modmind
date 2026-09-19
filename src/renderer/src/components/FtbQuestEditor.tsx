@@ -1,3 +1,5 @@
+import MoreActions from './MoreActions'
+import { reportClientFailure } from '../lib/clientFailure'
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { addEdge, Background, BaseEdge, Controls, Handle, MiniMap, Position, ReactFlow, useEdgesState, useNodesState, useStore, type Connection, type Edge, type EdgeMouseHandler, type EdgeProps, type Node, type NodeChange, type NodeMouseHandler, type ReactFlowInstance } from '@xyflow/react'
@@ -67,9 +69,9 @@ const QUEST_GRID_Y = 78
 // 用 dependency.png 箭头贴图沿直线无缝平铺并按主题色染色（编辑器内任务无完成态，用未完成色）。
 // 颜色取自 FTB-Quests 默认主题 ftb_quests_theme.txt（#AARRGGBB）：#B4CCA3A3 = rgba(204,163,163,0.71)。
 const QUEST_EDGE_COLOR = '#B4CCA3A3'
-const QUEST_EDGE_START = 'rgba(204, 163, 163, 0.71)'
+const QUEST_EDGE_START = 'var(--theme-subtle)'
 // 原版线条末端 RGB 衰减为 3/4（见 renderConnection 顶点颜色 r*3/4 等）。
-const QUEST_EDGE_END = 'rgba(153, 122, 122, 0.71)'
+const QUEST_EDGE_END = 'var(--theme-strong-line)'
 // 原版 renderConnection 贴图平铺周期 = 2×半宽（线宽），游戏中线宽 ≈ 按钮宽 / 5.9。
 // 编辑器按钮 64px，对应贴图单元 = 64 / 5.9 ≈ 11px。
 const QUEST_EDGE_TILE = 11
@@ -405,7 +407,7 @@ function QuestFlowNode({ data }: { data: QuestNodeData }): React.JSX.Element {
     setFallbackIcon(null)
     if (shouldLoadIcon && descriptor) requestFtbIcon(data.projectPath, scope, descriptor).then(result => {
       if (alive) setInspection(result)
-    }).catch(error => { if (alive) setInspection({ icon: null, reason: String(error), sources: [], generation: 0 }) })
+    }).catch(error => { if (alive) setInspection({ icon: null, reason: reportClientFailure(error), sources: [], generation: 0 }) })
     return () => { alive = false }
   }, [descriptorKey, data.projectPath, scope, shouldLoadIcon])
   useEffect(() => {
@@ -433,9 +435,9 @@ function QuestFlowNode({ data }: { data: QuestNodeData }): React.JSX.Element {
   const shapeSet = shapes?.[shapeId] ?? null
   const shapeLayers = shapeId === 'none' ? null : shapeSet
     ? <>
-      <span className="ftb-quest-shape-layer" style={{ background: '#373737', maskImage: `url(${shapeSet.shape})`, WebkitMaskImage: `url(${shapeSet.shape})` }} />
-      <span className="ftb-quest-shape-layer" style={{ background: 'rgba(255,255,255,0.59)', maskImage: `url(${shapeSet.background})`, WebkitMaskImage: `url(${shapeSet.background})` }} />
-      <span className="ftb-quest-shape-layer" style={{ background: 'rgba(255,255,255,0.59)', maskImage: `url(${shapeSet.outline})`, WebkitMaskImage: `url(${shapeSet.outline})` }} />
+      <span className="ftb-quest-shape-layer" style={{ background: 'var(--theme-inset)', maskImage: `url(${shapeSet.shape})`, WebkitMaskImage: `url(${shapeSet.shape})` }} />
+      <span className="ftb-quest-shape-layer" style={{ background: 'var(--theme-surface)', maskImage: `url(${shapeSet.background})`, WebkitMaskImage: `url(${shapeSet.background})` }} />
+      <span className="ftb-quest-shape-layer" style={{ background: 'var(--theme-surface)', maskImage: `url(${shapeSet.outline})`, WebkitMaskImage: `url(${shapeSet.outline})` }} />
     </>
     : <span className="ftb-quest-shape-fallback" />
   return <div className={`ftb-quest-node shape-${shapeId}`}>
@@ -631,7 +633,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
       setSelectedQuestId('')
       syncCanvas(nextChapter)
       setMessage(next.chapters.length ? `已载入 ${next.chapters.length} 个章节` : '未发现任务章节，可以从这里创建第一章')
-    } catch (error) { if (generation === requestGeneration.current) setMessage(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { if (generation === requestGeneration.current) setMessage(reportClientFailure(error)) }
     finally { if (generation === requestGeneration.current) setBusy('') }
   }, [syncCanvas, project.path, setNodes, setEdges])
 
@@ -848,7 +850,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
       updateBook(current => rewriteFtbQuestReferences({ ...current, chapters: current.chapters.map(item => ({ ...item, quests: item.quests.map(quest => quest.id === selectedQuest.id ? next : quest) })) }, new Map([[selectedQuest.id, next.id]])))
       setSelectedQuestId(next.id)
       setMessage('已应用高级字段')
-    } catch (error) { setMessage(`高级字段无效：${error instanceof Error ? error.message : String(error)}`) }
+    } catch (error) { setMessage(`高级字段无效：${reportClientFailure(error)}`) }
   }
   const save = async (): Promise<void> => {
     if (!book || busy || loadedProject.current !== project.path || errors.length) return
@@ -863,7 +865,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
       undoStack.current = undoStack.current.map(snapshot => ({ ...snapshot, baseline: result.baseline }))
       redoStack.current = redoStack.current.map(snapshot => ({ ...snapshot, baseline: result.baseline }))
       setMessage(`已保存 ${result.written.length} 个文件${result.removed.length ? `，移除 ${result.removed.length} 个章节文件` : ''}`)
-    } catch (error) { if (generation === requestGeneration.current) setMessage(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { if (generation === requestGeneration.current) setMessage(reportClientFailure(error)) }
     finally { if (generation === requestGeneration.current) setBusy('') }
   }
 
@@ -887,7 +889,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
       const first = next.chapters[0]
       selectedChapterIdRef.current = first?.id ?? ''; setSelectedChapterId(first?.id ?? '')
       setSelectedQuestId(''); syncCanvas(first); setMessage('已恢复任务书备份')
-    } catch (error) { if (generation === requestGeneration.current) setMessage(String(error)) }
+    } catch (error) { if (generation === requestGeneration.current) setMessage(reportClientFailure(error)) }
     finally { if (generation === requestGeneration.current) setBusy('') }
   }
   const reload = async (): Promise<void> => {
@@ -896,7 +898,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
   }
 
   return <FtbResources.Provider value={{ projectPath: project.path, scope: `${project.path}:${project.minecraftVersion}:${resourceRevision}` }}><div className="ftb-quest-editor">
-    <header className="ftb-quest-toolbar content-toolbar"><div><h1>FTB 任务书</h1><p>章节、前置依赖、任务条件和奖励在同一张画布中编辑</p></div><div className="ftb-quest-toolbar-actions"><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.listFtbQuestBackups(project.path).then(setBackups).catch(error => setMessage(String(error)))}>备份恢复</button><span className={`ftb-quest-health ${errors.length ? 'error' : ''}`}>{errors.length ? <AlertTriangle size={14} /> : <PackageOpen size={14} />}{errors.length ? `${errors.length} 个问题` : `${book?.chapters.length ?? 0} 个章节`}</span><button className="icon-button" title="撤销" aria-label="撤销" disabled={!undoStack.current.length || Boolean(busy)} onClick={undo}><Undo2 size={15} /></button><button className="icon-button" title="重做" aria-label="重做" disabled={!redoStack.current.length || Boolean(busy)} onClick={redo}><Redo2 size={15} /></button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => { setShowRewardTables(true); setEditingRewardTableId('') }}><Gift size={15} />奖励表{rewardTables.length ? `（${rewardTables.length}）` : ''}</button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void reload()}>{busy === 'load' ? <LoaderCircle className="spin" size={15} /> : <RotateCw size={15} />}重新加载</button><button className="primary-button" disabled={!book || Boolean(busy) || errors.length > 0} onClick={() => void save()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}保存任务书</button></div></header>
+    <header className="ftb-quest-toolbar content-toolbar"><h1 className="visually-hidden">FTB 任务书</h1><div className="ftb-quest-toolbar-actions"><MoreActions label="任务书更多操作"><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.listFtbQuestBackups(project.path).then(setBackups).catch(error => setMessage(reportClientFailure(error)))}>备份恢复</button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => { setShowRewardTables(true); setEditingRewardTableId('') }}><Gift size={15} />奖励表{rewardTables.length ? `（${rewardTables.length}）` : ''}</button><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void reload()}>{busy === 'load' ? <LoaderCircle className="spin" size={15} /> : <RotateCw size={15} />}重新加载</button></MoreActions><span className={`ftb-quest-health ${errors.length ? 'error' : ''}`}>{errors.length ? <AlertTriangle size={14} /> : <PackageOpen size={14} />}{errors.length ? `${errors.length} 个问题` : `${book?.chapters.length ?? 0} 个章节`}</span><button className="icon-button" title="撤销" aria-label="撤销" disabled={!undoStack.current.length || Boolean(busy)} onClick={undo}><Undo2 size={15} /></button><button className="icon-button" title="重做" aria-label="重做" disabled={!redoStack.current.length || Boolean(busy)} onClick={redo}><Redo2 size={15} /></button><button className="primary-button" disabled={!book || Boolean(busy) || errors.length > 0} onClick={() => void save()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}保存任务书</button></div></header>
     {backups ? <section aria-label="任务书备份"><div className="ftb-quest-panel-title"><strong>任务书备份</strong><button className="icon-button" title="关闭备份列表" onClick={() => setBackups(null)}><X size={16} /></button></div>{backups.length ? backups.map(backup => <div key={backup.id}><time>{new Date(backup.createdAt).toLocaleString()}</time> · {backup.files} 个文件 <button className="secondary-button compact" disabled={Boolean(busy)} onClick={() => void restoreBackup(backup.id)}>恢复</button></div>) : <p>暂无备份</p>}</section> : null}
     <div className="ftb-quest-layout">
       <aside className="ftb-quest-chapters"><div className="ftb-quest-panel-title"><span><FolderTree size={16} />章节</span><button className="icon-button" title="新建章节" onClick={createChapter} disabled={!book || Boolean(busy)}><FilePlus2 size={15} /></button></div><div className="ftb-quest-book-meta"><BookOpen size={14} /><span>{book?.format === 'json5' ? 'JSON5 任务书' : 'SNBT 任务书'}</span></div><div className="ftb-quest-chapter-list">{book?.chapters.map((item) => <button key={item.id} className={chapter?.id === item.id ? 'selected' : ''} onClick={() => chooseChapter(item.id)}><BookOpen size={15} /><span><strong>{renderColoredText(item.title)}</strong><small>{item.quests.length} 个任务</small></span><ChevronRight size={14} /></button>)}</div><button className="secondary-button compact ftb-quest-add-chapter" onClick={createChapter} disabled={!book}><Plus size={14} />新建章节</button></aside>
@@ -906,7 +908,7 @@ export default function FtbQuestEditor({ project }: { project: ProjectInfo }): R
           <div><button className="icon-button" title="添加任务" disabled={!chapter} onClick={createQuest}><CirclePlus size={16} /></button><button className="icon-button" title="删除当前章节" disabled={!chapter} onClick={deleteChapter}><Trash2 size={15} /></button></div>
         </div>
         <div ref={canvasRef} className="ftb-quest-canvas">
-          <ReactFlow nodes={nodes} edges={edges} nodeTypes={{ quest: QuestFlowNode }} edgeTypes={{ questRoute: RoutedQuestEdge }} onNodesChange={onQuestNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onNodeDragStop={onNodeDragStop} onNodeClick={onNodeClick} onNodeMouseEnter={onNodeMouseEnter} onNodeMouseLeave={onNodeMouseLeave} onEdgeClick={onEdgeClick} onConnect={onConnect} onPaneClick={() => { setSelectedEdgeId(''); setCtxMenu(null); setEdges((current) => current.map((item) => ({ ...item, selected: false }))) }} onNodeContextMenu={(event, node) => { event.preventDefault(); setCtxMenu({ kind: 'quest', x: event.clientX, y: event.clientY, questId: node.id }) }} onPaneContextMenu={(event) => { event.preventDefault(); setCtxMenu({ kind: 'pane', x: event.clientX, y: event.clientY }) }} onInit={(instance) => { flowRef.current = instance; syncCanvas(chapter) }} deleteKeyCode={['Backspace', 'Delete']} onlyRenderVisibleElements fitView><MiniMap pannable zoomable /><Controls /><Background gap={26} size={1.3} color="#3a3b42" /></ReactFlow>
+          <ReactFlow nodes={nodes} edges={edges} nodeTypes={{ quest: QuestFlowNode }} edgeTypes={{ questRoute: RoutedQuestEdge }} onNodesChange={onQuestNodesChange} onEdgesChange={onEdgesChange} onEdgesDelete={onEdgesDelete} onNodeDragStop={onNodeDragStop} onNodeClick={onNodeClick} onNodeMouseEnter={onNodeMouseEnter} onNodeMouseLeave={onNodeMouseLeave} onEdgeClick={onEdgeClick} onConnect={onConnect} onPaneClick={() => { setSelectedEdgeId(''); setCtxMenu(null); setEdges((current) => current.map((item) => ({ ...item, selected: false }))) }} onNodeContextMenu={(event, node) => { event.preventDefault(); setCtxMenu({ kind: 'quest', x: event.clientX, y: event.clientY, questId: node.id }) }} onPaneContextMenu={(event) => { event.preventDefault(); setCtxMenu({ kind: 'pane', x: event.clientX, y: event.clientY }) }} onInit={(instance) => { flowRef.current = instance; syncCanvas(chapter) }} deleteKeyCode={['Backspace', 'Delete']} onlyRenderVisibleElements fitView><MiniMap pannable zoomable /><Controls /><Background gap={26} size={1.3} color="var(--theme-grid)" /></ReactFlow>
           {!chapter?.quests.length ? <div className="ftb-quest-empty"><ClipboardCheck size={20} /><strong>此章节还没有任务</strong><button className="primary-button compact" onClick={createQuest}><Plus size={14} />添加第一个任务</button></div> : null}
         </div>
       </section>

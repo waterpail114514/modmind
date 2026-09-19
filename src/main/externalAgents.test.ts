@@ -1,3 +1,5 @@
+import { diagnosticJournal } from './diagnosticLog'
+import { normalizeWorkbenchFeatures } from '../shared/workbenchFeatures'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
@@ -7,7 +9,10 @@ import { auditExternalAgentCompletion, agentStreamFailureMessage, buildWindowsEx
 import type { ProjectInfo } from '../shared/types'
 import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
 import { LiveConfiguration } from './liveConfiguration'
-import { WORKBENCH_SKILL_POLICY } from './workbenchSkillPolicy'
+import { WORKBENCH_SKILL_POLICY, workbenchSkillPrompt } from './workbenchSkillPolicy'
+import { CLAUDE_REQUIRED_FLAGS } from './claudeCompatibility'
+
+const claudeHelpFixture = `if (process.argv.includes('--help')) { console.log(${JSON.stringify(CLAUDE_REQUIRED_FLAGS.join(' ') + ' dontAsk --bare')}); process.exit(0); }`
 
 const temporaryRoots: string[] = []
 const bridges: ModMindBridge[] = []
@@ -176,7 +181,9 @@ describe('agent stream failure extraction', () => {
     // 400-class request failures fail fast with a short actionable reason.
     const invalid = classifyAgentStreamFailure('请求参数无效，请检查请求格式和参数(request id: 20260827014043304885208268d9d6yoZi5cow)')
     expect(invalid.transient).toBe(false)
-    expect(invalid.reason).toContain('不是你的需求内容错误')
+    expect(invalid.reason).toContain('请求未被接受')
+    expect(invalid.status).toBeNull()
+    expect(invalid.reason).not.toContain('HTTP')
     const badRequest = classifyAgentStreamFailure('returned 400 Bad Request')
     expect(badRequest.transient).toBe(false)
     expect(badRequest.status).toBe(400)
@@ -274,12 +281,12 @@ describe('agent stream failure extraction', () => {
       onProgress: () => undefined,
       onAttemptAudit: (audit) => audits.push({outcome: audit.outcome}),
       bridge: stubBridgeHandlers(project)
-    })).rejects.toThrow('不是你的需求内容错误')
+    })).rejects.toThrow('请求未被接受')
     // Exactly one CLI run — no retries — and raw JSON never reaches the UI.
     expect((await fs.readFile(attempts, 'utf8')).trim().split(/\r?\n/)).toHaveLength(1)
     const errorOutputs = outputs.filter((entry) => entry.kind === 'error')
     expect(errorOutputs).toHaveLength(1)
-    expect(errorOutputs[0]?.content).toContain('不是你的需求内容错误')
+    expect(errorOutputs[0]?.content).toContain('请求未被接受')
     expect(outputs.some((entry) => entry.content.includes('invalid_request_error'))).toBe(false)
     expect(audits.some((audit) => audit.outcome === 'failure')).toBe(true)
     expect(audits.every((audit) => audit.outcome !== 'retry')).toBe(true)
@@ -443,7 +450,7 @@ describe('ModMind external agent MCP bridge', () => {
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
       "    else if (request.method === 'turn/start') {",
       "      send({id:request.id,result:{turn:{id:'native-turn-new'}}}); send({method:'turn/started',params:{threadId:request.params.threadId,turn:{id:'native-turn-new'}}})",
-      "      if (process.env.FAKE_STRUCTURED_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { const error={message:'请求未完成',codexErrorInfo:JSON.parse(process.env.FAKE_STRUCTURED_ERROR)}; if (process.env.FAKE_ERROR_COMPLETION) send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'failed',error}}}); else send({method:'error',params:{error,willRetry:false}}); continue }",
+      "      if (process.env.FAKE_STRUCTURED_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { const error={message:process.env.FAKE_ERROR_MESSAGE || '请求未完成',codexErrorInfo:JSON.parse(process.env.FAKE_STRUCTURED_ERROR)}; if (process.env.FAKE_ERROR_COMPLETION) send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'failed',error}}}); else send({method:'error',params:{error,willRetry:false}}); continue }",
       "      if (process.env.FAKE_CONNECTION_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { send({method:'error',params:{error:{message:process.env.FAKE_CONNECTION_ERROR},willRetry:process.env.FAKE_NATIVE_RETRY === 'true'}}); if (process.env.FAKE_NATIVE_RETRY === 'true') setTimeout(() => { send({method:'item/completed',params:{item:{type:'agentMessage',id:'answer',text:'重连后完成'}}}); send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'completed'}}}) }, 150); continue }",
       "      if (Number(process.env.FAKE_APPROVAL_FAILURES) >= readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length) send({method:'item/completed',params:{item:{type:'commandExecution',id:'failed-review',aggregatedOutput:'This action was rejected due to unacceptable risk.\\nReason: Automatic approval review failed: stream disconnected before completion'}}})",
       "      if (process.env.FAKE_TOOL_BRIDGE && request.params.model === 'A') { const cfg=JSON.parse(readFileSync(process.env.FAKE_TOOL_BRIDGE,'utf8')); void fetch('http://127.0.0.1:'+cfg.port+'/tool',{method:'POST',headers:{'x-modmind-token':cfg.token},body:JSON.stringify({action:'apply_edits',input:{edits:[]}})}).then(r=>r.text()).catch(()=>{}); }",
@@ -460,6 +467,100 @@ describe('ModMind external agent MCP bridge', () => {
     else await fs.chmod(executable, 0o755)
     return { executable, log }
   }
+
+  it.each(['explicit', 'disk', 'fork', 'fresh'])('selects history only when needed: %s', async (mode) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-prompt-selection-'))
+    temporaryRoots.push(root)
+    const project = { name: 'History', path: root, loader: 'paper', minecraftVersion: '1.20.1', namespace: 'history', createdAt: new Date().toISOString() } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    if (mode === 'disk') {
+      const pointer = path.join(root, '.modmind', 'external-agents', 'session-codex.json')
+      await fs.mkdir(path.dirname(pointer), { recursive: true })
+      await fs.writeFile(pointer, JSON.stringify({ kind: 'codex', sessionId: 'existing', projectPath: root }))
+    }
+    const turns: string[] = []
+    await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project,
+      prompt: 'CURRENT_ONLY', fallbackPrompt: 'HISTORY_FALLBACK', resumeSession: mode === 'disk',
+      ...(mode === 'explicit' ? { sessionId: 'existing' } : {}),
+      ...(mode === 'fork' ? { forkFrom: { sessionId: 'existing', nativeMode: 'native' as const } } : {}),
+      env: { FAKE_APP_SERVER_LOG: fake.log }, signal: AbortSignal.timeout(10_000),
+      onNativeTurn: async (session, turn) => { turns.push(`${session}:${turn}`) },
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    const text = requests.find(r => r.method === 'turn/start').params.input[0].text
+    expect(text).toContain(mode === 'fresh' ? 'HISTORY_FALLBACK' : 'CURRENT_ONLY')
+    expect(text).not.toContain(mode === 'fresh' ? 'CURRENT_ONLY' : 'HISTORY_FALLBACK')
+    expect(turns).toHaveLength(1)
+  })
+
+  it('records a native turn before cancellation without a final answer', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-interrupted-turn-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Interrupted', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'interrupted', createdAt: new Date().toISOString() } as ProjectInfo
+    const fake = await fakeAppServer(root, true)
+    const controller = new AbortController()
+    const saved: string[] = []
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+      env: { FAKE_APP_SERVER_LOG: fake.log }, signal: controller.signal,
+      onNativeTurn: async (session, turn) => { saved.push(`${session}:${turn}`); controller.abort() },
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(saved).toEqual(['thread-new:native-turn-new'])
+  })
+
+  it('retains the native turn when completion has no answer', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-empty-turn-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Empty', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'empty', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const runner = path.join(root, 'fake-app-server.mjs')
+    await fs.writeFile(runner, (await fs.readFile(runner, 'utf8')).replaceAll("text:'完成'", "text:''").replaceAll("delta:'完成'", "delta:''"))
+    const saved: string[] = []
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log }, signal: AbortSignal.timeout(10_000),
+      onNativeTurn: async (session, turn) => { saved.push(`${session}:${turn}`) },
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: 'ExternalAgentEmptyResponseError' })
+    expect(saved).toEqual(['thread-new:native-turn-new'])
+  })
+
+  it('preserves a thread on a generic invalid API request', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-invalid-request-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Request', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'request', createdAt: new Date().toISOString() } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+      sessionId: 'broken-thread', fallbackPrompt: 'HISTORY', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_REJECT_METHOD: 'thread/resume', FAKE_REJECT_MESSAGE: 'Invalid Responses API request' },
+      signal: AbortSignal.timeout(10_000), onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })).rejects.toThrow()
+    const requests = await fs.readFile(fake.log, 'utf8')
+    expect(requests).toContain('thread/resume')
+    expect(requests).not.toContain('thread/start')
+  })
+
+  it.each([false, true])('retains the original provider error before translation (completion=%s)', async (completion) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-raw-provider-error-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Failure', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'failure', createdAt: new Date().toISOString() } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const original = 'invalid_request_error: Unsupported parameter tools[0].strict (request id: req-original-456)'
+    const info = { httpConnectionFailed: { httpStatusCode: 400 } }
+    const output = vi.fn()
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_STRUCTURED_ERROR: JSON.stringify(info), FAKE_ERROR_MESSAGE: original, ...(completion ? { FAKE_ERROR_COMPLETION: 'true' } : {}) },
+      signal: AbortSignal.timeout(10_000), onOutput: output, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: 'ExternalAgentCompatibilityFailureError', cause: { message: original, codexErrorInfo: info } })
+    const evidence = diagnosticJournal.snapshot().filter(event => event.operation === 'provider-error' && (event.data as { projectPath?: string })?.projectPath === root)
+    expect(evidence.some(event => event.error?.message === original && JSON.stringify(event).includes('httpStatusCode'))).toBe(true)
+    expect(JSON.stringify(output.mock.calls)).not.toContain('req-original-456')
+  })
 
   it('uses app-server start, streams one answer, and records the native turn', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-app-server-start-'))
@@ -478,9 +579,11 @@ describe('ModMind external agent MCP bridge', () => {
     expect(onOutput).toHaveBeenCalledWith('response', '完成', identity)
     const requests = await fs.readFile(fake.log, 'utf8')
     expect(requests).toContain('"method":"thread/start"')
-    expect(requests).toContain('"approvalsReviewer":"auto_review"')
+    expect(requests).toContain('"approvalsReviewer":"user"')
+    expect(requests).toContain('"permissions":"modmind-protected"')
+    expect(requests).toContain('"approvalPolicy":"never"')
     const turn = requests.trim().split('\n').map(line => JSON.parse(line)).find(request => request.method === 'turn/start')
-    expect(turn.params.input[0].text).toContain(WORKBENCH_SKILL_POLICY)
+    expect(turn.params.input[0].text).toContain(workbenchSkillPrompt('', project).split('\n\n本轮备用 skill 目录：')[0])
   })
 
   it.each([false, true])('keeps native reconnects in the same turn (readOnly=%s)', async (readOnly) => {
@@ -498,7 +601,8 @@ describe('ModMind external agent MCP bridge', () => {
       onAttemptAudit: audit => { audits.push(audit.outcome) }, bridge: stubBridgeHandlers(project)
     })
     expect(result.summary).toBe('重连后完成')
-    expect(onOutput).toHaveBeenCalledWith('retry', 'Reconnecting... 1/5')
+    expect(onOutput).toHaveBeenCalledWith('retry', expect.stringContaining('正在重试'))
+    expect(onOutput).not.toHaveBeenCalledWith('retry', 'Reconnecting... 1/5')
     expect(audits).toEqual(['complete'])
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1)
@@ -559,14 +663,14 @@ describe('ModMind external agent MCP bridge', () => {
     })
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(requests.find(r => r.method === 'thread/resume').params).toMatchObject({ threadId: 'old-astra-thread', model: 'gpt-5.6-terra', modelProvider: 'thirdparty' })
+    expect(requests.find(r => r.method === 'thread/resume').params.developerInstructions).toContain('当前接入的模型是 gpt-5.6-terra。')
     expect(requests.find(r => r.method === 'turn/start').params).toMatchObject({ model: 'gpt-5.6-terra', effort: 'high' })
-    expect(requests.find(r => r.method === 'turn/start').params.input[0].text).toContain(WORKBENCH_SKILL_POLICY)
+    expect(requests.find(r => r.method === 'turn/start').params.input[0].text).toContain(workbenchSkillPrompt('', project).split('\n\n本轮备用 skill 目录：')[0])
   })
 
   it.each([
     ['thread/resume', 'no rollout found for thread id broken-thread'],
     ['thread/resume', 'session not found'],
-    ['thread/resume', 'Invalid Responses API request'],
     ['thread/fork', 'no rollout found for thread id broken-thread'],
     ['turn/start', 'no rollout found for thread id broken-thread']
   ])('recovers a rejected native %s with the original task (%s)', async (method, message) => {
@@ -634,14 +738,17 @@ describe('ModMind external agent MCP bridge', () => {
     await fs.writeFile(rollout, history)
     const sessionFile = path.join(data, 'session-codex.json')
     await fs.writeFile(sessionFile, JSON.stringify({ kind: 'codex', sessionId: 'broken-thread', projectPath: path.join(root, 'old-project-location') }))
+    const recoveryEvents: Array<{ phase: string }> = []
     const result = await runExternalAgent({
       kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue',
       resumeSession: true, maxAttempts: 1, sessionHome: path.join(data, 'codex-homes', 'new-scope', 'quota'),
+      onContextRecovery: event => recoveryEvents.push(event),
       ...(method === 'thread/fork' ? { forkFrom: { sessionId: 'broken-thread', lastTurnId: 'boundary-turn', nativeMode: 'native' as const } } : {}),
       env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_REJECT_METHOD: method, FAKE_REJECT_MESSAGE: 'failed to resolve rollout path: file does not exist (code -32600)' },
       signal: new AbortController().signal, onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
     })
     expect(result.sessionId).toBe(method === 'thread/fork' ? 'thread-fork' : 'broken-thread')
+    expect(recoveryEvents.map(event => event.phase)).toEqual(['native-failure', 'rollout-success'])
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(requests.filter(r => r.method === 'thread/start')).toHaveLength(0)
     const restores = requests.filter(r => r.method === method)
@@ -666,10 +773,14 @@ describe('ModMind external agent MCP bridge', () => {
     })
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     const method = mode === 'resume' ? 'thread/resume' : mode === 'fork' ? 'thread/fork' : 'thread/start'
-    const sandbox = mode === 'read-only' ? 'read-only' : 'danger-full-access'
-    expect(requests.find(r => r.method === method).params).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', sandbox })
+    const policy = mode === 'read-only' ? { sandbox: 'read-only' } : { permissions: 'modmind-protected' }
+    expect(requests.find(r => r.method === method).params).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', ...policy })
+    const identity = requests.find(r => r.method === method).params.developerInstructions
+    expect(identity).toContain(`我是 ModMind ${mode === 'read-only' ? '灵感台' : '工作台'}，基于 Codex`)
+    expect(identity).toContain('当前通过 Codex 使用默认模型，接入信息未提供具体模型名称。')
     const args = JSON.parse((await fs.readFile(fake.log + '.args.jsonl', 'utf8')).trim())
-    expect(args.slice(0, 6)).toEqual(['-s', sandbox, '-a', 'never', '-c', 'approvals_reviewer="user"'])
+    expect(args).toEqual(expect.arrayContaining(nativePermissionArgs('codex', mode === 'read-only', 'yolo', root)))
+    expect(args).not.toContain('danger-full-access')
   })
 
   it.each([1, 3])('bounds approval retries even with persistent retry enabled (%s failures)', async (failures) => {
@@ -678,7 +789,7 @@ describe('ModMind external agent MCP bridge', () => {
     const project: ProjectInfo = { name: 'Approval Retry', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'approval_retry', createdAt: new Date().toISOString() }
     const fake = await fakeAppServer(root)
     const run = runExternalAgent({
-      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue', persistentRetry: true, retryDelayMs: 0,
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue', persistentRetry: true, retryDelayMs: 0, approvalMode: 'auto-review',
       env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_APPROVAL_FAILURES: String(failures) }, signal: new AbortController().signal,
       onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
     })
@@ -731,6 +842,9 @@ describe('ModMind external agent MCP bridge', () => {
     expect((await run).summary).toBe('完成')
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(requests.filter(r => r.method === 'turn/start').map(r => r.params.model)).toEqual(['A', 'C'])
+    const currentIdentity = requests.find(r => r.method === 'thread/resume').params.developerInstructions
+    expect(currentIdentity).toContain('当前接入的模型是 C。')
+    expect(currentIdentity).not.toContain('当前接入的模型是 A。')
     expect(requests.find(r => r.method === 'thread/resume').params.threadId).toBe('thread-new')
     expect(requests.filter(r => r.method === 'turn/start')[1].params.input[0].text).toContain('HS-47')
     expect(output.some(line => line.startsWith('error:'))).toBe(false)
@@ -872,6 +986,7 @@ describe('ModMind external agent MCP bridge', () => {
     await fs.writeFile(runner, [
       "import fs from 'node:fs';",
       "const claude = process.argv.includes('--input-format');",
+      claudeHelpFixture,
       "let input = ''; let done = false;",
       "function finish() { if (done) return; done = true;",
       "const prompt = claude ? JSON.parse(input.trim()).message.content : input;",
@@ -900,10 +1015,15 @@ describe('ModMind external agent MCP bridge', () => {
     expect(received.prompt).toContain('谢谢')
     expect(received.prompt).not.toContain('SKILL_BODY_MUST_STAY_ON_DISK')
     expect(received.skillBody).toBe('SKILL_BODY_MUST_STAY_ON_DISK')
+    const identity = kind === 'claude'
+      ? received.args[received.args.indexOf('--append-system-prompt') + 1]
+      : JSON.parse(received.args.find(arg => arg.startsWith('developer_instructions='))!.slice('developer_instructions='.length))
+    expect(identity).toContain(`我是 ModMind ${mode === 'read-only' ? '灵感台' : '工作台'}，基于 ${kind === 'claude' ? 'Claude Code' : 'Codex'}`)
+    expect(identity).toContain('Do not preface ordinary identity/model answers with internal attribution')
     if (mode === 'read-only') {
       expect(received.prompt).not.toContain(WORKBENCH_SKILL_POLICY)
     } else {
-      expect(received.prompt.split(WORKBENCH_SKILL_POLICY)).toHaveLength(2)
+      expect(received.prompt.split(workbenchSkillPrompt(skillsDirectory, project))).toHaveLength(2)
       expect(received.prompt).toContain(skillsDirectory.replaceAll('\\', '/'))
     }
     if (mode === 'resumed') expect(received.args).toContain('existing-native-thread')
@@ -913,7 +1033,7 @@ describe('ModMind external agent MCP bridge', () => {
     expect(externalAgentRetryPrompt()).toBe('继续')
     expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 1)).toEqual({prompt: '继续', retryOnly: true})
     expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 1, false)).toEqual({prompt: '备用任务'})
-    expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 0)).toEqual({prompt: '备用任务'})
+    expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 0)).toEqual({prompt: '原始任务', fallbackPrompt: '备用任务'})
   })
 
   it('treats Claude API error messages and failed results as errors', () => {
@@ -932,8 +1052,8 @@ describe('ModMind external agent MCP bridge', () => {
   })
 
   it('detects backend rejections of a resumed conversation', () => {
-    expect(isResumedPromptRejection({error: {code: 'invalid_prompt', message: 'Invalid Responses API request'}})).toBe(true)
-    expect(isResumedPromptRejection({error: {message: 'Invalid Responses API request'}})).toBe(true)
+    expect(isResumedPromptRejection({error: {code: 'invalid_prompt', message: 'Invalid Responses API request'}})).toBe(false)
+    expect(isResumedPromptRejection({error: {message: 'Invalid Responses API request'}})).toBe(false)
     expect(isResumedPromptRejection({type: 'error', message: 'session not found'})).toBe(true)
     expect(isResumedPromptRejection({error: {message: 'no rollout found for thread id 01a08abe-5b20-7490-9a92-5ce3bacdd48f'}})).toBe(true)
     expect(isResumedPromptRejection({error: {message: 'local file not found'}})).toBe(false)
@@ -941,7 +1061,7 @@ describe('ModMind external agent MCP bridge', () => {
     expect(isResumedPromptRejection({
       type: 'item.completed',
       item: {id: 'item_0', type: 'error', message: 'stream error: Invalid Responses API request; retries exhausted'}
-    })).toBe(true)
+    })).toBe(false)
     // A generic 400 is not enough evidence that the persisted session is bad.
     expect(isResumedPromptRejection({error: {code: 'invalid_request_error', message: '会话历史包含无法识别的条目'}})).toBe(true)
     expect(isResumedPromptRejection({type: 'error', message: '请求参数无效，请检查请求格式和参数'})).toBe(false)
@@ -958,10 +1078,11 @@ describe('ModMind external agent MCP bridge', () => {
   })
 
   it('uses each CLI\'s managed permission mode', () => {
-    expect(nativePermissionArgs('codex')).toEqual(['-s', 'workspace-write', '-a', 'on-request', '-c', 'approvals_reviewer="auto_review"'])
-    expect(nativePermissionArgs('claude')).toEqual(['--permission-mode', 'auto'])
+    expect(nativePermissionArgs('codex')).toEqual(expect.arrayContaining(['default_permissions="modmind-protected"', '-a', 'never']))
+    expect(nativePermissionArgs('codex', false, 'auto-review')).toEqual(expect.arrayContaining(['approval_policy={granular={sandbox_approval=false,rules=true,skill_approval=true,request_permissions=false,mcp_elicitations=true}}', 'approvals_reviewer="auto_review"']))
+    expect(nativePermissionArgs('claude')).toEqual(['--permission-mode', 'dontAsk', '--tools', 'Read', 'Glob', 'Grep', '--allowedTools', 'mcp__modmind'])
     expect(nativePermissionArgs('codex', true)).toEqual(['-s', 'read-only', '-a', 'never', '-c', 'approvals_reviewer="user"'])
-    expect(nativePermissionArgs('claude', true)).toEqual(['--permission-mode', 'plan', '--tools', 'Read', 'Glob', 'Grep'])
+    expect(nativePermissionArgs('claude', true)).toEqual(['--permission-mode', 'dontAsk', '--tools', 'Read', 'Glob', 'Grep', '--allowedTools', 'mcp__modmind'])
     expect(isReadOnlyActionDenied('apply_edits')).toBe(true)
     expect(isReadOnlyActionDenied('maven_dependency_install')).toBe(true)
     expect(isReadOnlyActionDenied('modpack_download_content')).toBe(true)
@@ -1037,6 +1158,20 @@ describe('ModMind external agent MCP bridge', () => {
   it('opens Bilibili installation tutorials', () => {
     expect(externalAgentDocsUrl('codex')).toMatch(/^https:\/\/search\.bilibili\.com\//)
     expect(externalAgentDocsUrl('claude')).toMatch(/^https:\/\/search\.bilibili\.com\//)
+  })
+
+  it.each(['paper', 'spigot', 'folia', 'velocity'] as const)('describes %s as a server plugin', (loader) => {
+    const context = externalAgentContextText({ name: 'Plugin', path: '/project', kind: 'server-plugin', loader, minecraftVersion: '1.20.1', namespace: 'test', createdAt: '' })
+    expect(context).toContain('Java server plugin project')
+    expect(context).not.toContain('Python Mod SDK')
+  })
+
+  it('gives modpacks a configuration workflow without replacing Java Mod or addon contexts', () => {
+    const project = { name: 'Test', path: '/project', loader: 'fabric' as const, minecraftVersion: '1.20.1', namespace: 'test', createdAt: '' }
+    expect(externalAgentContextText({ ...project, kind: 'modpack' })).toContain('Minecraft modpack project')
+    expect(externalAgentContextText(project)).toContain('Java Edition project')
+    expect(externalAgentContextText({ ...project, loader: 'bedrock' })).toContain('International Bedrock')
+    expect(externalAgentContextText({ ...project, loader: 'netease-pc' })).toContain('Python Mod SDK')
   })
 
   it('refreshes a moved project context before manual agent launch', async () => {
@@ -1141,7 +1276,7 @@ describe('ModMind external agent MCP bridge', () => {
     }), 'stdout')
     expect(partial).toMatchObject({ kind: 'response', content: '正在回答', agentMessage: true })
     expect(parseExternalAgentOutputLine(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: ' \n' } } }), 'stdout')?.content).toBe(' \n')
-    expect(extractClaudeTokenUsage({ type: 'result', model: 'claude-sonnet-4', usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 5 } })).toEqual({ inputTokens: 10, cachedInputTokens: 3, outputTokens: 5, contextWindow: 200_000 })
+    expect(extractClaudeTokenUsage({ type: 'result', model: 'claude-sonnet-4', usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 5 } })).toEqual({ inputTokens: 10, cachedInputTokens: 3, outputTokens: 5 })
   })
 
   it('reports backend readiness only after the Agent process really spawns', async () => {
@@ -1248,6 +1383,7 @@ describe('ModMind external agent MCP bridge', () => {
     const handlers: ExternalAgentBridgeHandlers = {
       projectInfo: {name: project.name},
       projectFiles: async () => ({files: ['README.md'], truncated: false}),
+      projectSearch: async (query) => ({matches: [{path: 'README.md', line: 1, text: query}], truncated: false}),
       setIntent: async () => ({}),
       applyEdits: async () => ({}),
       updateTodo: async () => ({}),
@@ -1468,6 +1604,7 @@ describe('ModMind external agent MCP bridge', () => {
     await fs.writeFile(runner, [
       "import fs from 'node:fs';",
       `const attempts = ${JSON.stringify(attempts)};`,
+      claudeHelpFixture,
       "const previous = fs.existsSync(attempts) ? fs.readFileSync(attempts, 'utf8').trim().split(/\\r?\\n/).filter(Boolean).length : 0;",
       "fs.appendFileSync(attempts, JSON.stringify(process.argv.slice(2)) + '\\n');",
       `if (previous === 0) { console.log(${JSON.stringify(sessionEvent)}); process.exit(1); }`,
@@ -1488,7 +1625,7 @@ describe('ModMind external agent MCP bridge', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it.each(['stream error: Invalid Responses API request', 'no rollout found for thread id broken-thread'])('drops a rejected resumed Codex thread and restarts fresh (%s)', async (message) => {
+  it.each(['no rollout found for thread id broken-thread'])('drops a rejected resumed Codex thread and restarts fresh (%s)', async (message) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-invalid-resume-'))
     temporaryRoots.push(root)
     const project: ProjectInfo = {name: 'Invalid Resume', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'invalid_resume', createdAt: new Date().toISOString()}
@@ -1609,6 +1746,203 @@ describe('ModMind external agent MCP bridge', () => {
     await expect(fs.stat(path.join(path.dirname(secondPaths.mcpConfigPath), 'bridge.json'))).resolves.toBeTruthy()
   })
 
+  it('lists a folder attachment and reads its nested source through the read-only MCP bridge', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-folder-bridge-')); temporaryRoots.push(root)
+    const project = { name: 'Folder', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'folder', createdAt: '' } as ProjectInfo
+    const folder = '.modmind/attachments/abcd-上传目录'
+    await fs.mkdir(path.join(root, folder, 'src'), { recursive: true })
+    await fs.writeFile(path.join(root, folder, 'src', 'WaxEvents.java'), '// 只读\nclass WaxEvents {}', 'utf8')
+    await fs.copyFile(path.resolve('src/main/__fixtures__/documents/paragraphs-table.docx'), path.join(root, folder, 'src', '答案.docx'))
+    await fs.copyFile(path.resolve('src/main/__fixtures__/documents/text-and-empty.pdf'), path.join(root, folder, 'src', '讲义.pdf'))
+    const edits = vi.fn(async () => ({}))
+    const build = vi.fn(async () => ({}))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), applyEdits: edits, build }, 'test', undefined, true)
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const tools = (listed.result as { tools: Array<{ name: string; annotations: { readOnlyHint?: boolean } }> }).tools
+    expect(tools.find(tool => tool.name === 'modmind_list_project_directory')?.annotations.readOnlyHint).toBe(true)
+    expect(tools.find(tool => tool.name === 'modmind_read_document')?.annotations.readOnlyHint).toBe(true)
+    let id = 1
+    const call = (name: string, args: object) => rpc(child, { jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } })
+    const content = (reply: Record<string, unknown>) => JSON.parse((reply.result as { content: Array<{ text: string }> }).content[0].text)
+    const directory = content(await call('modmind_list_project_directory', { path: folder, limit: 1 }))
+    expect(directory.entries).toEqual([{ name: 'src', path: `${folder}/src`, type: 'directory' }])
+    const nested = content(await call('modmind_list_project_directory', { path: directory.entries[0].path }))
+    const source = content(await call('modmind_read_project_file', { path: nested.entries[0].path }))
+    expect(source.content).toBe('// 只读\nclass WaxEvents {}')
+    const docx = content(await call('modmind_read_document', { path: `${folder}/src/答案.docx` }))
+    expect(docx.content).toContain('问题\t答案')
+    const pdf = content(await call('modmind_read_document', { path: `${folder}/src/讲义.pdf`, page: 1 }))
+    expect(pdf.content).toContain('高三阅读专题指导讲义')
+    expect(JSON.stringify(await call('modmind_apply_edits', { edits: [{ path: 'new.txt', newText: 'no' }] }))).toContain('只读')
+    expect(JSON.stringify(await call('modmind_build_project', {}))).toContain('只读')
+    expect(edits).not.toHaveBeenCalled(); expect(build).not.toHaveBeenCalled()
+    expect(await fs.readFile(path.join(root, folder, 'src', 'WaxEvents.java'), 'utf8')).toBe(source.content)
+  })
+
+  it.each([false, true])('enforces creation/player tool boundaries on the live MCP bridge (readOnly=%s)', async readOnly => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-player-bridge-')); temporaryRoots.push(root)
+    const project = { name: 'Bridge', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'bridge', createdAt: '' } as ProjectInfo
+    const player = vi.fn(async () => ({ sessionId: 'test', gameplayVerified: false }))
+    const creation = vi.fn(async () => ({ revision: 1 }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), playerTest: player, creationContext: creation }, 'test', undefined, readOnly)
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const call = (id: number, name: string, args: object) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+    const state = await call(1, 'modmind_creation_context', { operation: 'state' })
+    expect(JSON.stringify(state)).toContain('revision')
+    const mutation = await call(2, 'modmind_creation_context', { operation: 'hypothesis', taskId: 'a', text: 'test' })
+    const delivery = await call(4, 'modmind_creation_context', { operation: 'delivery', taskId: 'a', delivery: { status: 'partial', remaining: ['finish cards'], evidenceIds: [] } })
+    const target = await call(5, 'modmind_creation_context', { operation: 'target', taskId: 'a', path: 'cards' })
+    if (readOnly) {
+      expect(JSON.stringify(delivery)).toContain('只读')
+      expect(JSON.stringify(target)).toContain('只读')
+    } else {
+      expect(creation).toHaveBeenCalledWith(expect.objectContaining({ operation: 'delivery' }))
+      expect(creation).toHaveBeenCalledWith(expect.objectContaining({ operation: 'target' }))
+    }
+    const action = await call(3, 'modmind_test_action', { operation: 'command', sessionId: 'test', command: 'help' })
+    if (readOnly) {
+      expect(JSON.stringify(mutation)).toContain('只读')
+      expect(JSON.stringify(action)).toContain('只读')
+      expect(player).not.toHaveBeenCalled(); expect(creation).toHaveBeenCalledTimes(1)
+    } else {
+      expect(player).toHaveBeenCalledWith('action', expect.objectContaining({ sessionId: 'test' }))
+      expect(creation).toHaveBeenCalledTimes(4)
+      expect(JSON.stringify(action)).toContain('gameplayVerified')
+    }
+  })
+
+  it.each(['none', 'headless', 'rendered', 'all'])('filters tools and rejects unchecked calls, including stale player sessions (%s)', async mode => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-features-')); temporaryRoots.push(root)
+    const project = { name: 'Features', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'features', createdAt: '' } as ProjectInfo
+    const features = normalizeWorkbenchFeatures({ headlessTesting: mode === 'headless' || mode === 'all', renderedTesting: mode === 'rendered' || mode === 'all', imageGeneration: mode === 'all', modeling: mode === 'all' })
+    const headless = vi.fn(async () => ({ success: true }))
+    const rendered = vi.fn(async () => ({ success: true }))
+    const image = vi.fn(async () => ({ success: true }))
+    const model = vi.fn(async () => ({ success: true }))
+    const matrix = vi.fn(async () => ({ success: true }))
+    const player = vi.fn(async (category: string, input: Record<string, unknown>) => ({ mode: input.sessionId === 'old-rendered' ? 'rendered' : 'headless', category, success: true }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), testMinecraft: headless, testRendered: rendered, imageGenerate: image, blockbenchActions: model, testMatrix: matrix, playerTest: player }, 'test', undefined, false, undefined, undefined, features)
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const list = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const names = (list.result as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
+    const cases = [
+      ['modmind_test_minecraft', {}, features.headlessTesting, headless],
+      ['modmind_test_rendered', {}, features.renderedTesting, rendered],
+      ['modmind_image_generate', { prompt: 'test' }, features.imageGeneration, image],
+      ['modmind_blockbench_actions', { actions: [] }, features.modeling, model]
+    ] as const
+    let id = 2
+    const call = (name: string, args: object) => rpc(child, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: args } })
+    for (const [name, args, enabled, handler] of cases) {
+      expect(names.includes(name)).toBe(enabled)
+      const result = await call(name, args)
+      expect(JSON.stringify(result).includes('用户未勾选')).toBe(!enabled)
+      expect(handler).toHaveBeenCalledTimes(enabled ? 1 : 0)
+    }
+    await call('modmind_test_matrix', { targets: ['build'] })
+    await call('modmind_test_matrix', { targets: ['client'] })
+    expect(matrix).toHaveBeenCalledTimes(features.headlessTesting ? 2 : 1)
+    for (const [sessionId, enabled] of [['old-rendered', features.renderedTesting], ['old-headless', features.headlessTesting]] as const) {
+      player.mockClear()
+      const result = await call('modmind_test_action', { operation: 'command', sessionId, command: 'help' })
+      expect(JSON.stringify(result).includes('用户未勾选')).toBe(!enabled)
+      expect(player.mock.calls.some(([category]) => category === 'action')).toBe(enabled)
+    }
+    player.mockClear()
+    await call('modmind_test_session', { operation: 'stop', sessionId: 'old-rendered' })
+    expect(player).toHaveBeenCalledWith('session', expect.objectContaining({ operation: 'stop' }))
+  })
+
+  it.each(['allowed', 'read-only', 'review-denied'])('routes module delegation through the live MCP bridge (%s)', async mode => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-delegation-bridge-')); temporaryRoots.push(root)
+    const project = { kind: 'modpack', name: 'Pack', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'pack', createdAt: '' } as ProjectInfo
+    const delegate = vi.fn(async () => ({ taskId: 'module-task', status: 'running' }))
+    const taskResult = vi.fn(async () => ({ taskId: 'module-task', status: 'completed', result: { summary: 'child result', conversationId: 'child-thread', packIntegrationVerified: false } }))
+    const review = vi.fn(async () => ({ approved: mode !== 'review-denied', complete: true, dangerousOperations: [], risk: 'low' as const, feedback: 'review boundary' }))
+    const bridge = new ModMindBridge(project, {
+      ...stubBridgeHandlers(project), reviewAction: review,
+      modpackModules: async () => ({ modules: [{ namespace: 'cards' }] }), modpackDelegateModule: delegate, modpackModuleTask: taskResult
+    }, 'test', undefined, mode === 'read-only')
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const call = (id: number, name: string, args: object) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+    expect(JSON.stringify(await call(1, 'modmind_modpack_modules', { operation: 'list' }))).toContain('cards')
+    const result = await call(2, 'modmind_modpack_delegate_module', { namespace: 'cards', request: '增加卡牌效果' })
+    if (mode === 'allowed') {
+      expect(delegate).toHaveBeenCalledWith({ namespace: 'cards', request: '增加卡牌效果' })
+      expect(JSON.stringify(result)).toContain('module-task')
+      expect(JSON.stringify(await call(3, 'modmind_modpack_module_task', { taskId: 'module-task', waitSeconds: 20 }))).toContain('child-thread')
+      expect(taskResult).toHaveBeenCalledWith({ taskId: 'module-task', waitSeconds: 20 })
+      expect(review).toHaveBeenCalledWith('modpack_delegate_module', { namespace: 'cards', request: '增加卡牌效果' })
+    } else {
+      expect(delegate).not.toHaveBeenCalled()
+      expect(JSON.stringify(result)).toContain(mode === 'read-only' ? '只读' : 'AI Review denied')
+      if (mode === 'review-denied') {
+        await call(3, 'modmind_modpack_delegate_module', { namespace: 'cards', request: '缩小范围方案' })
+        const stopped = await call(4, 'modmind_modpack_delegate_module', { namespace: 'cards', request: '第二种低风险方案' })
+        expect(JSON.stringify(stopped)).toContain('Stop this blocked operation')
+        expect(delegate).not.toHaveBeenCalled()
+      }
+    }
+    expect(await fs.readFile(path.join(root, '.modmind/external-agents/agent-context.md'), 'utf8')).toContain('modmind_modpack_delegate_module')
+  })
+
+  it('keeps dedicated plugin development tools available under infrastructure protection', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-plugin-protection-')); temporaryRoots.push(root)
+    const project = { name: 'Bridge', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'bridge', createdAt: '' } as ProjectInfo
+    const scaffold = vi.fn(async () => ({ directory: path.join(root, '.modmind', 'plugins', 'example') }))
+    const readSource = vi.fn(async () => [{ path: 'panel/index.html', content: '<html></html>' }])
+    const writeFiles = vi.fn(async () => ({ success: true }))
+    const reload = vi.fn(async () => ({ success: true }))
+    const bridge = new ModMindBridge(project, stubBridgeHandlers(project), 'test', undefined, false, undefined, {
+      listTools: async () => [], callTool: async () => ({}), scaffold, readSource, writeFiles, reload
+    })
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const call = (id: number, name: string, args: object) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+    await call(1, 'modmind_plugins_scaffold', { id: 'example', name: 'Example', kind: 'panel-only' })
+    await call(2, 'modmind_plugins_read_source', { pluginId: 'example' })
+    await call(3, 'modmind_plugins_write_files', { pluginId: 'example', files: [{ path: 'panel/index.html', content: '<html>Updated</html>' }] })
+    await call(4, 'modmind_plugins_reload', {})
+    expect(scaffold).toHaveBeenCalledTimes(1)
+    expect(readSource).toHaveBeenCalledWith('example')
+    expect(writeFiles).toHaveBeenCalledWith(expect.objectContaining({ pluginId: 'example' }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects protected MCP edits before invoking the write handler', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-protected-bridge-')); temporaryRoots.push(root)
+    const project = { name: 'Bridge', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'bridge', createdAt: '' } as ProjectInfo
+    const applyEdits = vi.fn(async () => ({ success: true }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), applyEdits }, 'test')
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const call = (id: number, paths: string[]) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'modmind_apply_edits', arguments: { edits: paths.map(path => ({ path, newText: 'broken' })) } } })
+    for (const [index, protectedPath] of ['.modmind/settings.json', '.MODMIND/session.json', '../ModMind/app.exe'].entries()) {
+      const response = await call(index + 1, ['src/Main.java', protectedPath])
+      expect(JSON.stringify(response)).toContain('protected or unsafe path')
+    }
+    expect(applyEdits).not.toHaveBeenCalled()
+    await call(4, ['src/Main.java'])
+    expect(applyEdits).toHaveBeenCalledTimes(1)
+  })
+
   it('syncs workflows and routes optional Todo, edit, and mappings tools', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-external-agent-'))
     temporaryRoots.push(root)
@@ -1635,6 +1969,7 @@ describe('ModMind external agent MCP bridge', () => {
       projectInfo: {name: project.name},
       renameProject: async (name, namespace) => { renamedProject = `${name}:${namespace}`; return {name, namespace} },
       projectFiles: async () => ({files: ['README.md'], truncated: false}),
+      projectSearch: async (query) => ({matches: [{path: 'README.md', line: 1, text: query}], truncated: false}),
       setIntent: async (intent) => { classifiedIntent = intent; return {intent} },
       applyEdits: async (edits) => {
         editPath = String((edits[0] as {path?: unknown} | undefined)?.path ?? '')
@@ -1722,6 +2057,7 @@ describe('ModMind external agent MCP bridge', () => {
     const toolNames = tools.map((tool) => tool.name)
     expect(toolNames).toContain('modmind_update_todo')
     expect(toolNames).toContain('modmind_project_files')
+    expect(toolNames).toContain('modmind_read_project_file')
     expect(toolNames).toContain('modmind_rename_project')
     expect(toolNames).toContain('modmind_set_intent')
     expect(toolNames).toContain('modmind_apply_edits')
@@ -1767,6 +2103,8 @@ describe('ModMind external agent MCP bridge', () => {
     })
 
     await rpc(child, {jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'modmind_set_intent', arguments: {intent: 'informational', reason: 'Greeting'}}})
+    const searched = await rpc(child, {jsonrpc: '2.0', id: 101, method: 'tools/call', params: {name: 'modmind_project_search', arguments: {query: 'needle'}}})
+    expect(JSON.stringify(searched)).toContain('needle')
     const projectFiles = await rpc(child, {jsonrpc: '2.0', id: 10, method: 'tools/call', params: {name: 'modmind_project_files', arguments: {}}})
     await rpc(child, {jsonrpc: '2.0', id: 3, method: 'tools/call', params: {name: 'modmind_mapping_search', arguments: {query: 'LivingEntity'}}})
     await rpc(child, {jsonrpc: '2.0', id: 4, method: 'tools/call', params: {name: 'modmind_update_todo', arguments: {tasks: [{id: 'T1', title: 'Inspect', status: 'in_progress'}]}}})

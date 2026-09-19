@@ -109,6 +109,11 @@ function defaultDirectory(kind: ModpackContentKind): string {
 }
 
 function classifyPath(relative: string): ModpackContentKind {
+  const normalized = relative.toLowerCase()
+  if (normalized.startsWith('config/ftbquests/')) return 'quests'
+  if (normalized.startsWith('config/fancymenu/')) return 'ui'
+  if (/^(config\/)?openloader\/data\//.test(normalized)) return 'datapacks'
+  if (/^(config\/)?openloader\/resources\//.test(normalized)) return 'resourcepacks'
   const top = relative.split('/')[0].toLowerCase()
   if (top === 'config' || top === 'defaultconfigs' || top === 'serverconfig' || top === 'global_packs') return 'config'
   if (top === 'kubejs' || top === 'scripts') return 'scripts'
@@ -120,6 +125,19 @@ function classifyPath(relative: string): ModpackContentKind {
   if (top === 'server.properties' || top === 'serverconfig') return 'server'
   if (top === 'options.txt') return 'client'
   return 'other'
+}
+
+/** Register verified downloads without dropping content the user already manages. */
+export async function registerImportedPackContent(project: ProjectInfo, files: Array<{ path: string; sha1: string; sourceUrl: string; size: number; scope?: ModpackContentScope }>): Promise<void> {
+  const inventory = await readStoredInventory(project)
+  const items = new Map(inventory.items.map(item => [item.path, item]))
+  for (const file of files) {
+    const kind = classifyPath(file.path)
+    const hashes = await hashFile(contentTarget(project, file.path))
+    if (hashes.sha1 !== file.sha1 || hashes.size !== file.size) throw new Error(`导入内容校验失败：${file.path}`)
+    items.set(file.path, { id: itemId(file.path), path: file.path, kind, scope: file.scope ?? defaultScope(kind), delivery: 'remote', ...hashes, sourceUrl: file.sourceUrl, addedAt: new Date().toISOString() })
+  }
+  if (files.length) await writeStoredInventory(project, { version: 1, items: [...items.values()] })
 }
 
 function itemId(relative: string): string {

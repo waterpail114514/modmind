@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -9,7 +9,7 @@
   "sourceFingerprint": "sha256:235b5b247370dc5069a627962c848fb0d80f557114a51f51ebf5610db303f504",
   "scripts": {
     "dev": "electron-vite dev",
-    "prebuild": "node scripts/clean-build-output.mjs",
+    "prebuild": "npm run theme:check && node scripts/clean-build-output.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "test": "vitest run src && npm run test:mcp && npm run test:mac-policy",
@@ -29,7 +29,12 @@
     "dist:mac:release": "npm run build && node scripts/build-macos.mjs",
     "assets:mac": "node scripts/generate-macos-assets.mjs",
     "verify:mac": "node scripts/verify-macos-release.mjs",
-    "test:mac-policy": "node --test scripts/macos-release-policy.test.mjs"
+    "test:mac-policy": "node --test scripts/macos-release-policy.test.mjs",
+    "theme:generate": "node scripts/generate-theme-tokens.mjs",
+    "theme:check": "node scripts/generate-theme-tokens.mjs --check && node scripts/check-theme-colors.mjs && npm run plugins:check",
+    "plugins:generate": "node scripts/generate-plugin-templates.mjs",
+    "plugins:check": "node scripts/generate-plugin-templates.mjs --check && node scripts/check-plugin-ui.mjs",
+    "plugins:smoke": "node scripts/plugin-ui-smoke.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -48,6 +53,7 @@
     "ftbq-nbt": "^1.4.1",
     "fzstd": "^0.1.1",
     "json5": "^2.2.3",
+    "pdfjs-dist": "4.10.38",
     "proper-lockfile": "^4.1.2",
     "react-virtuoso": "^4.18.13",
     "react-zoom-pan-pinch": "4.2.0",
@@ -113,6 +119,7 @@
       "node_modules/ffmpeg-static/**",
       "node_modules/sharp/**",
       "node_modules/@img/**",
+      "node_modules/@napi-rs/**",
       "node_modules/7zip-bin/**"
     ],
     "extraResources": [

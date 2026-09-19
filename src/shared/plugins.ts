@@ -194,6 +194,9 @@ export interface PluginPanelHostInfo {
   pluginId: string
   panelVersion: number
   theme: 'light' | 'dark'
+  themePreset?: import('./appTheme').ThemePreset
+  palette?: Record<string, string>
+  scrollbarStyle?: string
   surface?: 'panel' | 'overlay'
   project?: {
     name: string
@@ -215,6 +218,13 @@ export type PluginPanelRequest =
 export interface PluginPanelResponse {
   type: 'hostInfo'
   hostInfo: PluginPanelHostInfo
+}
+export interface PluginThemeChanged {
+  type: 'themeChanged'
+  theme: 'light' | 'dark'
+  themePreset: import('./appTheme').ThemePreset
+  palette: Record<string, string>
+  scrollbarStyle?: string
 }
 
 export type PluginPanelResult = {

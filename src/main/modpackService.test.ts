@@ -6,7 +6,9 @@ import extractZip from 'extract-zip'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, removeModpackFile, syncModpackOverrides, updateModpackModuleSide } from './modpackService'
-import { createEmptyModpackLock, writeModpackLock } from './modpackLockService'
+import { auditModpackLock, createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
+import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
+import { readManagedModpackContent } from './modpackContentInventoryService'
 
 const roots: string[] = []
 
@@ -27,6 +29,52 @@ afterEach(async () => {
 })
 
 describe('modpack manifests', () => {
+  it('preserves verified MRPack provenance and remote records through adoption and export', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-mrpack-provenance-'))
+    roots.push(root)
+    const source = path.join(root, 'source')
+    const info = project(path.join(root, 'project'))
+    const bytes = Buffer.alloc(2048, 7)
+    const hashes = { sha1: createHash('sha1').update(bytes).digest('hex'), sha512: createHash('sha512').update(bytes).digest('hex') }
+    const files = [
+      { path: 'mods/official.jar', downloads: ['https://cdn.modrinth.com/data/Abc12345/versions/Xyz12345/official.jar'], hashes, env: { client: 'required', server: 'unsupported' } },
+      { path: 'mods/external.jar', downloads: ['https://example.test/data/Abc12345/versions/Xyz12345/external.jar'], hashes },
+      { path: 'resourcepacks/With Spaces.zip', downloads: ['https://cdn.modrinth.com/data/Resource/versions/Version1/With%20Spaces.zip'], hashes: { sha512: hashes.sha512 }, env: { client: 'required', server: 'required' } }
+    ]
+    for (const file of files) {
+      await fs.mkdir(path.dirname(path.join(source, file.path)), { recursive: true })
+      await fs.writeFile(path.join(source, file.path), bytes)
+    }
+    const index = JSON.stringify({ name: 'Imported', dependencies: { minecraft: '1.21.1', 'fabric-loader': '0.19.3' }, files })
+    await fs.writeFile(path.join(source, 'modrinth.index.json'), index)
+    await fs.mkdir(path.join(source, '.modmind/import'), { recursive: true })
+    await fs.writeFile(path.join(source, '.modmind/import/source-archive.json'), '{"sha256":"original"}')
+    const inspection = (await inspectExternalModpack(source))!
+    await materializeExternalModpack(inspection, info.path, { trackDownloadActivities: false })
+    await adoptExternalModpack(info, { format: 'modrinth', layout: inspection.layout, importedAt: '2026-09-19T00:00:00.000Z' })
+    expect(await fs.readFile(path.join(info.path, '.modmind/import/modrinth.index.json'), 'utf8')).toBe(index)
+    expect(await fs.readFile(path.join(info.path, '.modmind/import/source-archive.json'), 'utf8')).toBe('{"sha256":"original"}')
+    const lock = await readModpackLock(info)
+    expect(lock.mods).toEqual([expect.objectContaining({ projectId: 'Abc12345', versionId: 'Xyz12345', side: 'client', sources: files[0].downloads })])
+    expect(await auditModpackLock(info)).toEqual({ success: true, checked: 1, errors: [] })
+    expect((await readManagedModpackContent(info)).items).toEqual(expect.arrayContaining([expect.objectContaining({ path: files[2].path, delivery: 'remote', scope: 'common', sha1: hashes.sha1 })]))
+    const archive = path.join(root, 'roundtrip.mrpack')
+    await fs.writeFile(archive, await createModrinthPackArchive(info))
+    const extracted = path.join(root, 'roundtrip')
+    await extractZip(archive, { dir: extracted })
+    const exported = JSON.parse(await fs.readFile(path.join(extracted, 'modrinth.index.json'), 'utf8'))
+    expect(exported.files).toHaveLength(2)
+    expect(exported.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: files[0].path, downloads: files[0].downloads, hashes, env: files[0].env }),
+      expect.objectContaining({ path: files[2].path, downloads: files[2].downloads, hashes, env: files[2].env })
+    ]))
+    await expect(fs.readFile(path.join(extracted, 'overrides/mods/external.jar'))).resolves.toEqual(bytes)
+    await expect(fs.access(path.join(extracted, 'overrides/mods/official.jar'))).rejects.toThrow()
+    // A preserved manifest must never assign upstream identity to different bytes.
+    await fs.writeFile(path.join(info.path, 'mods/official.jar'), Buffer.alloc(2048, 8))
+    await expect(adoptExternalModpack(info, { format: 'modrinth', layout: inspection.layout, importedAt: '2026-09-19T00:00:00.000Z' })).rejects.toThrow(/来源校验失败/)
+  })
+
   it('locks imported JARs and tracks editable local modules', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-'))
     roots.push(root)

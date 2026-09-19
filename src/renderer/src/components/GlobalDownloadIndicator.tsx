@@ -1,3 +1,4 @@
+import { describeClientFailure } from '../../../shared/clientFailure'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, CircleAlert, Download, LoaderCircle, RotateCcw, Square, Trash2, X } from 'lucide-react'
 import type { DownloadActivity, DownloadActivitySnapshot } from '../../../shared/types'
@@ -104,7 +105,7 @@ export default function GlobalDownloadIndicator(): React.JSX.Element | null {
                     </span>
                   </div>
                   {activity.detail ? <small>{activity.detail}</small> : null}
-                  {activity.error ? <p>{activity.error}</p> : null}
+                  {activity.error ? <p>{describeClientFailure(activity.error)}</p> : null}
                   <span>{progressLabel(activity)}</span>
                   {activity.status === 'downloading' ? <i className={fraction === undefined ? 'indeterminate' : ''}><b style={fraction === undefined ? undefined : { transform: `scaleX(${fraction})` }} /></i> : null}
                 </div>

@@ -40,7 +40,7 @@ export interface CreatedModuleFromDecompiled {
 export interface CreateProjectFromDecompiledInput {
   sourceSha256: string
   name: string
-  loader: 'fabric' | 'quilt' | 'forge' | 'neoforge'
+  loader: import('./decompile').DecompilePlatform
   minecraftVersion: string
   termsAcknowledgement: {
     termsVersion: string

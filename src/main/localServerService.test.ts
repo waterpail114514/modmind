@@ -26,6 +26,23 @@ const project: ProjectInfo = {
 }
 
 describe('local server manager', () => {
+  it('waits for client preparation before spawning the server and propagates cancellation to that hook', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-client-barrier-'))
+    roots.push(root)
+    const activeProject = { ...project, path: root }
+    await createModpackTemplate(activeProject)
+    vi.spyOn(serverPackService, 'installServerRuntime').mockResolvedValue({ launchCommand: ['unused'], loader: 'fabric', loaderVersion: project.loaderVersion! })
+    const spawn = vi.spyOn(ServerProcess.prototype, 'start')
+    const manager = new LocalServerManager({ getProject: () => activeProject, getJavaPath: async () => 'unused', onState: () => undefined, onEvent: () => undefined })
+    const prepareClient = vi.fn((signal: AbortSignal) => new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true })))
+    const pending = manager.start({ localPlayerTest: true }, prepareClient).catch(error => error)
+    await vi.waitFor(() => expect(prepareClient).toHaveBeenCalled())
+    expect(spawn).not.toHaveBeenCalled()
+    await manager.stop()
+    await pending
+    expect(spawn).not.toHaveBeenCalled()
+    expect(manager.isBusy()).toBe(false)
+  })
   it.each([false, true])('starts without another EULA confirmation (existing pack: %s)', async (existingPack) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-local-eula-'))
     roots.push(root)

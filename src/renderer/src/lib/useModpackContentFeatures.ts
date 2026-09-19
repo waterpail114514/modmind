@@ -1,3 +1,4 @@
+import { reportClientFailure } from './clientFailure'
 import { useEffect, useState } from 'react'
 import type { ModpackContentFeatures } from '../../../shared/modpackContentFeatures'
 
@@ -19,7 +20,7 @@ export function useModpackContentFeatures(projectPath: string | undefined, revis
         if (current) setState({ path: projectPath, features, error: '' })
       }).catch((error: unknown) => {
         if (!current) return
-        const message = error instanceof Error ? error.message : String(error)
+        const message = reportClientFailure(error)
         const hint = /No handler registered|contentFeatures.*(?:not a function|undefined)/i.test(message)
           ? '内容识别接口尚未加载，请保存工作后完整重启 ModMind；刷新页面不会重启后台。'
           : '暂时无法识别内容工具，已保留入口。切回窗口或刷新内容列表后重试。'

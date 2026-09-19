@@ -104,4 +104,14 @@ describe('server process orchestration', () => {
       await expect(server.runScenario([{ command: 'ignored' }])).rejects.toThrow('requires evidence')
     } finally { await server.stop(0) }
   })
+  it('rejects fresh errors even when the expected success text is present', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-server-false-pass-')); roots.push(root)
+    const port = await freePort()
+    const script = "require('net').createServer().listen(Number(process.argv[1]),'127.0.0.1');console.log('Done (1s)!');process.stdin.on('data',()=>console.log('PASS item\\n[ERROR] java.lang.IllegalStateException: failed'));setInterval(()=>{},1000)"
+    const server = new ServerProcess()
+    try {
+      await server.start({ pack: { root, copiedMods: [], skippedClientMods: [], warnings: [], manifestPath: '' }, runtime: { launchCommand: [process.execPath, '-e', script, String(port)], loader: 'fabric', loaderVersion: 'test' }, port })
+      await expect(server.runScenario([{ command: 'give', expect: ['PASS item'], timeoutMs: 1000 }])).resolves.toMatchObject({ success: false, failedStep: 1 })
+    } finally { await server.stop(0) }
+  })
 })

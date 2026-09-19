@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { JavaLoaderKind, ModpackImportFormat, ModpackLayout } from '../shared/types'
+import type { JavaLoaderKind, ModpackImportFormat, ModpackLayout, ModpackModuleSide } from '../shared/types'
 import { verifiedDownload } from './downloadService'
+import { installCurseForgePack, parseCurseForgeReferences, type CurseForgePackReference, type CurseForgePackInstallOptions } from './curseForgePackService'
 
 const PACK_CONTENT_DIRECTORIES = new Set([
   'mods', 'config', 'defaultconfigs', 'kubejs', 'scripts', 'resourcepacks', 'shaderpacks',
@@ -23,6 +24,7 @@ interface ModrinthFile {
   path?: unknown
   downloads?: unknown
   hashes?: unknown
+  env?: { client?: unknown; server?: unknown }
 }
 
 interface ModrinthIndex {
@@ -35,6 +37,7 @@ interface CurseForgeManifest {
   name?: unknown
   minecraft?: { version?: unknown; modLoaders?: unknown }
   files?: unknown
+  overrides?: unknown
 }
 
 interface MmcPack {
@@ -53,7 +56,9 @@ export interface ExternalModpackInspection {
   overrideFiles: string[]
   unresolvedDependencyCount: number
   warnings: string[]
-  remoteFiles: Array<{ path: string; downloads: string[]; hashes: Record<string, string> }>
+  remoteFiles: Array<{ path: string; downloads: string[]; hashes: Record<string, string>; side?: ModpackModuleSide }>
+  curseForgeReferences?: CurseForgePackReference[]
+  overridesDirectory?: string
 }
 
 export interface ExternalModpackMaterialization {
@@ -76,6 +81,8 @@ export interface ExternalModpackMaterializationProgress {
 export interface ExternalModpackMaterializationOptions {
   trackDownloadActivities?: boolean
   onProgress?: (progress: ExternalModpackMaterializationProgress) => void
+  curseForge?: CurseForgePackInstallOptions
+  signal?: AbortSignal
 }
 
 function isDirectory(value: Awaited<ReturnType<typeof fs.stat>> | null): boolean {
@@ -183,9 +190,9 @@ async function findInstanceRoot(source: string): Promise<{ root: string; format:
   return { root: source, format: 'instance' }
 }
 
-function parseModrinthFiles(value: unknown): Array<{ path: string; downloads: string[]; hashes: Record<string, string> }> {
+function parseModrinthFiles(value: unknown, expandMirrors = true): ExternalModpackInspection['remoteFiles'] {
   if (!Array.isArray(value)) throw new Error('Modrinth 清单缺少有效的 files 数组')
-  const files: Array<{ path: string; downloads: string[]; hashes: Record<string, string> }> = []
+  const files: ExternalModpackInspection['remoteFiles'] = []
   for (const [index, entry] of (value as ModrinthFile[]).entries()) {
     const relative = safeRelativePath(entry?.path)
     if (!relative) throw new Error(`Modrinth 清单第 ${index + 1} 个文件路径无效`)
@@ -211,7 +218,7 @@ function parseModrinthFiles(value: unknown): Array<{ path: string; downloads: st
     const mirror = (process.env.MODMIND_MODRINTH_MIRROR ?? '').trim().replace(/\/+$/, '')
     const fallbackMirrors = mirror ? [mirror] : ['https://ghproxy.net/https://cdn.modrinth.com']
     const expandedDownloads = [...downloads]
-    for (const url of downloads) {
+    for (const url of expandMirrors ? downloads : []) {
       for (const base of fallbackMirrors) {
         if (!base || url.startsWith(base)) continue
         try {
@@ -221,9 +228,19 @@ function parseModrinthFiles(value: unknown): Array<{ path: string; downloads: st
         } catch { /* validated HTTPS URL above */ }
       }
     }
-    files.push({ path: relative, downloads: expandedDownloads, hashes: Object.fromEntries(Object.entries(hashes).filter(([algorithm]) => algorithm === 'sha1' || algorithm === 'sha512')) })
+    const side = entry.env?.server === 'unsupported' ? 'client' : entry.env?.client === 'unsupported' ? 'server' : 'both'
+    files.push({ path: relative, downloads: expandedDownloads, side, hashes: Object.fromEntries(Object.entries(hashes).filter(([algorithm]) => algorithm === 'sha1' || algorithm === 'sha512')) })
   }
   return files
+}
+
+/** Read the preserved upstream manifest, without adding download-only mirrors. */
+export async function readImportedModrinthFiles(projectRoot: string): Promise<ExternalModpackInspection['remoteFiles']> {
+  const content = await fs.readFile(path.join(projectRoot, '.modmind', 'import', 'modrinth.index.json'), 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  return content === null ? [] : parseModrinthFiles((JSON.parse(content) as ModrinthIndex).files, false)
 }
 
 function inferMmcLoader(value: MmcPack | null): { loader?: JavaLoaderKind; loaderVersion?: string; minecraftVersion?: string } {
@@ -288,6 +305,8 @@ export async function inspectExternalModpack(sourcePath: string): Promise<Extern
   let version: string | undefined
   let remoteFiles: ExternalModpackInspection['remoteFiles'] = []
   let unresolvedDependencyCount = 0
+  let curseForgeReferences: CurseForgePackReference[] | undefined
+  let overridesDirectory = 'overrides'
   const warnings: string[] = []
 
   if (modrinth) {
@@ -310,9 +329,14 @@ export async function inspectExternalModpack(sourcePath: string): Promise<Extern
     const loaderIds = loaders.map((item) => item && typeof item === 'object' ? String((item as Record<string, unknown>).id ?? '') : '')
     loader = loaderFromText(loaderIds.join(' '))
     loaderVersion = loaderVersionFromId(loaderIds.find((id) => loaderFromText(id) === loader), loader)
-    const listedFiles = Array.isArray(curseforge.files) ? curseforge.files.length : 0
-    unresolvedDependencyCount = listedFiles
-    if (listedFiles) warnings.push(`CurseForge 清单引用 ${listedFiles} 个依赖；只有选择已安装的实例目录或配置 CurseForge API 后才能下载这些 JAR`)
+    curseForgeReferences = parseCurseForgeReferences(curseforge.files)
+    unresolvedDependencyCount = curseForgeReferences.filter(entry => entry.required).length
+    if (curseforge.overrides !== undefined) {
+      const relative = safeRelativePath(curseforge.overrides)
+      if (!relative) throw new Error('CurseForge overrides 路径无效')
+      overridesDirectory = relative
+    }
+    if (unresolvedDependencyCount) warnings.push(`CurseForge 清单含 ${unresolvedDependencyCount} 个必需文件，导入时将按指定版本解析、下载并校验模组、资源包和光影`)
   } else {
     const inferred = inferMmcLoader(mmc)
     loader = inferred.loader
@@ -324,19 +348,17 @@ export async function inspectExternalModpack(sourcePath: string): Promise<Extern
   }
 
   const archiveLayout = Boolean((modrinth || curseforge)
-    && await pathIsDirectory(path.join(root, 'overrides'))
     && !await pathIsDirectory(path.join(root, 'mods')))
   const localModFiles = archiveLayout
-    ? await scanFiles(path.join(root, 'overrides'), (relative) => /^mods\/[^/]+\.jar$/i.test(relative)).then((files) => files.map((relative) => `overrides/${relative}`))
+    ? await scanFiles(path.join(root, overridesDirectory), (relative) => /^mods\/[^/]+\.jar$/i.test(relative)).then((files) => files.map((relative) => `${overridesDirectory}/${relative}`))
     : await scanFiles(root, (relative) => /^mods\/[^/]+\.jar$/i.test(relative))
   const overrideFiles = (modrinth || archiveLayout)
-    ? (await Promise.all((modrinth ? ['overrides', 'client-overrides', 'server-overrides'] : ['overrides']).map(async (prefix) => (await scanFiles(path.join(root, prefix), (relative) => !/^mods(?:\/|$)/i.test(relative)).catch(() => [])).map((entry) => `${prefix}/${entry}`)))).flat()
+    ? (await Promise.all((modrinth ? ['overrides', 'client-overrides', 'server-overrides'] : [overridesDirectory]).map(async (prefix) => (await scanFiles(path.join(root, prefix), (relative) => !/^mods(?:\/|$)/i.test(relative)).catch(() => [])).map((entry) => `${prefix}/${entry}`)))).flat()
     : await scanFiles(root, isPackContentFile).then((files) => files.filter((relative) => !/^mods\/[^/]+\.jar$/i.test(relative)))
-  if (!localModFiles.length && !remoteFiles.length && !overrideFiles.length) return null
+  if (!localModFiles.length && !remoteFiles.length && !overrideFiles.length && !curseForgeReferences?.length) return null
 
   if (!loader) warnings.push('未能自动识别加载器，请在接管前确认 Fabric、Forge、NeoForge 或 Quilt')
   if (!version) warnings.push('未能自动识别 Minecraft 版本，请在接管前确认')
-  if (curseforge && localModFiles.length) unresolvedDependencyCount = Math.max(0, unresolvedDependencyCount - localModFiles.length)
   return {
     root,
     format,
@@ -349,7 +371,8 @@ export async function inspectExternalModpack(sourcePath: string): Promise<Extern
     overrideFiles,
     unresolvedDependencyCount,
     warnings,
-    remoteFiles
+    remoteFiles,
+    ...(curseForgeReferences ? { curseForgeReferences, overridesDirectory } : {})
   }
 }
 
@@ -411,6 +434,7 @@ async function downloadRemoteFile(
       attemptsPerSource
     })
   })
+  if (!await matchesRemoteHash(target, entry)) throw new Error(`下载文件未通过全部清单哈希校验：${entry.path}`)
   budget.bytes += result.bytes
 }
 
@@ -444,7 +468,7 @@ export async function materializeExternalModpack(
   if (source !== target) {
     const installedInstance = (inspection.format === 'modrinth' || inspection.format === 'curseforge') && inspection.layout !== 'archive' && await pathIsDirectory(path.join(source, 'mods'))
     if (inspection.layout === 'archive') {
-      const from = path.join(source, 'overrides')
+      const from = path.join(source, inspection.overridesDirectory ?? 'overrides')
       if (await pathIsDirectory(from)) copiedFiles += await copyDirectory(from, path.join(target, 'overrides'), localBudget)
       for (const directory of ['client-overrides', 'server-overrides']) {
         const scoped = path.join(source, directory)
@@ -474,6 +498,24 @@ export async function materializeExternalModpack(
       }
     }
   }
+  if (inspection.curseForgeReferences) {
+    if (source === target && inspection.layout === 'archive' && inspection.overridesDirectory && inspection.overridesDirectory !== 'overrides') {
+      copiedFiles += await copyDirectory(path.join(source, inspection.overridesDirectory), path.join(target, 'overrides'), localBudget)
+    }
+    const provenance = path.join(target, '.modmind', 'import')
+    await fs.mkdir(provenance, { recursive: true })
+    for (const file of ['manifest.json', 'modlist.html']) {
+      if (await fs.access(path.join(source, file)).then(() => true, () => false)) await copyFile(path.join(source, file), path.join(provenance, file))
+    }
+    const archiveIdentity = path.join(source, '.modmind', 'import', 'source-archive.json')
+    if (source !== target && await fs.access(archiveIdentity).then(() => true, () => false)) await copyFile(archiveIdentity, path.join(provenance, 'source-archive.json'))
+    const result = await installCurseForgePack(target, inspection.layout === 'archive' ? path.join(target, 'overrides') : target, inspection.curseForgeReferences, {
+      ...options.curseForge, signal: options.signal ?? options.curseForge?.signal,
+      trackDownloadActivities: options.trackDownloadActivities,
+      onProgress: options.onProgress
+    })
+    return { copiedFiles, ...result }
+  }
   const budget = { bytes: 0 }
   const remoteStaging = source === target ? await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-remote-')) : ''
   const downloadedPaths: Array<{ staged: string; target: string }> = []
@@ -490,7 +532,7 @@ export async function materializeExternalModpack(
       }
       const stagedPath = remoteStaging ? destinationFor(remoteStaging, relative) : finalPath
       await downloadRemoteFile(entry, stagedPath, budget, options, fileIndex, fileCount)
-      downloadedPaths.push({ staged: stagedPath, target: finalPath })
+      if (stagedPath !== finalPath) downloadedPaths.push({ staged: stagedPath, target: finalPath })
       downloadedFiles += 1
       options.onProgress?.({ path: entry.path, fileIndex, fileCount, phase: 'completed' })
     }
@@ -501,6 +543,14 @@ export async function materializeExternalModpack(
     }
   } finally {
     if (remoteStaging) await fs.rm(remoteStaging, { recursive: true, force: true }).catch(() => undefined)
+  }
+  if (inspection.format === 'modrinth') {
+    const provenance = path.join(target, '.modmind', 'import')
+    await fs.mkdir(provenance, { recursive: true })
+    const index = path.join(source, 'modrinth.index.json')
+    if (await fs.access(index).then(() => true, () => false)) await copyFile(index, path.join(provenance, 'modrinth.index.json'))
+    const identity = path.join(source, '.modmind', 'import', 'source-archive.json')
+    if (source !== target && await fs.access(identity).then(() => true, () => false)) await copyFile(identity, path.join(provenance, 'source-archive.json'))
   }
   return { copiedFiles, downloadedFiles, unresolvedDependencyCount: inspection.unresolvedDependencyCount, warnings: inspection.warnings }
 }

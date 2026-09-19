@@ -22,7 +22,7 @@ import { inspectModJar } from './jarInspection'
 import { listModpackContent } from './modpackContentInventoryService'
 import { readModpackLock } from './modpackLockService'
 import { modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
-import { addModpackFiles, addModpackModule, createModpackTemplate, readModpackManifest } from './modpackService'
+import { addModpackFiles, addModpackModule, createModpackTemplate, readModpackManifest, resolveModpackModuleRoot } from './modpackService'
 import { applyModpackPlan, planModpack, type McmodQueryProvider } from './modpackPlanner'
 import type { AutomaticModPlatform, ModCandidate, ModFile, ModProviderRegistry } from './modProviderService'
 import { projectTemplateFiles } from './projectTemplates'
@@ -743,8 +743,7 @@ export async function createModpackMigration(
     }
     for (const module of sourceManifest.modules) {
       if (moduleDecisionById.get(module.namespace)?.action === 'remove') continue
-      const sourceRoot = path.resolve(source.path, ...module.path.split('/'))
-      if (!inside(source.path, sourceRoot)) throw new Error(`自制模块路径无效：${module.path}`)
+      const sourceRoot = resolveModpackModuleRoot(source, module)
       const moduleRoot = path.join(root, 'modules', module.namespace)
       const moduleProject: ProjectInfo = {
         ...targetProject,

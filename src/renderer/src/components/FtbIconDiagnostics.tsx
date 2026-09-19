@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useState } from 'react'
 import { Download, LocateFixed, RotateCw, X } from 'lucide-react'
 import { ftbIconDescriptor, ftbIconKey } from '../../../shared/ftbIcon'
@@ -40,7 +41,7 @@ export function FtbIconDiagnostics({ book, projectPath, scope, onClose, onLocate
         try {
           const result = await requestFtbIcon(projectPath, scope, row.descriptor)
           if (alive) setResults(current => ({ ...current, [row.key]: result }))
-        } catch (error) { if (alive) setResults(current => ({ ...current, [row.key]: { icon: null, reason: String(error), sources: [], generation: 0 } })) }
+        } catch (error) { if (alive) setResults(current => ({ ...current, [row.key]: { icon: null, reason: reportClientFailure(error), sources: [], generation: 0 } })) }
       }
     }
     for (let i = 0; i < 4; i++) void worker()

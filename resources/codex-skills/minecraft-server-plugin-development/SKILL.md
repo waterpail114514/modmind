@@ -1,9 +1,14 @@
 ---
 name: minecraft-server-plugin-development
-description: Develop, migrate, repair, and verify Minecraft Paper, Spigot, Folia, and Velocity server plugins. Use for plugin lifecycle, commands, permissions, scheduling, dependencies, or server memory and performance issues. Not for ModMind application extensions or Fabric/Forge mods.
+description: Develop, migrate, repair, and verify Minecraft Paper, Spigot, Folia, and Velocity server plugins with performance-aware runtime design. Use for plugin lifecycle, commands, permissions, scheduling, dependencies, or server memory and performance issues. Not for ModMind application extensions or Fabric/Forge mods.
 ---
 
 # Minecraft server plugins
+
+In ModMind, follow the current turn's feature checklist before this workflow. A tool described here can be absent because its feature is unchecked in the professional chat composer (制作功能). Suggest checking the corresponding feature and sending a new instruction when needed; do not install replacements, use native commands, plugins, or delegation to bypass an unchecked feature. A checked but unsupported or failed capability must be reported as such, not blamed on the checkbox.
+
+For an explicit review denial, try at most two materially different, permitted lower-risk alternatives, then stop the blocked operation and report what remains. Codex automatic approval is independently adjustable at 设置 → 执行审批 → Codex 审批模式 (default YOLO); let the user adjust it and send a new instruction when that setting is the actual blocker. Never change it yourself. YOLO does not override feature switches, read-only mode, protected files, or deterministic safety denials. An approval-service failure is distinct from a rejected operation.
+
 
 Inspect the existing build, source entrypoint, plugin.yml/paper-plugin.yml or Velocity annotation metadata before changing code. Preserve commands, permissions, configuration and stored player data. Distinguish world servers from proxies; a Velocity migration requires redesign of world operations, not just dependency replacement.
 
@@ -16,6 +21,12 @@ Inspect the existing build, source entrypoint, plugin.yml/paper-plugin.yml or Ve
 - Server APIs are compileOnly/provided. Runtime plugins go in server-plugins/ and descriptor dependency declarations; shade and relocate private libraries only when needed. Vault is an API bridge and requires the actual provider for economy scenarios.
 - Preserve Gradle/Maven and lock reproducible coordinates/checksums where available. Keep build JVM, compiler target and server JVM distinct; compiling on a newer JDK does not justify raising the runtime requirement silently.
 - For migration, back up data and work in an isolated copy; check API removals, serialization/config migrations and downgrade behavior before replacing the original. API availability, compilation, core readiness, plugin enablement and scenario success are separate results.
+
+## Performance by design
+
+For each changed runtime path, consider execution frequency, work per invocation, thread ownership and growth with players/entities/observers. Prefer the simplest implementation that preserves required behavior with bounded work and resource use; do not wait for a lag report to consider these costs.
+
+Before implementing high-frequency events, repeating tasks, scans, I/O, caches or multiplayer effects, read [performance-design.md](references/performance-design.md). Also use it for explicit performance reviews and lag reports. Text, metadata and trivial command-response edits do not require a performance workflow. Do not silently reduce gameplay fidelity, durability or thread safety to make a benchmark faster.
 
 ## Ownership and cleanup
 
@@ -30,6 +41,8 @@ Every resource introduced by the change must have an owner and a cleanup path. A
 - Config reload must replace existing resources without duplicating tasks/listeners/pools. Do not claim Bukkit `/reload` or third-party hot-unload compatibility unless specifically implemented and tested; use normal server restarts for deployment.
 
 ## Verification
+
+For uncertain player visuals, repeated integration failures, or inventory changes, read [experience-and-interaction.md](references/experience-and-interaction.md). Inspect `modmind_test_session` capabilities before promising automated player or visual tests. Record requirements and evidence through `modmind_creation_context` when available.
 
 For changed runtime behavior, build and run the matching isolated core, inspect enablement errors, then exercise the affected command/event with player and console permissions and dependency absence where relevant. A ready server or a successful JAR build is insufficient evidence of plugin enablement.
 

@@ -1,3 +1,4 @@
+import { reportClientFailure } from '../lib/clientFailure'
 import { useMemo, useState } from 'react'
 import { BookOpen, FilePlus2, FolderPlus, LibraryBig, LoaderCircle, Plus, Save, Trash2 } from 'lucide-react'
 import { useConfirmDialog } from './InteractionDialogs'
@@ -48,12 +49,12 @@ export default function PatchouliBookEditor(): React.JSX.Element {
     try {
       const files = await window.modmind.modpack.writePatchouliBook({ bookId, name, landingText, categories })
       setMessage(`已写入 ${files.length} 个指南文件`)
-    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { setMessage(reportClientFailure(error)) }
     finally { setBusy(false) }
   }
 
   return <div className="patchouli-book-editor">
-    <header className="content-toolbar patchouli-toolbar"><div><h1>Patchouli 指南书</h1><p>用分类和条目组织整合包内的游玩引导</p></div><div className="patchouli-toolbar-actions"><span>{categories.length} 个分类 · {entryCount} 个条目</span><button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}写入指南书</button></div></header>
+    <header className="content-toolbar patchouli-toolbar"><h1 className="visually-hidden">Patchouli 指南书</h1><div className="patchouli-toolbar-actions"><span>{categories.length} 个分类 · {entryCount} 个条目</span><button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}写入指南书</button></div></header>
     <div className="patchouli-book-meta"><label>书籍标识<input value={bookId} onChange={(event) => setBookId(event.target.value)} /></label><label>书籍名称<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>首页文本<textarea value={landingText} onChange={(event) => setLandingText(event.target.value)} /></label></div>
     <div className="patchouli-book-layout">
       <aside className="patchouli-categories"><div className="patchouli-panel-title"><span><LibraryBig size={16} />分类</span><button className="icon-button" title="新增分类" onClick={addCategory}><FolderPlus size={15} /></button></div><div className="patchouli-category-list">{categories.map((item) => <button className={item.id === category?.id ? 'selected' : ''} key={item.id} onClick={() => chooseCategory(item.id)}><BookOpen size={15} /><span><strong>{item.name}</strong><small>{item.entries.length} 个条目</small></span></button>)}</div><button className="secondary-button compact patchouli-add-category" onClick={addCategory}><Plus size={14} />新增分类</button></aside>

@@ -1,5 +1,5 @@
 import type { BlockbenchAction, BlockbenchBounds, BlockbenchBridgeStatus } from './blockbench'
-import type { LocalServerEvent, LocalServerState, MinecraftApi, MinecraftRuntimeState } from './minecraft'
+import type { LocalServerEvent, LocalServerState, LocalTestApi, MinecraftApi, MinecraftRuntimeState } from './minecraft'
 import type { MappingsApi } from './mappings'
 import type { ProductionApi, ProjectFileMutationResult } from './production'
 import type { ImageGenerationRequest, ImageGenerationResult, ImageHistoryItem, ImageProcessingOptions, ImageProcessingResult, ImageStudioCapabilities, ImageStudioSettings, ImageStudioSettingsInput } from './imageStudio'
@@ -27,6 +27,8 @@ export interface LoaderVersionOption {
 }
 
 export interface ProjectInfo {
+  /** Stable identity retained when relocating the project. */
+  projectId?: string
   /** Conversation-only project; loader/version fields are not build targets until initialized. */
   draft?: { target: Partial<ProjectCreateInput> }
   kind?: ProjectKind
@@ -72,6 +74,8 @@ export interface ModpackLocalModule {
   name: string
   namespace: string
   path: string
+  /** Linked modules use an absolute path to the original project. */
+  linked?: boolean
   createdAt: string
   /** Missing values from older manifests are normalized to `both`. */
   side?: ModpackModuleSide
@@ -89,6 +93,14 @@ export interface ModpackImportSource {
   layout: ModpackLayout
   importedAt: string
   unresolvedDependencies?: number
+}
+
+export interface ModpackImportStatus {
+  total: number
+  installed: number
+  requiredPending: number
+  failures: Array<{ projectId: number; fileId: number; path?: string; required: boolean; error?: string }>
+  compatibilityWarnings: string[]
 }
 
 export interface ModpackManifest {
@@ -559,6 +571,8 @@ export interface AiAttachment {
   size: number
   isImage: boolean
   isDirectory?: boolean
+  /** Generated from the validated local attachment, never trusted from input. */
+  diagnosticSummary?: string
 }
 
 /** 从整合包 mod jar 提取出的物品图标。动画贴图为纵向精灵图，渲染端按帧裁剪并播放。 */
@@ -806,6 +820,9 @@ export interface AgentSettings {
   networkProxyUrl?: string
   javaPreferences: JavaPreferences
   darkMode: boolean
+  themePreset?: import('./appTheme').ThemePreset
+  customThemeColors?: import('./appTheme').CustomThemeColors
+  background?: import('./appTheme').AppBackground
   closeBehavior: 'ask' | 'tray' | 'quit'
   notificationsEnabled: boolean
 }
@@ -826,6 +843,7 @@ export interface ExternalAgentStatus {
   installed: boolean
   executable: string
   version?: string
+  compatible?: boolean
   detail: string
 }
 
@@ -996,6 +1014,8 @@ export interface ConversationDocument extends ConversationSummary {
   view: { timeline?: unknown[]; messages?: InspirationChatMessage[] }
   native: Partial<Record<CodingBackend, ConversationNativeState>>
   nativeTurns: Record<string, Partial<Record<CodingBackend, string>>>
+  /** First native attempt per user turn; nativeTurns retains the latest attempt. */
+  nativeTurnStarts?: Record<string, Partial<Record<CodingBackend, string>>>
   /** A native fork is consumed once by the first turn on this branch. */
   nativeForkPending?: boolean
 }
@@ -1028,6 +1048,7 @@ export interface ConversationEventsPage {
 }
 
 export interface AiCreateCodeOptions {
+  workbenchFeatures?: import('./workbenchFeatures').WorkbenchFeatures
   surface?: AiSurface
   /** Read-only inspiration policy inside the existing workspace conversation. */
   workbenchPhase?: 'discussion'
@@ -1266,6 +1287,9 @@ export interface ModMindApi {
   }
   modpack: {
     get: () => Promise<ModpackManifest>
+    resumeImport: () => Promise<ModpackManifest>
+    cancelImport: () => Promise<void>
+    importStatus: () => Promise<ModpackImportStatus | null>
     getServerPackManifest: () => Promise<ServerPackManifest | null>
     addServerPackMods: () => Promise<ServerPackManifest | null>
     removeServerPackMod: (fileName: string) => Promise<ServerPackManifest>
@@ -1273,6 +1297,7 @@ export interface ModMindApi {
     importMods: () => Promise<ModpackManifest>
     removeMod: (fileName: string) => Promise<ModpackManifest>
     createModule: (name: string) => Promise<ModpackManifest>
+    importModule: (mode: 'copy' | 'link') => Promise<ModpackManifest | null>
     updateModuleSide: (namespace: string, side: ModpackModuleSide) => Promise<ModpackManifest>
     openModule: (namespace: string) => Promise<ProjectInfo>
     sync: () => Promise<MinecraftRuntimeState>
@@ -1349,6 +1374,8 @@ export interface ModMindApi {
     revealSecret: (key: 'codex' | 'claude' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
     getAgent: () => Promise<AgentSettings>
     saveAgent: (settings: AgentSettings) => Promise<AgentSettings>
+    onAppearanceChanged: (listener: (appearance: import('./appTheme').AppAppearance) => void) => () => void
+    pickBackground: () => Promise<import('./appTheme').BackgroundMedia | null>
     listAgentModels: (kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => Promise<AiModelInfo[]>
     scanGradle: () => Promise<GradleInstallation[]>
     scanJavaHomes: () => Promise<DetectedJavaHome[]>
@@ -1356,6 +1383,7 @@ export interface ModMindApi {
     pickJavaHome: () => Promise<string | null>
   }
   diagnostics: {
+    reportError: (error: import('./diagnostics').DiagnosticErrorPayload, operation?: string) => void
     exportLogs: (pages?: DiagnosticPageSnapshot[]) => Promise<string | null>
   }
   device: {
@@ -1383,13 +1411,14 @@ export interface ModMindApi {
   }
   ai: {
     createCode: (prompt: string, sessionId?: string, backend?: CodingBackend, executionProfile?: AiExecutionProfile, options?: AiCreateCodeOptions) => Promise<CodingResult>
-    pickAttachments: (kind: AiAttachmentSelectionKind) => Promise<AiAttachment[]>
+    pickAttachments: (kind: AiAttachmentSelectionKind, projectPath?: string) => Promise<AiAttachment[]>
+    importAttachments: (files: File[], projectPath?: string) => Promise<AiAttachment[]>
     validateAttachments: (attachments: AiAttachment[], projectPath?: string) => Promise<AiAttachment[]>
     cancelCode: (sessionId?: string, projectPath?: string) => Promise<AiCancellationResult>
     clearQuotaCredentials: () => Promise<void>
     getRecovery: (projectPath?: string) => Promise<AiRecoveryInfo>
     getProjectTaskState: (projectPath?: string) => Promise<AiProjectTaskState>
-    resumeRecovery: (projectPath?: string, conversationId?: string) => Promise<CodingResult>
+    resumeRecovery: (projectPath?: string, conversationId?: string, features?: import('./workbenchFeatures').WorkbenchFeatures) => Promise<CodingResult>
     switchBackend: (backend: CodingBackend, projectPath?: string, sessionScope?: string, switchId?: number) => Promise<AiBackendSwitchResult>
     onBackendReady: (listener: (event: AiBackendReadyEvent) => void) => () => void
     restoreRecovery: () => Promise<SnapshotInfo | null>
@@ -1425,7 +1454,7 @@ export interface ModMindApi {
     openProject: () => Promise<void>
     openYsm: () => Promise<{ name: string; animations: number } | null>
     saveProject: () => Promise<void>
-    setTheme: (theme: 'light' | 'dark') => Promise<void>
+    setTheme: (theme: 'light' | 'dark', preset?: import('./appTheme').ThemePreset, custom?: import('./appTheme').CustomThemeColors) => Promise<void>
     runAction: (action: string) => Promise<void>
     execute: (action: BlockbenchAction) => Promise<unknown>
     executeActions: (actions: BlockbenchAction[], expectedRevision?: string) => Promise<import('./blockbench').BlockbenchActionBatchResult>
@@ -1465,6 +1494,7 @@ export interface ModMindApi {
   }
   mappings: MappingsApi
   minecraft: MinecraftApi
+  localTest: LocalTestApi
   production: ProductionApi
   decompile: {
     pickJar: () => Promise<string | null>

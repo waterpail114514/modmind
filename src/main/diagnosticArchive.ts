@@ -13,6 +13,10 @@ export interface DiagnosticCollectionItem {
   size?: number
   modifiedAt?: string
   reason?: string
+  capturedAt?: string
+  startOffset?: number
+  endOffset?: number
+  truncated?: boolean
 }
 
 interface DiagnosticArchiveCollectorOptions {
@@ -51,7 +55,10 @@ export async function summarizeDiagnosticDirectory(root: string, maxEntries = 50
     summary.exists = true
     while (queue.length && visited < maxEntries) {
       const current = queue.shift()!
-      const entries = await fs.readdir(current.directory, { withFileTypes: true }).catch(() => [])
+      const entries = await fs.readdir(current.directory, { withFileTypes: true }).catch((error) => {
+        summary.error = redactDiagnosticText(`Unable to read ${current.relative || '.'}: ${String(error)}`)
+        return []
+      })
       for (const entry of entries) {
         visited += 1
         if (visited > maxEntries) break
@@ -64,7 +71,10 @@ export async function summarizeDiagnosticDirectory(root: string, maxEntries = 50
           continue
         }
         if (!entry.isFile()) continue
-        const stat = await fs.stat(target).catch(() => null)
+        const stat = await fs.stat(target).catch((error) => {
+          summary.error = redactDiagnosticText(`Unable to stat ${relative}: ${String(error)}`)
+          return null
+        })
         if (!stat) continue
         summary.files += 1
         summary.bytes += stat.size
@@ -102,17 +112,40 @@ function archivePath(value: string): string {
   return normalized
 }
 
-async function readFileSnapshot(filePath: string, maxBytes: number, binary: boolean): Promise<{ data: Buffer; truncated: boolean; originalSize: number }> {
-  const stat = await fs.stat(filePath)
-  if (stat.size <= maxBytes) return { data: await fs.readFile(filePath), truncated: false, originalSize: stat.size }
-  if (binary) throw new Error(`binary file exceeds ${maxBytes} bytes`)
+async function readFileSnapshot(filePath: string, maxBytes: number, binary: boolean): Promise<{ data: Buffer; truncated: boolean; originalSize: number; startOffset: number; endOffset: number; capturedAt: string }> {
   const handle = await fs.open(filePath, 'r')
   try {
-    const marker = Buffer.from(`[TRUNCATED TO LAST ${maxBytes} BYTES; ORIGINAL SIZE ${stat.size}]\n`, 'utf8')
-    const length = Math.max(0, maxBytes - marker.byteLength)
-    const tail = Buffer.alloc(length)
-    const { bytesRead } = await handle.read(tail, 0, length, Math.max(0, stat.size - length))
-    return { data: Buffer.concat([marker, tail.subarray(0, bytesRead)]), truncated: true, originalSize: stat.size }
+    const stat = await handle.stat()
+    const capturedAt = new Date().toISOString()
+    if (binary && stat.size > maxBytes) throw new Error(`binary file exceeds ${maxBytes} bytes`)
+    const length = Math.min(maxBytes, stat.size)
+    let startOffset = Math.max(0, stat.size - length)
+    const buffer = Buffer.alloc(length)
+    let bytesRead = 0
+    while (bytesRead < length) {
+      const read = await handle.read(buffer, bytesRead, length - bytesRead, startOffset + bytesRead)
+      if (!read.bytesRead) break
+      bytesRead += read.bytesRead
+    }
+    let data = buffer.subarray(0, bytesRead)
+    let endOffset = startOffset + bytesRead
+    if (!binary && startOffset > 0) {
+      const before = Buffer.alloc(1)
+      await handle.read(before, 0, 1, startOffset - 1)
+      if (before[0] !== 10) {
+        const newline = data.indexOf(10)
+        const skip = newline < 0 ? data.length : newline + 1
+        data = data.subarray(skip)
+        startOffset += skip
+      }
+    }
+    if (!binary && /\.jsonl$/i.test(filePath) && data.length && data[data.length - 1] !== 10) {
+      // A writer may still be appending the final record; export complete records only.
+      const lastNewline = data.lastIndexOf(10)
+      data = data.subarray(0, lastNewline + 1)
+      endOffset = startOffset + data.length
+    }
+    return { data, truncated: startOffset > 0 || endOffset < stat.size, originalSize: stat.size, startOffset, endOffset, capturedAt }
   } finally {
     await handle.close()
   }
@@ -126,6 +159,7 @@ export class DiagnosticArchiveCollector {
   private readonly names = new Set<string>()
   private readonly collectionItems: DiagnosticCollectionItem[] = []
   private totalBytes = 0
+  private readonly collectionStartedAt = new Date().toISOString()
 
   constructor(options: DiagnosticArchiveCollectorOptions = {}) {
     this.maxFileBytes = Math.max(64 * 1024, options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES)
@@ -190,7 +224,11 @@ export class DiagnosticArchiveCollector {
         status: 'collected',
         size: snapshot.originalSize,
         modifiedAt: stat.mtime.toISOString(),
-        ...(snapshot.truncated ? { reason: `included tail capped at ${this.maxFileBytes} bytes` } : {})
+        capturedAt: snapshot.capturedAt,
+        startOffset: snapshot.startOffset,
+        endOffset: snapshot.endOffset,
+        truncated: snapshot.truncated,
+        ...(snapshot.truncated ? { reason: `included complete records within ${this.maxFileBytes} bytes; omitted bytes are described by startOffset/endOffset` } : {})
       })
     } catch (error) {
       this.collectionItems.push({ archiveName: safeName, status: 'error', size: stat.size, modifiedAt: stat.mtime.toISOString(), reason: redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
@@ -207,9 +245,9 @@ export class DiagnosticArchiveCollector {
         children = await fs.readdir(current.directory, { withFileTypes: true })
         rootSeen = true
       } catch (error) {
-        if (!current.relative) {
+        {
           const code = error && typeof error === 'object' && 'code' in error ? String((error as NodeJS.ErrnoException).code) : ''
-          this.collectionItems.push({ archiveName: archivePath(prefix), status: code === 'ENOENT' ? 'missing' : 'error', reason: code === 'ENOENT' ? 'directory does not exist' : redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
+          this.collectionItems.push({ archiveName: archivePath(path.posix.join(prefix, current.relative)), status: code === 'ENOENT' ? 'missing' : 'error', reason: code === 'ENOENT' ? 'directory does not exist' : redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
         }
         continue
       }
@@ -240,6 +278,8 @@ export class DiagnosticArchiveCollector {
   finalize(metadata: Record<string, unknown> = {}): DiagnosticArchiveEntry[] {
     const report = {
       generatedAt: new Date().toISOString(),
+      collectionStartedAt: this.collectionStartedAt,
+      consistency: 'per-file snapshots; timestamps may differ; offsets refer to source bytes before redaction',
       limits: { maxFileBytes: this.maxFileBytes, maxTotalBytes: this.maxTotalBytes, maxFiles: this.maxFiles },
       totals: {
         collected: this.collectionItems.filter((item) => item.status === 'collected').length,

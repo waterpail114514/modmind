@@ -57,6 +57,26 @@ function registry(files: Record<string, { candidate: ModCandidate; file: ModFile
 }
 
 describe('add-on relationship service', () => {
+  it('relocates a legacy linked project without duplicating the target or its descriptor', async () => {
+    const project = await projectFixture()
+    const target = { ...await projectFixture(), namespace: 'engine', name: 'Engine' }
+    const jar = await modJar(target.path, 'engine.jar', 'engine')
+    const service = new AddonRelationshipService({ getProject: () => project, registry: () => registry({}), cacheRoot: path.join(project.path, '.cache'), importRuntime: async () => undefined, removeRuntime: async () => undefined, readProject: async root => root === target.path ? target : null })
+    const initial = await service.linkProject(target, jar)
+    const original = initial.relationships.find(entry => entry.provider === 'modmind-project')!
+    const legacy = { ...original, id: 'modmind-project:old-path', linkedProjectId: undefined }
+    await fs.writeFile(path.join(project.path, 'modmind.relationships.json'), JSON.stringify({ ...initial, relationships: [legacy, { ...legacy, id: 'modmind-project:second-path', sha256: 'stale' }] }))
+    const moved = `${target.path}-moved`; roots.push(moved)
+    await fs.rename(target.path, moved); target.path = moved
+    const refreshed = await service.linkProject(target, path.join(moved, 'engine.jar'))
+    const links = refreshed.relationships.filter(entry => entry.provider === 'modmind-project')
+    expect(links).toHaveLength(1)
+    expect(links[0].id).toBe(original.id)
+    expect(links[0].linkedProjectPath).toBe(moved)
+    expect(links[0].sha256).toBe(original.sha256)
+    const gradle = await fs.readFile(path.join(project.path, 'build.gradle'), 'utf8')
+    expect(gradle.match(/modmind-linked-engine.jar/g)).toHaveLength(1)
+  })
   it('uses MC百科 Chinese names while keeping automatic platform downloads first', async () => {
     const project = await projectFixture()
     const createCandidate = candidate('create', 'Create')

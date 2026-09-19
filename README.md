@@ -4,15 +4,16 @@
 
 ModMind 是一个面向 Minecraft Mod 开发的 AI 辅助工作台，帮助你管理项目、模组、资源包、整合包和服务器工作流。
 
-## 当前版本：1.4.6
+## 当前版本：1.4.7
 
-- 新增资源包工作区：浏览、编辑、预览、校验和导出资源。
-- 增强 Blockbench、模型、贴图和图片编辑流程。
-- 增强插件系统、插件权限、插件桥接和开发文档。
-- 增强 ModPack 内容管理、配置识别和资源来源管理。
-- 增强 FTB Quests、模组检查、运行时和依赖处理。
-- 改进 Codex Agent、任务恢复、进程清理和跨平台兼容性。
-- 提供 Windows 安装包以及 macOS arm64/x64 预览构建。
+- 更新 ModMind Logo、应用图标与安装界面，新增主题配色、自定义颜色和图片/视频背景。
+- 改进工作台、设置、插件界面和窄窗口布局，集中管理功能开关与常用操作。
+- 新增 AI 附件导入与 PDF/DOCX 文档读取，改进 Codex 模型信息、Claude 兼容性及任务保护。
+- 增强图片工作流的切换、粘贴、历史记录与诊断追踪。
+- 增强整合包模块导入、Modrinth/CurseForge 导入识别及产物校验。
+- 改进本地游戏测试、客户端会话、玩家测试和服务器插件项目处理。
+- 增强诊断日志与会话记录，提供 Windows 和 macOS arm64/x64 安装包。
+- 移除 Herobrine。
 
 ## 下载
 
@@ -74,7 +75,7 @@ Windows 直接运行项目的 `gradlew.bat`，macOS/Linux 运行 `./gradlew`。G
 
 Windows 打包会生成 NSIS 安装包和更新元数据，并执行版本、体积及签名策略检查。自动更新文件位于 `release/update`：稳定版使用 `latest.yml`，预发布版使用 `beta.yml`，预发布版不能覆盖稳定版元数据。向更新服务上传时，先上传安装包和 blockmap，最后上传 YAML；保留旧安装包和 blockmap，以便跨版本更新。
 
-当前版本为 `1.4.6`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
+当前版本为 `1.4.7`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
 
 ## 参与开发
 

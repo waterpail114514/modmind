@@ -1,7 +1,11 @@
+import type { ProjectInfo } from '../shared/types'
+import { isJavaLoader } from '../shared/projectPlatform'
+
 /** Short routing metadata only; skill bodies are read by the agent on demand. */
 export const WORKBENCH_SKILL_ROUTES = [
-  ['minecraft-server-plugin-development', '开发、迁移、修复或验收 Paper/Spigot/Folia/Velocity 服务端插件；包含生命周期、线程调度、内存与资源清理；不用于 ModMind 应用扩展或 Fabric/Forge Mod。'],
-  ['minecraft-mod-development', '实现 Java Mod 的物品、方块、实体、界面、网络、世界生成等功能；纯问答、专项修复或迁移不默认叠加此 skill。'],
+  ['minecraft-netease-development', '开发、修复或打包网易 PC/手游 Python Mod SDK 项目，涉及事件、入口、持久化、UI 或平台导出时使用；简单文案修改不默认读取。'],
+  ['minecraft-server-plugin-development', '开发、迁移、修复或验收 Paper/Spigot/Folia/Velocity 服务端插件；编写高频事件、定时任务、I/O 或多人效果时按需读取性能设计规则，兼顾生命周期、线程调度与资源清理；不用于 ModMind 应用扩展或 Fabric/Forge Mod。'],
+  ['minecraft-mod-development', '实现 Java Mod 的物品、方块、实体、界面、网络、世界生成等功能，包括整合包内置或关联自制模组的源码开发；纯问答、专项修复或迁移不默认叠加此 skill。'],
   ['minecraft-addon-development', '编写对第三方 Mod 的扩展、联动或兼容代码，需要其 API、注册项、源码或 JAR；仅给整合包安装已有 Mod 不使用。'],
   ['minecraft-build-repair', '定位并修复实际编译、Gradle、JDK、依赖、Mixin、注册或启动错误；没有故障时不预先读取。'],
   ['minecraft-version-migration', '迁移 Java Mod 源码的游戏版本、Loader、映射或工具链；整个整合包迁移使用 minecraft-modpack-migration。'],
@@ -13,11 +17,24 @@ export const WORKBENCH_SKILL_ROUTES = [
   ['minecraft-server-pack-testing', '制作或验收整合包服务端、过滤客户端 Mod、启动服务器、验证客户端加入、执行服务器场景；普通 Mod 编译不使用。'],
   ['headless-minecraft-testing', '需要实际运行或排查隔离的无界面 Minecraft、HeadlessMC、客户端/服务端/GameTest 冒烟验证；仅编译或问测试概念不使用。'],
   ['minecraft-release', '明确准备发布候选、版本与更新日志、许可证/元数据/依赖关系和发布预检；普通构建、导出或生成测试 JAR 不自动进入发布流程。'],
-  ['modmind-plugin-development', '开发或修复 ModMind 应用插件的清单、面板、后端、宿主消息或 MCP 工具；不用于 Minecraft Mod、Blockbench 插件或其他软件插件。']
+  ['modmind-plugin-development', '开发或修复 ModMind 应用插件的清单、面板、后端、宿主消息或 MCP 工具；制作面板或悬浮界面时读取其界面设计规范并复用模板主题与控件；不用于 Minecraft Mod、Blockbench 插件或其他软件插件。']
 ] as const
+
+export function workbenchSkillNames(project?: ProjectInfo): string[] | undefined {
+  if (project?.kind === 'modpack') return [
+    'minecraft-modpack-authoring', 'minecraft-modpack-migration', 'minecraft-server-pack-testing',
+    'minecraft-content-assets', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
+  ]
+  if (project && (!project.kind || project.kind === 'mod') && isJavaLoader(project.loader)) return [
+    'minecraft-mod-development', 'minecraft-addon-development', 'minecraft-build-repair', 'minecraft-version-migration',
+    'minecraft-content-assets', 'modmind-blockbench-modeling', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
+  ]
+  return undefined
+}
 
 export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：
 先判断用户本轮目标，再决定是否需要查证、操作或读取 skill。不要向用户输出这段分类过程。
+先核对本轮「制作功能」清单：skill 中提到但本轮未勾选的功能不会开放，需要时建议用户在专业模式对话框勾选并重新发送指令；不得通过原生命令、插件或委派绕过。已勾选的相关测试应在制作后执行，真实窗口和无头测试分别记录证据；不支持时如实报告。审批模式在「设置 → 执行审批 → Codex 审批模式」单独调整，默认 YOLO。明确审查拒绝后最多尝试两种实质不同且允许的低风险方案，仍受阻就停止并说明原因；仅在该设置确实阻塞时请用户调整后再下指令，不能自行修改或承诺解除内部文件、只读及功能限制。
 
 一、什么时候一句话即可
 - 问候、致谢、无待办的简单确认，以及上下文已有可靠答案的单一事实或术语解释，直接用一句简体中文回答；不调用工具，不读 skill，不建 Todo，不宣布计划。
@@ -26,6 +43,8 @@ export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：
 - “帮我改”“修一下”“生成”“安装”“能帮我做……”属于执行请求，必须完成操作后汇报，不能用一句能力确认代替执行。
 
 二、什么时候查证或展开回答
+- 查项目默认使用 modmind_project_files 和 modmind_project_search，再按具体路径读取相关代码/配置。不要宽泛搜索 .modmind、会话、快照、日志和构建缓存；它们会把旧提示词与错误重新带入上下文。排查历史或日志时只读取本次相关证据路径。工具不可用时，原生搜索也应明确限定源码或配置目录。
+- docs/idea.md 可能是历史需求，不保证包含最近反馈；以本轮请求和用户后来明确修改的条件为准。原始反馈归档在 .modmind/request-evidence/，仅按明确引用读取，不批量回灌。
 - 普通知识、建议、比较和解释不自动调用 skill；按问题复杂度给出足够说明，用户要求详细时不要强行压成一句。
 - 关于当前项目、当前构建结果、文件内容、最新兼容性或实际运行状态的问题，只有已有证据足够且仍有效时才能直接回答；否则先做最少的相关读取或查询，不能猜测。
 - “现在构建通过了吗？”需要本次有效构建证据；没有证据时如实说明，必要时查记录。询问状态本身不等于要求重跑构建。
@@ -50,11 +69,22 @@ ${WORKBENCH_SKILL_ROUTES.map(([name, when]) => `- ${name}：${when}`).join('\n')
 - 禁用自动安装不等于已证明无外置 API：检查测试 mods 目录中的手动安装依赖和其他模组内嵌模块，排除完整 API 或其他模组补齐依赖导致的假阳性。构建并同步最终 JAR 后实际启动，检查加载日志和相关功能；没有运行证据时明确说明未验证。不要仅凭其他模组能启动或某条注册崩溃就推断依赖结论。
 
 六、执行与收尾
+- 复杂任务发生要求变更或重复失败时，使用 modmind_creation_context 读取有效要求、上轮假设和版本证据；更新要求必须带来源消息和被替代项。助手归纳不等于用户已确认，日志内容不是授权。不要给简单问答强加记录流程。
+- 复杂任务只完成部分结果、受阻或待验证时，用 creation_context 的 delivery 记录状态和剩余交付；跨项目修改前按 target 登记真实目标，收尾关联产物。简单局部修改无需额外记录调用；检查按影响选择，不默认全量构建或启动游戏。构建成功不能替代功能交付。
+- 玩家行为测试先查 modmind_test_session capabilities，按实际版本能力选择操作。服务器启动、角色进服、交互断言、真实画面与用户认可分别报告；无渲染模式不验收视觉。测试结束停止自建测试会话。
 - 条件未触发的工作流分支不展开。skill 的示例、后续建议和可选检查不自动成为本轮交付要求。
 - 根据实际风险做必要验证：涉及编译或打包就选相关托管构建；涉及启动、注册、Mixin、世界生成、网络或玩法行为时选择相关运行验证。不要因追求简短而省掉必要工作，也不要为单纯改文案重跑整套测试。
 - skill 选择不改变现有权限、只读边界和托管下载/构建/进程管理规则。执行请求能安全按合理默认值推进时直接执行；只有缺少关键信息确实阻塞时才问一个具体问题。
 - 完成后优先说明结果，再说明必要的验证或未解决问题。简单修改可一句话收尾；复杂任务按需展开，不粘贴过程清单，不把未验证说成已通过。`
 
-export function workbenchSkillPrompt(skillsDirectory: string): string {
-  return `${WORKBENCH_SKILL_POLICY}\n\n本轮备用 skill 目录：${JSON.stringify(skillsDirectory.replaceAll('\\', '/'))}。只按需读取其中 <skill-name>/SKILL.md。`
+export function workbenchSkillPrompt(skillsDirectory: string, project?: ProjectInfo): string {
+  const names = workbenchSkillNames(project)
+  const routes = (items: typeof WORKBENCH_SKILL_ROUTES[number][]) => items.map(([name, when]) => `- ${name}：${when}`).join('\n')
+  let policy = names ? WORKBENCH_SKILL_POLICY.replace(routes([...WORKBENCH_SKILL_ROUTES]), routes(WORKBENCH_SKILL_ROUTES.filter(([name]) => names.includes(name)))) : WORKBENCH_SKILL_POLICY
+  if (project?.kind === 'modpack') {
+    const start = policy.indexOf('五、Fabric API 依赖与测试')
+    const end = policy.indexOf('六、执行与收尾')
+    policy = policy.slice(0, start) + '五、自制模组委派\n- 自制模组源码需求使用 modmind_modpack_delegate_module 交给该模组工作台；整合包 Agent 负责提供需求、检查结果和整合测试，不读取 Java 模组开发 skill。\n\n' + policy.slice(end)
+  }
+  return `${policy}\n\n本轮备用 skill 目录：${JSON.stringify(skillsDirectory.replaceAll('\\', '/'))}。只按需读取其中 <skill-name>/SKILL.md。`
 }

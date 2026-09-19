@@ -51,11 +51,31 @@ describe('DiagnosticArchiveCollector', () => {
     await collector.addFile(target, 'logs/large.log')
     const entries = collector.finalize()
     const log = entries.find((entry) => entry.name === 'logs/large.log')?.data.toString('utf8') ?? ''
-    expect(log).toContain('[TRUNCATED TO LAST')
+    expect(log).not.toContain('[TRUNCATED')
+    expect(reportFrom(entries)).toMatchObject({ items: [expect.objectContaining({ truncated: true, startOffset: expect.any(Number) })] })
     expect(log).toContain('FINAL ROOT CAUSE')
 
     const summary = await summarizeDiagnosticDirectory(root)
     expect(summary).toMatchObject({ exists: true, files: 1, truncated: false })
     expect(summary.bytes).toBeGreaterThan(64 * 1024)
+  })
+
+  it('exports complete UTF-8 JSONL records and reports the exact retained source range', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-diagnostic-jsonl-'))
+    temporaryRoots.push(root)
+    const target = path.join(root, 'events.jsonl')
+    const content = Array.from({ length: 2000 }, (_, id) => JSON.stringify({ id, message: '诊断证据'.repeat(10) })).join('\n') + '\n{"partial":'
+    await fs.writeFile(target, content)
+    const collector = new DiagnosticArchiveCollector({ maxFileBytes: 64 * 1024 })
+    await collector.addFile(target, 'events.jsonl')
+    const entries = collector.finalize()
+    const data = entries.find(entry => entry.name === 'events.jsonl')!.data
+    const records = data.toString('utf8').trim().split('\n').map(line => JSON.parse(line))
+    expect(records.at(-1)).toMatchObject({ id: 1999, message: '诊断证据'.repeat(10) })
+    expect(data.byteLength).toBeLessThanOrEqual(64 * 1024)
+    const report = reportFrom(entries) as { items: Array<{ startOffset: number; endOffset: number; truncated: boolean }> }
+    const item = report.items[0]
+    expect(item.truncated).toBe(true)
+    expect(Buffer.from(content).subarray(item.startOffset, item.endOffset)).toEqual(data)
   })
 })

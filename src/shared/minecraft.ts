@@ -121,6 +121,29 @@ export interface MinecraftLaunchOptions {
   maxMemoryMb: number
   width?: number
   height?: number
+  server?: { ip: string; port: number }
+}
+
+export interface LocalTestState {
+  projectPath?: string
+  stage: 'idle' | 'preparing' | 'starting-server' | 'launching-client' | 'running' | 'stopping' | 'stopped' | 'error'
+  active: boolean
+  message: string
+  client?: MinecraftRuntimeState
+  recentLogs: LocalServerLogEntry[]
+}
+
+export interface LocalTestOptions {
+  username: string
+  maxMemoryMb: number
+  port?: number
+}
+
+export interface LocalTestApi {
+  getState: () => Promise<LocalTestState>
+  start: (options: LocalTestOptions) => Promise<LocalTestState>
+  stop: () => Promise<LocalTestState>
+  onState: (listener: (state: LocalTestState) => void) => () => void
 }
 
 export interface MinecraftLaunchTestResult {
