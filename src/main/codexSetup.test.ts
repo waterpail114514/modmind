@@ -15,6 +15,24 @@ const settings = {
 } satisfies CodexServerConfig
 
 describe('Codex beginner preparation', () => {
+  it('writes actual runtime limits through the local adapter and isolates model-specific overrides', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-budget-'))
+    try {
+      const setup = (model: string, contextWindow?: number) => prepareCodex({ rootDir: root, existingExecutable: 'C:\\codex.exe', serverConfig: {
+        ...settings, model, contextWindow, baseUrl: 'http://127.0.0.1:12345/v1', upstreamBaseUrl: 'https://api.deepseek.com'
+      } })
+      const result = await setup('deepseek-v4-flash')
+      const config = parseToml(await fs.readFile(result.configPath, 'utf8'))
+      const catalog = JSON.parse(await fs.readFile(String(config.model_catalog_json), 'utf8'))
+      expect(catalog.models.at(-1).context_window).toBe(1000000)
+      expect(catalog.models.at(-1).auto_compact_token_limit).toBeGreaterThan(500000)
+      await setup('private', 524288)
+      const overridden = parseToml(await fs.readFile(result.configPath, 'utf8'))
+      expect(JSON.parse(await fs.readFile(String(overridden.model_catalog_json), 'utf8')).models.at(-1).context_window).toBe(524288)
+      await setup('deepseek-v4-flash')
+      expect(parseToml(await fs.readFile(result.configPath, 'utf8')).model_catalog_json).toBe(config.model_catalog_json)
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
   afterEach(() => {
     delete process.env.MODMIND_CODEX_CONFIG_URL
     clearPreparedCodexCredentials()

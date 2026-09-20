@@ -1,20 +1,25 @@
 // Maintainer tool: freeze official metadata only after inspecting each actual archive.
+// node scripts/inspect-codex-packages.mjs [target|all] [version]
 import { promises as fs } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 
-const version = '0.154.0'
+const descriptors = JSON.parse(await fs.readFile(new URL('../src/main/codexRuntimeDescriptors.json', import.meta.url), 'utf8'))
+const version = process.argv[3] || descriptors.version
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Invalid Codex version: ${version}`)
 const vendors = {
   'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin',
   'win32-x64': 'x86_64-pc-windows-msvc', 'win32-arm64': 'aarch64-pc-windows-msvc',
   'linux-x64': 'x86_64-unknown-linux-musl', 'linux-arm64': 'aarch64-unknown-linux-musl'
 }
+const target = process.argv[2] || 'all'
+if (target !== 'all' && !Object.hasOwn(vendors, target)) throw new Error(`Unknown Codex target: ${target}`)
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-codex-review-'))
 try {
   const results = []
-  for (const [id, vendor] of Object.entries(vendors).filter(([id]) => !process.argv[2] || id === process.argv[2])) {
+  for (const [id, vendor] of Object.entries(vendors).filter(([id]) => target === 'all' || id === target)) {
     const metadata = await fetch(`https://registry.npmjs.org/@openai%2fcodex/${version}-${id}`).then(r => r.json())
     const archive = path.join(root, `${id}.tgz`)
     const download = spawnSync(process.platform === 'win32' ? 'curl.exe' : 'curl', ['--fail', '--location', '--retry', '3', '--retry-all-errors', '--max-time', '600', '--silent', '--show-error', '--output', archive, metadata.dist.tarball], { encoding: 'utf8', timeout: 2500000 })
@@ -36,5 +41,5 @@ try {
     results.push({ id, archiveName: path.basename(metadata.dist.tarball), executableRelativePath, integrity, sha512: createHash('sha512').update(bytes).digest('hex'), files: listing.stdout.trim().split(/\r?\n/) })
   }
   await fs.mkdir('test-results', { recursive: true })
-  await fs.writeFile(`test-results/codex-package-inspection-${process.argv[2] || 'all'}.json`, JSON.stringify({ version, inspectedAt: new Date().toISOString(), targets: results }, null, 2) + '\n')
+  await fs.writeFile(`test-results/codex-package-inspection-${target}.json`, JSON.stringify({ version, inspectedAt: new Date().toISOString(), targets: results }, null, 2) + '\n')
 } finally { await fs.rm(root, { recursive: true, force: true }) }

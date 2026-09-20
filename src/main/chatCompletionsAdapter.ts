@@ -14,6 +14,7 @@ interface AdapterRoute {
   protocol: UpstreamProtocol
   signal?: AbortSignal
   approvalFallbackModel?: string
+  executionModel?: string
 }
 
 interface ChatToolDescriptor {
@@ -78,6 +79,30 @@ function uniqueChatToolName(preferred: string, used: Set<string>): string {
   return candidate
 }
 
+/** Codex can declare tools in input items. Lift them for upstream providers
+ * that only recognize top-level tools, including declarations in old turns. */
+export function normalizeResponsesTools(value: JsonRecord): JsonRecord {
+  if (!Array.isArray(value.input) || !value.input.some(item => isRecord(item) && item.type === 'additional_tools')) return value
+  const merge = (items: unknown[]): JsonRecord[] => {
+    const tools = new Map<string, JsonRecord>()
+    for (const item of items) {
+      if (!isRecord(item)) continue
+      const key = `${item.type}:${item.name ?? ''}`
+      const previous = tools.get(key)
+      tools.set(key, item.type === 'namespace' && Array.isArray(item.tools)
+        ? { ...item, tools: merge([...(Array.isArray(previous?.tools) ? previous.tools : []), ...item.tools]) }
+        : item)
+    }
+    return [...tools.values()]
+  }
+  const declarations = value.input.filter(item => isRecord(item) && item.type === 'additional_tools') as JsonRecord[]
+  return {
+    ...value,
+    tools: merge([...(Array.isArray(value.tools) ? value.tools : []), ...declarations.flatMap(item => Array.isArray(item.tools) ? item.tools : [])]),
+    input: value.input.filter(item => !isRecord(item) || item.type !== 'additional_tools')
+  }
+}
+
 function translateTools(value: unknown): { tools: JsonRecord[]; descriptors: Map<string, ChatToolDescriptor> } {
   if (!Array.isArray(value)) return { tools: [], descriptors: new Map() }
   const tools: JsonRecord[] = []
@@ -100,6 +125,17 @@ function translateTools(value: unknown): { tools: JsonRecord[]; descriptors: Map
     })
   }
 
+  const addCustom = (entry: JsonRecord, namespace?: string): void => {
+    if (typeof entry.name !== 'string') return
+    const chatName = uniqueChatToolName(namespace ? `${namespace}__${entry.name}` : entry.name, usedNames)
+    descriptors.set(chatName, { chatName, name: entry.name, kind: 'custom', ...(namespace ? { namespace } : {}) })
+    tools.push({ type: 'function', function: {
+      name: chatName,
+      ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
+      parameters: { type: 'object', properties: { input: { type: 'string', description: 'Raw input for the tool.' } }, required: ['input'] }
+    } })
+  }
+
   for (const entry of value) {
     if (!isRecord(entry)) continue
     if (entry.type === 'function') {
@@ -107,24 +143,15 @@ function translateTools(value: unknown): { tools: JsonRecord[]; descriptors: Map
       continue
     }
     if (entry.type === 'namespace' && typeof entry.name === 'string' && Array.isArray(entry.tools)) {
-      for (const child of entry.tools) if (isRecord(child) && child.type === 'function') addFunction(child, entry.name)
+      for (const child of entry.tools) {
+        if (!isRecord(child)) continue
+        if (child.type === 'function') addFunction(child, entry.name)
+        else if (child.type === 'custom') addCustom(child, entry.name)
+      }
       continue
     }
     if (entry.type === 'custom' && typeof entry.name === 'string') {
-      const chatName = uniqueChatToolName(entry.name, usedNames)
-      descriptors.set(chatName, { chatName, name: entry.name, kind: 'custom' })
-      tools.push({
-        type: 'function',
-        function: {
-          name: chatName,
-          ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
-          parameters: {
-            type: 'object',
-            properties: { input: { type: 'string', description: 'Raw input for the tool.' } },
-            required: ['input']
-          }
-        }
-      })
+      addCustom(entry)
     }
   }
   return { tools, descriptors }
@@ -195,8 +222,9 @@ function translateInput(input: unknown, descriptors: Map<string, ChatToolDescrip
   return messages
 }
 
-export function responsesRequestToChatCompletions(value: unknown): ChatCompletionTranslation {
-  if (!isRecord(value)) throw new Error('Responses 请求必须是 JSON 对象')
+export function responsesRequestToChatCompletions(request: unknown): ChatCompletionTranslation {
+  if (!isRecord(request)) throw new Error('Responses 请求必须是 JSON 对象')
+  const value = normalizeResponsesTools(request)
   const model = typeof value.model === 'string' ? value.model.trim() : ''
   if (!model) throw new Error('Responses 请求缺少模型名')
   const translatedTools = translateTools(value.tools)
@@ -285,7 +313,7 @@ export function chatCompletionToResponsesEvents(value: unknown, tools: Map<strin
         const parsed = JSON.parse(rawArguments) as unknown
         if (isRecord(parsed) && typeof parsed.input === 'string') input = parsed.input
       } catch { /* Keep the raw arguments as custom tool input. */ }
-      events.push({ type: 'response.output_item.done', item: { type: 'custom_tool_call', call_id: callId, name: descriptor.name, input } })
+      events.push({ type: 'response.output_item.done', item: { type: 'custom_tool_call', call_id: callId, name: descriptor.name, input, ...(descriptor.namespace ? { namespace: descriptor.namespace } : {}) } })
     } else {
       events.push({
         type: 'response.output_item.done',
@@ -487,13 +515,13 @@ export class ChatCompletionsAdapter {
   private readonly routesByIdentity = new Map<string, AdapterRoute>()
   private readonly routesById = new Map<string, AdapterRoute>()
 
-  async baseUrl(upstreamBaseUrl: string, providerIdentity = '', signal?: AbortSignal, approvalFallbackModel?: string): Promise<string> {
+  async baseUrl(upstreamBaseUrl: string, providerIdentity = '', signal?: AbortSignal, approvalFallbackModel?: string, executionModel?: string): Promise<string> {
     const normalized = normalizedBaseUrl(upstreamBaseUrl)
     const port = await this.ensureListening()
-    const identity = createHash('sha256').update(`${normalized}\n${providerIdentity}\n${approvalFallbackModel ?? ''}`).digest('hex')
+    const identity = createHash('sha256').update(`${normalized}\n${providerIdentity}\n${approvalFallbackModel ?? ''}\n${executionModel ?? ''}`).digest('hex')
     let route = this.routesByIdentity.get(identity)
     if (!route) {
-      route = { id: randomUUID().replaceAll('-', ''), upstreamBaseUrl: normalized, protocol: 'unknown', signal, approvalFallbackModel }
+      route = { id: randomUUID().replaceAll('-', ''), upstreamBaseUrl: normalized, protocol: 'unknown', signal, approvalFallbackModel, executionModel }
       this.routesByIdentity.set(identity, route)
       this.routesById.set(route.id, route)
     }
@@ -562,14 +590,19 @@ export class ChatCompletionsAdapter {
       // native Responses passthrough — so one bad field cannot make the
       // provider reject an otherwise valid request.
       const sanitizedBody = normalizeHistoryMessageIds(sanitizeTokenBudgets(body))
+      const outgoingPayload = normalizeResponsesTools(JSON.parse(sanitizedBody.toString('utf8')) as JsonRecord)
+      // Resumed threads can still emit the previous group's model (including
+      // internal requests). Bind task requests to this execution's selection.
+      // Dedicated approval requests retain their own model and fallback policy.
+      if (route.executionModel && outgoingPayload.model !== 'codex-auto-review') outgoingPayload.model = route.executionModel
       const requestUpstreamResponses = (): Promise<Response> => fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'responses'), {
         method: 'POST',
         headers: requestHeaders(request.headers),
         signal: upstreamSignal(300_000)
-      }, JSON.parse(sanitizedBody.toString('utf8')) as JsonRecord, route.approvalFallbackModel)
+      }, outgoingPayload, route.approvalFallbackModel)
       let translated: ChatCompletionTranslation | undefined
       const requestUpstreamChat = (): Promise<Response> => {
-        translated ??= responsesRequestToChatCompletions(JSON.parse(sanitizedBody.toString('utf8')) as unknown)
+        translated ??= responsesRequestToChatCompletions(outgoingPayload)
         return fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'chat/completions'), {
           method: 'POST',
           headers: requestHeaders(request.headers),

@@ -61,6 +61,9 @@ export async function archiveEntries(file: string): Promise<string[]> {
 }
 
 /** Read ZIP metadata without decompressing every asset just to build a file list. */
+export async function archiveFingerprintInfo(file: string): Promise<Array<{ path: string; size: number; crc32: number }>> {
+  return [...(await catalog(file)).values()].map(entry => ({ path: entry.fileName, size: entry.uncompressedSize, crc32: entry.crc32 }))
+}
 export async function archiveFileInfo(file: string): Promise<Array<{ path: string; size: number }>> {
   return [...(await catalog(file)).values()].map(entry => ({ path: entry.fileName, size: entry.uncompressedSize }))
 }

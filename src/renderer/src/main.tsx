@@ -12,6 +12,7 @@ import './palette.css'
 import './appearance.css'
 import './theme'
 import { diagnosticErrorPayload } from '../../shared/diagnostics'
+import { setAppLoading } from './useAppLoading'
 
 // Capture in the page world: preload's isolated world cannot reliably read page Error objects.
 const reportPageError = (reason: unknown, operation: string): void => {
@@ -21,7 +22,10 @@ window.addEventListener('error', event => reportPageError(event.error ?? event.m
 window.addEventListener('unhandledrejection', event => reportPageError(event.reason, 'page-unhandled-rejection'))
 
 const externalPluginOverlay = new URLSearchParams(window.location.search).has('pluginOverlay')
-if (externalPluginOverlay) document.documentElement.classList.add('plugin-overlay-window-document')
+if (externalPluginOverlay) {
+  document.documentElement.classList.add('plugin-overlay-window-document')
+  setAppLoading(false, true)
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

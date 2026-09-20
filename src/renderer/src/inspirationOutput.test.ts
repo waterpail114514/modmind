@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
+import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
 
 describe('inspiration output settlement', () => {
+  it('replays retries into one row without losing the provisional answer', () => {
+    const restored = replayInspirationEvents([{ role: 'assistant', turnId: 't', sessionId: 'run', content: 'partial', status: 'streaming' }], [1,2,3].map(i => ({
+      eventId: `e${i}`, conversationId: 'c', generation: 0, turnId: 't', sequence: i, kind: 'output' as const, time: 'T',
+      payload: { kind: 'retry', content: `重试 ${i}`, time: 'T', sessionId: 'run', turnId: 't', notice: { key: 'retry', detail: '等待恢复', occurrences: i } }
+    })))
+    expect(restored).toHaveLength(2)
+    expect(restored[0]).toMatchObject({ content: '重试 3', notice: { occurrences: 3 } })
+    expect(restored[1]).toMatchObject({ content: 'partial', status: 'streaming' })
+  })
   it('replays a durable cumulative delta and terminal answer after a crash', () => {
     const pending = [{ role: 'assistant' as const, turnId: 'turn-a', content: '', status: 'streaming' as const }]
     const restored = replayInspirationEvents(pending, [
@@ -15,10 +24,27 @@ describe('inspiration output settlement', () => {
     const pending = [{ role: 'assistant' as const, turnId: 'turn-a', content: '', status: 'streaming' as const, sessionId: 'run-a' }]
     const restored = replayInspirationEvents(pending, [
       { eventId: 'e1', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 2, kind: 'output', time: 'T1', payload: { kind: 'delta', content: 'partial', time: 'T1', turnId: 'turn-a', sessionId: 'run-a' } },
-      { eventId: 'e2', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 3, kind: 'output', time: 'T2', payload: { kind: 'error', content: 'network unavailable', time: 'T2', turnId: 'turn-a', sessionId: 'run-a', terminal: false, recoverable: true } }
+      { eventId: 'e2', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 3, kind: 'output', time: 'T2', payload: { kind: 'error', content: 'network unavailable', time: 'T2', turnId: 'turn-a', sessionId: 'run-a', terminal: true, recoverable: true } }
     ])
     expect(restored.at(-1)).toMatchObject({ turnId: 'turn-a', content: 'network unavailable', status: 'error', isFinal: true, sequence: 3 })
     expect(restored.some((message) => message.status === 'streaming')).toBe(false)
+  })
+  it.each(['warning', 'error'] as const)('keeps a nonterminal %s advisory during live rendering and replay', (kind) => {
+    const event = { kind, content: '正在恢复', time: 'T2', turnId: 'turn-a', sessionId: 'run-a', terminal: false, recoverable: true }
+    expect(inspirationStepStatus(event)).toBe('warning')
+    const restored = replayInspirationEvents([{ role: 'assistant', turnId: 'turn-a', content: 'partial', status: 'streaming', sessionId: 'run-a' }], [
+      { eventId: 'e1', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 1, kind: 'output', time: 'T2', payload: event }
+    ])
+    expect(restored.find(message => message.kind === 'tool')).toMatchObject({ status: 'warning', isFinal: false })
+    expect(restored.at(-1)).toMatchObject({ content: 'partial', status: 'streaming' })
+    expect(restored.some(message => message.isFinal)).toBe(false)
+  })
+
+  it('replays an explicit stop as cancellation, not failure', () => {
+    const restored = replayInspirationEvents([], [
+      { eventId: 'e1', conversationId: 'idea-a', generation: 0, turnId: 'turn-a', sequence: 1, kind: 'output', time: 'T1', payload: { kind: 'warning', content: '任务已停止', terminal: true, recoverable: true } }
+    ])
+    expect(restored[0]).toMatchObject({ status: 'cancelled', isFinal: true })
   })
   it('renders retry/tool steps in order between the question and provisional answer', () => {
     const rows = buildInspirationRows([
@@ -37,7 +63,8 @@ describe('inspiration output settlement', () => {
       { role: 'user' as const, content: 'second', status: 'completed' as const }
     ]
     expect(deleteInspirationTimelineItem(messages, 0).map((message) => message.content)).toEqual(['second'])
-    expect(deleteInspirationTimelineItem(messages, 2).map((message) => message.content)).toEqual(['first', 'second'])
+    expect(deleteInspirationTimelineItem(messages, 1).map((message) => message.content)).toEqual(['second'])
+    expect(deleteInspirationTimelineItem(messages, 2).map((message) => message.content)).toEqual(['second'])
     expect(deleteInspirationTimelineItem(messages, 99)).toBe(messages)
   })
 

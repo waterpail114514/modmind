@@ -169,6 +169,25 @@ export class ConversationStore {
     })
   }
 
+  replaceView(projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']): Promise<ConversationDocument> {
+    return this.enqueue(projectPath, conversationId, async () => {
+      const document = await this.readUnlocked(projectPath, conversationId)
+      if (!document) throw new Error('对话不存在')
+      if (document.generation !== generation) throw new Error('对话已更新，请重新载入后再删除')
+      const next: ConversationDocument = {
+        ...document, generation: generation + 1, updatedAt: new Date().toISOString(),
+        view: resetViewSequences(view), events: [], lastSequence: 0, checkpointSequence: 0,
+        native: {}, nativeTurns: {}, nativeTurnStarts: {}, nativeForkPending: false,
+        parent: undefined
+      }
+      // Commit the new generation first: even after a crash, old journal replicas
+      // and delayed renderer saves cannot restore the removed history.
+      await this.writeDocumentUnlocked(projectPath, next)
+      await this.data.deleteJournal(projectPath, journalKey(conversationId))
+      return next
+    })
+  }
+
   appendUser(projectPath: string, conversationId: string, generation: number, turnId: string, payload: unknown, runId?: string): Promise<ConversationEventRecord> {
     return this.appendEvent(projectPath, conversationId, generation, turnId, 'user', payload, runId, true)
   }

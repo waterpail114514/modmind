@@ -1,9 +1,11 @@
 import { normalizeAiTurnReplay, replayUserText } from '../../shared/aiReplay'
-import type { AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationEventRecord, PipelineEvent } from '../../shared/types'
+import { presentLegacyAiNotice } from '../../shared/aiNotice'
+import type { AiNotice, AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationEventRecord, PipelineEvent } from '../../shared/types'
 
 export type WorkbenchTimelineDiff = { path: string; added: number; removed: number; additions: string[]; removals: string[] }
 
 export type WorkbenchTimelineItem = {
+  notice?: AiNotice
   id: string
   kind: 'user' | 'answer' | 'response' | 'thinking' | 'tool' | 'diff' | 'warning' | 'error' | 'start' | 'retry' | 'history' | 'status'
   content: string
@@ -133,7 +135,7 @@ function legacyReduceWorkbenchOutput(
   const content = normalize(event.content)
   const identity = eventIdentity(event)
   const assistantId = `${identity}:assistant`
-  const currentItems = event.kind === 'answer' || event.kind === 'error' && event.terminal === true
+  const currentItems = event.kind === 'answer' || (event.kind === 'error' || event.kind === 'warning') && event.terminal === true
     ? settleWorkbenchActivity(items)
     : items
   if (event.kind === 'delta') {
@@ -197,15 +199,33 @@ export function reduceWorkbenchOutput(
   event: AiOutputEvent,
   normalize: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
+  if (event.kind === 'warning' || event.kind === 'error') event = { ...event, content: presentLegacyAiNotice(event.content, event.kind === 'warning') }
   if (items.some((item) => sameOutputTurn(item, event) && (
     event.eventId && item.eventId === event.eventId
     || event.sequence !== undefined && item.sequence === event.sequence
   ))) return items
   const content = normalize(event.content)
-  const current = event.kind === 'answer' || (event.kind === 'error' && event.terminal === true)
+  const current = event.kind === 'answer' || ((event.kind === 'error' || event.kind === 'warning') && event.terminal === true)
     ? settleWorkbenchActivity(items)
     : items
   const identity = eventIdentity(event)
+  if (event.notice && event.terminal !== true && ['warning', 'retry'].includes(event.kind)) {
+    const notice = event.notice
+    const index = current.findIndex(item => sameOutputTurn(item, event) && item.notice?.key === notice.key && item.terminal !== true)
+    const previous = index >= 0 ? current[index] : undefined
+    if (previous?.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return current
+    const item: WorkbenchTimelineItem = {
+      id: previous?.id ?? `notice:${event.turnId ?? event.runId ?? event.sessionId}:${notice.key}`,
+      kind: event.kind as 'warning' | 'retry', content, time: event.time, runId: event.runId ?? event.sessionId,
+      turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, status: 'warning', terminal: false, recoverable: true,
+      notice: { ...notice, occurrences: notice.occurrences ?? previous?.notice?.occurrences }
+    }
+    const next = current.map(row => event.kind === 'retry' && row.kind === 'response' && row.status === 'running' && sameOutputTurn(row, event)
+      ? { ...row, status: 'done' as const } : row)
+    if (index >= 0) next[index] = item
+    else next.push(item)
+    return orderTimeline(next)
+  }
   if (event.kind === 'delta' || event.kind === 'stream-start') {
     const streamId = streamIdentity(event)
     if (event.sequence !== undefined && current.some((item) => sameOutputTurn(item, event) && item.streamId === streamId
@@ -289,7 +309,7 @@ export function reduceWorkbenchOutput(
   const terminal = errorLike ? event.terminal === true : event.terminal
   const recoverable = errorLike ? event.recoverable ?? !terminal : event.recoverable
   return orderTimeline([...current, {
-    id: `${kind}:${identity}`, kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, stage: event.kind,
+    id: `${kind}:${identity}`, kind, content, notice: event.notice, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, stage: event.kind,
     status: event.kind === 'error' ? 'error' : event.kind === 'warning' ? 'warning' : 'done',
     ...(terminal !== undefined ? { terminal } : {}), ...(recoverable !== undefined ? { recoverable } : {})
   }])
@@ -300,6 +320,9 @@ export function reduceWorkbenchProgress(
   event: PipelineEvent,
   normalize: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
+  if (event.notice) return reduceWorkbenchOutput(items, {
+    ...event, kind: 'retry', content: event.detail, notice: event.notice, terminal: false, recoverable: true
+  }, normalize)
   const currentItems = settleWorkbenchActivity(items, true)
   const liveItems = items
   const identity = event.eventId || event.id || (event.sequence !== undefined ? `seq-${event.sequence}` : undefined) || event.runId || event.sessionId || event.time
@@ -350,6 +373,41 @@ export function replayWorkbenchEvents(
   normalizeActivity: (value: string) => string = (value) => value,
   normalizeOutput: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
+  const replay = replayWorkbenchSteps(view, events, normalizeActivity, normalizeOutput)
+  let step = replay.next()
+  while (!step.done) step = replay.next()
+  return step.value
+}
+
+/** Restore long histories without monopolizing the renderer's event loop. */
+export async function replayWorkbenchEventsAsync(
+  view: WorkbenchTimelineItem[],
+  events: ConversationEventRecord[],
+  normalizeActivity: (value: string) => string = (value) => value,
+  normalizeOutput: (value: string) => string = (value) => value,
+  isCancelled: () => boolean = () => false
+): Promise<WorkbenchTimelineItem[]> {
+  const yieldToUi = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+  await yieldToUi()
+  const replay = replayWorkbenchSteps(view, events, normalizeActivity, normalizeOutput)
+  let sliceStarted = performance.now()
+  while (true) {
+    if (isCancelled()) throw new DOMException('History loading cancelled', 'AbortError')
+    const step = replay.next()
+    if (step.done) return step.value
+    if (performance.now() - sliceStarted >= 8) {
+      await yieldToUi()
+      sliceStarted = performance.now()
+    }
+  }
+}
+
+function* replayWorkbenchSteps(
+  view: WorkbenchTimelineItem[],
+  events: ConversationEventRecord[],
+  normalizeActivity: (value: string) => string = (value) => value,
+  normalizeOutput: (value: string) => string = (value) => value
+): Generator<void, WorkbenchTimelineItem[], void> {
   if (!events.length) return normalizeWorkbenchTimeline(view)
   const replayedTurns = new Set(events.filter((event) => event.kind === 'output' || event.kind === 'progress').map((event) => event.turnId))
   // Forks and migrated conversations can have older turns only in the saved view.
@@ -358,6 +416,7 @@ export function replayWorkbenchEvents(
   const knownUsers = new Map(result.filter((item) => item.kind === 'user' && item.turnId).map((item) => [item.turnId!, item]))
   const seenEvents = new Set<string>()
   for (const record of [...events].sort((left, right) => left.sequence - right.sequence)) {
+    yield
     if (seenEvents.has(record.eventId)) continue
     seenEvents.add(record.eventId)
     if (record.kind === 'user') {
@@ -386,6 +445,7 @@ export function replayWorkbenchEvents(
 }
 
 export function normalizeStoredWorkbenchTimeline(item: WorkbenchTimelineItem): WorkbenchTimelineItem {
+  if (item.kind === 'warning' || item.kind === 'error') item = { ...item, content: presentLegacyAiNotice(item.content, item.kind === 'warning') }
   const replay = normalizeAiTurnReplay(item.replay)
   const normalized = replay ? { ...item, replay } : item.replay ? { ...item, replay: undefined } : item
   if (normalized.kind === 'warning' || normalized.kind === 'retry') return { ...normalized, status: 'warning', terminal: false, recoverable: true }

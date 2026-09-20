@@ -150,7 +150,7 @@ pre { max-width: 100%; margin: 8px 0; padding: 12px; border-radius: 6px; backgro
       pending.delete(data.requestId)
       clearTimeout(entry.timer)
       if (data.ok) entry.resolve(data.result)
-      else entry.reject(new Error(typeof data.error === 'string' ? data.error : '操作失败，请重试。'))
+      else entry.reject(new Error(typeof data.error === 'string' ? data.error : '插件未提供错误详情。'))
     }
   })
   window.parent.postMessage({ type: 'ready' }, '*')
@@ -189,7 +189,7 @@ button.addEventListener('click', async () => {
       ui.setStatus(status, 'success', '运行完成')
     } else renderProject(value)
   } catch (error) {
-    ui.setStatus(status, 'error', '操作失败：' + error.message + ' 可再次点击按钮重试。')
+    ui.setStatus(status, 'error', error.message || '插件未提供错误详情。')
   } finally {
     button.disabled = false
     result.setAttribute('aria-busy', 'false')

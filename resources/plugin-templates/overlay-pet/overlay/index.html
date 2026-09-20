@@ -145,7 +145,7 @@ body { display: grid; place-items: end center; padding: 36px 12px 12px; }
       pending.delete(data.requestId)
       clearTimeout(entry.timer)
       if (data.ok) entry.resolve(data.result)
-      else entry.reject(new Error(typeof data.error === 'string' ? data.error : '操作失败，请重试。'))
+      else entry.reject(new Error(typeof data.error === 'string' ? data.error : '插件未提供错误详情。'))
     }
   })
   window.parent.postMessage({ type: 'ready' }, '*')

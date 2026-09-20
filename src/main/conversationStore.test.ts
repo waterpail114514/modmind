@@ -34,6 +34,46 @@ async function fixture(): Promise<{ project: string; userData: string; data: Wor
 }
 
 describe('ConversationStore', () => {
+  it('removes inspiration history in place and prevents old journals or saves from restoring it', async () => {
+    const { project, store, userData, data } = await fixture()
+    await store.create(project, { id: 'idea-delete', surface: 'inspiration', title: 'Ideas' })
+    const deleted = await store.appendOutput(project, { kind: 'answer', content: 'delete me', time: 'T1', conversationId: 'idea-delete', generation: 0, turnId: 'deleted' })
+    await store.setNativeState(project, 'idea-delete', 0, 'codex', 'old-thread', 'old-turn', 'deleted')
+    const oldJournal = await data.readJournal(project, '.modmind/conversations-v3/idea-delete.jsonl')
+    const updated = await store.replaceView(project, 'idea-delete', 0, { messages: [
+      { role: 'user', content: 'keep me', status: 'completed', sequence: deleted.sequence }
+    ] })
+    expect(updated).toMatchObject({ id: 'idea-delete', generation: 1, native: {}, nativeTurns: {}, events: [], lastSequence: 0 })
+    expect(updated.view.messages?.[0].sequence).toBeUndefined()
+    expect(await data.readJournal(project, '.modmind/conversations-v3/idea-delete.jsonl')).toEqual([])
+    await expect(store.saveView(project, updated.id, 0, { messages: [] })).rejects.toThrow()
+    await expect(store.appendOutput(project, { ...deleted, content: 'late', generation: 0 })).rejects.toThrow()
+    // Simulate an old replica surviving a crash during journal cleanup.
+    await data.appendJournal(project, '.modmind/conversations-v3/idea-delete.jsonl', oldJournal.join(''))
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData))
+    stores.push(reopened)
+    expect((await reopened.list(project, 'inspiration')).map(entry => entry.id)).toEqual(['idea-delete'])
+    const restored = await reopened.read(project, updated.id)
+    expect(restored?.view.messages?.map(message => message.content)).toEqual(['keep me'])
+    expect(restored?.events).toEqual([])
+    await reopened.replaceView(project, updated.id, 1, { messages: [] })
+    expect((await reopened.read(project, updated.id))?.view.messages).toEqual([])
+    expect(await reopened.eventsSince(project, updated.id, 0)).toMatchObject({ events: [] })
+  })
+
+  it('rejects a queued old stream when replacing history and accepts the new generation', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'idea-queued', surface: 'inspiration' })
+    const replacement = store.replaceView(project, 'idea-queued', 0, { messages: [] })
+    const stale = store.appendOutput(project, { kind: 'delta', content: 'late', time: 'T1', conversationId: 'idea-queued', generation: 0, turnId: 'old' })
+    const rejected = expect(stale).rejects.toThrow()
+    await replacement
+    await rejected
+    const fresh = await store.appendOutput(project, { kind: 'answer', content: 'new', time: 'T2', conversationId: 'idea-queued', generation: 1, turnId: 'new' })
+    expect(fresh.sequence).toBe(1)
+    expect((await store.read(project, 'idea-queued'))?.events).toHaveLength(1)
+  })
+
   it('keeps first and last native attempts across reload and clears positions when replacing a thread', async () => {
     const { project, store, userData } = await fixture()
     await store.create(project, { id: 'ws-turns', surface: 'workspace' })

@@ -619,6 +619,7 @@ export type UiMode = 'beginner' | 'advanced'
 export type BeginnerTaskState = 'idle' | 'working' | 'success' | 'error'
 
 export interface PipelineEvent {
+  notice?: AiNotice
   id: string
   sessionId?: string
   projectPath?: string
@@ -792,6 +793,8 @@ export interface ExternalAgentConfiguration {
   mode?: 'local' | 'hosted'
   baseUrl?: string
   model?: string
+  /** Actual runtime context limits keyed by exact model ID; absent means registry lookup. */
+  modelContextWindows?: Record<string, number>
   reasoningEffort?: ReasoningEffort
   apiKey?: string
   hasStoredKey?: boolean
@@ -915,7 +918,15 @@ export interface AiTokenUsage {
   contextWindow?: number
 }
 
+export interface AiNotice {
+  /** Stable within one user run; used only for display aggregation. */
+  key: string
+  detail: string
+  occurrences?: number
+}
+
 export interface AiOutputEvent {
+  notice?: AiNotice
   kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error'
   content: string
   time: string
@@ -943,6 +954,7 @@ export interface AiOutputEvent {
 }
 
 export interface InspirationChatMessage {
+  notice?: AiNotice
   role: 'user' | 'assistant'
   kind?: 'tool'
   id?: string
@@ -951,7 +963,7 @@ export interface InspirationChatMessage {
   turnId?: string
   sequence?: number
   content: string
-  status?: 'streaming' | 'completed' | 'error' | 'cancelled'
+  status?: 'streaming' | 'completed' | 'warning' | 'error' | 'cancelled'
   dedupeKey?: string
   replay?: AiTurnReplay
   /** Only the completed answer for a turn can be sent to the workbench. */
@@ -1048,6 +1060,7 @@ export interface ConversationEventsPage {
 }
 
 export interface AiCreateCodeOptions {
+  inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   workbenchFeatures?: import('./workbenchFeatures').WorkbenchFeatures
   surface?: AiSurface
   /** Read-only inspiration policy inside the existing workspace conversation. */
@@ -1430,6 +1443,7 @@ export interface ModMindApi {
     read: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
     create: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
+    replaceView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']) => Promise<ConversationDocument>
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => Promise<ConversationEventsPage>
     fork: (projectPath: string, input: ConversationForkInput) => Promise<ConversationDocument>
     archive: (projectPath: string, conversationId: string, archived: boolean) => Promise<ConversationDocument>
@@ -1496,6 +1510,11 @@ export interface ModMindApi {
   minecraft: MinecraftApi
   localTest: LocalTestApi
   production: ProductionApi
+  inspiration: {
+    readEvidence: (projectPath: string, input: import('./inspirationEvidence').InspirationEvidenceRequest) => Promise<import('./inspirationEvidence').InspirationEvidence>
+    readKnowledge: (projectPath: string) => Promise<import('./inspirationKnowledge').InspirationNote[]>
+    updateKnowledge: (projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }) => Promise<import('./inspirationKnowledge').InspirationNote[]>
+  }
   decompile: {
     pickJar: () => Promise<string | null>
     inspect: (jarPath: string) => Promise<import('./decompile').DecompileInspectResult>

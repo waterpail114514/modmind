@@ -1536,7 +1536,7 @@ button { color: inherit; }
 .agent-picker-menu { position: absolute; z-index: 10; top: calc(100% + 6px); right: 0; width: 170px; padding: 5px; border: 1px solid var(--agent-fill-3); border-radius: 8px; background: var(--theme-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--theme-shadow) 14%, transparent); }
 .agent-picker-menu button { width: 100%; min-height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 6px; color: var(--agent-text-2); background: transparent; cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
 .agent-picker-menu button:hover, .agent-picker-menu button.active { color: var(--agent-text-1); background: var(--agent-fill-2); }
-.agent-picker-menu button svg:last-child { margin-left: auto; color: var(--agent-primary); }
+.agent-picker-menu button svg:last-child:not(:first-child) { margin-left: auto; color: var(--agent-primary); }
 .agent-recovery-banner { margin: 8px auto 0; width: calc(100% - clamp(80px, 10%, 240px)); box-sizing: border-box; padding: 9px 12px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--theme-line); border-radius: 8px; color: var(--theme-accent); background: var(--theme-panel); }
 .agent-recovery-banner > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .agent-recovery-banner strong { font-size: 12px; }
@@ -1613,6 +1613,10 @@ button { color: inherit; }
 .agent-notice { padding: 9px 10px; display: flex; align-items: flex-start; gap: 7px; border-radius: 8px; font-size: 12px; }
 .agent-notice.warning { color: var(--theme-warning); background: var(--theme-panel); }
 .agent-notice.error { color: var(--theme-danger); background: var(--theme-surface); }
+.ai-notice-details { margin-top: 5px; color: var(--theme-text); font-size: 12px; }
+.ai-notice-details summary { width: fit-content; cursor: pointer; }
+.ai-notice-details p { margin: 6px 0 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.ai-notice-row strong { white-space: normal; overflow-wrap: anywhere; }
 .agent-empty { min-height: 300px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--agent-text-3); text-align: center; }
 .agent-empty-avatar { width: 48px; height: 48px; margin-bottom: 14px; display: grid; place-items: center; border-radius: 8px; color: var(--agent-text-2); background: var(--agent-fill-2); }
 .agent-empty strong { color: var(--agent-text-1); font-size: 16px; font-weight: 600; }
@@ -4715,14 +4719,28 @@ body {
 .chat-welcome button:disabled { opacity: .45; cursor: default; }
 .chat-welcome button:focus-visible { outline: none; outline-offset: 0; }
 .inspiration-minimal { background: var(--mm-background); container-type: inline-size; }
-.inspiration-heading { min-height: 58px; flex: 0 0 auto; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.inspiration-heading { position: relative; z-index: 4; min-height: 58px; flex: 0 0 auto; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .inspiration-heading-title { min-width: 0; display: flex; align-items: baseline; gap: 14px; }
 .inspiration-heading-title h1 { margin: 0; color: var(--inspiration-text); font-size: 14px; font-weight: 600; white-space: nowrap; }
 .inspiration-heading-title > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .inspiration-heading-actions { min-width: 0; display: flex; align-items: center; gap: 16px; }
-.inspiration-heading-actions select { width: 140px; min-width: 0; padding: 5px 20px 5px 4px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; text-overflow: ellipsis; cursor: pointer; }
-.inspiration-heading-actions button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; padding: 6px 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
-.inspiration-heading-actions button:disabled, .inspiration-heading-actions select:disabled { opacity: .45; cursor: default; }
+.inspiration-heading-actions > button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; padding: 6px 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.inspiration-heading-actions button:disabled { opacity: .45; cursor: default; }
+.inspiration-conversation-picker { position: relative; min-width: 0; }
+.inspiration-conversation-picker > .agent-picker-trigger { width: auto; max-width: 220px; min-width: 0; padding: 0 10px; }
+.inspiration-conversation-picker > .agent-picker-trigger > span { display: block; text-overflow: ellipsis; mask-image: none; -webkit-mask-image: none; }
+.inspiration-conversation-picker > .agent-picker-trigger > svg { display: block; flex-shrink: 0; }
+.inspiration-conversation-menu { width: min(320px, calc(100vw - 32px)); box-sizing: border-box; }
+.inspiration-conversation-list { max-height: min(280px, calc(100dvh - 180px)); overflow: auto; overscroll-behavior: contain; }
+.inspiration-conversation-list button { min-height: 38px; }
+.inspiration-conversation-option { display: flex; align-items: center; }
+.inspiration-conversation-option > button:first-child { flex: 1; min-width: 0; width: auto; }
+.inspiration-conversation-menu .inspiration-conversation-delete { flex: 0 0 32px; width: 32px; justify-content: center; padding: 0; color: var(--theme-muted); }
+.inspiration-conversation-menu .inspiration-conversation-delete:hover { color: var(--theme-danger); }
+.inspiration-conversation-list button > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.inspiration-conversation-list small { flex-shrink: 0; color: var(--theme-muted); font-size: 10px; }
+.inspiration-conversation-list button > svg { flex-shrink: 0; }
+.inspiration-conversation-menu .inspiration-conversation-new { margin-top: 5px; border-top: 1px solid var(--theme-line); border-radius: 0 0 5px 5px; min-height: 36px; }
 .inspiration-minimal .inspiration-layout { display: flex; flex: 1; min-height: 0; }
 .inspiration-minimal .inspiration-chat { flex: 1; background: transparent; }
 .inspiration-minimal .chat-welcome { width: min(860px, calc(100% - 64px)); padding-bottom: 24px; }
@@ -4767,7 +4785,7 @@ body {
 .app-shell.dark-mode .inspiration-minimal { background: var(--mm-background); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-chat { background: transparent; }
 .app-shell.dark-mode .inspiration-heading-title h1 { color: var(--inspiration-text); }
-.app-shell.dark-mode .inspiration-heading-actions select, .app-shell.dark-mode .inspiration-heading-actions button { color: var(--muted); }
+.app-shell.dark-mode .inspiration-heading-actions > button { color: var(--muted); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-composer { background: var(--surface); border-color: var(--line); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-composer textarea { color: var(--inspiration-text); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-message.user > div { background: var(--surface-alt); }
@@ -4780,7 +4798,9 @@ body {
   .inspiration-heading { min-height: 52px; padding: 0 16px; gap: 8px; }
   .inspiration-heading-title > span { display: none; }
   .inspiration-heading-actions { gap: 10px; }
-  .inspiration-heading-actions select { width: 112px; }
+  .inspiration-conversation-picker { position: static; }
+  .inspiration-conversation-picker > .agent-picker-trigger { max-width: 150px; }
+  .inspiration-conversation-menu { right: 16px; top: calc(100% - 2px); }
   .inspiration-minimal .chat-welcome, .inspiration-compose-area { width: calc(100% - 32px); }
   .chat-welcome.inspiration .chat-welcome-options { gap: 0; }
   .chat-welcome.inspiration .chat-welcome-options > button { min-height: 42px; padding: 10px 0; }

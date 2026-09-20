@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -8,6 +8,7 @@
   "license": "AGPL-3.0-only",
   "sourceFingerprint": "sha256:235b5b247370dc5069a627962c848fb0d80f557114a51f51ebf5610db303f504",
   "scripts": {
+    "models:sync": "node scripts/sync-model-context-registry.mjs",
     "dev": "electron-vite dev",
     "prebuild": "npm run theme:check && node scripts/clean-build-output.mjs",
     "build": "electron-vite build",

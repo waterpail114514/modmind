@@ -32,6 +32,7 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 async function check(model, prepareCatalog) {
   const home = await fs.mkdtemp(path.join(temporary, 'home-'))
   const catalog = await prepareCatalog(home, model)
+  const entry = JSON.parse(await fs.readFile(catalog.path, 'utf8')).models.find(entry => entry.slug === model)
   await fs.writeFile(path.join(home, 'config.toml'), [
     `model = ${JSON.stringify(model)}`, 'model_provider = "thirdparty"',
     `model_catalog_json = ${JSON.stringify(catalog.path)}`, 'model_reasoning_effort = "high"',
@@ -82,7 +83,9 @@ async function check(model, prepareCatalog) {
         assert.equal(outgoing.reasoning?.summary, undefined)
         assert.equal(outgoing.reasoning?.effort, 'high')
         assert.equal(outgoing.text?.verbosity, undefined)
-        console.log(`PASS ${model}: native models retained, turn completed, exact upstream model, no metadata warnings`)
+        const windows = events.filter(event => event.method === 'thread/tokenUsage/updated').map(event => event.params.tokenUsage.modelContextWindow)
+        assert.ok(windows.some(window => window >= entry.context_window * 0.9 && window <= entry.context_window), `Runtime context differs from registry: ${JSON.stringify(windows)} vs ${entry.context_window}`)
+        console.log(`PASS ${model}: context=${entry.context_window}, compact=${entry.auto_compact_token_limit}, native window=${windows.at(-1)}, turn completed`)
       })(),
       new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`Timed out: ${model}\n${stderr}\n${JSON.stringify(events).slice(-3000)}`)), 20_000) })
     ])
@@ -98,7 +101,7 @@ try {
   const bundle = path.join(temporary, 'catalog.cjs')
   await build({ entryPoints: ['src/main/codexModelCatalog.ts'], outfile: bundle, platform: 'node', format: 'cjs', bundle: true })
   const { prepareCodexModelCatalog } = createRequire(import.meta.url)(bundle)
-  for (const model of ['grok-4', 'google/gemini-2.5-pro', 'deepseek-chat', 'qwen/qwen3-coder', 'nvidia/nemotron-3-ultra-550b-a55b:free']) await check(model, prepareCodexModelCatalog)
+  for (const model of ['deepseek-v4-flash', 'gpt-4-0314', 'grok-4', 'google/gemini-2.5-pro', 'deepseek-chat', 'qwen/qwen3-coder', 'nvidia/nemotron-3-ultra-550b-a55b:free']) await check(model, prepareCodexModelCatalog)
 } finally {
   await new Promise(resolve => server.close(resolve))
   await fs.rm(temporary, { recursive: true, force: true })

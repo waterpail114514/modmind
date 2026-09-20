@@ -9,6 +9,7 @@ import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarge
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
 import { prepareCodexModelCatalog } from './codexModelCatalog'
 import { syncWorkbenchSkills } from './workbenchSkills'
+import { validModelContext } from '../shared/modelContext'
 export { CODEX_RUNTIME_VERSION } from './runtimeTarget'
 const CODEX_ENV_KEY = 'MODMIND_THIRD_PARTY_API_KEY'
 const DOWNLOAD_ATTEMPTS_PER_SOURCE = 2
@@ -27,6 +28,9 @@ export interface CodexServerConfig {
   baseUrl: string
   model: string
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+  contextWindow?: number
+  /** Original provider address before routing through the local protocol adapter. */
+  upstreamBaseUrl?: string
 }
 
 export interface CodexSetupResult {
@@ -91,6 +95,33 @@ async function usableManagedCodex(root: string, executable: string): Promise<boo
   catch { return false }
 }
 
+/** Only retire completed installations after the pinned runtime has passed validation. */
+async function pruneObsoleteCodexRuntimes(rootDir: string): Promise<void> {
+  const cache = path.resolve(rootDir, 'codex-runtime')
+  const currentName = path.basename(managedCodexRuntimePath(rootDir))
+  const target = requireCodexRuntimeTarget().id
+  try {
+    // Never traverse a redirected cache or an installation supplied by the user.
+    if (!(await fs.lstat(cache)).isDirectory()) return
+    const realCache = await fs.realpath(cache)
+    for (const entry of await fs.readdir(cache, { withFileTypes: true })) {
+      const match = /^(\d+\.\d+\.\d+)-([a-z0-9]+-[a-z0-9]+)$/.exec(entry.name)
+      if (!entry.isDirectory() || entry.name === currentName || match?.[2] !== target) continue
+      const obsolete = path.join(realCache, entry.name)
+      try {
+        if (!(await fs.lstat(obsolete)).isDirectory() || path.relative(realCache, await fs.realpath(obsolete)) !== entry.name) continue
+        await fs.rm(obsolete, { recursive: true, force: true })
+      } catch (error) {
+        // Windows may still hold an old executable. Retry on the next preparation;
+        // cleanup must never prevent the verified current runtime from starting.
+        console.warn(`Could not retire managed Codex runtime ${entry.name}; will retry on next preparation`, error)
+      }
+    }
+  } catch (error) {
+    console.warn('Could not inspect obsolete managed Codex runtimes; will retry on next preparation', error)
+  }
+}
+
 function normalizeBaseUrl(value: string): string {
   const url = new URL(value.trim())
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('第三方 AI 地址必须使用 HTTP 或 HTTPS')
@@ -105,7 +136,9 @@ function validateConfig(value: unknown): CodexServerConfig {
   const model = typeof record.model === 'string' ? record.model.trim() : ''
   const reasoningEffort = record.reasoningEffort === 'low' || record.reasoningEffort === 'medium' || record.reasoningEffort === 'high' || record.reasoningEffort === 'xhigh' || record.reasoningEffort === 'max' || record.reasoningEffort === 'ultra' ? record.reasoningEffort : 'high'
   if (!apiKey || !baseUrl || !model) throw new Error('服务端配置缺少 API Key、Base URL 或模型名')
-  return {apiKey, baseUrl, model, reasoningEffort}
+  if (record.contextWindow !== undefined && !validModelContext(record.contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
+  const upstreamBaseUrl = typeof record.upstreamBaseUrl === 'string' ? normalizeBaseUrl(record.upstreamBaseUrl) : undefined
+  return {apiKey, baseUrl, model, reasoningEffort, contextWindow: record.contextWindow as number | undefined, upstreamBaseUrl}
 }
 
 function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): string {
@@ -130,7 +163,7 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): 
 }
 
 async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model)
+  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow })
   const desired = codexConfigText(config, catalog.path)
   const current = await fs.readFile(configPath, 'utf8').catch(() => '')
   if (current === desired) return catalog.changed
@@ -199,15 +232,16 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
 }
 
 export async function ensureManagedCodexRuntime(options: EnsureManagedCodexOptions): Promise<string> {
-  const runtimePath = managedCodexRuntimePath(options.rootDir)
-  const executable = managedCodexExecutablePath(options.rootDir)
-  if (await usableManagedCodex(runtimePath, executable)) return executable
-
+  const runtimePath = path.resolve(managedCodexRuntimePath(options.rootDir))
   const key = process.platform === 'win32' ? runtimePath.toLowerCase() : runtimePath
   const active = managedRuntimePreparations.get(key)
   if (active) return active
 
-  const preparation = downloadCodex(options.rootDir, options)
+  const preparation = (async () => {
+    const executable = await downloadCodex(options.rootDir, options)
+    await pruneObsoleteCodexRuntimes(options.rootDir)
+    return executable
+  })()
   managedRuntimePreparations.set(key, preparation)
   try {
     return await preparation

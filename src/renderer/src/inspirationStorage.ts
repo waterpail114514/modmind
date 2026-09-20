@@ -3,6 +3,7 @@ import type { InspirationChatMessage } from '../../shared/types'
 import { normalizeAiTurnReplay } from '../../shared/aiReplay'
 import { isAiOperationalStatusText } from '../../shared/aiOutput'
 import { titleFromUserText } from './workbenchConversations'
+import { presentLegacyAiNotice } from '../../shared/aiNotice'
 
 export interface InspirationConversation {
   id: string
@@ -55,6 +56,9 @@ export function normalizeStoredInspirationMessages(messages: InspirationChatMess
     if (message.role !== 'assistant') {
       const replay = normalizeAiTurnReplay(message.replay)
       return replay ? { ...message, replay } : message.replay ? { ...message, replay: undefined } : message
+    }
+    if (message.kind === 'tool' || message.status === 'error' || message.status === 'warning') {
+      message = { ...message, content: presentLegacyAiNotice(message.content, message.status === 'warning') }
     }
     if (message.kind === 'tool') return message.status === 'streaming' ? { ...message, status: 'completed' } : message
     if (message.status === 'streaming') {

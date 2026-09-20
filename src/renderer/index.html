@@ -7,8 +7,30 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>ModMind</title>
+    <style>
+      #app-loading { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; background: var(--theme-raised, #fff); opacity: 1; transition: opacity 240ms var(--ease-out, cubic-bezier(.23, 1, .32, 1)); -webkit-app-region: drag; }
+      #app-loading[data-loading="false"] { opacity: 0; }
+      #app-loading[popover] { margin: 0; padding: 0; border: 0; width: 100%; height: 100%; max-width: none; max-height: none; }
+      #app-loading::backdrop { background: transparent; pointer-events: none; }
+      #app-loading[hidden] { display: none; }
+      #app-loading img { width: 180px; max-width: 45vw; height: auto; user-select: none; }
+      #app-loading .loading-logo-dark { display: none; }
+      :root[data-theme-mode="dark"] #app-loading .loading-logo-light { display: none; }
+      :root[data-theme-mode="dark"] #app-loading .loading-logo-dark { display: block; }
+      @starting-style { #app-loading { opacity: 0; } }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme-mode]) #app-loading { background: #202020; }
+        :root:not([data-theme-mode]) #app-loading .loading-logo-light { display: none; }
+        :root:not([data-theme-mode]) #app-loading .loading-logo-dark { display: block; }
+      }
+      @media (prefers-reduced-motion: reduce) { #app-loading { transition-duration: 120ms !important; } }
+    </style>
   </head>
   <body>
+    <div id="app-loading" popover="manual" data-loading="true" role="status" aria-label="正在加载 ModMind" aria-live="polite">
+      <img class="loading-logo-light" src="/src/assets/logo-wordmark.svg" alt="ModMind" draggable="false" />
+      <img class="loading-logo-dark" src="/src/assets/logo-wordmark-dark.svg" alt="ModMind" draggable="false" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

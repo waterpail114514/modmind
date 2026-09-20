@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import builtinCatalog from './codexBuiltinModels.json'
 import { CODEX_RUNTIME_VERSION } from './runtimeTarget'
 import { buildCodexModelCatalog, CODEX_MODEL_CATALOG_VERSION, prepareCodexModelCatalog, THIRD_PARTY_CONTEXT_BUDGET } from './codexModelCatalog'
+import { resolveModelContextBudget } from './modelContextRegistry'
 
 describe('managed Codex model metadata', () => {
   it('pins the built-in catalog to the managed runtime', () => {
@@ -16,12 +17,31 @@ describe('managed Codex model metadata', () => {
   it.each(['grok-4', 'google/gemini-2.5-pro', 'deepseek-chat', 'qwen/qwen3-coder', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'custom-model'])('registers the exact upstream name %s while retaining native metadata', model => {
     const catalog = buildCodexModelCatalog(model)!
     expect(catalog.models.slice(0, -1)).toEqual(builtinCatalog.models)
+    const budget = resolveModelContextBudget(model)
     expect(catalog.models.at(-1)).toMatchObject({
-      slug: model, context_window: THIRD_PARTY_CONTEXT_BUDGET,
-      auto_compact_token_limit: 24_576,
+      slug: model, context_window: budget.contextWindow,
+      auto_compact_token_limit: budget.autoCompactTokenLimit,
       supports_reasoning_summaries: false, support_verbosity: false,
       supports_parallel_tool_calls: false, apply_patch_tool_type: null
     })
+  })
+
+  it('uses the registry for large models, keeps legacy small limits and permits explicit private deployments', () => {
+    expect(buildCodexModelCatalog('deepseek-v4-flash')!.models.at(-1)!.context_window).toBe(1_000_000)
+    expect(buildCodexModelCatalog('gpt-4-0314')!.models.at(-1)!.context_window).toBe(8192)
+    expect(buildCodexModelCatalog('custom-model')!.models.at(-1)!.context_window).toBe(THIRD_PARTY_CONTEXT_BUDGET)
+    expect(buildCodexModelCatalog('private', { contextWindow: 524288 })!.models.at(-1)!.context_window).toBe(524288)
+  })
+
+  it('does not apply native capabilities to arbitrary lookalike suffixes', () => {
+    expect(buildCodexModelCatalog('gpt-5.4-mini-private')!.models.at(-1)!.supports_reasoning_summaries).toBe(false)
+  })
+
+  it('overrides only the selected native model, retaining internal helper entries exactly', () => {
+    const catalog = buildCodexModelCatalog('gpt-5.4-mini', { contextWindow: 65536 })!
+    expect(catalog.models.filter(m => m.slug === 'gpt-5.4-mini')).toHaveLength(1)
+    expect(catalog.models.find(m => m.slug === 'codex-auto-review')).toEqual(builtinCatalog.models.find(m => m.slug === 'codex-auto-review'))
+    expect(catalog.models.at(-1)!.context_window).toBe(65536)
   })
 
   it('preserves the capabilities and instructions of native dated variants', () => {

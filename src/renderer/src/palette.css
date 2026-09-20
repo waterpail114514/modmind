@@ -61,6 +61,7 @@
   --bg: var(--theme-canvas);
   --mm-shadow: 0 4px 16px color-mix(in srgb, var(--theme-shadow) 8%, transparent);
   --mm-shadow-float: 0 10px 30px color-mix(in srgb, var(--theme-shadow) 18%, transparent);
+  --mm-floating-surface: color-mix(in srgb, var(--theme-raised) 35%, var(--theme-inset));
   --studio-tint: transparent;
 }
 /* Shared neutral surfaces. Blue identifies an action or selection, never a focus frame. */
@@ -120,7 +121,7 @@
 .app-shell:is(.dark-mode, :not(.dark-mode)) .switch-control input:focus-visible + span { outline: none; box-shadow: 0 2px 0 var(--focus-stroke); }
 .app-shell:is(.dark-mode, :not(.dark-mode)) :is(.primary-button, .send-button, .agent-primary-button, .agent-send-button):focus-visible { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--theme-on-action) 70%, transparent); }
 .app-shell .monaco-editor :focus { outline: none; box-shadow: none; }
-.ftb-ctx-menu { background: var(--surface); color: var(--text); border-color: var(--line); }
+.ftb-ctx-menu { background: var(--mm-floating-surface); color: var(--text); border-color: var(--line); }
 .ftb-ctx-menu button { color: inherit; }
 .ftb-ctx-menu button:focus-visible { outline: none; background: var(--focus-fill); box-shadow: inset 0 -2px 0 var(--focus-stroke); }
 .app-shell ::selection { color: var(--text); background: var(--selection-fill); }
@@ -141,3 +142,13 @@
 .app-shell:is(.dark-mode, :not(.dark-mode)) :is(.external-agent-reasoning-control button.active, .agent-segmented button.active) { background: var(--theme-action); color: var(--theme-on-action); }
 .app-shell .react-flow { --xy-background-color: var(--theme-canvas); --xy-background-pattern-dots-color: var(--theme-grid); --xy-minimap-background-color: var(--theme-panel); --xy-minimap-mask-background-color: color-mix(in srgb, var(--theme-canvas) 70%, transparent); --xy-minimap-node-background-color: var(--theme-strong-line); --xy-controls-button-background-color: var(--theme-surface); --xy-controls-button-color: var(--theme-text); --xy-controls-button-border-color: var(--theme-line); }
 @container (max-width: 600px) { .theme-preset-row { flex-wrap: wrap; } }
+
+/* A softly tinted, opaque surface separates floating content from the page.
+   Both source palette roles stay opaque when wallpaper is enabled. */
+.app-shell:is(.dark-mode, :not(.dark-mode)) :is(
+  .agent-picker-menu, .agent-settings-popover, .agent-context-popover,
+  .titlebar-menu, .project-context-menu, .backend-switch-menu,
+  .minimal-project-dropdown, .more-actions-panel, .global-download-popover,
+  .image-workflow-menu-panel, .image-workflow-picker-popover,
+  .ftb-ctx-menu, .info-tooltip-content, .ftb-quest-node-tooltip
+) { background: var(--mm-floating-surface); }

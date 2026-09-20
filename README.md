@@ -4,15 +4,12 @@
 
 ModMind 是一个面向 Minecraft Mod 开发的 AI 辅助工作台，帮助你管理项目、模组、资源包、整合包和服务器工作流。
 
-## 当前版本：1.4.7
+## 当前版本：1.4.8
 
-- 更新 ModMind Logo、应用图标与安装界面，新增主题配色、自定义颜色和图片/视频背景。
-- 改进工作台、设置、插件界面和窄窗口布局，集中管理功能开关与常用操作。
-- 新增 AI 附件导入与 PDF/DOCX 文档读取，改进 Codex 模型信息、Claude 兼容性及任务保护。
-- 增强图片工作流的切换、粘贴、历史记录与诊断追踪。
-- 增强整合包模块导入、Modrinth/CurseForge 导入识别及产物校验。
-- 改进本地游戏测试、客户端会话、玩家测试和服务器插件项目处理。
-- 增强诊断日志与会话记录，提供 Windows 和 macOS arm64/x64 安装包。
+- 增强灵感台联网检索、项目知识引用和分析功能，支持查看来源与证据。
+- 改进模型上下文配置、长任务保护和 AI 错误提示。
+- 修复对话删除后的历史恢复问题，优化项目加载和消息回放。
+- 改进 Codex 运行时缓存清理及界面细节。
 - 移除 Herobrine。
 
 ## 下载
@@ -75,7 +72,7 @@ Windows 直接运行项目的 `gradlew.bat`，macOS/Linux 运行 `./gradlew`。G
 
 Windows 打包会生成 NSIS 安装包和更新元数据，并执行版本、体积及签名策略检查。自动更新文件位于 `release/update`：稳定版使用 `latest.yml`，预发布版使用 `beta.yml`，预发布版不能覆盖稳定版元数据。向更新服务上传时，先上传安装包和 blockmap，最后上传 YAML；保留旧安装包和 blockmap，以便跨版本更新。
 
-当前版本为 `1.4.7`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
+当前版本为 `1.4.8`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
 
 ## 参与开发
 

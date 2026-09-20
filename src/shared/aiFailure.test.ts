@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { describeAiFailureForUser } from './aiFailure'
 
 describe('describeAiFailureForUser', () => {
+  it('does not interpret numbers in request IDs or usage as HTTP statuses', () => {
+    for (const message of ['request id: req-429-abc', 'input_tokens=500', 'received 404 tokens']) {
+      expect(describeAiFailureForUser(message)).not.toMatch(/线路繁忙|HTTP|模型不存在/)
+    }
+  })
   it('explains an upstream no-output timeout instead of showing a blank inspiration reply', () => {
     const message = describeAiFailureForUser(new Error('Codex 连续 5 分钟没有任何操作。请稍后重试'))
     expect(message).toContain('AI')
@@ -19,7 +24,7 @@ describe('describeAiFailureForUser', () => {
 
   it('does not blame the user for a generic invalid-request relay failure', () => {
     const message = describeAiFailureForUser('请求参数无效，请检查请求格式和参数')
-    expect(message).toBe('AI 请求未被接受，请尝试新会话或切换模型。')
+    expect(message).toBe('AI 请求未被接受，请检查模型接口配置或切换模型后继续。')
     expect(message).not.toContain('HTTP')
     expect(message).not.toContain('请修改任务描述')
   })
@@ -35,9 +40,11 @@ describe('describeAiFailureForUser', () => {
     expect(describeAiFailureForUser('permission denied while reading project')).toContain('没有操作权限')
   })
 
-  it('explains workflow and unclassified upstream failures without exposing internal labels', () => {
+  it('explains workflow issues but preserves unclassified upstream errors', () => {
     expect(describeAiFailureForUser('Review Agent rejected completion. Missing stages: validate, build'))
       .toContain('完成检查未通过')
-    expect(describeAiFailureForUser('Provider returned error')).toContain('AI 请求失败')
+    expect(describeAiFailureForUser('Provider returned error')).toBe('Provider returned error')
+    expect(describeAiFailureForUser('server_error\nrequest_id=req-456')).toBe('server_error\nrequest_id=req-456')
+    expect(describeAiFailureForUser({ message: 'Unknown provider response', code: 'unexpected' })).toBe('Unknown provider response')
   })
 })

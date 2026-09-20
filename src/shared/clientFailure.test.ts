@@ -7,8 +7,16 @@ describe('client failure presentation', () => {
   it('removes IPC wrappers and keeps useful validation messages', () => {
     expect(describeClientFailure(new Error("Error invoking remote method 'project:rename': Error: 项目名称不能为空"))).toBe('项目名称不能为空')
     expect(describeClientFailure(new Error('ENOENT: no such file or directory C:\\private\\project.json'))).toBe('找不到文件，请确认文件仍然存在。')
-    expect(describeClientFailure('unexpected provider payload\n' + 'x'.repeat(300))).toBe('操作失败，请重试；仍失败可导出诊断包。')
+    expect(describeClientFailure('unexpected provider payload\n' + 'x'.repeat(300))).toBe('unexpected provider payload\n' + 'x'.repeat(300))
     expect(describeClientFailure('HTTP 503: <html>upstream unavailable</html>')).toBe('服务暂时不可用，请稍后重试。')
+  })
+
+  it('retains the unknown cause and request ID while redacting credentials, including after IPC presentation twice', () => {
+    const raw = 'Unsupported tool schema\nrequest_id=req-123 api_key=private-value'
+    const result = presentClientResult({ kind: 'error', content: raw }, 'ai:output', () => undefined)
+    expect(result.content).toBe('Unsupported tool schema\nrequest_id=req-123 api_key=[REDACTED]')
+    expect(describeClientFailure(result.content)).toBe(result.content)
+    expect(describeClientFailure({ code: 'unsupported_model', message: 'This model cannot use tools' })).toBe('This model cannot use tools')
   })
 
   it('retains returned and streamed failure originals without changing state or logs', () => {

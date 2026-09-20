@@ -266,7 +266,7 @@ export default function ImageStudioWorkspace({ visible, darkMode, onOpenSettings
         setWorkflowId(next.id); setWorkflowName(name)
       }
       setMessage(action === 'switch' ? '已保存当前画布并切换工作流' : '工作流已保存')
-    } catch (error) { setMessage(`工作流操作失败：${errorText(error)}`) }
+    } catch (error) { setMessage(`工作流未完成：${errorText(error)}`) }
     finally { storageLock.current = false; setStorageBusy(false) }
   }
   const saveWorkflow = (): void => { void manageWorkflow('save') }

@@ -1,3 +1,5 @@
+import { rawErrorText } from './rawError'
+
 /** Presentation only. Callers must record the original error before using this text. */
 export function describeClientFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message
@@ -11,6 +13,7 @@ export function describeClientFailure(error: unknown): string {
   if (/certificate|CERT_|TLS|SSL/i.test(message)) return '安全连接失败，请检查系统时间和网络设置。'
   if (/ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|network error|socket hang up|连接中断/i.test(message)) return '连接失败，请检查网络后重试。'
   if (/ETIMEDOUT|timeout|timed out|超时/i.test(message)) return '操作超时，请稍后重试。'
+  if (/Invalid URL|ERR_INVALID_URL/i.test(message)) return '地址格式不正确，请检查服务地址配置。'
   const status = message.match(/(?:HTTP\s*|status(?:_code)?[\s"':=]*)([45]\d\d)\b/i)?.[1]
   if (status === '401') return '登录已失效，请重新连接账号。'
   if (status === '402') return '余额或额度不足，请检查账号用量。'
@@ -20,8 +23,5 @@ export function describeClientFailure(error: unknown): string {
   if (status?.startsWith('5')) return '服务暂时不可用，请稍后重试。'
   if (status || /invalid_request|bad request/i.test(message)) return '请求未被接受，请检查配置或稍后重试。'
   if (/SyntaxError|Unexpected token|not valid JSON|JSON.*(?:position|line)|JSON 解析/i.test(raw)) return '内容格式不正确，请检查后重试。'
-  // Keep useful, short validation messages; do not expose stacks, payloads, paths or URLs.
-  if (message.length <= 100 && /[\u4e00-\u9fff]/.test(message)
-    && !/[\r\n]|https?:\/\/|[A-Z]:[\\/]|(?:^|\s)\/(?:[^\s/]+\/)|[{}]|request.?id|api.?key\s*[:=]|token\s*[:=]/i.test(message)) return message
-  return '操作失败，请重试；仍失败可导出诊断包。'
+  return rawErrorText(error)
 }

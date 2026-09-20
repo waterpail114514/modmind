@@ -374,6 +374,7 @@ const api: ModMindApi = {
     read: (projectPath: string, conversationId: string) => invoke('conversations:read', projectPath, conversationId),
     create: (projectPath: string, input: ConversationCreateInput) => invoke('conversations:create', projectPath, input),
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => invoke('conversations:saveView', projectPath, conversationId, generation, view, title),
+    replaceView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']) => invoke('conversations:replaceView', projectPath, conversationId, generation, view),
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => invoke('conversations:eventsSince', projectPath, conversationId, generation, afterSequence, limit),
     fork: (projectPath: string, input: ConversationForkInput) => invoke('conversations:fork', projectPath, input),
     archive: (projectPath: string, conversationId: string, archived: boolean) => invoke('conversations:archive', projectPath, conversationId, archived),
@@ -572,6 +573,11 @@ const api: ModMindApi = {
     saveToProject: (dataUrl: string, suggestedName: string) => invoke('image-studio:saveToProject', dataUrl, suggestedName)
   }
   ,
+  inspiration: {
+    readEvidence: (projectPath: string, input: import('../shared/inspirationEvidence').InspirationEvidenceRequest) => invoke('inspiration:readEvidence', projectPath, input) as Promise<import('../shared/inspirationEvidence').InspirationEvidence>,
+    readKnowledge: (projectPath: string) => invoke('inspiration:readKnowledge', projectPath) as Promise<import('../shared/inspirationKnowledge').InspirationNote[]>,
+    updateKnowledge: (projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }) => invoke('inspiration:updateKnowledge', projectPath, input) as Promise<import('../shared/inspirationKnowledge').InspirationNote[]>
+  },
   decompile: {
     pickJar: () => invoke('decompile:pickJar'),
     inspect: (jarPath: string) => invoke('decompile:inspect', jarPath) as Promise<import('../shared/decompile').DecompileInspectResult>,

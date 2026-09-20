@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, decompressRequest, normalizeHistoryMessageIds, responsesRequestToChatCompletions, sanitizeTokenBudgets } from './chatCompletionsAdapter'
+import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, decompressRequest, normalizeHistoryMessageIds, normalizeResponsesTools, responsesRequestToChatCompletions, sanitizeTokenBudgets } from './chatCompletionsAdapter'
 
 const adapters: ChatCompletionsAdapter[] = []
 
@@ -10,6 +10,117 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  const nativeTools = { type: 'additional_tools', role: 'developer', tools: [{ type: 'namespace', name: 'functions', tools: [
+    { type: 'custom', name: 'exec', description: 'Call tools from ALL_TOOLS', format: { type: 'text' } },
+    { type: 'function', name: 'wait', parameters: { type: 'object', properties: { cell_id: { type: 'string' } } } }
+  ] }] }
+
+  it('preserves namespaced custom tools and their results across a resumed Chat Completions turn', () => {
+    const code = 'text(await tools.mcp__modmind__modmind_web_read({url:"https://example.org"}))'
+    const request = { model: 'test', input: [nativeTools,
+      { type: 'custom_tool_call', namespace: 'functions', name: 'exec', call_id: 'call-web', input: code },
+      { type: 'custom_tool_call_output', call_id: 'call-web', output: 'Retrieved official page' },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue' }] }
+    ] }
+    const translated = responsesRequestToChatCompletions(request)
+    expect(translated.body.tools).toEqual(expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: 'functions__exec' }) })]))
+    expect(translated.body.messages).toEqual([
+      { role: 'assistant', content: null, tool_calls: [{ id: 'call-web', type: 'function', function: { name: 'functions__exec', arguments: JSON.stringify({ input: code }) } }] },
+      { role: 'tool', tool_call_id: 'call-web', content: 'Retrieved official page' },
+      { role: 'user', content: 'Continue' }
+    ])
+    const events = chatCompletionToResponsesEvents({ choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ id: 'call-next', function: { name: 'functions__exec', arguments: JSON.stringify({ input: code }) } }] } }] }, translated.tools)
+    expect(events).toContainEqual({ type: 'response.output_item.done', item: { type: 'custom_tool_call', call_id: 'call-next', namespace: 'functions', name: 'exec', input: code } })
+  })
+
+  it('merges repeated tool declarations without duplicating names or mutating history', () => {
+    const updated = { type: 'additional_tools', tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec', description: 'Updated catalog' }] }] }
+    const request = { model: 'test', input: [nativeTools, updated], tools: [{ type: 'function', name: 'lookup', parameters: {} }] }
+    const result = normalizeResponsesTools(request)
+    expect(result.tools).toMatchObject([{ name: 'lookup' }, { name: 'functions', tools: [{ name: 'exec', description: 'Updated catalog' }, { name: 'wait' }] }])
+    expect(result.input).toEqual([])
+    expect(request.input).toHaveLength(2)
+    expect(normalizeResponsesTools(result)).toEqual(result)
+  })
+
+  it.each(['responses', 'chat-completions'])('sends native input tool declarations to the upstream (%s)', async protocol => {
+    const received: Record<string, unknown>[] = []
+    const upstream = createServer(async (request, response) => {
+      let raw = ''; for await (const chunk of request) raw += chunk
+      const body = JSON.parse(raw)
+      response.setHeader('Content-Type', 'application/json')
+      if (protocol === 'chat-completions' && request.url === '/responses') { response.writeHead(404).end('{"error":{"message":"responses endpoint not found"}}'); return }
+      received.push(body)
+      response.end(protocol === 'responses' ? '{"output":[]}' : '{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}')
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const adapter = new ChatCompletionsAdapter(); adapters.push(adapter)
+      const base = await adapter.baseUrl(`http://127.0.0.1:${(upstream.address() as { port: number }).port}`)
+      for (let turn = 0; turn < 2; turn++) {
+        const response = await fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify({ model: 'test', input: [nativeTools, { type: 'message', role: 'user', content: 'read a webpage' }] }) })
+        expect(response.ok).toBe(true); await response.text()
+      }
+      expect(received).toHaveLength(2)
+      for (const body of received) {
+        expect(body.tools).toEqual(expect.arrayContaining([protocol === 'responses'
+          ? expect.objectContaining({ name: 'functions', tools: expect.arrayContaining([expect.objectContaining({ type: 'custom', name: 'exec' })]) })
+          : expect.objectContaining({ function: expect.objectContaining({ name: 'functions__exec' }) })]))
+        expect(JSON.stringify(body.input ?? body.messages)).not.toContain('additional_tools')
+      }
+    } finally { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())) }
+  })
+
+  it.each(['responses', 'chat-completions'])('binds resumed requests to the new group model with the same key (%s)', async (protocol) => {
+    let availableModel = 'gpt-6-astra'
+    const received: Array<{ model: string; authorization: string | undefined; input: unknown }> = []
+    const upstream = createServer(async (request, response) => {
+      let raw = ''
+      for await (const chunk of request) raw += chunk
+      const body = JSON.parse(raw)
+      response.setHeader('Content-Type', 'application/json')
+      if (protocol === 'chat-completions' && request.url === '/responses') {
+        response.writeHead(404)
+        response.end('{"error":{"message":"responses endpoint not found"}}')
+        return
+      }
+      received.push({ model: body.model, authorization: request.headers.authorization, input: body.input ?? body.messages })
+      if (body.model !== availableModel) {
+        response.writeHead(404)
+        response.end(JSON.stringify({ error: { message: `Model "${body.model}" is not supported by any configured account in this group` } }))
+        return
+      }
+      response.end(protocol === 'responses' ? JSON.stringify({ output: 'ok' }) : JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] }))
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = upstream.address() as { port: number }
+      const adapter = new ChatCompletionsAdapter()
+      adapters.push(adapter)
+      const send = async (url: string) => {
+        const response = await fetch(`${url}/responses`, {
+          method: 'POST', headers: { Authorization: 'Bearer unchanged-key' },
+          body: JSON.stringify({ model: 'gpt-6-astra', input: 'continue existing work' })
+        })
+        await response.text()
+        expect(response.status).toBe(200)
+      }
+      const first = await adapter.baseUrl(`http://127.0.0.1:${address.port}`, 'same-key', undefined, undefined, availableModel)
+      await send(first)
+      availableModel = 'grok-4.5'
+      const second = await adapter.baseUrl(`http://127.0.0.1:${address.port}`, 'same-key', undefined, undefined, availableModel)
+      expect(second).not.toBe(first)
+      await send(second)
+      await send(second) // Also exercise the cached protocol with stale CLI model metadata.
+      expect(received.map(x => x.model)).toEqual(['gpt-6-astra', 'grok-4.5', 'grok-4.5'])
+      expect(received.every(x => x.authorization === 'Bearer unchanged-key')).toBe(true)
+      expect(received[1].input).toEqual(received[0].input)
+    } finally {
+      upstream.closeAllConnections()
+      await new Promise<void>(resolve => upstream.close(() => resolve()))
+    }
+  })
+
   it('falls back only the dedicated approval model through both upstream protocols', async () => {
     const models: string[] = []
     const upstream = createServer(async (request, response) => {
@@ -34,7 +145,7 @@ describe('Chat Completions compatibility adapter', () => {
       if (!address || typeof address === 'string') throw new Error('missing server address')
       const adapter = new ChatCompletionsAdapter()
       adapters.push(adapter)
-      const url = await adapter.baseUrl(`http://127.0.0.1:${address.port}`, 'review', undefined, 'selected-model')
+      const url = await adapter.baseUrl(`http://127.0.0.1:${address.port}`, 'review', undefined, 'selected-model', 'selected-model')
       const result = await fetch(`${url}/responses`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'codex-auto-review', input: 'Review this operation' })

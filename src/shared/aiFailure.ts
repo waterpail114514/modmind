@@ -1,17 +1,18 @@
 import { describeClientFailure } from './clientFailure'
+import { rawErrorText } from './rawError'
 
 function readMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return rawErrorText(error)
 }
 
 function statusIn(message: string, status: number): boolean {
-  return new RegExp(`(?:^|\\D)${status}(?:\\D|$)`).test(message)
+  // A request id or token count containing 429/500 is not an HTTP failure.
+  return new RegExp(`(?:\\b(?:HTTP(?:/\\d(?:\\.\\d)?)?|status(?:_code)?)[\\s"':=]*${status}\\b|^${status}(?:\\s|$)|[（(]${status}(?:[）)，,]|\\s)|\\b${status}\\s+(?:Too Many Requests|Unauthorized|Forbidden|Not Found|Bad Request|Payment Required|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\\b)`, 'i').test(message)
 }
 
 /** Converts provider/Agent failures into a user-facing cause and next step. */
 export function describeAiFailureForUser(error: unknown): string {
   const message = readMessage(error).replace(/\s+/g, ' ').trim()
-  if (!message) return 'AI 请求失败，请重试或导出诊断包。'
 
   if (/no-output-timeout|没有任何操作|没有返回(?:任何内容|可显示的(?:回答|内容))|did not respond|no output|empty response|响应超时|响应.*超时/i.test(message)) {
     const duration = message.match(/(?:连续|等待)\s*([0-9]+\s*(?:分钟|秒))/i)?.[1]
@@ -49,13 +50,10 @@ export function describeAiFailureForUser(error: unknown): string {
     return `ModMind 完成检查未通过，请继续任务完成验证。`
   }
   if (statusIn(message, 400) || statusIn(message, 422) || /invalid_request|invalid (?:api )?parameter|请求参数无效|参数错误|协议不兼容|bad request/i.test(message)) {
-    return 'AI 请求未被接受，请尝试新会话或切换模型。'
+    return 'AI 请求未被接受，请检查模型接口配置或切换模型后继续。'
   }
   if (/外部代理任务已停止|任务已停止/i.test(message)) {
     return '任务已停止，当前进度已保留。'
   }
-  if (/provider returned error|internal server error|unknown error|未知错误|未分类错误|异常退出（退出码/i.test(message)) {
-    return 'AI 请求失败，请重试或切换模型。'
-  }
-  return describeClientFailure(message)
+  return describeClientFailure(error)
 }

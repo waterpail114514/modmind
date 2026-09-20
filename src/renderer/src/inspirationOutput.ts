@@ -2,8 +2,33 @@ import type { CodingResult, InspirationChatMessage } from '../../shared/types'
 import { replayUserText } from '../../shared/aiReplay'
 import { isUsableAiAnswer } from '../../shared/aiOutput'
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
+import { aiNoticeDetails, presentLegacyAiNotice } from '../../shared/aiNotice'
 
 type IdFactory = () => string
+
+/** Shared by live events and replay so retry attempts update a single row. */
+export function upsertInspirationNotice(messages: InspirationChatMessage[], event: AiOutputEvent): InspirationChatMessage[] {
+  if (!event.notice) return messages
+  const matches = (message: InspirationChatMessage): boolean => message.kind === 'tool'
+    && (message.turnId ?? message.sessionId) === (event.turnId ?? event.sessionId)
+    && message.notice?.key === event.notice?.key
+  const previous = messages.find(matches)
+  if (previous?.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return messages
+  const item: InspirationChatMessage = {
+    role: 'assistant', kind: 'tool', id: previous?.id ?? event.eventId ?? `notice:${event.turnId ?? event.sessionId}:${event.notice.key}`,
+    turnId: event.turnId, sessionId: event.sessionId, sequence: event.sequence, time: event.time, content: event.content,
+    status: inspirationStepStatus(event), isFinal: false, notice: event.notice
+  }
+  if (previous) return messages.map(message => matches(message) ? item : message)
+  const pending = messages.findIndex(message => message.status === 'streaming' && message.sessionId === event.sessionId)
+  if (pending < 0) return [...messages, item]
+  return [...messages.slice(0, pending), item, ...messages.slice(pending)]
+}
+
+export function inspirationStepStatus(event: Pick<AiOutputEvent, 'kind' | 'terminal'>): 'completed' | 'warning' | 'error' {
+  if (event.kind === 'error') return event.terminal === true ? 'error' : 'warning'
+  return event.kind === 'warning' ? 'warning' : 'completed'
+}
 
 export type InspirationTimelineRow =
   | { id: string; kind: 'tool-group'; items: InspirationChatMessage[] }
@@ -43,8 +68,13 @@ export function replayInspirationEvents(messages: InspirationChatMessage[], even
   const lastViewSequence = Math.max(0, ...messages.map((message) => message.sequence ?? 0))
   for (const record of events.filter((event) => event.kind === 'output' && event.sequence > lastViewSequence).sort((left, right) => left.sequence - right.sequence)) {
     if (!record.payload || typeof record.payload !== 'object') continue
-    const event = record.payload as AiOutputEvent
+    const raw = record.payload as AiOutputEvent
+    const event = raw.kind === 'warning' || raw.kind === 'error' ? { ...raw, content: presentLegacyAiNotice(raw.content, raw.kind === 'warning') } : raw
     const turnId = event.turnId ?? record.turnId
+    if (event.notice && event.terminal !== true && (event.kind === 'retry' || event.kind === 'warning')) {
+      result = upsertInspirationNotice(result, { ...event, turnId, eventId: record.eventId, sequence: record.sequence })
+      continue
+    }
     let index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
     if (event.kind === 'delta' || event.kind === 'response') {
       if (index < 0) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
@@ -60,11 +90,11 @@ export function replayInspirationEvents(messages: InspirationChatMessage[], even
       else result[index] = completed
       continue
     }
-    if ((event.kind === 'error' || event.kind === 'warning') && (event.terminal !== undefined || event.recoverable !== undefined)) {
-      const status = event.kind === 'warning' ? 'cancelled' as const : 'error' as const
+    if ((event.kind === 'error' || event.kind === 'warning') && event.terminal === true) {
+      const status = event.kind === 'warning' ? event.notice?.key === 'context-stall' ? 'warning' as const : 'cancelled' as const : 'error' as const
       const failed: InspirationChatMessage = {
         ...(index >= 0 ? result[index] : { role: 'assistant' as const, id: `${turnId}:assistant`, turnId }),
-        content: event.content, status, isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence
+        content: event.content, notice: event.notice, status, isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence
       }
       if (index < 0) result.push(failed)
       else {
@@ -77,7 +107,7 @@ export function replayInspirationEvents(messages: InspirationChatMessage[], even
       continue
     }
     if (!event.content.trim()) continue
-    const step: InspirationChatMessage = { role: 'assistant', kind: 'tool', id: record.eventId, turnId, content: event.content, time: event.time, status: event.kind === 'error' || event.kind === 'warning' ? 'error' : 'completed', isFinal: false, sessionId: event.sessionId, sequence: record.sequence }
+    const step: InspirationChatMessage = { role: 'assistant', kind: 'tool', id: record.eventId, turnId, content: event.content, time: event.time, status: inspirationStepStatus(event), isFinal: false, sessionId: event.sessionId, sequence: record.sequence }
     if (!result.some((message) => message.id === step.id)) {
       index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
       if (index < 0) result.push(step)
@@ -89,14 +119,11 @@ export function replayInspirationEvents(messages: InspirationChatMessage[], even
 
 export function deleteInspirationTimelineItem(messages: InspirationChatMessage[], messageIndex: number): InspirationChatMessage[] {
   if (messageIndex < 0 || messageIndex >= messages.length) return messages
-  if (messages[messageIndex].role === 'user') {
-    let end = messageIndex + 1
-    while (end < messages.length && messages[end].role !== 'user') end += 1
-    return [...messages.slice(0, messageIndex), ...messages.slice(end)]
-  }
   let start = messageIndex
-  while (start > 0 && messages[start - 1].role !== 'user') start -= 1
-  return [...messages.slice(0, start), ...messages.slice(messageIndex + 1)]
+  while (start > 0 && messages[start].role !== 'user') start -= 1
+  let end = messageIndex + 1
+  while (end < messages.length && messages[end].role !== 'user') end += 1
+  return [...messages.slice(0, start), ...messages.slice(end)]
 }
 
 export function rewindInspirationTimelineTo(messages: InspirationChatMessage[], messageIndex: number): InspirationChatMessage[] {
@@ -168,7 +195,10 @@ export function settleInspirationFailure(
   failure: string,
   createId: IdFactory = defaultId
 ): InspirationChatMessage[] {
-  return settleInspirationReply(messages, sessionId, '', failure, createId)
+  return settleInspirationReply(messages, sessionId, '', failure, createId).map(message =>
+    message.sessionId === sessionId && message.isFinal && message.content === failure
+      ? { ...message, notice: aiNoticeDetails('error', failure), ...(/连续整理上下文/.test(failure) ? { status: 'warning' as const } : {}) }
+      : message)
 }
 
 export function settleInspirationCancellation(

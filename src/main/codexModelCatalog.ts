@@ -2,22 +2,28 @@ import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import builtinCatalog from './codexBuiltinModels.json'
+import { resolveModelContextBudget, UNKNOWN_MODEL_CONTEXT, type ModelBudgetOptions } from './modelContextRegistry'
 
 // Snapshot of the managed 0.154.0 runtime, including its original instructions.
 // model_catalog_json REPLACES the built-in catalog; always retain these entries.
 export const CODEX_MODEL_CATALOG_VERSION = '0.154.0'
 
 /** A conservative working budget, not a claim about the provider's maximum. */
-export const THIRD_PARTY_CONTEXT_BUDGET = 32_768
+export const THIRD_PARTY_CONTEXT_BUDGET = UNKNOWN_MODEL_CONTEXT
 
-export function buildCodexModelCatalog(model: string) {
-  if (builtinCatalog.models.some(entry => entry.slug === model)) return undefined
+export function buildCodexModelCatalog(model: string, options: ModelBudgetOptions = {}) {
+  const budget = resolveModelContextBudget(model, options)
+  const exact = builtinCatalog.models.find(entry => entry.slug === model)
+  const customizeNative = budget.source === 'override' || budget.source === 'provider' && exact && budget.contextWindow < exact.context_window
+  if (exact && !customizeNative) return undefined
 
   // Codex recognizes dated/suffixed variants by prefix. Preserve those capabilities.
-  const native = [...builtinCatalog.models]
+  const native = exact ?? [...builtinCatalog.models]
     .sort((a, b) => b.slug.length - a.slug.length)
-    .find(entry => model.startsWith(`${entry.slug}-`))
-  const custom = native ? { ...native, slug: model, display_name: model } : {
+    .find(entry => model.startsWith(`${entry.slug}-`) && /^\d{4}-\d{2}-\d{2}$/.test(model.slice(entry.slug.length + 1)))
+  const nativeBudget = native && (budget.source === 'override' || budget.source === 'provider' && budget.contextWindow < native.context_window)
+    ? { context_window: budget.contextWindow, auto_compact_token_limit: budget.autoCompactTokenLimit } : {}
+  const custom = native ? { ...native, ...nativeBudget, slug: model, display_name: model } : {
     slug: model,
     display_name: model,
     description: 'Third-party model through the ModMind provider',
@@ -42,18 +48,18 @@ export function buildCodexModelCatalog(model: string) {
     apply_patch_tool_type: null,
     supports_parallel_tool_calls: false,
     experimental_supported_tools: [],
-    context_window: THIRD_PARTY_CONTEXT_BUDGET,
-    auto_compact_token_limit: 24_576,
+    context_window: budget.contextWindow,
+    auto_compact_token_limit: budget.autoCompactTokenLimit,
     truncation_policy: { mode: 'tokens', limit: 10_000 },
     // Family names alone do not imply vision (e.g. deepseek-chat, qwen-coder).
     input_modalities: /(?:^|\/)(?:gemini-|grok-(?:4|2-vision)|qwen[^/]*-vl(?:-|:|$))/i.test(model)
       ? ['text', 'image'] : ['text']
   }
-  return { models: [...builtinCatalog.models, custom] }
+  return { models: [...builtinCatalog.models.filter(entry => entry.slug !== model), custom] }
 }
 
-export async function prepareCodexModelCatalog(home: string, model: string): Promise<{ path?: string; changed: boolean }> {
-  const catalog = buildCodexModelCatalog(model)
+export async function prepareCodexModelCatalog(home: string, model: string, options: ModelBudgetOptions = {}): Promise<{ path?: string; changed: boolean }> {
+  const catalog = buildCodexModelCatalog(model, options)
   if (!catalog) return { changed: false }
   const content = JSON.stringify(catalog)
   // Immutable, content-addressed files avoid races between runs switching models.

@@ -3,6 +3,29 @@ import { appendUserTurn, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTime
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 
 describe('workbench timeline adapter', () => {
+  it('merges notice updates across retries and progress events without erasing other turns or details', () => {
+    const notice = { key: 'retry', detail: '正在自动恢复', occurrences: 1 }
+    const first: AiOutputEvent = { kind: 'retry', content: '8 秒后重试', time: 'T1', runId: 'run', turnId: 'turn', sequence: 1, notice }
+    let items = reduceWorkbenchOutput([], first)
+    items = reduceWorkbenchProgress(items, { id: 'progress', stage: 'writing', title: '等待', detail: '16 秒后重试', status: 'warning', time: 'T2', runId: 'run', turnId: 'turn', sequence: 2, notice })
+    items = reduceWorkbenchOutput(items, { ...first, content: '16 秒后重试', sequence: 3, notice: { ...notice, occurrences: 2 } })
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ content: '16 秒后重试', notice: { occurrences: 2 } })
+    expect(reduceWorkbenchOutput(items, first)).toEqual(items)
+    items = reduceWorkbenchOutput(items, { ...first, turnId: 'another', runId: 'another' })
+    expect(items).toHaveLength(2)
+  })
+
+  it('replays 55 identical advisories as one row while preserving all events', () => {
+    const events: ConversationEventRecord[] = Array.from({ length: 55 }, (_, i) => ({
+      eventId: `e${i}`, conversationId: 'c', generation: 0, turnId: 't', sequence: i+1, kind: 'output', time: 'T',
+      payload: { kind: 'warning', content: '对话较长', time: 'T', turnId: 't', notice: { key: 'compaction', detail: '无需重复发送', occurrences: i+1 } }
+    }))
+    const replay = replayWorkbenchEvents([], events)
+    expect(replay).toHaveLength(1)
+    expect(replay[0].notice?.occurrences).toBe(55)
+    expect(events).toHaveLength(55)
+  })
   const output = (kind: AiOutputEvent['kind'], content: string, sequence: number, extra: Partial<AiOutputEvent> = {}): AiOutputEvent => ({
     kind, content, sequence, eventId: `event-${sequence}`, time: `2026-09-10T12:30:${String(sequence).padStart(2, '0')}Z`,
     runId: 'run-1', turnId: 'turn-1', ...extra

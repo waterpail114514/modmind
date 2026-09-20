@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { CircleAlert, RotateCcw } from 'lucide-react'
 import { diagnosticErrorPayload } from '../../../shared/diagnostics'
+import { setAppLoading } from '../useAppLoading'
 
 interface AppErrorBoundaryProps {
   children: ReactNode
@@ -18,6 +19,7 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    setAppLoading(false, true)
     try {
       window.modmind.diagnostics.reportError({
         ...diagnosticErrorPayload(error),

@@ -48,7 +48,7 @@ export default function MiniPaintEditor({ asset, darkMode, onError, onSave }: Mi
         return
       }
       if (event.data.type === 'error') {
-        const message = typeof event.data.message === 'string' ? event.data.message : 'miniPaint 操作失败'
+        const message = typeof event.data.message === 'string' ? reportClientFailure(event.data.message) : '图片编辑未完成，请重试。'
         if (pendingOpen.current?.requestId === requestId) {
           pendingOpen.current = null
           setAssetReady(false)

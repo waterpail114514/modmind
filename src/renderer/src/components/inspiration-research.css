@@ -1,0 +1,35 @@
+.inspiration-feature-controls {
+  --agent-text-1: var(--text);
+  --agent-text-2: var(--text);
+  --agent-text-3: var(--muted);
+  --agent-primary: var(--mm-accent);
+  --agent-fill-2: var(--surface-alt);
+  --agent-fill-3: var(--line);
+  flex: 0 0 auto;
+}
+.inspiration-feature-trigger.agent-icon-button { display: flex; gap: 5px; width: auto; padding: 0 8px; border-radius: 6px; font: inherit; font-size: 12px; white-space: nowrap; }
+.agent-picker-menu.workbench-feature-menu.inspiration-feature-menu { width: min(300px, calc(100vw - 24px)); }
+.inspiration-feature-hint { margin: 3px 9px 8px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.agent-picker-menu.workbench-feature-menu.inspiration-feature-menu > button { padding-block: 8px; }
+.inspiration-feature-menu small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 3px; }
+.inspiration-research-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.inspiration-research-shortcuts button, .inspiration-knowledge-button { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); padding: 6px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+.inspiration-research-shortcuts button:hover, .inspiration-knowledge-button:hover { color: var(--text); background: var(--surface-alt); }
+.inspiration-knowledge-button { border: 0; background: transparent; white-space: nowrap; }
+.inspiration-minimal .inspiration-composer-actions { flex-wrap: wrap; }
+.inspiration-knowledge-dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; box-sizing: border-box; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; }
+.inspiration-knowledge-dialog::backdrop { background: color-mix(in srgb, var(--theme-shadow) 35%, transparent); }
+.inspiration-knowledge-dialog header, .inspiration-knowledge-dialog footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.inspiration-knowledge-dialog p { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.inspiration-knowledge-dialog form, .inspiration-knowledge-dialog label { display: grid; gap: 10px; margin-top: 12px; }
+.inspiration-knowledge-dialog input, .inspiration-knowledge-dialog select, .inspiration-knowledge-dialog textarea { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); color: inherit; font: inherit; }
+.inspiration-knowledge-dialog textarea { min-height: 220px; resize: vertical; }
+.inspiration-knowledge-dialog button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); color: inherit; font: inherit; cursor: pointer; }
+@media (max-width: 480px) {
+  .inspiration-minimal .inspiration-composer-actions > .ai-attachments { flex-basis: 100%; order: 3; }
+  .inspiration-compose-note { flex-wrap: wrap; gap: 4px; }
+}
+
+.inspiration-source-link { padding: 0; border: 0; background: transparent; color: var(--mm-accent); text-decoration: underline; font: inherit; cursor: pointer; }
+.inspiration-evidence-dialog { width: min(900px, calc(100vw - 32px)); }
+.inspiration-evidence-dialog pre { overflow: auto; font-size: 12px; line-height: 1.7; max-height: 55dvh; }

@@ -1,5 +1,17 @@
 # Third-Party Notices
 
+## LobeHub Icons
+
+The Codex and Claude brand paths in `src/renderer/src/components/AgentBrandIcon.tsx`
+are adapted from LobeHub Icons (`packages/static-svg/icons/codex.svg` and `claude.svg`).
+Upstream: https://github.com/lobehub/lobe-icons
+
+Copyright (c) 2023 LobeHub
+
+Provided under the MIT License; the MIT permission and warranty text reproduced
+in the React Zoom Pan Pinch section below applies. Brand marks remain the property
+of their respective owners.
+
 ## React Zoom Pan Pinch
 
 Image previews use `react-zoom-pan-pinch` 4.2.0, provided under the MIT License.
@@ -234,3 +246,33 @@ dec3e63ba62b9f6aaea5ad6a21bc011fe087b08c (LGPL-3.0).
 Exact upstream files, SHA-256 values, source and license texts are retained in
 resources/server-plugin-starters and included with the application resources.
 Generated plugin projects and JARs retain template attribution and license texts.
+
+## Model context registry datasets
+
+The bundled model context registry derives numeric model limits from models.dev
+and LiteLLM. Source URLs, SHA-256 hashes, and the snapshot date are recorded in
+src/main/modelContextRegistry.json. LiteLLM's imported data is outside its
+separately licensed enterprise directory.
+
+- models.dev: https://github.com/anomalyco/models.dev — Copyright (c) 2025 models.dev
+- LiteLLM: https://github.com/BerriAI/litellm — Copyright (c) 2023 Berri AI
+
+Both datasets are provided under the following MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
