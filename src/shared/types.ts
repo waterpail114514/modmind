@@ -619,6 +619,8 @@ export type UiMode = 'beginner' | 'advanced'
 export type BeginnerTaskState = 'idle' | 'working' | 'success' | 'error'
 
 export interface PipelineEvent {
+  /** Files changed during this completed turn; empty for an ordinary reply. */
+  changedFiles?: string[]
   notice?: AiNotice
   id: string
   sessionId?: string

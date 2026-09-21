@@ -10,6 +10,7 @@ import { TestClientSession } from './testClientSession'
 import { SerialState } from './liveConfiguration'
 import { specificsFor, installTestSpecifics } from './testSpecifics'
 import { sameProjectPath } from './projectPath'
+import type { NativeMinecraftTestService } from './nativeMinecraftTestService'
 
 export class PlayerTestService {
   private session?: { id: string; project: ProjectInfo; username: string; directory: string; mode: 'headless' | 'rendered'; joined: boolean; serverOwned: boolean; operatorBefore?: boolean; serverRoot?: string; operatorChanged?: boolean; serverId?: string; buildId?: string }
@@ -17,14 +18,17 @@ export class PlayerTestService {
   private lane = new SerialState()
   private controller?: AbortController
   private stopping?: Promise<void>
+  async stopNativeForSignal(signal: AbortSignal): Promise<void> { await this.dependencies.native?.stopForSignal(signal) }
   async projectChanged(projectPath?: string): Promise<void> {
+    await this.dependencies.native?.projectChanged(projectPath)
     if (this.session && (!projectPath || !sameProjectPath(projectPath, this.session.project.path))) await this.stop()
   }
-  constructor(private dependencies: { server: () => LocalServerManager; headless: () => HeadlessMcService; currentProject: () => ProjectInfo | null; javaPreferences: () => Promise<import('../shared/types').AgentSettings['javaPreferences']>; onEvent?: (event: import('../shared/minecraft').MinecraftRuntimeEvent) => void }) {}
+  constructor(private dependencies: { server: () => LocalServerManager; headless: () => HeadlessMcService; currentProject: () => ProjectInfo | null; javaPreferences: () => Promise<import('../shared/types').AgentSettings['javaPreferences']>; onEvent?: (event: import('../shared/minecraft').MinecraftRuntimeEvent) => void; native?: NativeMinecraftTestService }) {}
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping
     this.controller?.abort()
-    const request = this.lane.run(() => this.cleanup())
+    const nativeStop = this.dependencies.native?.stop().then(() => undefined, error => error as Error)
+    const request = this.lane.run(async () => { const failure = await nativeStop; await this.cleanup(); if (failure) throw failure })
     this.stopping = request
     try { await request } finally { this.stopping = undefined }
   }
@@ -45,6 +49,7 @@ export class PlayerTestService {
     this.session = undefined
   }
   execute(project: ProjectInfo, category: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if ((project.kind ?? 'mod') === 'mod' && this.dependencies.native) return this.dependencies.native.execute(project, category, input, signal)
     if (category === 'session' && input.operation === 'stop') {
       if (this.session && (!sameProjectPath(this.session.project.path, project.path) || input.sessionId !== this.session.id)) return Promise.reject(new Error('测试会话不匹配'))
       return this.stop().then(() => ({ stopped: true }))

@@ -185,7 +185,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
             <button className="secondary-button compact" type="button" onClick={() => void window.modmind.plugins.openDirectory()}><FolderOpen size={14} />打开插件目录</button>
             <button className="secondary-button compact" type="button" onClick={() => setDocsOpen(true)}><BookOpen size={14} />查看制作文档</button>
           </div>
-          <p className="plugin-empty-hint">也可以在工作台直接让 AI 帮你做一个插件</p>
+
         </div>
       ) : (
         <>
@@ -276,7 +276,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
             <div className="dialog-header plugin-docs-dialog-header">
               <div>
                 <h2>插件制作文档</h2>
-                <p>从模板开始创建面板或 MCP 工具插件</p>
+
               </div>
               <div className="plugin-docs-dialog-actions">
                 <button className={`icon-button${docDownloaded ? ' success' : ''}`} type="button" title={docDownloaded ? '已保存到「下载」文件夹' : '下载文档到「下载」文件夹'} disabled={docDownloading} onClick={() => void downloadDoc()}>

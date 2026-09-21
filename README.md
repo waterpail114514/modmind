@@ -4,12 +4,11 @@
 
 ModMind 是一个面向 Minecraft Mod 开发的 AI 辅助工作台，帮助你管理项目、模组、资源包、整合包和服务器工作流。
 
-## 当前版本：1.4.8
+## 当前版本：1.4.9
 
-- 增强灵感台联网检索、项目知识引用和分析功能，支持查看来源与证据。
-- 改进模型上下文配置、长任务保护和 AI 错误提示。
-- 修复对话删除后的历史恢复问题，优化项目加载和消息回放。
-- 改进 Codex 运行时缓存清理及界面细节。
+- 修复 AI 会话消息串线及最终答复展示问题，改进任务完成提示。
+- 新增图片生成预设，支持在工作流中调整提示词和参考图。
+- 实验性接入 Minecraft 原生界面测试，支持截图和玩家操作，兼容范围见接入说明。
 - 移除 Herobrine。
 
 ## 下载
@@ -46,6 +45,8 @@ npm run build
 
 ModMind 支持 Fabric、Quilt、Forge 和 NeoForge 项目的创建与迁移，提供 Monaco 文件编辑、VS Code Java 语言服务与调试工作区生成、本地及远程 Git 操作、可恢复的项目快照、Modrinth 与 Maven 依赖锁定、数据与资源 JSON 编辑、内嵌 Blockbench、客户端/服务端/GameTest 验证、CI 生成及发布预检。
 
+模组模式的真实界面测试实验性接入了固定版本的 [Minecraft Mod MCP](https://github.com/langyo/minecraft-mod-mcp)：按 Minecraft / Loader 精确匹配并校验控制 Mod，启动独立客户端，返回原生截图和界面状态。目录中有适配包不代表已实测兼容。通过玩家测试会话还可请求点击、输入、按键、调整视角和执行游戏命令；截图和动作回执不等于玩法验收通过。启用“真实界面测试”后可用，不支持的组合保留启动检查及 GameTest。详见 [接入与验证说明](docs/minecraft-mcp-integration.zh-CN.md)。
+
 Agent 可以按项目的 Minecraft 版本查询 `mappings.dev` 映射信息。类索引和已查看页面会缓存在本地，手动映射视图使用相同数据源。
 
 新项目使用 `modmind.project.json` 与 `.modmind` 目录，同时兼容早期 ModTool 项目的 `modtool.project.json` 与 `.modtool` 布局。首次启动 ModMind 时会迁移旧应用数据。
@@ -72,7 +73,7 @@ Windows 直接运行项目的 `gradlew.bat`，macOS/Linux 运行 `./gradlew`。G
 
 Windows 打包会生成 NSIS 安装包和更新元数据，并执行版本、体积及签名策略检查。自动更新文件位于 `release/update`：稳定版使用 `latest.yml`，预发布版使用 `beta.yml`，预发布版不能覆盖稳定版元数据。向更新服务上传时，先上传安装包和 blockmap，最后上传 YAML；保留旧安装包和 blockmap，以便跨版本更新。
 
-当前版本为 `1.4.8`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
+当前版本为 `1.4.9`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
 
 ## 参与开发
 

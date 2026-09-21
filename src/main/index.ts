@@ -9,6 +9,8 @@ import { importBackgroundMedia, serveBackgroundMedia } from './appearanceMedia'
 import { summarizeLog } from '../shared/creationFeedback'
 import { CreationFeedbackService } from './creationFeedbackService'
 import { PlayerTestService } from './playerTestService'
+import { NativeMinecraftTestService } from './nativeMinecraftTestService'
+import { nativeMcpFor } from './nativeMinecraftMcp'
 import { LocalTestService } from './localTestService'
 import { readServerProfile } from './serverCoreService'
 import type { LocalTestOptions } from '../shared/minecraft'
@@ -2339,7 +2341,17 @@ function createWindow(): void {
   playerTestService = new PlayerTestService({ server: () => {
     if (!localServerManager) throw new Error('本机测试服务不可用')
     return localServerManager
-  }, currentProject: () => currentProject, headless: requireHeadlessMc, javaPreferences: async () => (await readSettings()).javaPreferences, onEvent: forwardMinecraftRuntimeEvent })
+  }, currentProject: () => currentProject, headless: requireHeadlessMc, javaPreferences: async () => (await readSettings()).javaPreferences, onEvent: forwardMinecraftRuntimeEvent,
+    native: new NativeMinecraftTestService({
+      currentProject: () => currentProject,
+      build: (project, signal) => aiProjectContext.run(project, () => buildProjectWithLock(signal)),
+      createRuntime: (project, directory, port) => new MinecraftRuntimeManager({
+        getProject: () => project, instanceDirectory: directory, minecraftMcpPort: port,
+        getJavaPreference: async () => (await readSettings()).javaPreferences,
+        onState: () => undefined, onEvent: forwardMinecraftRuntimeEvent
+      })
+    })
+  })
   blockbenchBridge.onStatus((status) => {
     diagnosticJournal.record({ subsystem: 'blockbench', operation: 'bridge', phase: status.phase, level: status.phase === 'error' ? 'error' : 'info', message: status.message || `Blockbench bridge: ${status.phase}`, data: status })
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
@@ -5145,6 +5157,16 @@ async function runHeadlessMinecraftSmoke(
 
 async function runManagedRenderedTest(project: ProjectInfo, signal?: AbortSignal) {
   if (project.kind === 'server-plugin' || !isJavaLoader(project.loader)) throw new Error('此入口支持 Java Mod 和整合包；服务端插件请使用玩家测试的 rendered 模式，基岩版和网易版使用其官方测试工具')
+  if ((project.kind ?? 'mod') === 'mod' && nativeMcpFor(project.minecraftVersion, project.loader)) {
+    if (!playerTestService) throw new Error('玩家测试服务不可用')
+    const session = await playerTestService.execute(project, 'session', { operation: 'start', mode: 'rendered' }, signal) as { sessionId: string; observation: unknown }
+    try {
+      const capture = await playerTestService.execute(project, 'capture', { sessionId: session.sessionId }, signal) as { captures: Array<{ path: string; dataUrl: string }> }
+      return { success: true, backend: 'minecraft-mod-mcp', observation: session.observation, captures: capture.captures, visualVerified: false as const, gameplayVerified: false as const, clientStopped: true as const }
+    } finally {
+      await playerTestService.execute(project, 'session', { operation: 'stop', sessionId: session.sessionId })
+    }
+  }
   return withMinecraftResourceLock(() => {
     const runtime = requireMinecraftRuntime()
     return runRenderedMinecraftTest({
@@ -6428,6 +6450,12 @@ async function runExternalCodingAgent(
       },
       onOutput: (kind, content, identity) => {
         if (kind === 'response') {
+          if (identity?.phase === 'commentary') {
+            flushBufferedProgress()
+            deliveredResponseContents.add(content.trim())
+            sendAiOutput(event, 'response', content, sessionId, project.path, context.runId, identity)
+            return
+          }
           // A newer reply proves the previous one was progress narration, so
           // it is safe to show before the final completion audit.
           const key = content.trim()
@@ -6970,24 +6998,12 @@ async function runExternalCodingAgent(
         }
       }
     }
-    const completedAnswer = (candidate: Awaited<ReturnType<typeof runExternalAgent>>): string => selectFinalAiAnswer(bufferedFinalResponse, candidate.summary, deliveredResponseContents)
-    const runUntilAnswer = async (): Promise<Awaited<ReturnType<typeof runExternalAgent>>> => {
-      const requestedRunPrompt = externalRunOptions.prompt
-      let missingAnswerAttempts = 0
-      while (true) {
-        const candidate = await runExternalAgent(externalRunOptions)
-        if (completedAnswer(candidate)) return candidate
-        missingAnswerAttempts += 1
-        const message = `${agentLabel} 本轮只返回了过程或重试状态，没有有效最终回答；正在继续同一会话（第 ${missingAnswerAttempts + 1} 次）`
-        sendCodingProgress(pipelineEvent('checking', '正在等待有效回答', message, 'warning'))
-        sendAiOutput(event, 'retry', message, sessionId, project.path, context.runId)
-        bufferedFinalResponse = undefined
-        deliveredResponseContents.clear()
-        externalRunOptions.prompt = `${requestedRunPrompt}\n\nThe previous attempt ended without a substantive user-facing final answer. Continue the same request and return the complete answer now. Do not return retry notices, internal reasoning, or process narration as the answer.`
-        await awaitWithAbort(new Promise((resolve) => setTimeout(resolve, 1_000)), signal, 'Agent 任务已停止')
-      }
+    const completedAnswer = (candidate: Awaited<ReturnType<typeof runExternalAgent>>): string => candidate.finalAnswer?.text
+      ?? selectFinalAiAnswer(bufferedFinalResponse, candidate.summary, deliveredResponseContents)
+    const result = await runExternalAgent(externalRunOptions)
+    if (!completedAnswer(result)) {
+      throw Object.assign(new Error('本轮已结束，但未收到完整回复。已保留当前修改和会话，请检查后再继续。'), { name: 'ExternalAgentOutputError' })
     }
-    const result = await runUntilAnswer()
     moduleTasks.assertCollected()
     const targetChanges = isInspiration ? [] : await creation.finishTargets(creationTaskId)
     if (!isInspiration) await creation.mutate(state => {
@@ -7050,10 +7066,13 @@ async function runExternalCodingAgent(
     // candidate response is intentionally withheld from the ordinary stream
     // so consumers cannot render it once as progress and once as the answer.
     bufferedFinalResponse = undefined
-    const answerOptions = result.usage ? { usage: result.usage, ...(bufferedFinalIdentity ?? {}) } : (bufferedFinalIdentity ?? undefined)
+    const finalIdentity = result.finalAnswer
+      ? { itemId: result.finalAnswer.itemId, streamId: result.finalAnswer.streamId }
+      : bufferedFinalIdentity
+    const answerOptions = result.usage ? { usage: result.usage, ...(finalIdentity ?? {}) } : finalIdentity
     bufferedFinalIdentity = undefined
     sendAiOutput(event, 'answer', finalResponse, sessionId, project.path, context.runId, answerOptions)
-    sendCodingProgress(pipelineEvent('complete', `${agentLabel} 任务完成`, changedFiles.length ? `检测到 ${changedFiles.length} 个文件变化` : '任务已完成，没有要求文件变化', 'success'))
+    sendCodingProgress({ ...pipelineEvent('complete', `${agentLabel} 本轮结束`, changedFiles.length ? `检测到 ${changedFiles.length} 个文件变化` : '已回复，本轮未检测到文件变化', 'success'), changedFiles })
     return {
       summary,
       finalResponse,
@@ -7094,6 +7113,7 @@ async function runExternalCodingAgent(
     throw error
   } finally {
     await moduleTasks.close()
+    await playerTestService?.stopNativeForSignal(signal)
   }
 }
 
@@ -7482,6 +7502,7 @@ function registerIpc(): void {
     return requireHeadlessMc().openLoginConsole(javaPath)
   })
   diagnosticHandle('minecraft:stop', async () => {
+    await playerTestService?.stop()
     await headlessMcService?.stop()
     const projectPath = requireMinecraftRuntime().getState().projectPath ?? currentProject?.path
     const state = await requireMinecraftRuntime().stop()

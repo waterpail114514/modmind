@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { connectionIsValid, planImageWorkflow, runImageWorkflow, snapshotImageWorkflow, type WorkflowNodeType, type WorkflowKind } from './imageWorkflow'
 import { parseImageWorkflowLibrary, parseWorkflowGraph } from './imageWorkflowStorage'
 import type { ImageAsset, ImageGenerationResult } from '../../../shared/imageStudio'
+import { imageStudioPresets } from './imageStudioPresets'
 
 const image: ImageAsset = { id: 'chosen', dataUrl: 'data:image/png;base64,AA==', model: 'test', hosted: true, credits: 1, createdAt: '', quality: 'low', size: '1024x1024', style: 'free' }
 const node = (id: string, kind: WorkflowKind, data: Partial<WorkflowNodeType['data']> = {}): WorkflowNodeType => ({ id, type: 'workflow', position: { x: 0, y: 0 }, data: { kind, title: id, subtitle: '', ...data } })
@@ -112,5 +113,69 @@ describe('workflow library persistence', () => {
     expect(() => parseImageWorkflowLibrary({ version: 3, workflows: [] })).toThrow('原存档未被修改')
     const graph = basic()
     expect(() => parseWorkflowGraph({ ...graph, edges: [edge('unknown', 'g')] })).toThrow('失效连线')
+  })
+})
+
+describe('image generation presets', () => {
+  it.each(imageStudioPresets)('executes $label with its full template and required image', async preset => {
+    const nodes = [node('g', 'generate', { presetId: preset.id, style: 'minecraft' })]
+    const edges: ReturnType<typeof edge>[] = []
+    if (preset.requiresReference) {
+      nodes.push(node('r', 'reference', { referenceImage: image.dataUrl }))
+      edges.push(edge('r', 'g'))
+    }
+    const calls = api()
+    await runImageWorkflow(planImageWorkflow(nodes, edges), calls, { onAsset: vi.fn() })
+    expect(calls.generate).toHaveBeenCalledWith(expect.objectContaining({ prompt: expect.stringContaining(preset.prompt), style: 'free', ...(preset.requiresReference ? { referenceImage: image.dataUrl } : {}) }))
+  })
+
+  it('keeps edited templates per generator without changing shared user prompts, including after reload', async () => {
+    const graph = { nodes: [node('p', 'prompt', { prompt: '主体改成红色机器人' }), node('a', 'generate', { presetId: 'creature-views', presetPrompt: '正面、侧面、背面。保持长方体结构。' }), node('b', 'generate', { presetId: 'item-icon' })], edges: [edge('p', 'a'), edge('p', 'b')] }
+    const saved = parseWorkflowGraph(JSON.parse(JSON.stringify(snapshotImageWorkflow(graph))))
+    const calls = api()
+    await runImageWorkflow(planImageWorkflow(saved.nodes, saved.edges), calls, { onAsset: vi.fn() })
+    expect(calls.generate).toHaveBeenNthCalledWith(1, expect.objectContaining({ prompt: expect.stringContaining('正面、侧面、背面。保持长方体结构。') }))
+    expect(calls.generate).toHaveBeenNthCalledWith(2, expect.objectContaining({ prompt: expect.stringContaining('物品栏图标') }))
+    for (const [request] of calls.generate.mock.calls as unknown as [{ prompt: string }][]) expect(request.prompt).toContain('主体改成红色机器人')
+    expect(saved.nodes[0].data.prompt).toBe('主体改成红色机器人')
+  })
+
+  it.each(imageStudioPresets.filter(preset => preset.requiresReference))('blocks $label without a reference before any upstream generation', preset => {
+    const graph = basic()
+    graph.nodes.push(node('missing', 'generate', { presetId: preset.id }))
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('需要参考图')
+  })
+
+  it('accepts an upstream generated image as the reference for a variant', async () => {
+    const graph = basic()
+    graph.nodes[1].data.count = 1
+    graph.nodes.push(node('variant', 'generate', { presetId: 'material-variant' }))
+    graph.edges.push(edge('g', 'variant'))
+    const calls = api()
+    await runImageWorkflow(planImageWorkflow(graph.nodes, graph.edges), calls, { onAsset: vi.fn() })
+    expect(calls.generate).toHaveBeenNthCalledWith(2, expect.objectContaining({ referenceImage: image.dataUrl, prompt: expect.stringContaining('钻石等级') }))
+  })
+
+  it('validates missing, emptied and oversized templates and malformed saved fields', () => {
+    const graph = basic()
+    graph.nodes[1].data.presetId = 'removed-preset'
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('预设不可用')
+    graph.nodes[1].data.presetId = 'creature-views'
+    graph.nodes[1].data.presetPrompt = ' '
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('预设提示词不能为空')
+    graph.nodes[1].data.presetPrompt = 'x'.repeat(31_999)
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('32000')
+    expect(() => parseWorkflowGraph({ nodes: [node('g', 'generate', { presetId: 123 as unknown as string })], edges: [] })).toThrow('参数无效')
+  })
+
+  it('preserves legacy style requests and requires a prompt when no template is selected', async () => {
+    const graph = basic()
+    graph.nodes[1].data.style = 'minecraft'
+    graph.nodes[1].data.count = 1
+    const calls = api()
+    await runImageWorkflow(planImageWorkflow(graph.nodes, graph.edges), calls, { onAsset: vi.fn() })
+    expect(calls.generate).toHaveBeenCalledWith(expect.objectContaining({ style: 'minecraft', prompt: 'cat' }))
+    graph.nodes[0].data.prompt = ''
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('有效提示词')
   })
 })

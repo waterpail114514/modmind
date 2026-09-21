@@ -5,6 +5,7 @@ import type { AiNotice, AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationE
 export type WorkbenchTimelineDiff = { path: string; added: number; removed: number; additions: string[]; removals: string[] }
 
 export type WorkbenchTimelineItem = {
+  changedFiles?: string[]
   notice?: AiNotice
   id: string
   kind: 'user' | 'answer' | 'response' | 'thinking' | 'tool' | 'diff' | 'warning' | 'error' | 'start' | 'retry' | 'history' | 'status'
@@ -340,6 +341,7 @@ export function reduceWorkbenchProgress(
     turnId: event.turnId,
     sequence: event.sequence,
     stage: event.stage,
+    ...(event.changedFiles ? { changedFiles: event.changedFiles } : {}),
     status,
     ...(event.terminal !== undefined ? { terminal: event.terminal } : {}),
     ...(event.recoverable !== undefined ? { recoverable: event.recoverable } : {})

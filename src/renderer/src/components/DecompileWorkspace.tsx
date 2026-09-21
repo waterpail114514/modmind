@@ -420,7 +420,7 @@ export default function DecompileWorkspace({ initialJarPath, projectContext, dar
             <FileCode2 size={28} strokeWidth={1.5} aria-hidden="true" />
             <h3>查看 JAR 源码</h3>
             <p>从左侧选择模组或服务端插件 JAR，<br />浏览源码、分析依赖。</p>
-            <p className="decompile-empty-hint">结果只读，可转换为独立项目继续编辑。</p>
+
           </div>
         ) : null}
         {obfuscationBanner}

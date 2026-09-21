@@ -73,7 +73,7 @@ export default function SettingsSections({ children, feedback = '' }: { children
     {searching && visibleSections.length === 0 && <div className="settings-empty">
       <Search size={24} aria-hidden="true" />
       <strong>没有找到相关设置</strong>
-      <p>试试「模型」「代理」或「通知」，也可以返回分类浏览。</p>
+
       <button className="secondary-button" type="button" onClick={clearSearch}>清除搜索</button>
     </div>}
     </ScrollArea>

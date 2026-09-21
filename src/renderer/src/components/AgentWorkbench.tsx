@@ -1,5 +1,6 @@
 import { useAiAttachments } from '../useAiAttachments'
 import MoreActions from './MoreActions'
+import TurnCompletionCard, { isTurnCompletion } from './TurnCompletionCard'
 import { AiNoticeDetails } from './AiNoticeDetails'
 import WorkbenchFeatureControls from './WorkbenchFeatureControls'
 import type { WorkbenchFeatures } from '../../../shared/workbenchFeatures'
@@ -72,6 +73,7 @@ type TodoItem = { id: string; title: string; status: 'pending' | 'in_progress' |
 type TimelineRow = AgentWorkbenchTimelineItem | { id: string; kind: 'tool-group'; items: AgentWorkbenchTimelineItem[] }
 
 export type AgentWorkbenchProps = {
+  onOpenChangedFile?: (path: string) => void
   project: ProjectInfo
   uiMode: 'beginner' | 'advanced'
   presentation?: 'minimal' | 'full'
@@ -180,6 +182,10 @@ function groupTimeline(items: AgentWorkbenchTimelineItem[]): TimelineRow[] {
     || (item.kind === 'error' && item.terminal !== true)
     || (item.kind === 'warning' && item.terminal !== true)
   for (const item of items) {
+    if (isTurnCompletion(item)) {
+      rows.push(item)
+      continue
+    }
     if (item.kind === 'thinking' && item.status !== 'running') {
       if (!visibleThinking.has(item.id)) {
         const previous = rows.at(-1)
@@ -406,7 +412,6 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
         <div className="agent-conversation-picker">
           <button type="button" className="agent-picker-trigger" aria-label="切换对话" aria-expanded={conversationPickerOpen} title={props.planning ? '任务运行中不能切换对话' : '多对话：切换、新建或删除对话'} disabled={props.planning} onClick={() => setConversationPickerOpen((value) => !value)}><MessagesSquare size={14} /><span>{props.conversations.find((item) => item.id === props.activeConversationId)?.title ?? '选择对话'}</span>{props.conversations.length > 1 ? <small>{props.conversations.length}</small> : null}<ChevronDown size={12} /></button>
           {conversationPickerOpen ? <div className="agent-picker-menu agent-conversation-menu">
-            <p className="agent-conversation-note">各对话共享同一项目文件，删除后其历史记录无法恢复。</p>
             {props.conversations.map((conversation) => {
               const original = isLegacyWorkbenchConversation(conversation)
               return <div key={conversation.id} className={`agent-conversation-item ${conversation.id === props.activeConversationId ? 'active' : ''}`}>
@@ -430,7 +435,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
 
     {recovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{recovery.backend ? `，将使用 ${backendLabel(recovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
 
-    {timelineRows.length ? <WorkbenchConversation key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} renderRow={(row) => row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <><TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />{project.kind === 'server-plugin' ? '进入测试' : '进入游戏测试'}</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" modpack={modpack} serverPlugin={project.kind === 'server-plugin'} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); composerRef.current?.focus() }} />}
+    {timelineRows.length ? <WorkbenchConversation key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} renderRow={(row) => row.kind !== 'tool-group' && isTurnCompletion(row) ? <TurnCompletionCard item={row} onOpenFile={props.onOpenChangedFile} /> : row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <><TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />{project.kind === 'server-plugin' ? '进入测试' : '进入游戏测试'}</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" modpack={modpack} serverPlugin={project.kind === 'server-plugin'} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); composerRef.current?.focus() }} />}
 
     <div className="agent-composer-stack">
       {planning ? <PlanBar todo={aiTodo} /> : null}

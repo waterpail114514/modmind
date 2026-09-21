@@ -48,6 +48,7 @@ import { sameProjectPath } from './projectPath'
 import { ensureGradleMavenFallback, gradleDistributionSources, type GradleDownloadSourcePreference } from './gradleDownload'
 import { windowsCmdInvocation } from './windowsCommand'
 import { managedJavaExecutable, normalizeRuntimeMetadata, type RuntimeMetadata } from './runtimeMetadata'
+import { managedJavaEnvironment } from './javaEnvironment'
 import { prepareLoaderApiTestPolicy } from './loaderApiTestPolicy'
 import { diagnosticJournal } from './diagnosticLog'
 import { verifiedDownload } from './downloadService'
@@ -249,6 +250,8 @@ export function multiplayerLaunchOptions(version: string, server: { ip: string; 
 interface MinecraftRuntimeOptions {
   vanillaClient?: boolean
   instanceDirectory?: string
+  /** Reserved local endpoint for an owned MCP test client, never supplied by renderer input. */
+  minecraftMcpPort?: number
   getProject: () => ProjectInfo | null
   onState: (state: MinecraftRuntimeState) => void
   onEvent: (event: MinecraftRuntimeEvent) => void
@@ -713,6 +716,7 @@ async function readConfiguredLoaderApiVersion(project: ProjectInfo): Promise<str
 export class MinecraftRuntimeManager {
   private readonly vanillaClient: boolean
   private readonly instanceDirectory?: string
+  private readonly minecraftMcpPort?: number
   private readonly getProject: () => ProjectInfo | null
   private readonly onState: (state: MinecraftRuntimeState) => void
   private readonly onEvent: (event: MinecraftRuntimeEvent) => void
@@ -747,6 +751,7 @@ export class MinecraftRuntimeManager {
   constructor(options: MinecraftRuntimeOptions) {
     this.vanillaClient = options.vanillaClient === true
     this.instanceDirectory = options.instanceDirectory
+    this.minecraftMcpPort = options.minecraftMcpPort
     this.getProject = options.getProject
     this.onState = options.onState
     this.onEvent = options.onEvent
@@ -968,7 +973,9 @@ export class MinecraftRuntimeManager {
       child = await launch({
         spawn: (command, args, options) => {
           signal?.throwIfAborted()
-          return spawnManaged(command, [...(args ?? [])], options ?? {})
+          return spawnManaged(command, [...(args ?? [])], this.minecraftMcpPort
+            ? { ...options, env: { ...managedJavaEnvironment(options?.env ?? process.env), MC_MCP_PORT: String(this.minecraftMcpPort) } }
+            : options ?? {})
         },
         gamePath: instanceRoot,
         resourcePath: this.resourceRoot(),

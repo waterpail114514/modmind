@@ -218,7 +218,7 @@ export default function GitWorkspace({ project, onFilesChanged }: { project: Pro
       <button className="icon-button" title="刷新 Git 状态" disabled={Boolean(busy)} onClick={() => void refresh()}>{busy === 'status' ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}</button>
     </div>
     {status && !status.available ? <div className="git-empty"><CircleAlert size={18} /><div><strong>未检测到 Git</strong><p>安装 Git 后即可使用本地提交和分支管理</p></div></div> : null}
-    {status?.available && !status.initialized ? <div className="git-empty"><GitBranch size={18} /><div><strong>当前项目还不是 Git 仓库</strong><p>初始化会创建 main 分支并写入适合模组项目的 .gitignore</p></div><button className="primary-button" disabled={Boolean(busy)} onClick={() => void initialize()}>{busy === 'initialize' ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}初始化</button></div> : null}
+    {status?.available && !status.initialized ? <div className="git-empty"><GitBranch size={18} /><div><strong>当前项目还不是 Git 仓库</strong></div><button className="primary-button" disabled={Boolean(busy)} onClick={() => void initialize()}>{busy === 'initialize' ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}初始化</button></div> : null}
     {status?.initialized ? <>
       <div className="git-status-line">
         <span><GitBranch size={14} /><strong>{status.branch || 'HEAD'}</strong></span>

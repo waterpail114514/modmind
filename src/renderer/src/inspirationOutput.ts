@@ -1,6 +1,5 @@
 import type { CodingResult, InspirationChatMessage } from '../../shared/types'
 import { replayUserText } from '../../shared/aiReplay'
-import { isUsableAiAnswer } from '../../shared/aiOutput'
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 import { aiNoticeDetails, presentLegacyAiNotice } from '../../shared/aiNotice'
 
@@ -145,7 +144,9 @@ function progressStep(message: InspirationChatMessage, sessionId: string, create
 }
 
 export function finalInspirationReply(result: Pick<CodingResult, 'finalResponse' | 'summary'>): string {
-  return isUsableAiAnswer(result.finalResponse) ? result.finalResponse.trim() : ''
+  // The main process selects the final item. Do not reclassify its wording or
+  // require edits: an explanation, a plan, or a quoted status can be an answer.
+  return result.finalResponse?.trim() ?? ''
 }
 
 export function shouldResumeInspirationSession(messages: InspirationChatMessage[]): boolean {
@@ -172,7 +173,7 @@ export function settleInspirationReply(
   return messages.flatMap((message) => {
     if (message.role !== 'assistant' || message.status !== 'streaming' || message.sessionId !== sessionId) return [message]
     const progress = message.content.trim() && message.content.trim() !== reply.trim() ? progressStep(message, sessionId, createId) : null
-    const valid = isUsableAiAnswer(reply)
+    const valid = Boolean(reply.trim())
     return [
       ...(progress ? [progress] : []),
       {

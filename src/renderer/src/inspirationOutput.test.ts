@@ -79,9 +79,9 @@ describe('inspiration output settlement', () => {
     expect(rewindInspirationTimelineTo(messages, 99)).toBe(messages)
   })
 
-  it('never promotes summary or retry status to the final answer', () => {
+  it('uses the confirmed final response without promoting a provisional summary', () => {
     expect(finalInspirationReply({ summary: '模型服务暂时不可用，8 秒后自动重试（第 2 次，最多 4 次）' })).toBe('')
-    expect(finalInspirationReply({ summary: 'fallback summary', finalResponse: 'Codex is reconnecting and will retry' })).toBe('')
+    expect(finalInspirationReply({ summary: 'fallback summary', finalResponse: '我会先检查项目——这是你要翻译的句子。' })).toBe('我会先检查项目——这是你要翻译的句子。')
     expect(finalInspirationReply({ summary: 'short', finalResponse: '这是完整且可展示的灵感回答。' })).toBe('这是完整且可展示的灵感回答。')
   })
 

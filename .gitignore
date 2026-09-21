@@ -24,6 +24,7 @@ ui-check*.jpg
 !/docs/plugin-development.zh-CN.md
 !/docs/fabric-api-test-policy.zh-CN.md
 !/docs/creation-experience-development-plan.zh-CN.md
+!/docs/minecraft-mcp-integration.zh-CN.md
 /modmind-mcp-open-source/
 /resources/server-pack-creator/.parts/
 /resources/server-pack-creator/*.partial

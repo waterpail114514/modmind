@@ -28,7 +28,7 @@ For an online test player, GUI/inventory interaction, permissions, or screenshot
 
 - Use `modmind_test_matrix` when selecting explicit build, client, server, or GameTest targets.
 - Use `modmind_test_minecraft` for the managed isolated startup workflow.
-- Use `modmind_test_rendered` for a visible Java Mod or modpack startup check only when 真实界面测试 is checked. It builds/syncs, opens a real window for a bounded check, and stops its own client. It does not verify screenshots or gameplay. Use the player-session rendered path for supported interactive server tests.
+- Use `modmind_test_rendered` only when 真实界面测试 is checked. Supported Java Mod versions use the pinned Minecraft Mod MCP integration, return a fresh native screenshot and GUI/player/world observations, then stop the owned client. Inspect the returned image before claiming visual correctness. Unsupported versions and modpacks retain the bounded startup-only check. Use `modmind_test_session` with `mode: rendered` for continued interaction, including native Java Mod projects; probe capabilities first and stop when done.
 - Read `modmind_runtime_state` after launch, timeout, cancellation, or failure to capture current events and avoid stale conclusions.
 - Invoke `$minecraft-server-pack-testing` for modpack server construction, actual HeadlessMC join verification, or bounded console scenarios. Those tools provide stronger evidence than a generic mod smoke test.
 

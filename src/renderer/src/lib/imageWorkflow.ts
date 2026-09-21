@@ -1,4 +1,5 @@
 import type { Connection, Edge, Node } from '@xyflow/react'
+import { findImageStudioPreset, imageWorkflowPrompt } from './imageStudioPresets'
 import type { ImageAsset, ImageGenerationRequest, ImageGenerationResult, ImageProcessingOptions, ImageProcessingResult, ImageStudioStyle, ImageStudioQuality, PerfectPixelOptions } from '../../../shared/imageStudio'
 
 export type WorkflowKind = 'prompt' | 'reference' | 'generate' | 'process' | 'output'
@@ -11,6 +12,8 @@ export type WorkflowData = {
   referenceImage?: string
   referenceLabel?: string
   style?: ImageStudioStyle
+  presetId?: string
+  presetPrompt?: string
   size?: string
   quality?: ImageStudioQuality
   moderation?: 'auto' | 'low'
@@ -115,11 +118,15 @@ export function planImageWorkflow(nodes: WorkflowNodeType[], edges: Edge[], targ
     }
     if (node.data.kind === 'generate') {
       const prompts = incoming.filter(item => item.data.kind === 'prompt')
-      if (prompts.length !== 1 || !prompts[0].data.prompt?.trim()) throw new Error(`“${node.data.title}”需要连接且只能连接一个有效提示词`)
-      if (prompts[0].data.prompt!.trim().length > 32_000) throw new Error('图片描述不能超过 32000 个字符')
+      const preset = findImageStudioPreset(node.data.presetId)
+      if (node.data.presetId && !preset) throw new Error(`“${node.data.title}”的预设不可用，请重新选择`)
+      const prompt = imageWorkflowPrompt(node.data, prompts[0]?.data.prompt)
+      if (prompts.length > 1 || !prompt) throw new Error(preset ? `“${node.data.title}”的预设提示词不能为空` : `“${node.data.title}”需要连接且只能连接一个有效提示词`)
+      if (prompt.length > 32_000) throw new Error('图片描述不能超过 32000 个字符（含预设与补充要求）')
       const count = node.data.count ?? 1
       if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error('每个生图节点的数量必须是 1～10 的整数')
       const inputCount = incoming.filter(item => imageProducingKind(item.data.kind)).reduce((sum, item) => sum + (counts.get(item.id) ?? 0), 0)
+      if (preset?.requiresReference && !inputCount) throw new Error(`“${preset.label}”需要参考图，请连接参考图、已有结果或上游图片节点`)
       const outputCount = count * Math.max(1, inputCount)
       counts.set(node.id, outputCount)
       totalCount += outputCount
@@ -153,13 +160,13 @@ export async function runImageWorkflow(plan: ImageWorkflowPlan, api: {
     if (node.data.kind === 'output') values.set(node.id, [node.data.outputAsset!])
     if (node.data.kind === 'reference') values.set(node.id, [{ id: node.id, dataUrl: node.data.referenceImage!, createdAt: '', model: 'reference', style: 'free', size: 'original', quality: 'auto', hosted: false, credits: 0 }])
     if (node.data.kind === 'generate') {
-      const prompt = incoming.find(item => item.data.kind === 'prompt')!.data.prompt!.trim()
+      const prompt = imageWorkflowPrompt(node.data, incoming.find(item => item.data.kind === 'prompt')?.data.prompt)
       const images = incoming.filter(item => imageProducingKind(item.data.kind)).flatMap(item => values.get(item.id) ?? [])
       const output: ImageAsset[] = []
       for (const reference of images.length ? images : [null]) {
         for (let index = 0; index < (node.data.count ?? 1); index += 1) {
           checkStopped()
-          const result = await api.generate({ prompt, style: node.data.style ?? 'free', size: node.data.size ?? '1024x1024', quality: node.data.quality ?? 'medium', moderation: node.data.moderation ?? 'auto', count: 1, background: 'solid', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...(reference ? { referenceImage: reference.dataUrl } : {}) })
+          const result = await api.generate({ prompt, style: node.data.presetId ? 'free' : node.data.style ?? 'free', size: node.data.size ?? '1024x1024', quality: node.data.quality ?? 'medium', moderation: node.data.moderation ?? 'auto', count: 1, background: 'solid', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...(reference ? { referenceImage: reference.dataUrl } : {}) })
           for (const asset of result.assets) { output.push(asset); options.onAsset(asset, node.id) }
           if (result.error) throw new Error(result.error)
           if (!result.assets.length) throw new Error('图片服务没有返回图片，已停止后续生成')

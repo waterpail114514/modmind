@@ -336,7 +336,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
             </div>
             <div className="mc-mod-list">
               {!modpack && projectMod ? <ModRow mod={projectMod} /> : !modpack ? (
-                <div className="mc-project-missing"><Box size={17} /><span><strong>项目构建产物</strong><small>在 build/libs 生成 JAR 后自动同步</small></span></div>
+                <div className="mc-project-missing"><Box size={17} /><span><strong>项目构建产物</strong></span></div>
               ) : null}
               {dependencies.map((mod) => <ModRow key={mod.name} mod={mod} />)}
               {!dependencies.length ? <div className="mc-mod-empty">没有额外前置模组</div> : null}

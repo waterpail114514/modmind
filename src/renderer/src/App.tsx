@@ -188,7 +188,7 @@ import {
   type WorkbenchConversation
 } from './workbenchConversations'
 import { inspirationConversationTitle, normalizeStoredInspirationMessages, persistInspirationHistory, type InspirationConversation } from './inspirationStorage'
-import { isAiOperationalStatusText, isUsableAiAnswer } from '../../shared/aiOutput'
+import { isAiOperationalStatusText } from '../../shared/aiOutput'
 import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, upsertInspirationNotice, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
 import appLogo from './assets/logo-wordmark.svg'
 import appLogoDark from './assets/logo-wordmark-dark.svg'
@@ -404,9 +404,8 @@ const initialSettings: AgentSettings = {
 
 type JavaProbeDisplayState = { status: 'idle' | 'checking' | 'valid' | 'invalid'; major: number }
 
-function JavaHomePreferenceRow({ label, description, value, homes, scanning, onChange }: {
+function JavaHomePreferenceRow({ label, value, homes, scanning, onChange }: {
   label: string
-  description: string
   value: string
   homes: DetectedJavaHome[]
   scanning: boolean
@@ -443,7 +442,7 @@ function JavaHomePreferenceRow({ label, description, value, homes, scanning, onC
 
   return (
     <div className="settings-java-row">
-      <div className="appearance-row"><div><strong>{label}</strong><p>{description}</p></div><span className={`status-dot ${probe.status === 'invalid' ? 'warning' : 'success'}`} /></div>
+      <div className="appearance-row"><div><strong>{label}</strong></div><span className={`status-dot ${probe.status === 'invalid' ? 'warning' : 'success'}`} /></div>
       <label className="field-label">自动检测
         <select
           value={normalizedValue}
@@ -633,7 +632,7 @@ function EmptyState({ onCreate, onOpen }: { onCreate: () => void; onOpen: () => 
     <main className="empty-state">
       <div className="empty-icon"><Box size={30} /></div>
       <h1>开始一个 Minecraft Mod</h1>
-      <p>创建新工程，或打开之前由 ModMind 管理的项目</p>
+
       <div className="empty-actions">
         <button className="primary-button" onClick={onCreate}><Plus size={16} />新建项目</button>
         <button className="secondary-button" onClick={onOpen}><FolderOpen size={16} />打开项目</button>
@@ -683,27 +682,27 @@ function ProjectLauncher({
   return (
     <main className="project-launcher">
       <div className="project-launcher-header">
-        <div><h1>项目</h1><p>选择最近项目或开始一个新项目</p></div>
+        <div><h1>项目</h1></div>
       </div>
       <div className="project-launcher-list">
         <button className="project-launcher-action" type="button" onClick={onCreate}>
           <span className="project-launcher-icon new"><Plus size={20} /></span>
-          <span><strong>新建项目</strong><small>创建 Minecraft Mod 工程或整合包</small></span>
+          <span><strong>新建项目</strong></span>
           <ChevronRight size={17} />
         </button>
         <button className="project-launcher-action" type="button" onClick={onOpen}>
           <span className="project-launcher-icon open"><FolderOpen size={19} /></span>
-          <span><strong>打开已有项目</strong><small>从其他位置选择 ModMind 项目文件夹</small></span>
+          <span><strong>打开已有项目</strong></span>
           <ChevronRight size={17} />
         </button>
         <button className="project-launcher-action" type="button" onClick={onAdopt}>
           <span className="project-launcher-icon adopt"><PackageOpen size={19} /></span>
-          <span><strong>接管现有项目</strong><small>支持项目文件夹或压缩包（ZIP、MRPack），识别完整工程、残缺源码或 API 文档</small></span>
+          <span><strong>接管现有项目</strong><small>文件夹、ZIP、MRPack</small></span>
           <ChevronRight size={17} />
         </button>
         <button className="project-launcher-action" type="button" onClick={onImportModJar}>
           <span className="project-launcher-icon adopt"><Binary size={19} /></span>
-          <span><strong>接管模组或插件</strong><small>支持模组和服务端插件 JAR，识别平台并反编译为 ModMind 项目</small></span>
+          <span><strong>接管模组或插件</strong><small>模组或服务端插件 JAR</small></span>
           <ChevronRight size={17} />
         </button>
       </div>
@@ -756,7 +755,7 @@ function RenameProjectDialog({ project, onClose, onRenamed }: { project: Project
     <div className="dialog rename-project-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
       <div className="dialog-header"><div><h2>重命名项目</h2><p>{project.path}</p></div><button className="icon-button" type="button" title="关闭" disabled={busy} onClick={onClose}><X size={17} /></button></div>
       <label className="field-label">项目名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <label className="field-label">命名空间<input value={namespace} onChange={(event) => setNamespace(event.target.value)} /><small>只允许 Minecraft 标识符；输入中的空格和大写字母会自动规范化</small></label>
+      <label className="field-label">命名空间<input value={namespace} onChange={(event) => setNamespace(event.target.value)} /><small>小写字母、数字、下划线</small></label>
       {error ? <div className="inline-error"><CircleAlert size={15} />{error}</div> : null}
       <div className="dialog-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" type="button" disabled={busy || !name.trim() || !namespace.trim()} onClick={() => void rename()}>{busy ? <LoaderCircle className="spin" size={16} /> : <Pencil size={16} />}保存重命名</button></div>
     </div>
@@ -948,18 +947,18 @@ function ExistingImportPicker({ onClose, onSelect }: { onClose: () => void; onSe
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="dialog import-picker-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-header">
-          <div><h2>接管现有项目</h2><p>选择要导入的来源类型</p></div>
+          <div><h2>接管现有项目</h2></div>
           <button className="icon-button" title="关闭" onClick={onClose}><X size={17} /></button>
         </div>
         <div className="import-picker-options">
           <button className="project-launcher-action" type="button" onClick={() => onSelect('folder')}>
             <span className="project-launcher-icon open"><FolderOpen size={19} /></span>
-            <span><strong>项目文件夹</strong><small>选择已经解压的源码或工程目录</small></span>
+            <span><strong>项目文件夹</strong></span>
             <ChevronRight size={17} />
           </button>
           <button className="project-launcher-action archive-picker-action" type="button" onClick={() => onSelect('zip')}>
             <span className="project-launcher-icon adopt"><PackageOpen size={19} /></span>
-            <span><strong>压缩包</strong><small>支持 ZIP、MRPack 格式，自动解压后识别并导入项目内容</small></span>
+            <span><strong>压缩包</strong><small>ZIP、MRPack</small></span>
             <ChevronRight size={17} />
           </button>
         </div>
@@ -1269,7 +1268,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         })
       }
       if (event.kind === 'answer') {
-        if (!isUsableAiAnswer(event.content)) {
+        if (!event.content.trim()) {
           demoteResponseAndAppendStep(event.content, 'error')
           return
         }
@@ -1662,7 +1661,7 @@ function CreateProjectDialog({ onClose, onCreated }: { onClose: () => void; onCr
         <div className="dialog-header">
           <div>
             <h2>新建 Minecraft 项目</h2>
-            <p>先选择你实际游玩的版本，ModMind 将生成对应的完整工程</p>
+
           </div>
           <button className="icon-button" title="关闭" onClick={onClose}><X size={17} /></button>
         </div>
@@ -1735,7 +1734,7 @@ function DeviceAccountDialog({ state, remoteState, busy, remoteBusy, onClose, on
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="dialog hosted-account-dialog" role="dialog" aria-modal="true" aria-labelledby="device-account-title" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="dialog-header"><div><h2 id="device-account-title">ModMind 设备连接</h2><p>管理本机授权凭证和站内余额</p></div><button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={17} /></button></div>
+        <div className="dialog-header"><div><h2 id="device-account-title">ModMind 设备连接</h2></div><button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={17} /></button></div>
         {state.status === 'connected' ? (
           <>
             <div className="hosted-dialog-profile"><span className="hosted-account-avatar"><UserRound size={16} /></span><div><strong>{state.username ?? '已连接账号'}</strong><small>{state.keyStatus === 'FROZEN' ? (state.frozenReason ?? 'Key 已冻结') : '设备已安全连接'}</small></div><button className="text-button" type="button" disabled={busy} onClick={onDisconnect}>断开设备</button></div>
@@ -5595,6 +5594,7 @@ export default function App(): React.JSX.Element {
               onEditTimelineItem={handleEditTimelineItem}
               onDeleteTimelineItem={handleDeleteTimelineItem}
               onRewindTimelineTo={handleRewindTimelineTo}
+              onOpenChangedFile={(path) => { void openEditorFile(path) }}
             /> : null}
 
             {[...new Map([...(project ? [project] : []), ...recentProjects].filter((entry) => uiMode === 'beginner' || !entry.draft).map((entry) => [normalizeProjectPath(entry.path), entry])).values()].map((inspirationProject) => (
@@ -5687,7 +5687,7 @@ export default function App(): React.JSX.Element {
                           ))}
                         </div>
                       </>
-                    ) : <div className="mapping-detail-empty"><LibraryBig size={30} /><h2>选择一个类查看完整映射</h2><p>结果包含字段、构造器、方法签名及各命名空间名称</p></div>}
+                    ) : <div className="mapping-detail-empty"><LibraryBig size={30} /><h2>选择一个类查看完整映射</h2></div>}
                   </section>
                 </div>
               </div>
@@ -5822,7 +5822,7 @@ export default function App(): React.JSX.Element {
                         </button>
                       </div>
                     </article>
-                  )) : <div className="large-empty"><History size={26} /><h3>还没有版本快照</h3><p>创建快照后，项目文件会保存在项目内的 {project.toolDataDirectory ?? '.modmind'} 目录</p></div>}
+                  )) : <div className="large-empty"><History size={26} /><h3>还没有版本快照</h3></div>}
                 </div>
               </div>
             ) : null}
@@ -5852,7 +5852,7 @@ export default function App(): React.JSX.Element {
               const pluginId = view.slice('plugin:'.length)
               const plugin = pluginSnapshot.plugins.find((entry) => entry.manifest.id === pluginId)
               if (!plugin) {
-                return <div className="large-empty"><Puzzle size={26} /><h3>插件未安装或已卸载</h3><p>在「管理插件」中检查插件状态</p></div>
+                return <div className="large-empty"><Puzzle size={26} /><h3>插件未安装或已卸载</h3></div>
               }
               return <PluginPanelHost plugin={plugin} theme={settings.darkMode ? 'dark' : 'light'} />
             })() : null}
@@ -5886,7 +5886,7 @@ export default function App(): React.JSX.Element {
                   />
                 </section>
                 <section id="settings-agents" className="settings-section">
-                  <div className="settings-heading"><h2>外部 Agent</h2><p>Codex 与 Claude Code</p></div>
+                  <div className="settings-heading"><h2>外部 Agent</h2></div>
                   <div className="external-agent-settings">
                     <div className="external-agent-list">
                       {EXTERNAL_AGENT_OPTIONS.map((agent) => {
@@ -5906,11 +5906,11 @@ export default function App(): React.JSX.Element {
                       const selectedAgent = EXTERNAL_AGENT_OPTIONS.find((item) => item.kind === editingAgent)!
                       const agent = {...selectedAgent, managedService: selectedAgent.managedService && (editingAgent !== 'claude' || agentDraft.mode === 'hosted')}
                       return <div className="external-agent-editor">
-                        <div className="external-agent-editor-heading"><div><strong>配置 {agent.label}</strong><p>{agent.managedService ? '只在这里填写该 Agent 需要的中转服务。保存前会备份现有配置' : '通常不需要填写服务信息；ModMind 会沿用该 Agent 本机已有的账号和配置'}</p></div><button className="icon-button" type="button" title="关闭" onClick={() => { setEditingAgent(null); setAgentDraft({}) }}><X size={15} /></button></div>
+                        <div className="external-agent-editor-heading"><div><strong>配置 {agent.label}</strong></div><button className="icon-button" type="button" title="关闭" onClick={() => { setEditingAgent(null); setAgentDraft({}) }}><X size={15} /></button></div>
                         <div className="external-agent-editor-form">
                           {editingAgent === 'claude' ? <label className="field-label">Claude Code 模式<select value={agentDraft.mode ?? 'local'} onChange={(event) => setAgentDraft((current) => ({...current, mode: event.target.value as ExternalAgentConfiguration['mode']}))}><option value="local">本机登录和配置</option><option value="hosted">ModMind 中转服务</option></select></label> : null}
                           {editingAgent === 'claude' ? <label className="field-label">命令路径<input value={agentDraft.executable ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, executable: event.target.value}))} placeholder="留空则从 PATH 查找" /></label> : null}
-                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value, modelContextWindows: undefined}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div>{editingAgent === 'codex' ? <label className="field-label">当前模型上下文上限（Token，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="自动使用模型能力表" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const windows = { ...current.modelContextWindows }; const model = current.model?.trim() ?? ''; if (value === '') delete windows[model]; else windows[model] = Number(value); return { ...current, modelContextWindows: windows } }) }} /><small>仅对当前模型生效，保存后用于实际执行和自动压缩。请填写服务商支持的上限；留空恢复自动匹配。</small></label> : null}<div className="external-agent-reasoning-control"><span>思考强度</span><div role="group" aria-label={`${agent.label} 思考强度`}>{(editingAgent === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] as const : ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).map((value) => <button type="button" className={agentDraft.reasoningEffort === value ? 'active' : ''} key={value} onClick={() => setAgentDraft((current) => ({...current, reasoningEffort: value}))}>{value}</button>)}</div></div></> : null}
+                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value, modelContextWindows: undefined}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div>{editingAgent === 'codex' ? <label className="field-label">当前模型上下文上限（Token，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="自动使用模型能力表" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const windows = { ...current.modelContextWindows }; const model = current.model?.trim() ?? ''; if (value === '') delete windows[model]; else windows[model] = Number(value); return { ...current, modelContextWindows: windows } }) }} /><small>填写服务商支持的上限，留空自动匹配</small></label> : null}<div className="external-agent-reasoning-control"><span>思考强度</span><div role="group" aria-label={`${agent.label} 思考强度`}>{(editingAgent === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] as const : ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).map((value) => <button type="button" className={agentDraft.reasoningEffort === value ? 'active' : ''} key={value} onClick={() => setAgentDraft((current) => ({...current, reasoningEffort: value}))}>{value}</button>)}</div></div></> : null}
                         </div>
                         <div className="settings-actions editor-actions"><span><ShieldCheck size={15} />凭证通过系统加密保存</span><button className="primary-button compact" type="button" disabled={configuringAgents[editingAgent]} onClick={() => void configureExternalAgent(editingAgent)}>{configuringAgents[editingAgent] ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存 {agent.label} 配置</button></div>
                       </div>
@@ -5951,48 +5951,46 @@ export default function App(): React.JSX.Element {
                     <div className="mcp-bridge-detail">
                       {mcpBridgeState.mcpConfigPath ? (
                         <>
-                          <p>把下面的配置文件路径填到你的 MCP 客户端（如 modmind-mcp）即可接入：</p>
+                          <p>MCP 配置文件</p>
                           <code className="mcp-bridge-path">{mcpBridgeState.mcpConfigPath}</code>
                           <div className="settings-actions mcp-bridge-actions">
-                            <span><Info size={14} />配置文件在打开项目后生成，切换项目会自动跟随</span>
+
                             <button className="secondary-button compact" type="button" onClick={() => void navigator.clipboard?.writeText(mcpBridgeState.mcpConfigPath ?? '').then(() => setNotice('已复制 MCP 配置路径')).catch(() => setNotice('复制失败，请手动复制'))}><Copy size={14} />复制路径</button>
                           </div>
                         </>
                       ) : (
-                        <p><Info size={14} />开关已打开。打开一个项目后，这里会显示 mcp-config.json 的路径，填进 MCP 客户端即可接入。</p>
+                        <p role="status">请先打开项目</p>
                       )}
                     </div>
-                  ) : (
-                    <div className="mcp-bridge-detail"><p>关闭时不监听任何外部接入；打开后也仅限本机访问，且跟随当前打开的项目。</p></div>
-                  )}
+                  ) : null}
                  </section>
                  <section id="settings-image" className="settings-section image-settings-section">
-                    <div className="settings-heading"><h2>图像服务</h2><p>图像工坊与 Agent 共用</p></div>
+                    <div className="settings-heading"><h2>图像服务</h2></div>
                     {imageStudioSettings.hasStoredKey ? <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageSettingsSaving} onClick={() => void clearImageApiKey()}>切换为额度图像服务</button></div> : null}
                     <div className="image-service-form">
-                      <label className="field-label">图片模型<select value={imageStudioSettings.model} disabled={imageModelsLoading || imageSettingsSaving} onChange={(event) => void saveImageSettings({ model: event.target.value })}>{!imageModels.includes(imageStudioSettings.model) && <option value={imageStudioSettings.model}>{imageStudioSettings.model ? imageStudioSettings.model + '（当前设置）' : '请选择图片模型'}</option>}{imageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select><small>选择后自动保存</small></label>
+                      <label className="field-label">图片模型<select value={imageStudioSettings.model} disabled={imageModelsLoading || imageSettingsSaving} onChange={(event) => void saveImageSettings({ model: event.target.value })}>{!imageModels.includes(imageStudioSettings.model) && <option value={imageStudioSettings.model}>{imageStudioSettings.model ? imageStudioSettings.model + '（当前设置）' : '请选择图片模型'}</option>}{imageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
                       <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageModelsLoading || imageSettingsSaving} onClick={() => void refreshImageModels()}>{imageModelsLoading ? '正在加载模型…' : '刷新模型列表'}</button></div>
                     </div>
                     <div className="settings-connection-status" role="status">{imageSettingsFeedback}</div>
                     {imageModelsError && <p role="alert">{imageModelsError}</p>}
                     <details>
                       <summary>自定义图像 API（可选）</summary>
-                      <p>使用自己的服务时填写地址和 Key；保存 Key 后将改用自定义 API。</p>
+
                       <div className="image-service-form">
                         <label className="field-label">Base URL<input value={imageStudioSettings.baseUrl} disabled={imageSettingsSaving} onChange={(event) => { setImageStudioSettings({ ...imageStudioSettings, baseUrl: event.target.value }); setImageSettingsFeedback('自定义 API 有未保存的修改') }} /></label>
                         <label className="field-label">图片 API Key<SecretInput aria-label="图片 API Key" secretKey="image" stored={imageStudioSettings.hasStoredKey} value={imageApiKey} disabled={imageSettingsSaving} onChange={(event) => { setImageApiKey(event.target.value); setImageSettingsFeedback('自定义 API 有未保存的修改') }} placeholder={imageStudioSettings.hasStoredKey ? '已安全保存，留空保持不变' : '输入自己的图片 API Key'} /></label>
                         <div className="settings-actions"><span><ShieldCheck size={15} />{imageStudioSettings.hasStoredKey ? '已有加密凭证' : '当前未启用自定义 API'}</span><div className="settings-button-group">{imageStudioSettings.hasStoredKey ? <button className="secondary-button compact danger" type="button" disabled={imageSettingsSaving} onClick={() => void clearImageApiKey()}><Trash2 size={14} />删除已保存 Key</button> : null}<button className="primary-button compact" type="button" disabled={imageSettingsSaving} onClick={() => void saveImageSettings({ apiKey: imageApiKey })}><Save size={14} />{imageSettingsSaving ? '正在保存…' : '保存自定义 API'}</button></div></div>
                       </div>
-                      <p>保存地址和 Key 后，在上方刷新并选择该服务的模型。</p>
+
                     </details>
                     <div className="settings-actions"><button className="secondary-button compact" type="button" onClick={() => setView('image-studio')}><WandSparkles size={14} />打开图像工坊</button></div>
                  </section>
                 <section id="settings-build" className="settings-section">
-                  <div className="settings-heading"><h2>构建工具</h2><p>ModMind 使用项目自带的 Gradle Wrapper 构建，不安装单独的 Gradle 运行时</p></div>
-                  <div className="appearance-row"><div><strong>项目 Gradle Wrapper</strong><p>构建时在项目根目录执行 {window.modmind.app.getPlatformInfo().os === 'windows' ? '.\\gradlew.bat build' : './gradlew build'}</p></div><span className="status-dot success" /></div>
+                  <div className="settings-heading"><h2>构建工具</h2></div>
+                  <div className="appearance-row"><div><strong>项目 Gradle Wrapper</strong></div><span className="status-dot success" /></div>
                 </section>
                 <section id="settings-java" className="settings-section">
-                  <div className="settings-heading"><h2>Java 运行时</h2><p>默认自动选择，也可指定本机 JDK</p></div>
+                  <div className="settings-heading"><h2>Java 运行时</h2></div>
                   <div className="settings-actions">
                     <span>
                       <Info size={14} />
@@ -6006,7 +6004,6 @@ export default function App(): React.JSX.Element {
                   </div>
                   <JavaHomePreferenceRow
                     label="游戏运行时"
-                    description="启动 Minecraft 测试实例、安装 Fabric/NeoForge 加载器时使用的 Java"
                     value={settings.javaPreferences?.game ?? ''}
                     homes={detectedJavaHomes}
                     scanning={javaScanState === 'scanning'}
@@ -6014,7 +6011,6 @@ export default function App(): React.JSX.Element {
                   />
                   <JavaHomePreferenceRow
                     label="Gradle 构建 JDK"
-                    description="编译模组项目时注入 Gradle 的 JAVA_HOME；需要包含 javac 的完整 JDK"
                     value={settings.javaPreferences?.build ?? ''}
                     homes={detectedJavaHomes}
                     scanning={javaScanState === 'scanning'}
@@ -6022,7 +6018,6 @@ export default function App(): React.JSX.Element {
                   />
                   <JavaHomePreferenceRow
                     label="内置工具"
-                    description="ServerPackCreator 服务端整合、HeadlessMC 冒烟测试等内置工具使用的 Java"
                     value={settings.javaPreferences?.tools ?? ''}
                     homes={detectedJavaHomes}
                     scanning={javaScanState === 'scanning'}
@@ -6030,15 +6025,15 @@ export default function App(): React.JSX.Element {
                   />
                 </section>
                 <section id="settings-network" className="settings-section">
-                  <div className="settings-heading"><h2>网络</h2><p>下载代理</p></div>
+                  <div className="settings-heading"><h2>网络</h2></div>
                   <form className="settings-connection-form" onSubmit={event => { event.preventDefault(); void saveNetworkProxy() }}>
-                    <label className="field-label">HTTP 代理地址<input value={networkProxyDraft} disabled={networkProxySaving} onChange={(event) => { networkProxyDirtyRef.current = true; setNetworkProxyDraft(event.target.value); setNetworkProxyFeedback('有未保存的修改') }} placeholder="http://127.0.0.1:7890" /><small>留空为直连。不支持 SOCKS；MC百科、Gitee 等国内站点保持直连。</small></label>
-                    <div className="settings-actions"><span className="settings-connection-status" role="status">{networkProxyFeedback || '修改后点击保存，或按 Enter'}</span><button className="secondary-button compact" type="submit" disabled={networkProxySaving || networkProxyDraft === (settings.networkProxyUrl ?? '')}>{networkProxySaving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{networkProxySaving ? '正在保存…' : '保存代理配置'}</button></div>
+                    <label className="field-label">HTTP 代理地址<input value={networkProxyDraft} disabled={networkProxySaving} onChange={(event) => { networkProxyDirtyRef.current = true; setNetworkProxyDraft(event.target.value); setNetworkProxyFeedback('有未保存的修改') }} placeholder="http://127.0.0.1:7890" /><small>留空直连，仅支持 HTTP / HTTPS</small></label>
+                    <div className="settings-actions"><span className="settings-connection-status" role="status">{networkProxyFeedback}</span><button className="secondary-button compact" type="submit" disabled={networkProxySaving || networkProxyDraft === (settings.networkProxyUrl ?? '')}>{networkProxySaving ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{networkProxySaving ? '正在保存…' : '保存代理配置'}</button></div>
                   </form>
                 </section>
                 <section id="settings-diagnostics" className="settings-section">
-                  <div className="settings-heading"><h2>诊断日志</h2><p>导出启动、构建和崩溃日志，便于排查本机运行问题。不会包含已保存的 API Key 或 Token</p></div>
-                  <div className="settings-actions"><span><TerminalSquare size={15} />包含应用事件、下载重试、Minecraft、构建、服务端日志和页面快照</span><button className="secondary-button" type="button" disabled={diagnosticExporting} onClick={() => void exportDiagnosticLogs()}>{diagnosticExporting ? <LoaderCircle className="spin" size={16} /> : <Archive size={16} />}导出诊断日志</button></div>
+                  <div className="settings-heading"><h2>诊断日志</h2></div>
+                  <div className="settings-actions"><button className="secondary-button" type="button" disabled={diagnosticExporting} onClick={() => void exportDiagnosticLogs()}>{diagnosticExporting ? <LoaderCircle className="spin" size={16} /> : <Archive size={16} />}导出诊断日志</button></div>
                 </section>
                 <section id="settings-appearance" className="settings-section">
                   <AppearanceSettings settings={settings} onSave={saveSettingsPatch} />
@@ -6048,35 +6043,35 @@ export default function App(): React.JSX.Element {
                 </section>
                 <section id="settings-notifications" className="settings-section close-settings-section">
                   <div className="settings-heading"><h2>关闭与通知</h2></div>
-                  {window.modmind.app.getPlatformInfo().os !== 'macos' ? <label className="field-label">关闭窗口<select value={settings.closeBehavior} onChange={(event) => void saveSettingsPatch({ closeBehavior: event.target.value as AgentSettings['closeBehavior'] })}><option value="ask">每次询问</option><option value="tray">最小化到系统托盘</option><option value="quit">直接关闭</option></select><small>首次关闭时会询问；勾选“不再提示”后会记住你的选择</small></label> : <p>关闭窗口后任务继续运行；点击 Dock 图标恢复，按 ⌘Q 退出应用。</p>}
-                  <div className="appearance-row"><div><strong>任务完成通知</strong><p>AI 或构建任务完成、失败时显示系统通知，不显示中间进度</p></div><button className={`toggle ${settings.notificationsEnabled ? 'on' : ''}`} type="button" role="switch" aria-label="任务完成通知" aria-checked={settings.notificationsEnabled} onClick={() => void saveSettingsPatch({ notificationsEnabled: !settings.notificationsEnabled })}><span /></button></div>
+                  {window.modmind.app.getPlatformInfo().os !== 'macos' ? <label className="field-label">关闭窗口<select value={settings.closeBehavior} onChange={(event) => void saveSettingsPatch({ closeBehavior: event.target.value as AgentSettings['closeBehavior'] })}><option value="ask">每次询问</option><option value="tray">最小化到系统托盘</option><option value="quit">直接关闭</option></select></label> : <p>关闭窗口后任务继续运行；点击 Dock 图标恢复，按 ⌘Q 退出应用。</p>}
+                  <div className="appearance-row"><div><strong>任务完成通知</strong></div><button className={`toggle ${settings.notificationsEnabled ? 'on' : ''}`} type="button" role="switch" aria-label="任务完成通知" aria-checked={settings.notificationsEnabled} onClick={() => void saveSettingsPatch({ notificationsEnabled: !settings.notificationsEnabled })}><span /></button></div>
                 </section>
                 <section id="settings-remote" className="settings-section remote-build-section">
-                  <div className="settings-heading"><h2>远程构建</h2><p>Gitee Go</p></div>
+                  <div className="settings-heading"><h2>远程构建</h2></div>
                   <div className="remote-build-card">
-                    <div className="remote-build-card-heading"><div><strong>推荐：Gitee Go</strong><small>免费额度 · 国内节点 · 支持 Java/Gradle 缓存</small></div><span className="status-dot warning" /></div>
-                    <p>配置一次仓库和 Token 后，ModMind 会自动生成 `.gitee-ci.yml`、提交项目并推送；已启用 Gitee Go 的仓库会自动开始 Gradle 构建</p>
+                    <div className="remote-build-card-heading"><div><strong>推荐：Gitee Go</strong></div><span className="status-dot warning" /></div>
+
                     <div className="remote-build-form">
                       <label className="field-label">Gitee 仓库地址<input value={giteeSettings.repositoryUrl} onChange={(event) => { setGiteeSettings({ ...giteeSettings, repositoryUrl: event.target.value }); setGiteeValidation(null) }} placeholder="https://gitee.com/用户名/仓库名" /></label>
                       <label className="field-label">构建分支<input value={giteeSettings.branch} onChange={(event) => setGiteeSettings({ ...giteeSettings, branch: event.target.value })} placeholder="main" /></label>
-                      <label className="field-label remote-build-token-field">Gitee Personal Access Token<SecretInput secretKey="gitee" stored={Boolean(giteeSettings.hasStoredToken)} value={giteeSettings.token} onChange={(event) => setGiteeSettings({ ...giteeSettings, token: event.target.value })} placeholder={giteeSettings.hasStoredToken ? '已安全保存，留空则保持不变' : '粘贴 Gitee Token'} /><small>请授予仓库读写权限；Token 只保存在系统加密存储中，用于 Git 推送和仓库校验</small></label>
+                      <label className="field-label remote-build-token-field">Gitee Personal Access Token<SecretInput secretKey="gitee" stored={Boolean(giteeSettings.hasStoredToken)} value={giteeSettings.token} onChange={(event) => setGiteeSettings({ ...giteeSettings, token: event.target.value })} placeholder={giteeSettings.hasStoredToken ? '已安全保存，留空则保持不变' : '粘贴 Gitee Token'} /><small>需要仓库读写权限</small></label>
                     </div>
-                    <div className="remote-build-actions"><div className="remote-build-button-group"><button className="secondary-button compact" type="button" onClick={() => window.open('https://gitee.com/profile/personal_access_tokens', '_blank')}><ExternalLink size={14} />创建 Token</button><button className="secondary-button compact" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim()} onClick={() => void validateGitee()}>{giteeBuildBusy === 'validate' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}校验连接</button><button className="secondary-button compact" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim()} onClick={() => void saveGiteeBuildSettings()}><Save size={14} />保存</button></div><span>{giteeValidation ? (giteeValidation.valid ? `已连接 ${giteeValidation.repository}` : giteeValidation.detail) : '首次使用需要 Gitee 账号和 Token'}</span></div>
+                    <div className="remote-build-actions"><div className="remote-build-button-group"><button className="secondary-button compact" type="button" onClick={() => window.open('https://gitee.com/profile/personal_access_tokens', '_blank')}><ExternalLink size={14} />创建 Token</button><button className="secondary-button compact" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim()} onClick={() => void validateGitee()}>{giteeBuildBusy === 'validate' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}校验连接</button><button className="secondary-button compact" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim()} onClick={() => void saveGiteeBuildSettings()}><Save size={14} />保存</button></div><span>{giteeValidation ? (giteeValidation.valid ? `已连接 ${giteeValidation.repository}` : giteeValidation.detail) : ''}</span></div>
                     <div className="remote-build-primary-action"><button className="primary-button" type="button" disabled={Boolean(giteeBuildBusy) || !giteeSettings.repositoryUrl.trim() || (!giteeSettings.token.trim() && !giteeSettings.hasStoredToken)} onClick={() => void triggerGiteeBuild()}>{giteeBuildBusy === 'build' ? <LoaderCircle className="spin" size={15} /> : <CloudUpload size={15} />}推送并开始远程构建</button>{giteeBuildResult?.pipelineUrl ? <button className="secondary-button compact" type="button" onClick={() => window.open(giteeBuildResult.pipelineUrl, '_blank')}><ExternalLink size={14} />打开 Gitee 流水线</button> : null}</div>
                     <details className="remote-build-guide">
-                      <summary>首次使用说明：需要注册账号</summary>
-                      <p>远程构建依赖第三方构建平台账号。ModMind 不会索要平台密码，只在浏览器中完成授权；没有账号时仍可使用本地构建</p>
+                      <summary>配置 Gitee Go</summary>
+
                       <div className="remote-build-account-list">
                         <div><strong>推荐路径</strong><span>注册 Gitee 账号，创建私有仓库并启用 Gitee Go</span></div>
-                        <div><strong>备用云平台</strong><span>CODING 需要腾讯云/CODING 账号；CodeArts 需要华为云账号</span></div>
-                        <div><strong>自托管路径</strong><span>GitHub Runner 需要 GitHub 账号和在线机器；Jenkins 需要 Gitee 账号和已部署的 Jenkins</span></div>
+
+
                       </div>
-                      <p className="remote-build-guide-note">云平台免费额度会因账号类型和政策变化；当前版本使用 Gitee Go，Gitee 不可用时请切换到本地构建。其他 Provider 接入后再启用自动择优</p>
+
                     </details>
                   </div>
                 </section>
                 <section id="settings-legal" className="settings-section">
-                  <div className="settings-heading"><h2>许可证与版权</h2><p>本版本的源码、许可证和第三方组件声明</p></div>
+                  <div className="settings-heading"><h2>许可证与版权</h2></div>
                   <div className="settings-actions"><span><Info size={15} />当前版本原创源码按 AGPL-3.0-only 授权。软件按“现状”提供，不提供任何明示或默示保证。</span><div className="settings-button-group"><button className="secondary-button compact" type="button" onClick={() => window.open('https://github.com/waterpail114514/modmind/blob/main/LICENSE', '_blank')}><ExternalLink size={14} />查看许可证</button><button className="secondary-button compact" type="button" onClick={() => window.open('https://github.com/waterpail114514/modmind', '_blank')}><ExternalLink size={14} />获取对应源码</button></div></div>
                   <div className="settings-actions"><span>1.4.3 及更早版本仍按发布时的 MIT 许可证提供；第三方组件和随包工具以其各自许可证为准。</span><button className="secondary-button compact" type="button" onClick={() => window.open('https://github.com/waterpail114514/modmind/blob/main/THIRD_PARTY_NOTICES.md', '_blank')}><ExternalLink size={14} />第三方声明</button></div>
                 </section>

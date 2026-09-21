@@ -1,0 +1,14 @@
+.turn-completion-card { width: 100%; min-width: 0; box-sizing: border-box; margin: 16px 0 8px; border: 1px solid var(--agent-fill-3); border-radius: 14px; overflow: hidden; background: var(--agent-surface); color: var(--agent-text-1); font-size: 13px; }
+.turn-completion-heading { display: flex; align-items: center; gap: 12px; min-height: 66px; padding: 12px; box-sizing: border-box; background: var(--agent-fill-2); }
+.turn-completion-icon { width: 40px; height: 40px; display: grid; place-items: center; flex-shrink: 0; border-radius: 10px; background: var(--agent-surface); color: var(--agent-text-3); }
+.turn-completion-heading strong { display: block; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.turn-completion-heading div > span { display: block; margin-top: 2px; color: var(--agent-text-3); font-size: 12px; }
+.turn-completion-files { list-style: none; margin: 0; padding: 4px 0; border-top: 1px solid var(--agent-fill-3); max-height: 320px; overflow-y: auto; }
+.turn-completion-files button, .turn-completion-file { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 8px 12px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.turn-completion-files button { cursor: pointer; }
+.turn-completion-files svg { flex-shrink: 0; color: var(--agent-text-3); }
+.turn-completion-files span span, .turn-completion-files button > span { min-width: 0; overflow-wrap: anywhere; }
+.turn-completion-files button:hover { background: var(--agent-fill-1); }
+.turn-completion-more { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 8px 12px; border: 0; border-top: 1px solid var(--agent-fill-3); background: var(--agent-fill-2); color: var(--agent-text-2); font: inherit; text-align: left; cursor: pointer; }
+.turn-completion-card button:focus-visible { outline: 2px solid var(--agent-primary); outline-offset: -3px; }
+.turn-completion-legacy { margin: 0; padding: 10px 12px; color: var(--agent-text-3); border-top: 1px solid var(--agent-fill-3); font-size: 12px; }

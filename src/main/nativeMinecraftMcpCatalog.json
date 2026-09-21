@@ -1,0 +1,548 @@
+{
+  "source": "https://github.com/langyo/minecraft-mod-mcp",
+  "release": "v0.3.0",
+  "checkedAt": "2026-09-21",
+  "entries": [
+    {
+      "minecraft": "1.10.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.10.2-forge-v0.3.0.jar",
+      "sha256": "67d19065814c9d94e0151810ac65b28d0d1a0d1ff403daf3a6c8210e1ca84cb7"
+    },
+    {
+      "minecraft": "1.11",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.11-forge-v0.3.0.jar",
+      "sha256": "972ad59a182ff3e13ffc76bc8cc360675637c9d61e7b97163c9f064f865beff3"
+    },
+    {
+      "minecraft": "1.11.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.11.2-forge-v0.3.0.jar",
+      "sha256": "608ffc3727c11acbd19520ba56c96e9e574afc10fdc4d42a5eef540ac5f1d55c"
+    },
+    {
+      "minecraft": "1.12",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.12-forge-v0.3.0.jar",
+      "sha256": "a8b8b9217f2c4ca0b8f4c09a94eb269b6146e430fd0a79be6cd11b745c8986dd"
+    },
+    {
+      "minecraft": "1.12.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.12.1-forge-v0.3.0.jar",
+      "sha256": "1cfcab2366fec35b1007c9792695b89f2d621bd0b65faee131bedf6df8497863"
+    },
+    {
+      "minecraft": "1.12.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.12.2-forge-v0.3.0.jar",
+      "sha256": "557994168431bf081cfcce39e9fb5273053e683b00d7e46f93d7561602dc66dd"
+    },
+    {
+      "minecraft": "1.13.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.13.2-forge-v0.3.0.jar",
+      "sha256": "a42ae9e36553f139868ffc236d4a0efe835038acdb7d43c501434a44ec0a6d3e"
+    },
+    {
+      "minecraft": "1.14.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.14.2-fabric-v0.3.0.jar",
+      "sha256": "307315bcdf120b3f2b19dc4b73e2f752e0b2ba8216c9bb396157462a34bc08a7"
+    },
+    {
+      "minecraft": "1.14.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.14.2-forge-v0.3.0.jar",
+      "sha256": "09181e11f6c5f79beeccebed33cf3333c8994b3ec378f67dd528be9136596472"
+    },
+    {
+      "minecraft": "1.14.3",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.14.3-fabric-v0.3.0.jar",
+      "sha256": "0a62f5b3a63a567c1d972f72d96cc8b7a8f1bf2883bc231b75f6381dac2dd737"
+    },
+    {
+      "minecraft": "1.14.3",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.14.3-forge-v0.3.0.jar",
+      "sha256": "e0c012e3eb79554668d63309b8336bc19102e0f6ec300ded4c01e781acf023af"
+    },
+    {
+      "minecraft": "1.14.4",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.14.4-fabric-v0.3.0.jar",
+      "sha256": "2d9c220c0159ab0dd6d50f352861a3d0e20554343eb4a3945c903833aede2ad6"
+    },
+    {
+      "minecraft": "1.14.4",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.14.4-forge-v0.3.0.jar",
+      "sha256": "e1594236720d4b2cb37105d543f05faa9cbcbc8a3159cbbef6d5d3f97270fea3"
+    },
+    {
+      "minecraft": "1.15",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.15-fabric-v0.3.0.jar",
+      "sha256": "56ce1b0c31f5a97b6c2ab3c25a0bb206f10a70a8dd20f2b3e6d2dd94ee8a796e"
+    },
+    {
+      "minecraft": "1.15",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.15-forge-v0.3.0.jar",
+      "sha256": "d751b8e7d61a2418e2b944e7d590d4ed1010c27953f25d1a7333737612e114c7"
+    },
+    {
+      "minecraft": "1.15.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.15.1-fabric-v0.3.0.jar",
+      "sha256": "6c35730aaa8af021a894eae7d2e3510fd095c666d9d55728ceb3e14e842b2fd8"
+    },
+    {
+      "minecraft": "1.15.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.15.1-forge-v0.3.0.jar",
+      "sha256": "83205a6c0a15cf442cf8e2c460014b044bd4bcc27eb1a118959691f33fad5f73"
+    },
+    {
+      "minecraft": "1.15.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.15.2-fabric-v0.3.0.jar",
+      "sha256": "bce50ae7304732a5720152752188ebd950ffa4d987c215277dbac0b2b1161b28"
+    },
+    {
+      "minecraft": "1.15.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.15.2-forge-v0.3.0.jar",
+      "sha256": "32b931424ddf8db6393c4168be8d96a30ab0b083b23461102dcfbc3c0ef1a7e9"
+    },
+    {
+      "minecraft": "1.16.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.1-fabric-v0.3.0.jar",
+      "sha256": "6415fa571a981bc015f60caae1b88a0c46d48569d820e3f84af451c18e5e315b"
+    },
+    {
+      "minecraft": "1.16.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.1-forge-v0.3.0.jar",
+      "sha256": "78787963b042f3ede23a7b8968b5865ff8632d8a7b5ccae051ab7df498e02374"
+    },
+    {
+      "minecraft": "1.16.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.2-fabric-v0.3.0.jar",
+      "sha256": "e298c11f3332697e8a4b479ff35ea8b6dc46762333c4ee3d14b543cdd4322986"
+    },
+    {
+      "minecraft": "1.16.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.2-forge-v0.3.0.jar",
+      "sha256": "8e862f2fda85b0e13c5a0c76e282070af7f416a10caeb77f580743370732a0c5"
+    },
+    {
+      "minecraft": "1.16.3",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.3-fabric-v0.3.0.jar",
+      "sha256": "a224f8b7f5860915c1b58d7075ac4780e000d80d2a16044b9e33e33752c0865f"
+    },
+    {
+      "minecraft": "1.16.3",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.3-forge-v0.3.0.jar",
+      "sha256": "043095128e2fe611f6aa88b7c53c374c8343b270192e401010509572f8859576"
+    },
+    {
+      "minecraft": "1.16.4",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.4-fabric-v0.3.0.jar",
+      "sha256": "866e55d8a04c29dacf6d3c00b1a33434f19ef71dd0b78a0df9d318fe51ec97fb"
+    },
+    {
+      "minecraft": "1.16.4",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.4-forge-v0.3.0.jar",
+      "sha256": "c2b2d30856bf7656e6c6230bc85ba1f3bd598044ee91b47ca7548283d1a4cdbe"
+    },
+    {
+      "minecraft": "1.16.5",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.5-fabric-v0.3.0.jar",
+      "sha256": "54f7f6b49e2e09dbf6071e8558d2cc69e353e09a2eb1e566c8c2fc6c44ee2bee"
+    },
+    {
+      "minecraft": "1.16.5",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.16.5-forge-v0.3.0.jar",
+      "sha256": "09c3f7c9215415469ea7a56f511ed5da5a34fb70fa4dd8916d07a416cd00512d"
+    },
+    {
+      "minecraft": "1.17.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.17.1-fabric-v0.3.0.jar",
+      "sha256": "6e6749181f3ba400b4c5ee7fcdeb8d9790b55315121c48c2bc1e42479f919a35"
+    },
+    {
+      "minecraft": "1.17.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.17.1-forge-v0.3.0.jar",
+      "sha256": "3ca3a4a4e2b8f28a65c5e88c68e51351fd7f6731c9040451243a60a6cc92afdc"
+    },
+    {
+      "minecraft": "1.18",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.18-fabric-v0.3.0.jar",
+      "sha256": "4f12c4c7afc98137ea555857480be8c7ce9b72cf6e4d69f01c8dc7eadd5cfde6"
+    },
+    {
+      "minecraft": "1.18",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.18-forge-v0.3.0.jar",
+      "sha256": "4af643f9e9a6bb90b6c5aef816cce2a24a06aebe6566b3902d82c9cc737d2b08"
+    },
+    {
+      "minecraft": "1.18.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.18.1-fabric-v0.3.0.jar",
+      "sha256": "6ccade890095c6d8dd4cfe16cd0a67eb03da3f1a6063b4727d85c46f03cac1d9"
+    },
+    {
+      "minecraft": "1.18.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.18.1-forge-v0.3.0.jar",
+      "sha256": "09185b28784b4e1949d4601d9c9e753668f0ea5c29beffee1fcf8c3b49d41881"
+    },
+    {
+      "minecraft": "1.18.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.18.2-fabric-v0.3.0.jar",
+      "sha256": "faf39d00771e780143bdbc5b07e66b24513ca67552b4a874eb3d8ab603a32af7"
+    },
+    {
+      "minecraft": "1.18.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.18.2-forge-v0.3.0.jar",
+      "sha256": "d7328a231d24af19d1712435e10f259091aef4d046318bb8f12e21fa56882296"
+    },
+    {
+      "minecraft": "1.19",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19-fabric-v0.3.0.jar",
+      "sha256": "519098eb6cb727c81706421076af212e6c78776bb2edc1a91bcc4dafcd1799a3"
+    },
+    {
+      "minecraft": "1.19",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19-forge-v0.3.0.jar",
+      "sha256": "138aaeb21579f1e108d566608ff498f2dbc0eeb48c084103beaa44243675aa35"
+    },
+    {
+      "minecraft": "1.19.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.1-fabric-v0.3.0.jar",
+      "sha256": "c15d0bfaecb72547a6641960d2ec916446533f501929544ee997d3fa055cd63e"
+    },
+    {
+      "minecraft": "1.19.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.1-forge-v0.3.0.jar",
+      "sha256": "7f8e985e8092b028997368f58296f2205a4ae5bac96239785e4be077c7e7404a"
+    },
+    {
+      "minecraft": "1.19.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.2-fabric-v0.3.0.jar",
+      "sha256": "f9c862fff35466641cf64f37459c2a11605c705f129501b0a3c9b51a72441b81"
+    },
+    {
+      "minecraft": "1.19.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.2-forge-v0.3.0.jar",
+      "sha256": "3f9ce7e56cfbb9030ca23e3c0d190c7161dfe775b9bf90b630b412926820b9f2"
+    },
+    {
+      "minecraft": "1.19.3",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.3-fabric-v0.3.0.jar",
+      "sha256": "1c900d000edc1ebab04938c0d0a562609ac90cac730f5d1543b9de00622a3a88"
+    },
+    {
+      "minecraft": "1.19.3",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.3-forge-v0.3.0.jar",
+      "sha256": "fc56405cfe1ed90eec79ad0a409700b9836c374c6fcd9e6f26844cb2fbe06b64"
+    },
+    {
+      "minecraft": "1.19.4",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.4-fabric-v0.3.0.jar",
+      "sha256": "a587fe918421ab512cf0a2b40969e508bc5b99a85eb6ac307a5510e8655e54bb"
+    },
+    {
+      "minecraft": "1.19.4",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.19.4-forge-v0.3.0.jar",
+      "sha256": "ba079186ee29b06154b4b73541252d3481148a59d712c9324e10ca7749cbeff0"
+    },
+    {
+      "minecraft": "1.20",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20-fabric-v0.3.0.jar",
+      "sha256": "83c58040107b46b7e10c360a66722becb7207093941bc235c0ce8526ad016352"
+    },
+    {
+      "minecraft": "1.20",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20-forge-v0.3.0.jar",
+      "sha256": "bdb15c1cb28524d657e6e1fa625be7b706a09d495c0219d1c9d3addbd0d739b8"
+    },
+    {
+      "minecraft": "1.20.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.1-fabric-v0.3.0.jar",
+      "sha256": "a447f4b6424424879c2d4050694f8cb0d71cc0a60d49a3c46b087e710c01e418"
+    },
+    {
+      "minecraft": "1.20.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.1-forge-v0.3.0.jar",
+      "sha256": "b6d94204a8accdbd716731c0eaecdbd5b070473423b0c17fb1710c52b73a8be5"
+    },
+    {
+      "minecraft": "1.20.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.2-fabric-v0.3.0.jar",
+      "sha256": "38faf6364e493230ac92fb12efbb43fd2442dce1399496104c88844ef5c990ea"
+    },
+    {
+      "minecraft": "1.20.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.2-forge-v0.3.0.jar",
+      "sha256": "59d786d323349156f1ad3b4be572b948f79792cfc268729afabd253a95a5c084"
+    },
+    {
+      "minecraft": "1.20.3",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.3-fabric-v0.3.0.jar",
+      "sha256": "bce8806c286268f56d6e990888aee386f7e2b0e0ecd92172396a1433f476404d"
+    },
+    {
+      "minecraft": "1.20.3",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.3-forge-v0.3.0.jar",
+      "sha256": "92ae8092f49ac0dbab96350a7fcf39268a92a01f0f6c2ffc97d3d5a652dfcce0"
+    },
+    {
+      "minecraft": "1.20.4",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.4-fabric-v0.3.0.jar",
+      "sha256": "44551aebaf63baf79a4585d2d9330cd21692e61cc573f28604178e1af4c9cd78"
+    },
+    {
+      "minecraft": "1.20.4",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.4-forge-v0.3.0.jar",
+      "sha256": "a236eacebc8e55144f87b5e719dfc023fb5fdec7936d87f31bdf4d9235a285fa"
+    },
+    {
+      "minecraft": "1.20.4",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.4-neoforge-v0.3.0.jar",
+      "sha256": "1990dee79b1d2260780b08ab490613a26c1e632a39e0332476471dce2e783e11"
+    },
+    {
+      "minecraft": "1.20.6",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.6-fabric-v0.3.0.jar",
+      "sha256": "c3b36e6ce072329ce12c9a4ad5e0e4eed9e025de0620f630507bba5c91d134b5"
+    },
+    {
+      "minecraft": "1.20.6",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.6-forge-v0.3.0.jar",
+      "sha256": "1a4f9a9568deeed2f94976a3e200cfc5c9840c92880f22b880637a50afb0a141"
+    },
+    {
+      "minecraft": "1.20.6",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.20.6-neoforge-v0.3.0.jar",
+      "sha256": "c6cc12c960490e72a83fd5c2f8169294cd1adda4d838ad69d188e8b7d3b73695"
+    },
+    {
+      "minecraft": "1.21",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21-fabric-v0.3.0.jar",
+      "sha256": "65b1354ce8a2ea25d120d175aeef071c49c6e48b1129b106245e6dff2cf38c96"
+    },
+    {
+      "minecraft": "1.21",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21-forge-v0.3.0.jar",
+      "sha256": "5dcd98b0dc512ead309b199a7f0cc5824b155a2deb1c17bcb79babcd5d4ccb73"
+    },
+    {
+      "minecraft": "1.21.1",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.1-fabric-v0.3.0.jar",
+      "sha256": "55aab04b1d7ac9203817e071cb83b6d6cf3da7164636867da33877750de64636"
+    },
+    {
+      "minecraft": "1.21.1",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.1-forge-v0.3.0.jar",
+      "sha256": "5b6ef9906f5e92d7702215d32817932c609da56bb0d28af9247a5691a9297c8a"
+    },
+    {
+      "minecraft": "1.21.1",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.1-neoforge-v0.3.0.jar",
+      "sha256": "c6cc12c960490e72a83fd5c2f8169294cd1adda4d838ad69d188e8b7d3b73695"
+    },
+    {
+      "minecraft": "1.21.10",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.10-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.11",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.11-fabric-v0.3.0.jar",
+      "sha256": "13e9bc1aba5a8a4310556d527d667db5e921877a638d431e24b5fae64e168785"
+    },
+    {
+      "minecraft": "1.21.11",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.11-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.11",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.11-neoforge-v0.3.0.jar",
+      "sha256": "c6cc12c960490e72a83fd5c2f8169294cd1adda4d838ad69d188e8b7d3b73695"
+    },
+    {
+      "minecraft": "1.21.3",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.3-fabric-v0.3.0.jar",
+      "sha256": "2bb15ba1afd0a68c707b4dc1e8830285a13390b1f5104fadf7c53bd69a2938b7"
+    },
+    {
+      "minecraft": "1.21.3",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.3-forge-v0.3.0.jar",
+      "sha256": "b1383fa025b5c0cd343da7777a860ef0321592f7e56eadcd5357b94733a66618"
+    },
+    {
+      "minecraft": "1.21.3",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.3-neoforge-v0.3.0.jar",
+      "sha256": "c6cc12c960490e72a83fd5c2f8169294cd1adda4d838ad69d188e8b7d3b73695"
+    },
+    {
+      "minecraft": "1.21.4",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.4-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.4",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.4-neoforge-v0.3.0.jar",
+      "sha256": "c6cc12c960490e72a83fd5c2f8169294cd1adda4d838ad69d188e8b7d3b73695"
+    },
+    {
+      "minecraft": "1.21.5",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.5-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.6",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.6-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.7",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.7-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.8",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.8-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.21.9",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.21.9-forge-v0.3.0.jar",
+      "sha256": "ef47fcda2ecb2b76d0e2c0a7be631d738cea1d122a0965ae0ed1ddbfcb0ed801"
+    },
+    {
+      "minecraft": "1.7.10",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.7.10-forge-v0.3.0.jar",
+      "sha256": "5fd25290765662799ba6d193789d8637c297fe0776bc61375596d2ae170209f5"
+    },
+    {
+      "minecraft": "1.7.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.7.2-forge-v0.3.0.jar",
+      "sha256": "c9dc0180de96aa6cc154c28c0b4fd8c0d0a6d3bed7e2f6d71c81d4f765435ba6"
+    },
+    {
+      "minecraft": "1.8",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.8-forge-v0.3.0.jar",
+      "sha256": "fea1eaa0ad77eaede12b19f05851128645851258f68954752d1011df488c3430"
+    },
+    {
+      "minecraft": "1.8.8",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.8.8-forge-v0.3.0.jar",
+      "sha256": "cd8751a2ee7e15d670bda7451b76186f25d7aab22f11bbaf897d435aa786db08"
+    },
+    {
+      "minecraft": "1.8.9",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.8.9-forge-v0.3.0.jar",
+      "sha256": "d607ff8ec2df66d879cf891694a34f4b09c34420324dd74e247f62e25de637e8"
+    },
+    {
+      "minecraft": "1.9.4",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-1.9.4-forge-v0.3.0.jar",
+      "sha256": "070bc03b220b9322ef741de21e0783ecabe33ab196a4c5572ce58d76beb82bfa"
+    },
+    {
+      "minecraft": "26.1.2",
+      "loader": "forge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-26.1.2-forge-v0.3.0.jar",
+      "sha256": "3cb6b0bf3fa0bbc9578e91a1e8473b2118c74b5f3644a240bc29ce42b9566f51"
+    },
+    {
+      "minecraft": "26.1.2",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-26.1.2-neoforge-v0.3.0.jar",
+      "sha256": "ce890e0679f1d243caa818e136c4fdc1417e5a1980d4b43d7ec41e330d580d82"
+    },
+    {
+      "minecraft": "26.2",
+      "loader": "fabric",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-26.2-fabric-v0.3.0.jar",
+      "sha256": "9f0c12e129cc3e5c4741b680c2ee957279c9626f55e926f998f5282c8bd51bb9"
+    },
+    {
+      "minecraft": "26.2",
+      "loader": "neoforge",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-26.2-neoforge-v0.3.0.jar",
+      "sha256": "ce890e0679f1d243caa818e136c4fdc1417e5a1980d4b43d7ec41e330d580d82"
+    }
+  ],
+  "license": "MIT License\n\nCopyright (c) 2025 langyo\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+}

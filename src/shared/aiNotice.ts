@@ -34,7 +34,7 @@ export function aiNoticeDetails(kind: 'warning' | 'retry' | 'error', content: st
   }
 }
 
-/** Provider warnings are advisory, not failed requests. Raw details stay in diagnostics. */
+/** Provider warnings are advisory. Empty text keeps an internal notice in diagnostics only. */
 export function describeAiNotice(message: string): string {
   if (/Long threads and multiple compactions can cause the model to be less accurate/i.test(message)) {
     return '对话较长，多次整理上下文可能影响回答准确度。'
@@ -43,7 +43,7 @@ export function describeAiNotice(message: string): string {
     return '技能说明已精简，技能仍可使用。'
   }
   if (/Configured filesystem path .*not recognized.*will be ignored/i.test(message)) {
-    return '部分目录保护配置未被当前引擎识别，请更新 ModMind。'
+    return ''
   }
   if (/Model metadata for .*not found.*fallback metadata/i.test(message)) {
     return '当前模型使用默认能力配置，可能影响上下文容量和工具使用。'

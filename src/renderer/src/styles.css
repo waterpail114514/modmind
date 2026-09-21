@@ -3998,7 +3998,6 @@ body {
 .decompile-empty > svg { flex-shrink: 0; margin-bottom: 4px; }
 .decompile-empty h3 { margin: 0; color: var(--theme-text); font-size: 18px; font-weight: 600; line-height: 1.4; }
 .decompile-empty p { margin: 0; font-size: 13px; line-height: 1.8; text-wrap: pretty; }
-.decompile-empty .decompile-empty-hint { margin-top: 4px; font-size: 12px; color: var(--theme-subtle); }
 .decompile-banner { display: flex; align-items: center; gap: 9px; padding: 10px 13px; border-radius: 10px; font-size: 13px; }
 .decompile-banner.warning { background: var(--theme-warning-bg); color: var(--theme-warning); }
 .decompile-banner.error { background: var(--theme-danger-bg); color: var(--theme-danger); }
@@ -4122,7 +4121,6 @@ body {
 
 .plugin-empty { gap: 4px; }
 .plugin-empty-actions { display: flex; gap: 8px; margin-top: 14px; }
-.plugin-empty-hint { margin-top: 10px; font-size: 11px; color: var(--muted, var(--theme-muted)); }
 
 .plugin-docs-dialog { width: min(760px, calc(100vw - 48px)); max-height: 84vh; gap: 0; overflow: hidden; }
 .plugin-docs-dialog-header { padding: 14px 18px 12px; border-bottom: 1px solid var(--line, var(--theme-line)); }
@@ -4440,7 +4438,7 @@ body {
 .ftb-quest-book-tile-del:hover { color: var(--theme-accent); background: var(--theme-panel); }
 .ftb-quest-book-tile-fields { display: grid; gap: 8px; padding: 10px; border-top: 1px solid var(--ftb-border); background: var(--ftb-surface-alt); }
 .ftb-quest-book-type { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: var(--ftb-muted); font-size: 10px; }
-.ftb-quest-book-type, .ftb-quest-book-edge-info { color: var(--ftb-muted); }
+.ftb-quest-book-type { color: var(--ftb-muted); }
 .ftb-quest-book-type select, .ftb-quest-field input, .ftb-quest-field select, .ftb-quest-rule input, .ftb-quest-rule select, .ftb-quest-dependencies select { border-color: var(--ftb-border); border-radius: 6px; color: var(--ftb-text); background: var(--ftb-surface); }
 .ftb-quest-book-type select:focus, .ftb-quest-field input:focus, .ftb-quest-field select:focus, .ftb-quest-rule input:focus, .ftb-quest-rule select:focus { border-color: var(--focus-stroke); outline: 0; box-shadow: none; }
 .ftb-quest-book-rule { height: 1px; margin: 4px 18px 0; }
@@ -4492,7 +4490,7 @@ body {
 .app-shell.dark-mode .ftb-quest-book-title:focus, .app-shell.dark-mode .ftb-quest-book-subtitle:focus, .app-shell.dark-mode .ftb-quest-book-desc:focus { border-color: var(--focus-stroke); box-shadow: none; }
 .app-shell.dark-mode .ftb-quest-book-tile, .app-shell.dark-mode .ftb-rt-row { border-color: var(--ftb-border); background: var(--dark-raised); }
 .app-shell.dark-mode .ftb-quest-book-tile-fields { border-top-color: var(--ftb-border); background: var(--dark-field); }
-.app-shell.dark-mode .ftb-quest-book-tile-label, .app-shell.dark-mode .ftb-quest-book-type, .app-shell.dark-mode .ftb-quest-book-edge-info { color: var(--dark-muted); }
+.app-shell.dark-mode .ftb-quest-book-tile-label, .app-shell.dark-mode .ftb-quest-book-type { color: var(--dark-muted); }
 .app-shell.dark-mode .ftb-quest-book-type select, .app-shell.dark-mode .ftb-quest-field input, .app-shell.dark-mode .ftb-quest-field select, .app-shell.dark-mode .ftb-quest-rule input, .app-shell.dark-mode .ftb-quest-rule select, .app-shell.dark-mode .ftb-quest-dependencies select, .app-shell.dark-mode .ftb-quest-book-desc, .app-shell.dark-mode .ftb-rt-weight input { border-color: var(--ftb-border); color: var(--dark-text); background: var(--dark-field); }
 .app-shell.dark-mode .ftb-quest-book .ftb-quest-section-title { border-top-color: var(--ftb-border); color: var(--dark-text); }
 .app-shell.dark-mode .ftb-quest-book .ftb-quest-dependencies button { border-color: var(--theme-line); color: var(--theme-accent); background: var(--theme-selected); }
@@ -4585,7 +4583,6 @@ body {
 .ftb-quest-book .ftb-quest-advanced summary { min-height: 28px; letter-spacing: -.005em; }
 .ftb-quest-book .ftb-quest-advanced summary:focus-visible { outline: none; outline-offset: 0; border-radius: 4px; }
 .ftb-quest-book .ftb-quest-advanced textarea { min-height: 150px; border-radius: 8px; background: var(--theme-surface); }
-.ftb-quest-book-edge-info { margin: 0; padding: 20px 22px 8px; line-height: 1.65; }
 .ftb-quest-book-edge-delete { margin: 0 22px 20px; }
 .ftb-quest-type-glyph { border-radius: 8px; }
 .ftb-mc-text { white-space: pre-wrap; }

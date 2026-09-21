@@ -563,7 +563,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
 
       {intentOpen ? <aside className="bb-intent-panel">
         <div className="bb-intent-head">
-          <div><strong>AI candidate</strong><span>Preview is isolated. Accept is explicit.</span></div>
+          <div><strong>AI candidate</strong></div>
           <button className="bb-tool-button" type="button" title="Close candidate panel" aria-label="Close candidate panel" onClick={() => setIntentOpen(false)}><X size={15} /></button>
         </div>
         <div className="bb-intent-modes" aria-label="Asset candidate mode">
@@ -611,7 +611,7 @@ export function BlockbenchWorkspace({ visible = true, darkMode = false, project,
       </aside> : null}
 
       {historyOpen ? <aside className="bb-history-panel">
-        <div className="bb-intent-head"><div><strong>Model history</strong><span>Up to 20 complete editable checkpoints</span></div><button className="bb-tool-button" type="button" title="Close history" aria-label="Close history" onClick={() => setHistoryOpen(false)}><X size={15} /></button></div>
+        <div className="bb-intent-head"><div><strong>Model history</strong></div><button className="bb-tool-button" type="button" title="Close history" aria-label="Close history" onClick={() => setHistoryOpen(false)}><X size={15} /></button></div>
         <button className="bb-intent-secondary" type="button" disabled={historyBusy} onClick={() => void createHistoryCheckpoint()}>{historyBusy ? <LoaderCircle className="bb-spin" size={14} /> : <History size={14} />}Create checkpoint</button>
         <div className="bb-history-list">{history.length ? history.map((entry) => <div key={entry.id}><span><strong>{entry.label}</strong><small>{new Date(entry.createdAt).toLocaleString()} | {entry.actionCount} actions</small></span><button className="bb-tool-button" type="button" title={`Restore ${entry.label}`} aria-label={`Restore ${entry.label}`} disabled={historyBusy} onClick={() => void restoreHistory(entry.id)}><RotateCcw size={14} /></button></div>) : <p>No checkpoints yet.</p>}</div>
       </aside> : null}

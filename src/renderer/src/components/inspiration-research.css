@@ -9,9 +9,7 @@
 }
 .inspiration-feature-trigger.agent-icon-button { display: flex; gap: 5px; width: auto; padding: 0 8px; border-radius: 6px; font: inherit; font-size: 12px; white-space: nowrap; }
 .agent-picker-menu.workbench-feature-menu.inspiration-feature-menu { width: min(300px, calc(100vw - 24px)); }
-.inspiration-feature-hint { margin: 3px 9px 8px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .agent-picker-menu.workbench-feature-menu.inspiration-feature-menu > button { padding-block: 8px; }
-.inspiration-feature-menu small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 3px; }
 .inspiration-research-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
 .inspiration-research-shortcuts button, .inspiration-knowledge-button { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); padding: 6px 9px; font: inherit; font-size: 12px; cursor: pointer; }
 .inspiration-research-shortcuts button:hover, .inspiration-knowledge-button:hover { color: var(--text); background: var(--surface-alt); }

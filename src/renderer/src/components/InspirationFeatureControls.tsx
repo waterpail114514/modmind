@@ -44,9 +44,9 @@ export default function InspirationFeatureControls({ value, disabled, onChange }
     <button ref={trigger} type="button" className={`agent-icon-button workbench-feature-trigger inspiration-feature-trigger${open ? ' active' : ''}`} title={`分析功能（已选 ${selected}/${INSPIRATION_FEATURES.length}）`} aria-label="分析功能" aria-expanded={open} aria-controls={open ? panelId : undefined} disabled={disabled} onClick={() => setOpen(current => !current)}><SlidersHorizontal size={15} /><span>分析功能{selected ? ` · ${selected}` : ''}</span><ChevronDown size={12} /></button>
     {open ? <div ref={panel} id={panelId} className="agent-picker-menu workbench-feature-menu inspiration-feature-menu" role="group" aria-label="分析功能">
       <div className="workbench-feature-heading"><span>分析功能</span><span>{selected}/{INSPIRATION_FEATURES.length}</span></div>
-      <p className="inspiration-feature-hint">按需启用，分析材料会增加 token 用量。勾选后在下次发送时生效。</p>
-      {INSPIRATION_FEATURES.map(({ id, label, description }) => {
-        return <button type="button" role="checkbox" aria-checked={value[id]} className={value[id] ? 'selected' : ''} key={id} disabled={disabled} onClick={() => onChange({ ...value, [id]: !value[id] })}><span>{label}<small>{description}</small></span><span className="workbench-feature-check" aria-hidden="true">{value[id] ? <Check size={15} strokeWidth={2.4} /> : null}</span></button>
+
+      {INSPIRATION_FEATURES.map(({ id, label }) => {
+        return <button type="button" role="checkbox" aria-checked={value[id]} className={value[id] ? 'selected' : ''} key={id} disabled={disabled} onClick={() => onChange({ ...value, [id]: !value[id] })}><span>{label}</span><span className="workbench-feature-check" aria-hidden="true">{value[id] ? <Check size={15} strokeWidth={2.4} /> : null}</span></button>
       })}
     </div> : null}
   </div>

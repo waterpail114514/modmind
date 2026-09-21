@@ -276,3 +276,40 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Minecraft Mod MCP
+
+ModMind downloads pinned, SHA-256 verified JARs from langyo/minecraft-mod-mcp v0.3.0 on demand for owned Java mod test clients. The TypeScript MCP adapter in ModMind uses the upstream mod HTTP API; the upstream npm launcher is not bundled.
+
+Upstream: https://github.com/langyo/minecraft-mod-mcp/tree/v0.3.0
+
+ModMind modifies the McpHttpServer class constant to bind only to 127.0.0.1 instead of 0.0.0.0. Patched test JARs retain upstream files and include this license and a modification notice. Source release assets remain unmodified in the download cache.
+
+ModMind also replaces ScreenshotHelper with its own native framebuffer capture
+implementation (AGPL-3.0-only), and adapts upstream WindowHelper (MIT) to query
+actual framebuffer dimensions. Sources are retained under `resources/minecraft-mcp`;
+the generated classes and source hashes are in `src/main/nativeMinecraftMcpHelper.json`.
+
+The upstream MIT license is selected from its MIT / Apache-2.0 / CC0 licensing options:
+
+MIT License
+
+Copyright (c) 2025 langyo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

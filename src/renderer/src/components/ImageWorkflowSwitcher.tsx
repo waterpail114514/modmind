@@ -72,7 +72,7 @@ export default function ImageWorkflowSwitcher({ workflows, activeId, name, disab
           </button>
         })}
       </div>
-      <div className="image-workflow-picker-footer">随第一个提示词命名 · 切换时保存</div>
+
     </div> : null}
   </div>
 }

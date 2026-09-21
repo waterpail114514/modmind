@@ -183,7 +183,7 @@ function DependenciesPane({ onFilesChanged }: { onFilesChanged: () => void }): R
 
   return <div className="production-pane dependency-pane">
     <div className="production-toolbar">
-      <div><h2>Modrinth 依赖中心</h2><p>搜索结果已按当前 Loader 与 Minecraft 版本筛选</p></div>
+      <div><h2>Modrinth 依赖中心</h2></div>
       <div className="production-search">
         <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void search() }} placeholder="搜索 API、前置或兼容模组" />
         <button className="primary-button" disabled={!query.trim() || Boolean(busy)} onClick={() => void search()}>{busy === 'search' ? <LoaderCircle className="spin" size={15} /> : <PackageSearch size={15} />}搜索</button>
@@ -191,7 +191,7 @@ function DependenciesPane({ onFilesChanged }: { onFilesChanged: () => void }): R
     </div>
     {notice ? <div className="production-notice"><CircleAlert size={14} /><span>{notice}</span></div> : null}
     <section className="maven-dependency-form">
-      <div className="maven-dependency-copy"><h3>Maven 坐标</h3><p>添加不在 Modrinth 上的 API 或库；仓库地址仅允许 HTTPS</p></div>
+      <div className="maven-dependency-copy"><h3>Maven 坐标</h3><p>仓库地址仅支持 HTTPS</p></div>
       <label className="maven-field">坐标<input value={mavenCoordinate} onChange={(event) => setMavenCoordinate(event.target.value)} placeholder="group:artifact:version" /></label>
       <label className="maven-field">仓库地址<input value={mavenRepository} onChange={(event) => setMavenRepository(event.target.value)} placeholder="https://repo.example.com/releases（可选）" /></label>
       <label className="maven-field">依赖配置<select value={mavenConfiguration} onChange={(event) => setMavenConfiguration(event.target.value as typeof mavenConfiguration)}>
@@ -304,7 +304,7 @@ function ContentPane({ onFilesChanged }: { onFilesChanged: () => void }): React.
 
   return <div className="production-pane content-pane">
     <div className="production-toolbar">
-      <div><h2>内容与数据</h2><p>生成版本匹配的资源 JSON，导入音频并检查资源引用</p></div>
+      <div><h2>内容与数据</h2></div>
       <button className="secondary-button" disabled={Boolean(busy)} onClick={() => void validate()}>{busy === 'validate' ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}验证资源</button>
     </div>
     <div className="content-builder">
@@ -370,7 +370,7 @@ function TestsPane(): React.JSX.Element {
 
   return <div className="production-pane tests-pane">
     <div className="production-toolbar">
-      <div><h2>自动测试矩阵</h2><p>顺序验证构建、客户端、专用服务器和 Loader GameTest</p></div>
+      <div><h2>自动测试矩阵</h2></div>
       <button className="secondary-button" disabled={Boolean(busy)} onClick={() => void workflow()}>{busy === 'workflow' ? <LoaderCircle className="spin" size={15} /> : <Workflow size={15} />}生成 CI</button>
     </div>
     <div className="test-targets">{testTargets.map((target) => <label key={target.id} className={targets.includes(target.id) ? 'selected' : ''}>
@@ -452,7 +452,7 @@ function ReleasePane({ project }: { project: ProjectInfo }): React.JSX.Element {
 
   return <div className="production-pane release-pane">
     <div className="production-toolbar">
-      <div><h2>发布中心</h2><p>统一预检并发布到 Modrinth、CurseForge 和 GitHub Releases</p></div>
+      <div><h2>发布中心</h2></div>
       <div className="production-toolbar-actions">
         <button className="secondary-button" disabled={Boolean(busy)} onClick={() => void check()}>{busy === 'check' ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}预检</button>
         <button className="primary-button" disabled={Boolean(busy)} onClick={() => void save()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}保存</button>
@@ -547,7 +547,7 @@ function ModpackDeliveryPane({ project }: { project: ProjectInfo }): React.JSX.E
   return <div className="production-page">
     <h1 className="visually-hidden">交付</h1>
     <section className="production-pane modpack-delivery-pane">
-      <div><h2>版本与导出</h2><p>当前版本用于本次 .mrpack；成功导出后才更新到下一版本</p></div>
+      <div><h2>版本与导出</h2></div>
       <div className="release-form modpack-release-form">
         <label>版本<input value={settings.version} onChange={(event) => update('version', event.target.value)} /></label>
         <label>显示名称<input value={settings.displayName} onChange={(event) => update('displayName', event.target.value)} /></label>

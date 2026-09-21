@@ -306,12 +306,12 @@ export default function ModpackMigrationWorkspace({ project, onDecompile }: { pr
       </section>
 
       {assessment.modules.length ? <section className="migration-table-section">
-        <div className="migration-section-heading"><div><FileCode2 size={18} /><div><h2>自制模块</h2><p>目标工程会保留源码并重新生成构建配置</p></div></div></div>
+        <div className="migration-section-heading"><div><FileCode2 size={18} /><div><h2>自制模块</h2></div></div></div>
         <div className="migration-module-list">{assessment.modules.map((module) => <div key={module.id}><Wrench size={16} /><span><strong>{module.name}</strong><small>{module.reason}</small></span><div className="migration-choice-tabs"><button type="button" className={moduleDecisions[module.id] === 'port-source' ? 'active' : ''} onClick={() => setModuleDecisions((current) => ({ ...current, [module.id]: 'port-source' }))}>迁移源码</button><button type="button" className={moduleDecisions[module.id] === 'remove' ? 'active danger' : ''} onClick={() => setModuleDecisions((current) => ({ ...current, [module.id]: 'remove' }))}>移除</button></div></div>)}</div>
       </section> : null}
 
       {assessment.content.length ? <section className="migration-table-section">
-        <div className="migration-section-heading"><div><FileCode2 size={18} /><div><h2>魔改内容</h2><p>配置、脚本、任务、资源与世界分别取舍</p></div></div></div>
+        <div className="migration-section-heading"><div><FileCode2 size={18} /><div><h2>魔改内容</h2></div></div></div>
         <div className="migration-content-grid">{assessment.content.map((content) => <div className={content.status} key={content.kind}><span className="migration-content-status">{content.status === 'compatible' ? <CheckCircle2 size={15} /> : content.status === 'blocked' ? <XCircle size={15} /> : <AlertTriangle size={15} />}</span><span><strong>{contentLabels[content.kind]}</strong><small>{content.count} 项 · {content.reason}</small><small>{content.paths.slice(0, 3).join(' · ')}</small></span><label className="switch-control" title={contentDecisions[content.kind] === 'copy' ? '复制到目标包' : '从目标包排除'}><input type="checkbox" checked={contentDecisions[content.kind] === 'copy'} onChange={(event) => setContentDecisions((current) => ({ ...current, [content.kind]: event.target.checked ? 'copy' : 'exclude' }))} /><span aria-hidden="true" /></label></div>)}</div>
       </section> : null}
     </> : <div className="migration-empty"><PackageSearch size={28} /><strong>选择一个目标版本开始扫描</strong></div>}
@@ -320,7 +320,7 @@ export default function ModpackMigrationWorkspace({ project, onDecompile }: { pr
     {result ? <section className={`migration-result ${result.status}`}><CheckCircle2 size={18} /><div><strong>{result.status === 'complete' ? '原项目已完成迁移' : '原项目已生成不完整迁移'}</strong><span>{result.project.path}</span><small>平台文件 {result.installed.length} · 手工文件 {result.manualFiles.length} · 暂缓 {result.deferred.length} · 移除 {result.removed.length} · 源码模块 {result.portedModules.length}</small>{result.canUndo ? <button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={() => void undoMigration(result.migrationId)}>{busy === 'undo' ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}撤销迁移</button> : null}</div></section> : null}
 
     {history.length ? <section className="migration-history-section">
-      <div className="migration-section-heading"><div><History size={18} /><div><h2>迁移历史</h2><p>备份迁移可撤销；撤销前会自动保存当前现场</p></div></div></div>
+      <div className="migration-section-heading"><div><History size={18} /><div><h2>迁移历史</h2></div></div></div>
       <div className="migration-history-list">{history.map((record) => <div key={record.id} className={record.status}>
         <span><strong>{record.source.loader} {record.source.minecraftVersion}<ArrowRight size={13} />{record.target.loader} {record.target.minecraftVersion}</strong><small>{new Date(record.completedAt).toLocaleString()} · {record.mode === 'backup' ? '备份迁移' : '直接迁移'} · {record.deferred.length} 项暂缓</small></span>
         <span className="migration-history-status">{record.status === 'undone' ? '已撤销' : record.status === 'complete' ? '完整' : '不完整'}</span>

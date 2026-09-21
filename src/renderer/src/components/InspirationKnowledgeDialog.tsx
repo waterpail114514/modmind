@@ -24,7 +24,7 @@ export default function InspirationKnowledgeDialog({ projectPath, notes, initial
   }
   return <dialog ref={dialog} className="inspiration-knowledge-dialog" aria-label="项目知识与收藏" onCancel={event => { event.preventDefault(); if (!busy) onClose() }}>
     <header><strong>项目知识与收藏</strong><button type="button" disabled={busy} onClick={onClose}>关闭</button></header>
-    <p>保存已确定的设定、技术选择和待办。勾选「引用项目知识」后，才会附入后续提问。</p>
+
     <select aria-label="选择知识条目" disabled={busy} value={id ?? ''} onChange={event => {
       const note = notes.find(item => item.id === event.target.value)
       setId(note?.id); setTitle(note?.title ?? ''); setContent(note?.content ?? ''); setError('')

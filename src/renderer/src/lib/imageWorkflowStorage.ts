@@ -13,7 +13,7 @@ export function parseWorkflowGraph(value: unknown): ImageWorkflowGraph {
     if (!node || typeof node.id !== 'string' || !node.id || ids.has(node.id) || !node.data || !['prompt', 'reference', 'generate', 'process', 'output'].includes(node.data.kind) || !Number.isFinite(node.position?.x) || !Number.isFinite(node.position?.y)) throw new Error('工作流存档包含无效节点')
     ids.add(node.id)
     if (typeof node.data.title !== 'string' || typeof node.data.subtitle !== 'string') throw new Error('工作流节点信息无效')
-    for (const key of ['prompt', 'referenceImage', 'referenceLabel', 'size'] as const) {
+    for (const key of ['prompt', 'referenceImage', 'referenceLabel', 'size', 'presetId', 'presetPrompt'] as const) {
       if (node.data[key] !== undefined && typeof node.data[key] !== 'string') throw new Error('工作流节点参数无效')
     }
     if (node.data.outputAsset && (typeof node.data.outputAsset.id !== 'string' || typeof node.data.outputAsset.dataUrl !== 'string')) throw new Error('工作流输出图片无效')

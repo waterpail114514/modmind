@@ -443,6 +443,7 @@ describe('ModMind external agent MCP bridge', () => {
       "  for (const line of lines) {",
       "    if (!line.trim()) continue",
       "    const request = JSON.parse(line); if (log) appendFileSync(log, JSON.stringify(request) + '\\n')",
+      "    if (!request.method) continue",
       "    if (request.method === process.env.FAKE_REJECT_METHOD && request.params.threadId === 'broken-thread' && (!request.params.path || process.env.FAKE_REJECT_PATH)) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_REJECT_MESSAGE}}); continue }",
       "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
@@ -451,12 +452,13 @@ describe('ModMind external agent MCP bridge', () => {
       "    else if (request.method === 'thread/fork') send({id:request.id,result:{thread:{id:'thread-fork'}}})",
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
       "    else if (request.method === 'turn/start') {",
+      "      if (process.env.FAKE_TURN_EVENTS) { const ack=()=>send({id:request.id,result:{turn:{id:'native-turn-new'}}}); if(process.env.FAKE_LATE_TURN_ACK) setTimeout(ack,40); else ack(); for(const {delayMs=0,...event} of JSON.parse(process.env.FAKE_TURN_EVENTS)) setTimeout(()=>send(event),delayMs); continue }",
       "      send({id:request.id,result:{turn:{id:'native-turn-new'}}}); send({method:'turn/started',params:{threadId:request.params.threadId,turn:{id:'native-turn-new'}}})",
       "      if (process.env.FAKE_WARNINGS) for (const message of JSON.parse(process.env.FAKE_WARNINGS)) send({method:'warning',params:{threadId:request.params.threadId,message}})",
       "      if (process.env.FAKE_COMPACTIONS) { for (const item of JSON.parse(process.env.FAKE_COMPACTIONS)) { const event=item.method ? {method:item.method,params:{threadId:request.params.threadId,turnId:'native-turn-new',...item.params}} : {method:'item/completed',params:{threadId:request.params.threadId,turnId:'native-turn-new',item}}; if(item.delayMs) setTimeout(()=>send(event),item.delayMs); else send(event); } }",
-      "      if (process.env.FAKE_STRUCTURED_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { const error={message:process.env.FAKE_ERROR_MESSAGE || '请求未完成',codexErrorInfo:JSON.parse(process.env.FAKE_STRUCTURED_ERROR)}; if (process.env.FAKE_ERROR_COMPLETION) send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'failed',error}}}); else send({method:'error',params:{error,willRetry:false}}); continue }",
-      "      if (process.env.FAKE_CONNECTION_ERROR && (process.env.FAKE_REPEAT_CONNECTION_ERROR || readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1)) { send({method:'error',params:{error:{message:process.env.FAKE_CONNECTION_ERROR},willRetry:process.env.FAKE_NATIVE_RETRY === 'true'}}); if (process.env.FAKE_NATIVE_RETRY === 'true') setTimeout(() => { send({method:'item/completed',params:{item:{type:'agentMessage',id:'answer',text:'重连后完成'}}}); send({method:'turn/completed',params:{turn:{id:'native-turn-new',status:'completed'}}}) }, 150); continue }",
-      "      if (Number(process.env.FAKE_APPROVAL_FAILURES) >= readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length) send({method:'item/completed',params:{item:{type:'commandExecution',id:'failed-review',aggregatedOutput:'This action was rejected due to unacceptable risk.\\nReason: Automatic approval review failed: stream disconnected before completion'}}})",
+      "      if (process.env.FAKE_STRUCTURED_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { const error={message:process.env.FAKE_ERROR_MESSAGE || '请求未完成',codexErrorInfo:JSON.parse(process.env.FAKE_STRUCTURED_ERROR)}; if (process.env.FAKE_ERROR_COMPLETION) send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:'native-turn-new',status:'failed',error}}}); else send({method:'error',params:{threadId:request.params.threadId,turnId:'native-turn-new',error,willRetry:false}}); continue }",
+      "      if (process.env.FAKE_CONNECTION_ERROR && (process.env.FAKE_REPEAT_CONNECTION_ERROR || readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1)) { send({method:'error',params:{threadId:request.params.threadId,turnId:'native-turn-new',error:{message:process.env.FAKE_CONNECTION_ERROR},willRetry:process.env.FAKE_NATIVE_RETRY === 'true'}}); if (process.env.FAKE_NATIVE_RETRY === 'true') setTimeout(() => { send({method:'item/completed',params:{threadId:request.params.threadId,turnId:'native-turn-new',item:{type:'agentMessage',id:'answer',text:'重连后完成'}}}); send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:'native-turn-new',status:'completed'}}}) }, 150); continue }",
+      "      if (Number(process.env.FAKE_APPROVAL_FAILURES) >= readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length) send({method:'item/completed',params:{threadId:request.params.threadId,turnId:'native-turn-new',item:{type:'commandExecution',id:'failed-review',aggregatedOutput:'This action was rejected due to unacceptable risk.\\nReason: Automatic approval review failed: stream disconnected before completion'}}})",
       "      if (process.env.FAKE_TOOL_BRIDGE && request.params.model === 'A') { const cfg=JSON.parse(readFileSync(process.env.FAKE_TOOL_BRIDGE,'utf8')); void fetch('http://127.0.0.1:'+cfg.port+'/tool',{method:'POST',headers:{'x-modmind-token':cfg.token},body:JSON.stringify({action:'apply_edits',input:{edits:[]}})}).then(r=>r.text()).catch(()=>{}); }",
       "      if (process.env.FAKE_WAIT_MODEL && request.params.model === process.env.FAKE_WAIT_MODEL) continue",
       waitForInterrupt
@@ -471,6 +473,156 @@ describe('ModMind external agent MCP bridge', () => {
     else await fs.chmod(executable, 0o755)
     return { executable, log }
   }
+
+  it.each([
+    { label: 'explicit final with later commentary', phase: 'final_answer', text: '我会先检查项目——这是你要求翻译的句子。', laterCommentary: true },
+    { label: 'unknown phase question', text: 'PathfinderMob 是可以进行路径导航的生物基类。' },
+    { label: 'null phase proposal', phase: null, text: '建议新增管理员指令，配置持久化到 YAML。' },
+    { label: 'unknown phase quotation', text: '我会先检查项目——这是你要求翻译的句子。' },
+    { label: 'plan mode', type: 'plan', text: '1. 分析命令入口\n2. 实现配置持久化' }
+  ])('accepts a complete parent reply without requiring file changes: $label', async (example) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-parent-answer-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Answer', path: root, loader: 'paper', minecraftVersion: '1.20.1', namespace: 'answer', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
+    const events = [
+      { method: 'item/agentMessage/delta', params: { ...owner, itemId: 'answer', delta: '并非最终正文' } },
+      { method: 'item/completed', params: { ...owner, item: { type: example.type ?? 'agentMessage', id: 'answer', phase: example.phase, text: example.text } } },
+      ...(example.laterCommentary ? [{ method: 'item/completed', params: { ...owner, item: { type: 'agentMessage', id: 'commentary', phase: 'commentary', text: '后续过程提示' } } }] : []),
+      { method: 'turn/completed', params: { threadId: owner.threadId, turn: { id: owner.turnId, status: 'completed' } } }
+    ]
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: '解释或提供方案', persistentRetry: true,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) },
+      signal: AbortSignal.timeout(5000), onOutput: vi.fn(), onProgress: vi.fn(), bridge: stubBridgeHandlers(project)
+    })
+    expect(result.finalAnswer).toMatchObject({ text: example.text, itemId: 'answer', streamId: 'thread-new:native-turn-new:answer' })
+    expect(result.summary).toBe(example.text)
+    expect(result.buildUsed).toBe(false)
+    expect(result.runtimeUsed).toBe(false)
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(1)
+  })
+
+  it.each(['commentary', 'delta-only', 'async', 'interrupted', 'failed'])('does not deliver or automatically continue an incomplete parent result: %s', async (mode) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-incomplete-answer-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Incomplete', path: root, loader: 'paper', minecraftVersion: '1.20.1', namespace: 'incomplete', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
+    const events = [
+      { method: 'item/agentMessage/delta', params: { ...owner, itemId: 'answer', delta: '完整的文字也不代表轮次已经完成。' } },
+      ...(mode === 'delta-only' ? [] : [{ method: 'item/completed', params: { ...owner, item: { type: 'agentMessage', id: 'answer', phase: mode === 'commentary' ? 'commentary' : 'final_answer', delivery: mode === 'async' ? 'async' : null, text: '完整的文字也不代表轮次已经完成。' } } }]),
+      { method: 'turn/completed', params: { threadId: owner.threadId, turn: { id: owner.turnId, status: mode === 'interrupted' || mode === 'failed' ? mode : 'completed', ...(mode === 'failed' ? { error: { message: 'invalid task' } } : {}) } } }
+    ]
+    const onAttemptAudit = vi.fn()
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', persistentRetry: true,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) },
+      signal: AbortSignal.timeout(5000), onOutput: vi.fn(), onProgress: vi.fn(), onAttemptAudit, bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: mode === 'interrupted' ? 'AbortError' : mode === 'failed' ? 'Error' : 'ExternalAgentOutputError' })
+    expect(onAttemptAudit).toHaveBeenCalledTimes(1)
+    expect(onAttemptAudit.mock.calls[0][0].outcome).toBe(mode === 'interrupted' ? 'cancelled' : 'failure')
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(1)
+  })
+
+  it('ignores terminal notifications with missing ownership or nonterminal status', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-terminal-identity-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Identity', path: root, loader: 'paper', minecraftVersion: '1.20.1', namespace: 'identity', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const events = [
+      { method: 'turn/completed', params: { turn: { id: 'native-turn-new', status: 'completed' } } },
+      { method: 'turn/completed', params: { threadId: 'thread-new', turn: { status: 'completed' } } },
+      { method: 'turn/completed', params: { threadId: 'thread-new', turn: { id: 'native-turn-new', status: 'inProgress' } } },
+      { method: 'item/completed', params: { item: { type: 'agentMessage', id: 'unowned', text: '未标记归属的回复' } } },
+      { delayMs: 200, method: 'item/completed', params: { threadId: 'thread-new', turnId: 'native-turn-new', item: { type: 'agentMessage', id: 'answer', text: '有效回复' } } },
+      { delayMs: 250, method: 'turn/completed', params: { threadId: 'thread-new', turn: { id: 'native-turn-new', status: 'completed' } } }
+    ]
+    const onOutput = vi.fn()
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) },
+      signal: AbortSignal.timeout(5000), onOutput, onProgress: vi.fn(), bridge: stubBridgeHandlers(project)
+    })
+    expect(result.summary).toBe('有效回复')
+    expect(onOutput.mock.calls.filter(([kind]) => kind === 'response').map(([, text]) => text)).toEqual(['有效回复'])
+  })
+
+  it.each(['child-thread', 'stale-turn', 'before-ack'])('isolates foreign agent events from the active task: %s', async (mode) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-agent-routing-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Routing', path: root, loader: 'paper', minecraftVersion: '1.20.1', namespace: 'routing', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
+    const foreign = { threadId: mode === 'stale-turn' ? owner.threadId : 'child-thread', turnId: 'foreign-turn' }
+    const events = [
+      { method: 'item/agentMessage/delta', params: { ...owner, itemId: 'parent-progress', delta: '正在实现' } },
+      { method: 'thread/started', params: { thread: { id: 'child-thread' } } },
+      { method: 'turn/started', params: { threadId: foreign.threadId, turn: { id: foreign.turnId } } },
+      { method: 'item/agentMessage/delta', params: { ...foreign, itemId: 'child-answer', delta: 'child progress' } },
+      { method: 'item/completed', params: { ...foreign, item: { type: 'agentMessage', id: 'child-answer', text: '核查完成，未修改文件' } } },
+      { method: 'warning', params: { ...foreign, message: 'child warning' } },
+      { method: 'error', params: { ...foreign, error: { message: 'child failure' }, willRetry: false } },
+      { method: 'error', params: { ...foreign, error: { message: 'child retry' }, willRetry: true } },
+      { id: 'child-approval', method: 'item/fileChange/requestApproval', params: foreign },
+      { method: 'thread/tokenUsage/updated', params: { ...foreign, tokenUsage: { last: { inputTokens: 999 } } } },
+      { method: 'item/started', params: { ...foreign, item: { id: 'child-tool', type: 'commandExecution', command: 'child command' } } },
+      { method: 'item/completed', params: { ...foreign, item: { id: 'child-tool', type: 'commandExecution', aggregatedOutput: 'child output' } } },
+      { method: 'turn/completed', params: { threadId: foreign.threadId, turn: { id: foreign.turnId, status: 'completed' } } },
+      { delayMs: 150, method: 'item/completed', params: { ...owner, item: { type: 'agentMessage', id: 'parent-answer', text: '已实现管理指令并完成验证' } } },
+      // A child finishing after the parent's answer must not replace it either.
+      { delayMs: 175, method: 'item/completed', params: { ...foreign, item: { type: 'agentMessage', id: 'late-child-answer', text: '只读报告' } } },
+      { delayMs: 200, method: 'thread/tokenUsage/updated', params: { ...owner, tokenUsage: { last: { inputTokens: 12 } } } },
+      { delayMs: 250, method: 'turn/completed', params: { threadId: owner.threadId, turn: { id: owner.turnId, status: 'completed' } } }
+    ]
+    const onOutput = vi.fn(), onUsage = vi.fn(), onSessionId = vi.fn(), onNativeTurn = vi.fn()
+    const result = await runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: '实现管理指令', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events), ...(mode === 'before-ack' ? { FAKE_LATE_TURN_ACK: '1' } : {}) },
+      signal: AbortSignal.timeout(10_000), onOutput, onUsage, onSessionId, onNativeTurn, onProgress: vi.fn(), bridge: stubBridgeHandlers(project)
+    })
+    expect(result).toMatchObject({ summary: '已实现管理指令并完成验证', sessionId: owner.threadId, nativeTurnId: owner.turnId })
+    expect(onNativeTurn.mock.calls).toEqual([[owner.threadId, owner.turnId]])
+    expect(onSessionId.mock.calls.every(([id]) => id === owner.threadId)).toBe(true)
+    expect(onOutput.mock.calls.filter(([kind]) => kind !== 'start')).toEqual([
+      ['delta', '正在实现', { itemId: 'parent-progress', streamId: 'thread-new:native-turn-new:parent-progress' }],
+      ['response', '已实现管理指令并完成验证', { itemId: 'parent-answer', streamId: 'thread-new:native-turn-new:parent-answer' }]
+    ])
+    expect(onUsage).toHaveBeenCalledTimes(1)
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 12 }))
+    expect(result.transcript).toContain('child failure')
+    const saved = JSON.parse(await fs.readFile(path.join(root, '.modmind', 'external-agents', 'session-codex.json'), 'utf8'))
+    expect(saved.sessionId).toBe(owner.threadId)
+  })
+
+  it('answers child requests without failing the parent and interrupts only the parent turn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-child-request-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Requests', path: root, loader: 'paper', minecraftVersion: '1.20.1', namespace: 'requests', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root, true)
+    const events = [
+      { method: 'thread/started', params: { thread: { id: 'child-thread' } } },
+      { method: 'turn/started', params: { threadId: 'child-thread', turn: { id: 'child-turn' } } },
+      { id: 'child-approval', method: 'item/commandExecution/requestApproval', params: { threadId: 'child-thread', turnId: 'child-turn' } },
+      { id: 'child-input', method: 'item/tool/requestUserInput', params: { threadId: 'child-thread', turnId: 'child-turn', questions: [{ id: 'q' }] } },
+      { delayMs: 150, method: 'item/completed', params: { threadId: 'thread-new', turnId: 'native-turn-new', item: { type: 'agentMessage', id: 'progress', text: 'parent ready' } } }
+    ]
+    const controller = new AbortController()
+    const onOutput = vi.fn((kind: string, content: string) => { if (content === 'parent ready') controller.abort() })
+    await expect(runExternalAgent({
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) },
+      signal: controller.signal, onOutput, onProgress: vi.fn(), bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: 'AbortError' })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.find(r => r.id === 'child-approval')).toEqual({ id: 'child-approval', result: { decision: 'decline' } })
+    expect(requests.find(r => r.id === 'child-input')).toEqual({ id: 'child-input', result: { answers: { q: { answers: [] } } } })
+    expect(requests.find(r => r.method === 'turn/interrupt')?.params).toEqual({ threadId: 'thread-new', turnId: 'native-turn-new' })
+    expect(onOutput.mock.calls.some(([kind]) => kind === 'warning')).toBe(false)
+  })
 
   it.each(['explicit', 'disk', 'fork', 'fresh'])('selects history only when needed: %s', async (mode) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-prompt-selection-'))
@@ -528,7 +680,7 @@ describe('ModMind external agent MCP bridge', () => {
       env: { FAKE_APP_SERVER_LOG: fake.log }, signal: AbortSignal.timeout(10_000),
       onNativeTurn: async (session, turn) => { saved.push(`${session}:${turn}`) },
       onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
-    })).rejects.toMatchObject({ name: 'ExternalAgentEmptyResponseError' })
+    })).rejects.toMatchObject({ name: 'ExternalAgentOutputError' })
     expect(saved).toEqual(['thread-new:native-turn-new'])
   })
 
@@ -572,10 +724,11 @@ describe('ModMind external agent MCP bridge', () => {
     const project = { name: 'Notices', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'notices', createdAt: new Date().toISOString() } as ProjectInfo
     const fake = await fakeAppServer(root)
     const warning = 'Heads up: Long threads and multiple compactions can cause the model to be less accurate.'
+    const internalWarning = 'Configured filesystem path `:project_roots/.modmind` is not recognized by this version of Codex and will be ignored. Upgrade Codex if this path is required.'
     const onOutput = vi.fn()
     const result = await runExternalAgent({
       kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
-      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_WARNINGS: JSON.stringify(Array(55).fill(warning)) },
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_WARNINGS: JSON.stringify([internalWarning, ...Array(55).fill(warning)]) },
       signal: AbortSignal.timeout(10_000), onOutput, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
     })
     expect(result.summary).toBe('完成')
@@ -585,7 +738,8 @@ describe('ModMind external agent MCP bridge', () => {
     expect(warnings.at(-1)?.[2].notice.occurrences).toBe(55)
     expect(JSON.stringify(onOutput.mock.calls)).not.toContain('操作失败')
     const evidence = diagnosticJournal.snapshot().filter(event => (event.data as { projectPath?: string })?.projectPath === root)
-    expect(evidence.filter(event => event.operation === 'provider-warning')).toHaveLength(55)
+    expect(evidence.filter(event => event.operation === 'provider-warning')).toHaveLength(56)
+    expect(evidence.some(event => event.operation === 'provider-warning' && event.message === internalWarning)).toBe(true)
     expect(evidence.some(event => event.level === 'error')).toBe(false)
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1)
@@ -2010,7 +2164,7 @@ describe('ModMind external agent MCP bridge', () => {
     const image = vi.fn(async () => ({ success: true }))
     const model = vi.fn(async () => ({ success: true }))
     const matrix = vi.fn(async () => ({ success: true }))
-    const player = vi.fn(async (category: string, input: Record<string, unknown>) => ({ mode: input.sessionId === 'old-rendered' ? 'rendered' : 'headless', category, success: true }))
+    const player = vi.fn(async (category: string, input: Record<string, unknown>) => ({ mode: input.sessionId === 'old-rendered' ? 'rendered' : 'headless', modes: ['rendered'], category, success: true }))
     const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), testMinecraft: headless, testRendered: rendered, imageGenerate: image, blockbenchActions: model, testMatrix: matrix, playerTest: player }, 'test', undefined, false, undefined, undefined, features)
     bridges.push(bridge)
     const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
@@ -2031,6 +2185,11 @@ describe('ModMind external agent MCP bridge', () => {
       const result = await call(name, args)
       expect(JSON.stringify(result).includes('用户未勾选')).toBe(!enabled)
       expect(handler).toHaveBeenCalledTimes(enabled ? 1 : 0)
+    }
+    if (features.headlessTesting || features.renderedTesting) {
+      const capabilities = await call('modmind_test_session', { operation: 'capabilities' })
+      const content = (capabilities.result as { content: Array<{ text: string }> }).content
+      expect(JSON.parse(content[0].text).modes).toEqual(features.renderedTesting ? ['rendered'] : [])
     }
     await call('modmind_test_matrix', { targets: ['build'] })
     await call('modmind_test_matrix', { targets: ['client'] })
