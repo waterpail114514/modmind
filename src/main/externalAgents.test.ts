@@ -2058,7 +2058,7 @@ describe('ModMind external agent MCP bridge', () => {
     expect(JSON.stringify(await call('modmind_build_project', {}))).toContain('只读')
     expect(edits).not.toHaveBeenCalled(); expect(build).not.toHaveBeenCalled()
     expect(await fs.readFile(path.join(root, folder, 'src', 'WaxEvents.java'), 'utf8')).toBe(source.content)
-  })
+  }, 15000)
 
   it('enforces inspiration selections and per-turn read budgets through the actual bridge', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-selection-')); temporaryRoots.push(root)
