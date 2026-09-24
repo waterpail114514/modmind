@@ -23,6 +23,14 @@
 .inspiration-knowledge-dialog input, .inspiration-knowledge-dialog select, .inspiration-knowledge-dialog textarea { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); color: inherit; font: inherit; }
 .inspiration-knowledge-dialog textarea { min-height: 220px; resize: vertical; }
 .inspiration-knowledge-dialog button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); color: inherit; font: inherit; cursor: pointer; }
+.inspiration-knowledge-views { display: inline-flex; gap: 2px; margin-top: 12px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); }
+.inspiration-knowledge-dialog .inspiration-knowledge-views button { border: 0; background: transparent; color: var(--muted); }
+.inspiration-knowledge-dialog .inspiration-knowledge-views button[aria-pressed="true"] { color: var(--text); background: var(--surface); box-shadow: 0 1px 3px color-mix(in srgb, var(--theme-shadow) 12%, transparent); }
+.inspiration-knowledge-preview { min-width: 0; margin-top: 12px; padding: 14px 0 4px; border-top: 1px solid var(--line); }
+.inspiration-knowledge-preview h2 { margin: 0 0 12px; font-size: 15px; line-height: 1.4; }
+.inspiration-knowledge-preview .markdown-message { font-size: 13px; line-height: 1.7; }
+.inspiration-knowledge-preview .markdown-message p { color: inherit; font-size: inherit; }
+.inspiration-knowledge-preview .markdown-message table, .inspiration-knowledge-preview .markdown-message pre { max-width: 100%; overflow-x: auto; }
 @media (max-width: 480px) {
   .inspiration-minimal .inspiration-composer-actions > .ai-attachments { flex-basis: 100%; order: 3; }
   .inspiration-compose-note { flex-wrap: wrap; gap: 4px; }

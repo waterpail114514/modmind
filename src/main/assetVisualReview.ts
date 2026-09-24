@@ -4,6 +4,7 @@ import type {BlockbenchCaptureFrame} from '../shared/blockbench'
 
 interface FrameMetrics {
   view: string
+  heightToWidth: number | null
   occupancy: number
   contrast: number
   edgeDensity: number
@@ -11,8 +12,11 @@ interface FrameMetrics {
   clippingRisk: number
 }
 
-export async function reviewAssetCaptures(captures: BlockbenchCaptureFrame[]): Promise<AssetVisualReview> {
+export async function reviewAssetCaptures(captures: BlockbenchCaptureFrame[], referenceHeightToWidth?: number): Promise<AssetVisualReview> {
   if (!Array.isArray(captures) || captures.length < 1 || captures.length > 6) throw new Error('Visual review requires 1 to 6 captures')
+  if (referenceHeightToWidth !== undefined && (!Number.isFinite(referenceHeightToWidth) || referenceHeightToWidth < 0.2 || referenceHeightToWidth > 8)) {
+    throw new Error('Reference height-to-width ratio must be between 0.2 and 8')
+  }
   const frames = await Promise.all(captures.map(analyzeFrame))
   const occupancy = average(frames.map((frame) => frame.occupancy))
   const contrast = average(frames.map((frame) => frame.contrast))
@@ -35,6 +39,14 @@ export async function reviewAssetCaptures(captures: BlockbenchCaptureFrame[]): P
   if (clippingRisk > 0.08) findings.push({severity: 'error', checkId: 'frame-clipping', message: 'Foreground pixels touch the capture boundary', metric: clippingRisk})
   if (symmetry < 0.62) findings.push({severity: 'info', checkId: 'asymmetry', message: 'The front silhouette is strongly asymmetric', view: symmetryFrame.view, metric: symmetry})
   if (viewConsistency < 0.55) findings.push({severity: 'warning', checkId: 'view-inconsistency', message: 'Model occupancy varies sharply between review angles', metric: viewConsistency})
+  if (referenceHeightToWidth !== undefined) {
+    const front = frames.find((frame) => frame.view === 'north' || frame.view === 'south')
+    if (!front?.heightToWidth) {
+      findings.push({severity: 'error', checkId: 'proportion-view-missing', message: 'A north or south capture is required to compare reference proportions'})
+    } else if (front.heightToWidth / referenceHeightToWidth < 0.75 || front.heightToWidth / referenceHeightToWidth > 1.33) {
+      findings.push({severity: 'error', checkId: 'reference-proportion-mismatch', message: `Front silhouette height-to-width ratio ${front.heightToWidth.toFixed(2)} differs from reference ${referenceHeightToWidth.toFixed(2)}`, view: front.view, metric: front.heightToWidth})
+    }
+  }
   if (!findings.length) findings.push({severity: 'info', checkId: 'visual-pass', message: 'Visual review found no framing, contrast, or silhouette blockers'})
   return {
     score,
@@ -49,6 +61,7 @@ async function analyzeFrame(frame: BlockbenchCaptureFrame): Promise<FrameMetrics
   const background = cornerColor(data, info.width, info.height, info.channels)
   const mask = new Uint8Array(info.width * info.height)
   let graySum = 0, graySquared = 0, foregroundCount = 0, borderForeground = 0, edgeCount = 0, comparisons = 0
+  let minX = info.width, minY = info.height, maxX = -1, maxY = -1
   const gray = new Float32Array(mask.length)
   for (let y = 0; y < info.height; y += 1) for (let x = 0; x < info.width; x += 1) {
     const pixel = y * info.width + x, offset = pixel * info.channels
@@ -58,6 +71,8 @@ async function analyzeFrame(frame: BlockbenchCaptureFrame): Promise<FrameMetrics
     mask[pixel] = foreground ? 1 : 0
     if (foreground) {
       foregroundCount += 1
+      minX = Math.min(minX, x); minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y)
       if (x <= 1 || y <= 1 || x >= info.width - 2 || y >= info.height - 2) borderForeground += 1
     }
   }
@@ -75,6 +90,7 @@ async function analyzeFrame(frame: BlockbenchCaptureFrame): Promise<FrameMetrics
   const deviation = Math.sqrt(Math.max(0, graySquared / gray.length - mean * mean))
   return {
     view: frame.view,
+    heightToWidth: foregroundCount ? (maxY - minY + 1) / (maxX - minX + 1) * frame.height / frame.width : null,
     occupancy: foregroundCount / mask.length,
     contrast: clamp(deviation / 64),
     edgeDensity: edgeCount / Math.max(1, comparisons),

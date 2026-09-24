@@ -1,3 +1,4 @@
+import { normalizeAgentApprovalMode } from '../../shared/agentApproval'
 import InspirationEvidenceDialog from './components/InspirationEvidenceDialog'
 import './components/inspiration-research.css'
 import InspirationFeatureControls from './components/InspirationFeatureControls'
@@ -14,7 +15,7 @@ import { SecretInput } from './components/SecretInput'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ReactNode, SetStateAction } from 'react'
 import { memo } from 'react'
-import { marked } from 'marked'
+import { ReplyMarkdown as MarkdownMessage } from './components/ReplyImages'
 import ConversationTimeline from './components/WorkbenchConversation'
 import ChatWelcome from './components/ChatWelcome'
 import InspirationConversationPicker from './components/InspirationConversationPicker'
@@ -362,30 +363,6 @@ export function parseStoredWorkbenchTimeline(value: unknown): AiTimelineItem[] {
   // truncating here made a crash-recovered timeline silently incomplete.
   return settleWorkbenchActivity(normalizeWorkbenchTimeline(history.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content)))))
 }
-
-marked.setOptions({ gfm: true, breaks: true })
-
-const appMarkdownRenderer = new marked.Renderer()
-const escapeMarkdownHtml = (text: string): string => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
-appMarkdownRenderer.html = ({ text }) => escapeMarkdownHtml(text)
-appMarkdownRenderer.link = ({ href, text }) => /^https?:\/\//i.test(href) ? `<a href="${escapeMarkdownHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeMarkdownHtml(text)}</a>` : escapeMarkdownHtml(text)
-appMarkdownRenderer.image = ({ text }) => escapeMarkdownHtml(text)
-const inspirationMarkdownRenderer = new marked.Renderer()
-inspirationMarkdownRenderer.html = appMarkdownRenderer.html
-inspirationMarkdownRenderer.image = appMarkdownRenderer.image
-inspirationMarkdownRenderer.link = ({ href, text }) => href.startsWith('modmind-source:') ? `<button type="button" class="inspiration-source-link" data-source="${escapeMarkdownHtml(href)}">${escapeMarkdownHtml(text)}</button>` : /^https?:\/\//i.test(href) ? `<a href="${escapeMarkdownHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeMarkdownHtml(text)}</a>` : escapeMarkdownHtml(text)
-const appMarkdownCache = new Map<string, string>()
-
-const MarkdownMessage = memo(function MarkdownMessage({ content, onSource }: { content: string; onSource?: (href: string) => void }): React.JSX.Element {
-  const key = `${onSource ? 'sources:' : 'plain:'}${content}`
-  let html = appMarkdownCache.get(key)
-  if (html === undefined) {
-    html = marked.parse(content, { async: false, renderer: onSource ? inspirationMarkdownRenderer : appMarkdownRenderer })
-    appMarkdownCache.set(key, html)
-    if (appMarkdownCache.size > 500) appMarkdownCache.delete(appMarkdownCache.keys().next().value ?? '')
-  }
-  return <div className="markdown-message" onClick={event => { const source = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-source]')?.dataset.source; if (source) onSource?.(source) }} dangerouslySetInnerHTML={{ __html: html }} />
-})
 
 const MAX_AUTO_REPAIR_ROUNDS = 3
 
@@ -1075,10 +1052,16 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     let active = true
     setNotes([]); setKnowledgeReady(false); setKnowledgeDialog(null); setEvidenceHref('')
     try { setFeatures(readInspirationFeatures(localStorage.getItem(`modmind-inspiration-features:${project.path}`))) } catch { setFeatures(readInspirationFeatures(null)) }
+    let receivedKnowledgeChange = false
+    const unsubscribe = window.modmind.inspiration?.onKnowledgeChanged?.(change => {
+      if (!active || change.projectPath !== project.path) return
+      receivedKnowledgeChange = true
+      setNotes(change.notes); setKnowledgeReady(true)
+    })
     if (window.modmind.inspiration) void window.modmind.inspiration.readKnowledge(project.path).then(items => {
-      if (active) { setNotes(items); setKnowledgeReady(true) }
-    }).catch(error => { if (active) setPersistenceWarning(`项目知识读取失败：${errorMessage(error)}`) })
-    return () => { active = false }
+      if (active && !receivedKnowledgeChange) { setNotes(items); setKnowledgeReady(true) }
+    }).catch(error => { if (active && !receivedKnowledgeChange) setPersistenceWarning(`项目知识读取失败：${errorMessage(error)}`) })
+    return () => { active = false; unsubscribe?.() }
   }, [project.path])
   const changeFeatures = (next: InspirationFeatures): void => {
     setFeatures(next)
@@ -1421,8 +1404,8 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       ? inspirationConversationHandoff(baseMessages)
       : (!resumeSession && messages.length ? inspirationConversationHandoff(messages) : '')
     const fallbackHandoff = inspirationConversationHandoff(baseMessages)
-    let inspirationPrompt = `${serverPluginContext(project, true)}\nAnswer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify files.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
-    const fallbackInspirationPrompt = `Use this visible conversation history when continuing without native history without repeating completed work. Answer in Simplified Chinese and do not modify files.\n\n${fallbackHandoff ? `VISIBLE CONVERSATION HISTORY\n${fallbackHandoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
+    let inspirationPrompt = `${serverPluginContext(project, true)}\nAnswer the user's latest inspiration question in Simplified Chinese. Default to a direct, concrete answer. Only inspect project files when the answer genuinely depends on current implementation details. Do not modify project source files. If the optional Image Studio capability is enabled, host-managed concept image generation is permitted.\n\n${handoff ? `RECENT CONVERSATION CONTEXT\n${handoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
+    const fallbackInspirationPrompt = `Use this visible conversation history when continuing without native history without repeating completed work. Answer in Simplified Chinese. Do not modify project source files; host-managed concept image generation is permitted only when the optional Image Studio capability is enabled.\n\n${fallbackHandoff ? `VISIBLE CONVERSATION HISTORY\n${fallbackHandoff}\n\n` : ''}LATEST QUESTION\n${content}${attachmentContext}`
     const attachmentKeys = attachments.map((attachment) => `${attachment.path}:${attachment.size}`)
     const dedupeKey = aiPromptFingerprint(content, attachmentKeys)
     if (editIndex !== null) {
@@ -1570,7 +1553,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       </header>
       <div className="inspiration-layout">
         <section className="inspiration-chat">
-          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" rows={visibleInspirationRows} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
+          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" projectPath={project.path} rows={visibleInspirationRows} isUserRow={row => row.kind === 'message' && row.message.role === 'user'} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
               if (row.kind === 'tool-group') return <InspirationStepGroup items={row.items} key={row.id} />
               const { message } = row
               const answer = splitInspirationFollowups(message.content)
@@ -1595,7 +1578,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
             <textarea value={draft} disabled={busy || historyBusy || !hydrated} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} aria-label="灵感提问" placeholder="一个念头、一个问题，都可以从这里开始…" />
              <div className="inspiration-composer-actions"><InspirationFeatureControls value={features} disabled={busy || historyBusy || !hydrated || !visible} onChange={changeFeatures} /><button className="inspiration-knowledge-button" type="button" disabled={busy || !knowledgeReady} onClick={() => setKnowledgeDialog({})}>项目知识{notes.length ? ` · ${notes.length}` : ''}</button><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy || historyBusy || !hydrated} controller={attachmentInput} />{busy ? <button className="secondary-button compact" type="button" onClick={cancelInspiration}><X size={14} />暂停任务</button> : null}<button className="send-button" title="发送" disabled={busy || historyBusy || !hydrated || attachmentInput.busy || (!draft.trim() && !attachments.length)} onClick={() => void send()}>{busy ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button></div>
           </div>
-          <div className="inspiration-compose-note"><span title={project.path}>{project.name}</span><span title="使用当前工作台的模型和推理设置">模型跟随工作台 · 不改动项目</span></div>
+          <div className="inspiration-compose-note"><span title={project.path}>{project.name}</span><span title="使用当前工作台的模型和推理设置">模型跟随工作台 · 不改动源码</span></div>
           </div>
           {attachmentReplayWarning || persistenceWarning ? <div className="inspiration-persistence-warning" role="status"><CircleAlert size={14} />{attachmentReplayWarning || persistenceWarning}</div> : null}
         </section>
@@ -1818,11 +1801,21 @@ export default function App(): React.JSX.Element {
   uiModeRef.current = uiMode
   const [project, setProjectState] = useState<ProjectInfo | null>(null)
   const [bootstrapping, setBootstrapping] = useState(true)
+  const bootstrappingRef = useRef(bootstrapping)
+  bootstrappingRef.current = bootstrapping
   const [openingProject, setOpeningProject] = useState(false)
+  const [firstProjectPending, setFirstProjectPending] = useState(false)
   const projectTransitionRef = useRef(0)
   const setProject = (next: ProjectInfo | null): void => {
     const transition = ++projectTransitionRef.current
+    if (next && !projectPathRef.current && !bootstrappingRef.current) {
+      setFirstProjectPending(true)
+      setProjectState(next)
+      setOpeningProject(false)
+      return
+    }
     if (!next || normalizeProjectPath(next.path) === normalizeProjectPath(projectPathRef.current)) {
+      if (!next) setFirstProjectPending(false)
       setProjectState(next)
       setOpeningProject(false)
       return
@@ -1841,7 +1834,12 @@ export default function App(): React.JSX.Element {
   const [recentProjects, setRecentProjects] = useState<ProjectInfo[]>([])
   const [projectLauncherOpen, setProjectLauncherOpen] = useState(() => !isDetachedWindow)
   useAppLoading(bootstrapping || openingProject || Boolean(project && !projectLauncherOpen
-    && (filesLoadedProject !== project.path || historyLoadedProject !== project.path)))
+    && !firstProjectPending && (filesLoadedProject !== project.path || historyLoadedProject !== project.path)))
+  useEffect(() => {
+    if (firstProjectPending && project && filesLoadedProject === project.path && historyLoadedProject === project.path) {
+      setFirstProjectPending(false)
+    }
+  }, [firstProjectPending, project?.path, filesLoadedProject, historyLoadedProject])
   const [minimalProjectMenuOpen, setMinimalProjectMenuOpen] = useState(false)
   const minimalProjectMenuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -3223,9 +3221,10 @@ export default function App(): React.JSX.Element {
   }, [view])
 
   const openProject = async (): Promise<void> => {
-    setOpeningProject(true)
+    const switchingProject = Boolean(projectPathRef.current)
+    if (switchingProject) setOpeningProject(true)
     try {
-      await waitForAppLoadingCover()
+      if (switchingProject) await waitForAppLoadingCover()
       const opened = await window.modmind.project.open()
       if (opened) {
         setProject(opened)
@@ -3236,7 +3235,7 @@ export default function App(): React.JSX.Element {
     } catch (error) {
       setNotice(uiMode === 'beginner' ? '制作没有完成，可导出诊断日志' : errorMessage(error))
     } finally {
-      setOpeningProject(false)
+      if (switchingProject) setOpeningProject(false)
     }
   }
 
@@ -3328,9 +3327,10 @@ export default function App(): React.JSX.Element {
       setProjectLauncherOpen(false)
       return
     }
-    setOpeningProject(true)
+    const switchingProject = Boolean(projectPathRef.current)
+    if (switchingProject) setOpeningProject(true)
     try {
-      await waitForAppLoadingCover()
+      if (switchingProject) await waitForAppLoadingCover()
       const opened = await window.modmind.project.openRecent(recent.path)
       setProject(opened)
       setView('workspace')
@@ -3340,7 +3340,7 @@ export default function App(): React.JSX.Element {
       setErrorNotice(errorMessage(error))
       void refreshRecentProjects()
     } finally {
-      setOpeningProject(false)
+      if (switchingProject) setOpeningProject(false)
     }
   }
 
@@ -5472,7 +5472,7 @@ export default function App(): React.JSX.Element {
           </div>
         </aside> : null}
 
-        {!isDetachedWindow && !projectIndependentView && (projectLauncherOpen || !project || (uiMode === 'advanced' && Boolean(project.draft))) ? (
+        {!isDetachedWindow && !projectIndependentView && (firstProjectPending || projectLauncherOpen || !project || (uiMode === 'advanced' && Boolean(project.draft))) ? (
           uiMode === 'beginner' ? <MinimalProjectStart draft={beginnerStartupDraft} onDraftChange={setBeginnerStartupDraft} onStart={() => void startConversationProject()} onCreate={() => setBeginnerStartupDraft('')} onOpen={() => void openProject()} preferences={beginnerAiPreferences} models={beginnerAvailableModels} saving={savingAiPreferences || creatingConversationProject} onModelChange={model => void saveBeginnerAiPreference({ model })} onReasoningLevelChange={reasoningLevel => void saveBeginnerAiPreference({ reasoningLevel })} /> : <ProjectLauncher
             projects={recentProjects.filter((recent) => !recent.draft)}
             onCreate={() => setShowCreate(true)}
@@ -5863,12 +5863,13 @@ export default function App(): React.JSX.Element {
                 <SettingsSections feedback={settingsFeedback}>
                 <section id="settings-approval" className="settings-section">
                   <div className="settings-heading"><h2>执行审批</h2></div>
-                  <div className="settings-form"><label className="field-label" htmlFor="codex-approval-mode" style={{ gridColumn: '1 / -1' }}>Codex 审批模式
-                    <select id="codex-approval-mode" value={settings.codexApprovalMode ?? 'yolo'} onChange={(event) => void saveSettingsPatch({ codexApprovalMode: event.target.value === 'yolo' ? 'yolo' : 'auto-review' })}>
-                      <option value="auto-review">自动审批</option>
-                      <option value="yolo">YOLO（默认，免审批，保留内部文件保护）</option>
+                  <div className="settings-form"><label className="field-label" htmlFor="codex-approval-mode" style={{ gridColumn: '1 / -1' }}>工作台审批模式
+                    <select id="codex-approval-mode" value={settings.codexApprovalMode ?? 'yolo'} onChange={(event) => void saveSettingsPatch({ codexApprovalMode: normalizeAgentApprovalMode(event.target.value) })}>
+                      <option value="auto-review">自动审批（故障时转为手动）</option>
+                      <option value="manual">手动审批</option>
+                      <option value="yolo">YOLO（默认，完全绕过审批与沙箱）</option>
                     </select>
-                  </label></div>
+                  </label><p className="settings-note" style={{ gridColumn: '1 / -1' }}>仅对工作台生效，支持 Codex 与 Claude Code。默认 YOLO；自动审批不可用时，本次任务直接转为手动确认。新任务使用已保存的模式。</p></div>
                 </section>
                 <section id="settings-ai" className="settings-section">
                   <div className="settings-heading"><h2>AI 模型</h2></div>

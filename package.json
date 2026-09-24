@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",

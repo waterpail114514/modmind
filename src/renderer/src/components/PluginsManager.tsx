@@ -1,4 +1,5 @@
 import MoreActions from './MoreActions'
+import { usePluginInstallDialog } from './PluginInstallDialog'
 import { describeClientFailure } from '../../../shared/clientFailure'
 import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useState } from 'react'
@@ -63,6 +64,7 @@ const runtimeStatusLabels: Record<PluginDiagnostics['status'], string> = {
  */
 export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, confirmDelete }: PluginsManagerProps): JSX.Element {
   const [busy, setBusy] = useState(false)
+  const { confirmInstall, installDialog } = usePluginInstallDialog()
   const [message, setMessage] = useState<string | null>(null)
   const [docsOpen, setDocsOpen] = useState(false)
   const [docDownloaded, setDocDownloaded] = useState(false)
@@ -162,10 +164,10 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
               {busy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
             </button></MoreActions>
 
-          <button className="secondary-button compact" type="button" disabled={busy || !hasProject} title={hasProject ? undefined : '打开项目后可安装到当前项目'} onClick={() => void runAction(async () => !('cancelled' in await window.modmind.plugins.importZip('project')), '已导入到当前项目')}>
+          <button className="secondary-button compact" type="button" disabled={busy || !hasProject} title={hasProject ? undefined : '打开项目后可安装到当前项目'} onClick={() => void runAction(async () => !('cancelled' in await window.modmind.plugins.importZip('project', confirmInstall)), '已导入到当前项目')}>
             <PackagePlus size={14} /> 导入到项目
           </button>
-          <button className="secondary-button compact" type="button" disabled={busy} onClick={() => void runAction(async () => !('cancelled' in await window.modmind.plugins.importZip('global')), '已导入到全局')}>
+          <button className="secondary-button compact" type="button" disabled={busy} onClick={() => void runAction(async () => !('cancelled' in await window.modmind.plugins.importZip('global', confirmInstall)), '已导入到全局')}>
             <PackagePlus size={14} /> 导入到全局
           </button>
 
@@ -176,6 +178,8 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
       <div className="plugin-trust-banner">
         <span>后端插件拥有完整 Node 权限，可读写本机文件、联网和启动进程。只安装并启用你完全信任的插件。</span>
       </div>
+
+      {message ? <div className={`plugin-toast ${message.startsWith('失败') ? 'error' : ''}`}>{message}</div> : null}
 
       {plugins.length === 0 ? (
         <div className="large-empty plugin-empty">
@@ -195,8 +199,6 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
             <div className="plugin-stat"><strong>{panelCount}</strong><span>界面插件</span></div>
             <div className="plugin-stat"><strong>{toolCount}</strong><span>MCP 工具</span></div>
           </div>
-
-          {message ? <div className={`plugin-toast ${message.startsWith('失败') ? 'error' : ''}`}>{message}</div> : null}
 
           <div className="plugin-grid">
             {plugins.map((plugin) => (
@@ -337,6 +339,7 @@ export function PluginsManager({ snapshot, hasProject, onRefresh, onOpenPanel, c
         </div>
       ) : null}
 
+      {installDialog}
       {docToast ? <div className="plugin-doc-toast">{docToast}</div> : null}
     </div>
   )

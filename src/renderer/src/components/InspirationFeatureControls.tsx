@@ -45,8 +45,8 @@ export default function InspirationFeatureControls({ value, disabled, onChange }
     {open ? <div ref={panel} id={panelId} className="agent-picker-menu workbench-feature-menu inspiration-feature-menu" role="group" aria-label="分析功能">
       <div className="workbench-feature-heading"><span>分析功能</span><span>{selected}/{INSPIRATION_FEATURES.length}</span></div>
 
-      {INSPIRATION_FEATURES.map(({ id, label }) => {
-        return <button type="button" role="checkbox" aria-checked={value[id]} className={value[id] ? 'selected' : ''} key={id} disabled={disabled} onClick={() => onChange({ ...value, [id]: !value[id] })}><span>{label}</span><span className="workbench-feature-check" aria-hidden="true">{value[id] ? <Check size={15} strokeWidth={2.4} /> : null}</span></button>
+      {INSPIRATION_FEATURES.map(({ id, label, description }) => {
+        return <button type="button" role="checkbox" title={description} aria-checked={value[id]} className={value[id] ? 'selected' : ''} key={id} disabled={disabled} onClick={() => onChange({ ...value, [id]: !value[id] })}><span>{label}</span><span className="workbench-feature-check" aria-hidden="true">{value[id] ? <Check size={15} strokeWidth={2.4} /> : null}</span></button>
       })}
     </div> : null}
   </div>

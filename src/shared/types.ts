@@ -816,6 +816,7 @@ export interface JavaPreferences {
 
 export interface AgentSettings {
   codingBackend: CodingBackend
+  /** Historical storage key; applies to both workbench engines, never inspiration or external terminals. */
   codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
   allowBuildScriptChanges: boolean
@@ -1276,7 +1277,8 @@ export interface ModMindApi {
     current: () => Promise<ProjectInfo | null>
     listFiles: (projectPath?: string) => Promise<FileNode[]>
     listImageAssets: () => Promise<ProjectImageAsset[]>
-    readImageAsset: (relativePath: string) => Promise<string>
+    readImageAsset: (relativePath: string, projectPath?: string) => Promise<string>
+    readModelAsset: (relativePath: string, projectPath: string) => Promise<import('./projectModels').ProjectModelPreview>
     readFile: (relativePath: string, projectPath?: string) => Promise<string>
     writeFile: (relativePath: string, content: string, projectPath?: string) => Promise<void>
     /** Reads only ModMind-owned workbench data files under .modmind. */
@@ -1425,6 +1427,9 @@ export interface ModMindApi {
     onState: (listener: (state: McpBridgeState) => void) => () => void
   }
   ai: {
+    listApprovals: () => Promise<import('./agentApproval').WorkbenchApprovalRequest[]>
+    respondApproval: (id: string, decision: import('./agentApproval').AgentApprovalDecision) => Promise<boolean>
+    onApprovalsChanged: (listener: () => void) => () => void
     createCode: (prompt: string, sessionId?: string, backend?: CodingBackend, executionProfile?: AiExecutionProfile, options?: AiCreateCodeOptions) => Promise<CodingResult>
     pickAttachments: (kind: AiAttachmentSelectionKind, projectPath?: string) => Promise<AiAttachment[]>
     importAttachments: (files: File[], projectPath?: string) => Promise<AiAttachment[]>
@@ -1515,6 +1520,7 @@ export interface ModMindApi {
   inspiration: {
     readEvidence: (projectPath: string, input: import('./inspirationEvidence').InspirationEvidenceRequest) => Promise<import('./inspirationEvidence').InspirationEvidence>
     readKnowledge: (projectPath: string) => Promise<import('./inspirationKnowledge').InspirationNote[]>
+    onKnowledgeChanged: (listener: (event: { projectPath: string; notes: import('./inspirationKnowledge').InspirationNote[] }) => void) => () => void
     updateKnowledge: (projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }) => Promise<import('./inspirationKnowledge').InspirationNote[]>
   }
   decompile: {
@@ -1543,7 +1549,7 @@ export interface ModMindApi {
   plugins: {
     list: () => Promise<import('./plugins').PluginSnapshot>
     setEnabled: (pluginId: string, enabled: boolean) => Promise<import('./plugins').PluginSnapshot>
-    importZip: (scope?: 'global' | 'project') => Promise<{ imported: string } | { cancelled: true }>
+    importZip: (scope: 'global' | 'project', confirm: (preview: import('./plugins').PluginImportPreview) => Promise<boolean>) => Promise<{ imported: string } | { cancelled: true }>
     reload: () => Promise<import('./plugins').PluginSnapshot>
     openDirectory: () => Promise<void>
     invokeTool: (pluginId: string, toolName: string, input?: unknown) => Promise<unknown>

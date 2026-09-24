@@ -23,7 +23,7 @@ export default function ResourceImagePreview({ src, name }: { src: string; name:
     </div>
     {error ? <div className="resource-pack-notice" role="alert">无法解码此图片，请检查图片文件是否完整。</div> : null}
     <div className="resource-image-viewport" ref={viewport}>
-      <TransformWrapper ref={transform} minScale={.01} maxScale={32} centerOnInit limitToBounds={false} onTransform={(_, state) => setScale(state.scale)} autoAlignment={{ disabled: true }} velocityAnimation={{ disabled: true }} doubleClick={{ disabled: true }}>
+      <TransformWrapper ref={transform} minScale={.01} maxScale={32} centerOnInit limitToBounds={false} wheel={{ step: .001 }} onTransform={(_, state) => setScale(state.scale)} autoAlignment={{ disabled: true }} velocityAnimation={{ disabled: true }} doubleClick={{ disabled: true }}>
         <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }}>
           <img src={src} alt={name} draggable={false} onError={() => setError(true)} onLoad={event => {
             setError(false)

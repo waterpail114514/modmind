@@ -183,6 +183,7 @@ export interface PluginWriteFilesInput {
 export interface PluginImportPreview {
   manifest: PluginManifest
   fileName: string
+  scope: PluginScope
   conflictsWith?: { id: string; scope: PluginScope; directory: string }
 }
 

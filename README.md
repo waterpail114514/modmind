@@ -1,41 +1,85 @@
-# ModMind
+<div align="center">
 
-![ModMind Logo](resources/readme-logo.png)
+<img src="resources/readme-logo.png" alt="ModMind" width="820" />
 
-ModMind 是一个面向 Minecraft Mod 开发的 AI 辅助工作台，帮助你管理项目、模组、资源包、整合包和服务器工作流。
+### 从一个想法，到可以进入游戏的 Minecraft 项目
 
-## 当前版本：1.4.9
+AI 辅助开发 · 模组与整合包 · 资源创作 · 游戏测试
 
-- 修复 AI 会话消息串线及最终答复展示问题，改进任务完成提示。
-- 新增图片生成预设，支持在工作流中调整提示词和参考图。
-- 实验性接入 Minecraft 原生界面测试，支持截图和玩家操作，兼容范围见接入说明。
-- 移除 Herobrine。
+**[官网与客户端下载](https://ether-studio.top/)** · **[GitHub 最新版](https://github.com/waterpail114514/modmind/releases/latest)** · **[更新日志](https://github.com/waterpail114514/modmind/releases)**
 
-## 下载
+[功能一览](#功能一览) · [开始使用](#开始使用) · [本地开发](#本地开发) · [文档与社区](#文档与社区)
 
-请前往 [GitHub Releases](https://github.com/waterpail114514/modmind/releases) 下载最新版本。Windows 安装包包含自动更新所需的 `latest.yml` 和 blockmap；未签名版本首次运行时可能显示 SmartScreen 安全提示。
+</div>
 
-macOS 预览包未进行 Apple 签名和公证，首次打开时请在系统设置中允许，或右键应用选择“打开”。
+---
 
-## 开源协议
+ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感台整理想法，再让 AI 协助编写代码、制作资源、处理依赖，并在项目中构建和测试。编辑器、对话、图片、模型、整合包和服务端工具都集中在同一个工作区。
 
-ModMind 使用 GNU Affero General Public License v3.0 only（`AGPL-3.0-only`）。第三方组件和内置工具继续适用各自的许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 开始使用
 
-## MCP 服务
+**[访问官网 ether-studio.top](https://ether-studio.top/)** 即可下载客户端，查看使用流程，并使用账号管理、桌面授权、模型服务接入、额度与用量查询、兑换充值等功能。官网不只是下载页，更多功能可在登录后查看。
 
-独立 MCP 服务维护在 [ModMind-MCP](https://github.com/waterpail114514/ModMind-MCP) 仓库。
+也可以从 **[GitHub Releases](https://github.com/waterpail114514/modmind/releases/latest)** 下载。具体版本与更新内容以发布页为准，仓库中的开发版本可能领先于正式版。
 
+| 你的设备 | 选择的安装包 |
+| --- | --- |
+| Windows | `ModMind-Setup-<版本>.exe` |
+| Mac · Apple Silicon（M 系列） | 文件名包含 `arm64` 的 `.dmg` 或 `.zip` |
+| Mac · Intel | 文件名包含 `x64` 的 `.dmg` 或 `.zip` |
+
+macOS 最低版本按当前构建配置为 **macOS 13**。Linux 提供源码构建命令，是否有预构建下载请以对应 Release 的附件为准。
+
+> 当前发布包未进行代码签名，macOS 也未进行 Apple 公证，首次安装或打开时可能出现系统安全提示。请从官网或本仓库发布页获取文件；Mac 安装遇到拦截时，可按系统“隐私与安全性”中的提示处理。
+
+下载后，按官网流程连接账号，或在应用设置中配置所需的 AI 服务，然后创建或导入项目。官网模型服务按实际使用计费，开源软件许可证不包含模型服务额度。
+
+## 功能一览
+
+| 工作区 | 可以做什么 |
+| --- | --- |
+| **灵感台** | 讨论玩法与实现方案，引用项目知识，按需联网检索、分析日志、检查 JAR，并查看来源与证据。 |
+| **AI 开发工作台** | 接入 Codex、Claude 等 Agent，结合文件与文档附件处理任务，管理对话、历史恢复与任务状态。 |
+| **项目与代码** | 创建或导入项目，编辑文件，处理依赖、Git、快照、版本迁移与构建问题。 |
+| **图像与模型** | 使用图片生成预设和节点工作流，编辑贴图，通过 MiniPaint 与 Blockbench 处理图片和模型资源。 |
+| **整合包与内容** | 导入 Modrinth / CurseForge 整合包，管理模组、配置、资源包、自制模块、FTB Quests 与 Patchouli 内容。 |
+| **测试与服务端** | 执行构建、客户端/服务端检查、GameTest 和玩家测试，查看运行日志与诊断结果。 |
+| **插件与外观** | 安装扩展面板和工具，使用主题配色、自定义颜色及图片/视频背景。 |
+
+### 项目类型
+
+- **Java 模组**：Fabric、Quilt、Forge、NeoForge。
+- **服务端插件**：Paper、Spigot、Folia、Velocity。
+- **Add-on 与网易项目**：国际基岩版、网易 PC 和网易手游。
+- **整合包与资源**：整合包、资源包、任务书、图片和模型相关工作流。
+
+不同平台与 Minecraft 版本的构建和测试能力有所区别，以项目界面中的可用功能为准。
+
+### 真实游戏交互测试
+
+Java 模组的真实界面测试实验性接入 [Minecraft Mod MCP](https://github.com/langyo/minecraft-mod-mcp)。支持的版本与加载器组合可以启动隔离客户端，获取原生截图和状态，并执行点击、输入、按键等玩家操作。
+
+该能力不是全版本通用；目录中有适配包不代表已经实测兼容，启动成功也不等于玩法验收通过。完整能力、实测范围和限制见 [接入与验证说明](docs/minecraft-mcp-integration.zh-CN.md)。
 
 ## 本地开发
 
-建议使用 Node.js 22。在项目目录执行：
+使用 **Node.js 22**。首次克隆后执行：
 
 ```sh
+git clone https://github.com/waterpail114514/modmind.git
+cd modmind
 npm ci
 npm run dev
 ```
 
-提交或打包前运行：
+### 检查与测试
+
+`npm test` 包含独立 MCP 仓库的测试，因此首次运行前还需检出该仓库。下面的提交与当前 macOS CI 固定版本一致：
+
+```sh
+git clone https://github.com/waterpail114514/ModMind-MCP.git modmind-mcp-open-source
+git -C modmind-mcp-open-source checkout f21d65950f255243e941554d1463729ad1056b41
+```
 
 ```sh
 npm run typecheck
@@ -43,42 +87,53 @@ npm test
 npm run build
 ```
 
-ModMind 支持 Fabric、Quilt、Forge 和 NeoForge 项目的创建与迁移，提供 Monaco 文件编辑、VS Code Java 语言服务与调试工作区生成、本地及远程 Git 操作、可恢复的项目快照、Modrinth 与 Maven 依赖锁定、数据与资源 JSON 编辑、内嵌 Blockbench、客户端/服务端/GameTest 验证、CI 生成及发布预检。
+构建前会自动检查主题颜色与插件模板是否和源码一致。部分集成测试需要 Java 或额外运行环境，请同时查看测试输出中的跳过项。
 
-模组模式的真实界面测试实验性接入了固定版本的 [Minecraft Mod MCP](https://github.com/langyo/minecraft-mod-mcp)：按 Minecraft / Loader 精确匹配并校验控制 Mod，启动独立客户端，返回原生截图和界面状态。目录中有适配包不代表已实测兼容。通过玩家测试会话还可请求点击、输入、按键、调整视角和执行游戏命令；截图和动作回执不等于玩法验收通过。启用“真实界面测试”后可用，不支持的组合保留启动检查及 GameTest。详见 [接入与验证说明](docs/minecraft-mcp-integration.zh-CN.md)。
+### 构建安装包
 
-Agent 可以按项目的 Minecraft 版本查询 `mappings.dev` 映射信息。类索引和已查看页面会缓存在本地，手动映射视图使用相同数据源。
-
-新项目使用 `modmind.project.json` 与 `.modmind` 目录，同时兼容早期 ModTool 项目的 `modtool.project.json` 与 `.modtool` 布局。首次启动 ModMind 时会迁移旧应用数据。
-
-## 运行与服务配置
-
-设备授权网站由 `MODMIND_SITE_URL` 指定；发布构建也可在 `resources/service-config.json` 中设置 `siteUrl`。该值必须是 HTTPS 源地址，不能包含路径、查询参数或凭据。桌面协议为 `mcdev://`。
-
-Windows 更新服务由同一配置文件的 `updateUrl` 或环境变量 `MODMIND_UPDATE_URL` 指定，必须使用 HTTPS。GitHub Release 附件和实际配置的更新服务是两个发布位置；使用对象存储更新源时，还需同步更新文件。
-
-测试运行器按需下载托管 Java、Minecraft 资源和所选加载器。启动测试时执行真实的 Gradle Wrapper 构建，同步项目 JAR，保留用户自行添加的依赖模组，并使用确定性的离线游戏档案。
-
-Windows 直接运行项目的 `gradlew.bat`，macOS/Linux 运行 `./gradlew`。Gradle 版本由项目 Wrapper 配置决定，ModMind 不会另行安装或回退到独立 Gradle 运行时。
-
-## 构建安装包
-
-| 平台 | 命令 | 说明 |
+| 平台 | 命令 | 构建条件 |
 | --- | --- | --- |
-| Windows 未签名 | `npm run dist:win:unsigned` | 在 Windows 上构建，用于未签名分发 |
-| Windows 签名 | `npm run dist:win` | 需要有效的签名配置 |
-| macOS 未签名 | `npm run dist:mac:unsigned` | 需要对应架构的 macOS；可运行 GitHub Actions 的 Validate macOS |
-| macOS 签名 | `npm run dist:mac` | 需要 Apple 签名证书和公证凭据 |
-| Linux | `npm run dist:linux` | 生成 AppImage 和 ZIP |
+| Windows 未签名 | `npm run dist:win:unsigned` | 在 Windows 上运行 |
+| Windows 签名 | `npm run dist:win` | 配置有效签名身份 |
+| macOS 未签名 | `npm run dist:mac:unsigned` | 在对应架构的 Mac 上运行 |
+| macOS 签名与公证 | `npm run dist:mac` | 对应架构的 Mac，以及 Apple 签名和公证凭据 |
+| Linux | `npm run dist:linux` | 输出 AppImage 和 ZIP |
 
-Windows 打包会生成 NSIS 安装包和更新元数据，并执行版本、体积及签名策略检查。自动更新文件位于 `release/update`：稳定版使用 `latest.yml`，预发布版使用 `beta.yml`，预发布版不能覆盖稳定版元数据。向更新服务上传时，先上传安装包和 blockmap，最后上传 YAML；保留旧安装包和 blockmap，以便跨版本更新。
+**没有 Mac 也可以构建。** 在 GitHub Actions 中运行 [Validate macOS](https://github.com/waterpail114514/modmind/actions/workflows/build-macos.yml)，云端会分别构建 arm64 和 x64，执行测试、打包应用启动检查和归档校验。通过后可从运行页面下载附件。
 
-当前版本为 `1.4.9`。以后发布补丁版本时，可使用 `npm run version:patch` 同步更新 `package.json` 与 `package-lock.json`，该命令不会自动创建 Git 标签。
+<details>
+<summary><strong>维护者配置与更新分发</strong></summary>
 
-## 参与开发
+设备授权网站由 `MODMIND_SITE_URL` 或 `resources/service-config.json` 的 `siteUrl` 指定，必须是 HTTPS 源地址，不能包含路径、查询参数或凭据。桌面协议为 `mcdev://`。
 
-仓库默认分支为 `main`，远程地址为 `https://github.com/waterpail114514/modmind.git`。提交前检查 `git status`、`git diff` 和测试结果，只暂存本次修改涉及的源码及必要资源，避免上传本地缓存或测试运行数据。
+Windows 更新地址由 `MODMIND_UPDATE_URL` 或同一文件中的 `updateUrl` 指定，必须使用 HTTPS。**GitHub 发布附件与应用配置的更新源是两个位置**；使用对象存储时，还需单独同步更新文件。
 
-提交说明建议使用 `feat`、`fix`、`docs`、`test`、`build` 或 `chore` 等类型。GitHub 凭据应保存在凭据管理器中，不要写入远程地址或受版本控制的文件。贡献条款见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+Windows 更新文件位于 `release/update`。稳定版使用 `latest.yml`，预发布版使用 `beta.yml`。上传顺序为安装包、blockmap、最后 YAML；不要用预发布元数据覆盖稳定版。保留旧安装包和 blockmap，以便跨版本差分更新。
 
-从 `1.4.4` 起，项目原创代码采用 AGPL-3.0-only；`1.4.3` 及更早版本已发布的 MIT 授权不被撤销。完整许可见 [LICENSE](LICENSE)。ModMind 名称与标志不随软件许可证授予商标权，详见 [TRADEMARKS.md](TRADEMARKS.md)。
+`npm run version:patch` 会同步更新 `package.json` 与 `package-lock.json`，不会自动创建 Git 标签。
+
+测试运行器按需下载 Java、Minecraft 资源和加载器。Java 模组构建使用项目固定的 Gradle Wrapper：Windows 为 `gradlew.bat`，macOS/Linux 为 `./gradlew`，Gradle 版本由项目配置决定。
+
+新项目使用 `modmind.project.json` 与 `.modmind`，同时兼容旧版 ModTool 的 `modtool.project.json` 与 `.modtool` 布局。
+
+</details>
+
+## 文档与社区
+
+| 入口 | 内容 |
+| --- | --- |
+| [ModMind 官网](https://ether-studio.top/) | 客户端下载、使用流程、账号与模型服务 |
+| [发布记录](https://github.com/waterpail114514/modmind/releases) | 安装包、更新日志与校验文件 |
+| [问题反馈](https://github.com/waterpail114514/modmind/issues) | 报告问题与提出建议 |
+| [插件开发指南](docs/plugin-development.zh-CN.md) | 插件清单、面板、工具与权限 |
+| [真实交互测试说明](docs/minecraft-mcp-integration.zh-CN.md) | 支持范围、测试方式与限制 |
+| [Fabric API 测试策略](docs/fabric-api-test-policy.zh-CN.md) | 测试实例的 API 管理配置 |
+| [ModMind-MCP](https://github.com/waterpail114514/ModMind-MCP) | 独立维护的 MCP 服务 |
+
+参与开发前请阅读 [贡献说明](CONTRIBUTING.md)。提交时只包含相关源码与必要资源，避免上传本地缓存、凭据和测试运行数据。
+
+## 开源与授权
+
+项目原创代码自 `1.4.4` 起采用 **[AGPL-3.0-only](LICENSE)**；`1.4.3` 及更早版本已发布的 MIT 授权不被撤销。
+
+第三方组件与内置工具适用各自许可证，见 [第三方声明](THIRD_PARTY_NOTICES.md)。ModMind 名称与标志的商标权不随软件许可证授予，见 [商标说明](TRADEMARKS.md)。

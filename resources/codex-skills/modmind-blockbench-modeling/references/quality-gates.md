@@ -67,6 +67,7 @@ Fail acceptance when any applicable gate fails, regardless of the total visual s
 ### Reference fidelity
 
 - Match the reference's defining proportions, silhouette, palette, and feature placement without inventing contradictory forms.
+- For concept-guided models, compare the subject's approximate silhouette height-to-width ratio with a front model capture. Treat a `reference-proportion-mismatch` finding as a failed gate, and inspect both images directly before accepting a perspective-heavy reference.
 - Document reasonable assumptions for unseen surfaces rather than copying the visible side onto every direction.
 - Reject a shallow silhouette extrusion when the reference clearly describes a volumetric subject.
 

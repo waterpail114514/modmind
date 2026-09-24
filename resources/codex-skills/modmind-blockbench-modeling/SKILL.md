@@ -44,6 +44,8 @@ Write a compact internal model brief containing:
 - material palette and texture character;
 - required poses, motion, and export constraints.
 
+When a concept image is the shape reference, estimate the subject silhouette's height-to-width ratio from its visible bounds (not the full image canvas). Record that ratio in the brief; perspective can make it approximate.
+
 ### 2. Inspect and protect the workspace
 
 Use `modmind_project_info` when project conventions matter, then use `modmind_blockbench_project_state`. For an existing model, create a checkpoint before any mutation. Record the baseline revision, counts, format, textures, hierarchy, and animations.
@@ -97,7 +99,7 @@ Build the hierarchy and pivots before animation. Check key poses for detachment 
 
 ### 8. Enforce acceptance and deliver
 
-Run `modmind_blockbench_validate`, capture the required views, and run `modmind_asset_visual_review`. Apply every hard gate in [quality-gates.md](references/quality-gates.md). Correct failures and repeat the complete validation and visual review, up to the three-round limit.
+Run `modmind_blockbench_validate`, capture the required views, and run `modmind_asset_visual_review`. For concept-guided models, pass the brief's `referenceHeightToWidth` to the visual review and include a north or south view. Compare the concept and captures directly when perspective makes the numeric ratio uncertain. Apply every hard gate in [quality-gates.md](references/quality-gates.md). Correct failures and repeat the complete validation and visual review, up to the three-round limit.
 
 Only after acceptance:
 

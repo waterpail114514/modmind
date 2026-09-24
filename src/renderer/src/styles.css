@@ -1313,7 +1313,7 @@ button { color: inherit; }
 .inspiration-message { max-width: 820px; margin: 0 auto 18px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 9px; }
 .inspiration-message > span { width: 27px; height: 27px; border-radius: 6px; display: grid; place-items: center; color: var(--theme-on-action); background: var(--theme-inset); }
 .inspiration-message.assistant > span { color: var(--theme-warning); background: var(--theme-selected); }
-.inspiration-message strong { display: block; margin: 3px 0 6px; color: var(--theme-text); font-size: var(--type-support); }
+.inspiration-message > div > strong { display: block; margin: 3px 0 6px; color: var(--theme-text); font-size: var(--type-support); }
 .inspiration-message p { margin: 0; color: var(--theme-text); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .inspiration-messages .agent-tool-group { max-width: 820px; margin: 0 auto 18px; }
 .inspiration-message.error .markdown-message { color: var(--theme-danger); }
@@ -1335,6 +1335,11 @@ button { color: inherit; }
 .markdown-message pre { margin: 8px 0; padding: 10px; overflow: auto; border-radius: 5px; background: var(--theme-inset); color: var(--theme-muted); }
 .markdown-message pre code { padding: 0; background: transparent; color: inherit; }
 .markdown-message a { color: var(--theme-accent); }
+.markdown-message table { display: block; width: fit-content; max-width: 100%; margin: 14px 0; overflow-x: auto; border-collapse: collapse; font-size: inherit; line-height: 1.65; }
+.markdown-message th, .markdown-message td { min-width: 5em; padding: 10px 14px; border: 1px solid var(--theme-line); text-align: left; vertical-align: top; overflow-wrap: break-word; }
+.markdown-message th { background: var(--theme-panel); font-weight: 600; }
+.markdown-message th[align="center"], .markdown-message td[align="center"] { text-align: center; }
+.markdown-message th[align="right"], .markdown-message td[align="right"] { text-align: right; }
 .app-shell.dark-mode .markdown-message { color: var(--theme-text); }
 .app-shell.dark-mode .markdown-message h1, .app-shell.dark-mode .markdown-message h2, .app-shell.dark-mode .markdown-message h3 { color: var(--theme-text); }
 .app-shell.dark-mode .markdown-message code { background: var(--theme-raised); }
@@ -3327,7 +3332,7 @@ body {
 .inspiration-empty p { font-size: 12px; }
 .inspiration-message { max-width: 860px; grid-template-columns: 32px minmax(0, 1fr); gap: 11px; margin-bottom: 22px; }
 .inspiration-message > span { width: 30px; height: 30px; border-radius: 8px; }
-.inspiration-message strong { font-size: 12px; }
+.inspiration-message > div > strong { font-size: 12px; }
 .inspiration-message p, .markdown-message { font-size: 13px; line-height: 1.75; }
 .inspiration-composer { width: min(860px, calc(100% - 56px)); margin-bottom: 24px; padding: 9px; border-color: var(--theme-line); border-radius: 8px; box-shadow: var(--mm-shadow); }
 .inspiration-composer textarea { min-height: 42px; padding: 8px; font-size: 13px; }
@@ -4757,7 +4762,9 @@ body {
 .inspiration-minimal .inspiration-message table { display: block; }
 .inspiration-minimal .inspiration-message > span { display: none; }
 .inspiration-minimal .inspiration-message > div > strong { color: var(--muted); font-size: 11px; font-weight: 500; }
-.inspiration-minimal .inspiration-message.user > div { width: fit-content; max-width: 85%; margin-left: auto; padding: 10px 14px; border-radius: 12px; background: var(--surface-alt); }
+.inspiration-minimal .inspiration-message.user > div { width: fit-content; max-width: 85%; margin-left: auto; }
+.inspiration-minimal .inspiration-message.user > div > p { width: fit-content; max-width: 100%; margin-left: auto; padding: 10px 14px; border-radius: 12px; background: var(--surface-alt); }
+.inspiration-minimal .inspiration-message.user .inspiration-message-actions { position: static; justify-content: flex-end; margin-top: 4px; }
 .inspiration-minimal .inspiration-message.user > div > strong { display: none; }
 .inspiration-compose-area { flex: 0 0 auto; width: min(860px, calc(100% - 64px)); margin: 0 auto 16px; }
 .inspiration-minimal .inspiration-composer { width: 100%; box-sizing: border-box; margin: 0; padding: 14px 16px; flex-direction: column; align-items: stretch; border: 1px solid var(--line); border-radius: 14px; box-shadow: none; background: var(--surface); }
@@ -4785,7 +4792,7 @@ body {
 .app-shell.dark-mode .inspiration-heading-actions > button { color: var(--muted); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-composer { background: var(--surface); border-color: var(--line); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-composer textarea { color: var(--inspiration-text); }
-.app-shell.dark-mode .inspiration-minimal .inspiration-message.user > div { background: var(--surface-alt); }
+.app-shell.dark-mode .inspiration-minimal .inspiration-message.user > div > p { background: var(--surface-alt); }
 .app-shell.dark-mode .inspiration-minimal .inspiration-message p { color: var(--inspiration-text); }
 @media (max-width: 760px) {
   .chat-welcome { width: calc(100% - 28px); padding-bottom: 16px; }

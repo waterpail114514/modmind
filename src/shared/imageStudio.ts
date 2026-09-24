@@ -33,6 +33,10 @@ export interface ImageStudioCapabilities {
 }
 
 export interface ImageGenerationRequest {
+  /** Per-request model; omitted uses the saved Image Studio model. */
+  model?: string
+  presetId?: string
+  presetPrompt?: string
   prompt: string
   style: ImageStudioStyle
   size: string

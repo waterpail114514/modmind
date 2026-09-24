@@ -73,7 +73,7 @@ describe('agent infrastructure protection', () => {
     for (const target of targets) expect(await fs.readFile(target, 'utf8')).toBe('keep')
   }, 60_000)
 
-  it.skipIf(!process.env.MODMIND_CODEX_SANDBOX_TEST_EXE)('accepts the protected profile on a real app-server without a model request', async () => {
+  it.skipIf(!process.env.MODMIND_CODEX_SANDBOX_TEST_EXE).each(['auto-review', 'manual'] as const)('accepts the protected %s profile on a real app-server without a model request', async mode => {
     const root = await fixture()
     const project = path.join(root, 'project')
     await fs.mkdir(project)
@@ -103,7 +103,7 @@ describe('agent infrastructure protection', () => {
             if (message.id === 1) {
               child.stdin.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`)
               child.stdin.write(`${JSON.stringify({ id: 2, method: 'thread/start', params: {
-                cwd: project, runtimeWorkspaceRoots: [project], ...codexApprovalPolicy(false, 'auto-review'), ephemeral: true
+                cwd: project, runtimeWorkspaceRoots: [project], ...codexApprovalPolicy(false, mode), ephemeral: true
               } })}\n`)
             } else if (message.id === 2) {
               if (!message.result?.thread?.id) done(new Error(`Missing thread: ${line}`))

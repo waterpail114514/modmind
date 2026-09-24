@@ -10,6 +10,10 @@ describe('inspiration selections and handoff', () => {
     expect(normalizeInspirationFeatures({ jarAnalysis: 'true', deepAnalysis: true })).toMatchObject({ jarAnalysis: false, deepAnalysis: true })
     expect(requiredInspirationFeature('research', { operation: 'compare' })).toBe('comparison')
     expect(requiredInspirationFeature('research', { operation: 'decompile' })).toBe('jarAnalysis')
+    expect(readInspirationFeatures(null).imageGeneration).toBe(false)
+    expect(readInspirationFeatures('{"imageGeneration":true}').imageGeneration).toBe(true)
+    expect(requiredInspirationFeature('image_generate')).toBe('imageGeneration')
+    expect(requiredInspirationFeature('image_read_project_asset')).toBeUndefined()
   })
   it('carries user decisions and attachment sources into the workbench without silently dropping long history', () => {
     const result = buildInspirationHandoff('使用事件监听', [

@@ -28,8 +28,9 @@ try {
   await waitForPage(() => Boolean(window.modmind))
   await page.locator('#app-loading').waitFor({ state: 'hidden' })
   await app.evaluate(({ ipcMain, BrowserWindow }) => {
-    globalThis.loadingSmoke = { failFiles: false, failHistory: false, coverViolations: [], historyCoverChecks: 0 }
+    globalThis.loadingSmoke = { failFiles: false, failHistory: false, monitorCover: false, coverViolations: [], historyCoverChecks: 0 }
     const checkCover = async operation => {
+      if (!globalThis.loadingSmoke.monitorCover) return
       const opacity = await BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('getComputedStyle(document.getElementById("app-loading")).opacity')
       if (opacity !== '1') globalThis.loadingSmoke.coverViolations.push({ operation, opacity })
     }
@@ -63,6 +64,18 @@ try {
   }
   const projectPath = await fixture('loading_fixture')
   await page.evaluate(() => {
+    window.firstOpenSplashCount = 0
+    window.firstOpenSplashObserver = new MutationObserver(records => {
+      for (const record of records) if (record.attributeName === 'hidden' && !record.target.hidden) window.firstOpenSplashCount++
+    })
+    window.firstOpenSplashObserver.observe(document.getElementById('app-loading'), { attributes: true })
+  })
+  await page.evaluate(projectPath => window.modmind.project.openRecent(projectPath), projectPath)
+  await page.locator('.main-content').waitFor({ state: 'visible' })
+  assert.equal(await page.evaluate(() => { window.firstOpenSplashObserver.disconnect(); return window.firstOpenSplashCount }), 0, 'first project opens without reopening the startup splash')
+  assert.equal(await page.locator('#root').evaluate(root => root.inert), false)
+
+  await page.evaluate(() => {
     window.loadingFadeSamples = []
     const sample = () => {
       const splash = document.getElementById('app-loading')
@@ -71,7 +84,9 @@ try {
     }
     sample()
   })
-  await page.evaluate(projectPath => window.modmind.project.openRecent(projectPath), projectPath)
+  const switchedProject = await fixture('loading_fixture_switch')
+  await app.evaluate(() => { globalThis.loadingSmoke.monitorCover = true })
+  await page.evaluate(projectPath => window.modmind.project.openRecent(projectPath), switchedProject)
   await page.locator('#app-loading').waitFor({ state: 'visible' })
   assert.equal(await page.locator('#app-loading').innerText(), '')
   assert.equal(await page.locator('#app-loading img:visible').count(), 1)
@@ -106,7 +121,7 @@ try {
   await page.locator('.minimal-project-trigger').click()
   await page.locator('.minimal-project-dropdown').getByRole('button', { name: '新建作品', exact: true }).click()
   await page.locator('.minimal-project-trigger').click()
-  await page.locator('.minimal-project-dropdown').getByRole('button', { name: 'loading_fixture', exact: true }).click()
+  await page.locator('.minimal-project-dropdown').getByRole('button', { name: 'loading_fixture_switch', exact: true }).click()
   await page.locator('.agent-workbench').waitFor({ state: 'visible' })
   assert.equal(await page.evaluate(() => { window.returnSplashObserver.disconnect(); return window.returnSplashCount }), 0, 'returning to the current project does not show the splash')
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -121,7 +136,7 @@ try {
   const violations = await app.evaluate(() => globalThis.loadingSmoke.coverViolations)
   assert.ok(await app.evaluate(() => globalThis.loadingSmoke.historyCoverChecks > 0))
   assert.deepEqual([...new Map(violations.map(entry => [entry.operation, entry])).values()], [], 'project content loads only behind the opaque cover')
-  console.log(JSON.stringify({ passed: true, checks: ['empty startup', 'fade in and out', 'light and dark logo', 'keyboard blocked while loading', 'reload current project', 'return without loading animation', 'reduced motion', 'file and history failure exit', 'content loads behind opaque cover'], work }))
+  console.log(JSON.stringify({ passed: true, checks: ['empty startup', 'first project without splash', 'fade in and out on project switch', 'light and dark logo', 'keyboard blocked while loading', 'reload current project', 'return without loading animation', 'reduced motion', 'file and history failure exit', 'content loads behind opaque cover'], work }))
 } finally {
   await app.close()
 }

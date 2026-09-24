@@ -1,3 +1,5 @@
+import { readProjectImage } from './projectImages'
+import { readProjectModel } from './projectModels'
 import { readProjectTextFile } from './projectTextRead'
 import type { InspirationEvidenceRequest } from '../shared/inspirationEvidence'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
@@ -25,6 +27,7 @@ import { desktopProcessEnvironment } from './desktopEnvironment'
 import { modpackConfigIdentities, modpackContentFeatures } from './modpackConfigIdentities'
 import { runtimePlatformInfo } from '../shared/platform'
 import { normalizeAgentApprovalMode } from '../shared/agentApproval'
+import { WorkbenchApprovals } from './workbenchApprovals'
 import { configureAgentProtection, assertAgentWriteAllowed } from './agentProtection'
 import { nativeToolDiagnostics } from './nativeToolDiagnostics'
 import { platformWindowOptions } from './platformWindow'
@@ -267,6 +270,11 @@ async function readDecompileProvenanceForExport(decompileCacheRoot: string, sour
   return entry.provenance
 }
 
+const workbenchApprovals = new WorkbenchApprovals(owner => {
+  const window = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.webContents.id === owner)
+  if (window && !window.webContents.isDestroyed()) window.webContents.send('ai:approvalsChanged')
+})
+
 let mainWindow: BrowserWindow | null = null
 let resizeObserverDiagnosticAt = 0
 let suppressedResizeObserverDiagnostics = 0
@@ -304,6 +312,14 @@ const workbenchDataStore = new WorkbenchDataStore(app.getPath('userData'), (entr
   })
 })
 const conversationStore = new ConversationStore(workbenchDataStore)
+let inspirationKnowledgeStore: InspirationKnowledgeStore | undefined
+function projectKnowledgeStore(): InspirationKnowledgeStore {
+  return inspirationKnowledgeStore ??= new InspirationKnowledgeStore(path.join(app.getPath('userData'), 'inspiration-knowledge'), (projectPath, notes) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('inspiration:knowledgeChanged', { projectPath, notes })
+    }
+  })
+}
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
   'workspace', 'relationships', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
@@ -2679,25 +2695,8 @@ function requireImageStudio(): ImageStudioService {
   return imageStudioService
 }
 
-function normalizeAgentImageRequest(input: unknown): ImageGenerationRequest {
-  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-  const style = value.style === 'free' ? 'free' : 'minecraft'
-  const quality = value.quality === 'low' || value.quality === 'high' || value.quality === 'auto' ? value.quality : 'medium'
-  const moderation = value.moderation === 'low' ? 'low' : 'auto'
-  const count = Math.min(Math.max(Number(value.count ?? 1) || 1, 1), 10)
-  return {
-    prompt: String(value.prompt ?? '').trim().slice(0, 32_000),
-    style,
-    size: typeof value.size === 'string' && value.size.trim() ? value.size.trim() : '1024x1024',
-    quality,
-    moderation,
-    count,
-    background: 'solid',
-    backgroundColor: typeof value.backgroundColor === 'string' ? value.backgroundColor.slice(0, 16) : '#ffffff',
-    removeBackground: Boolean(value.removeBackground),
-    source: 'agent',
-    ...(typeof value.referenceImage === 'string' && value.referenceImage.startsWith('data:image/') ? { referenceImage: value.referenceImage } : {})
-  }
+function generateStudioImage(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent') {
+  return runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(input, source), { source })
 }
 
 async function createHostedImageLease(request?: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
@@ -5404,6 +5403,8 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     resourcePackOperation: input => resourcePackAgentOperation(project, input),
     serverOperation: input => localServerAgentOperation(project, input, signal),
     creationContext: input => creationContextOperation(project, input),
+    projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
+    projectKnowledgeSave: input => projectKnowledgeStore().save(project.path, input),
     playerTest: (category, input) => { if (!playerTestService) throw new Error('玩家测试服务不可用'); return playerTestService.execute(project, category, input, signal) },
     projectSearch: (query, limit) => searchProjectText(project, query, limit),
     projectFiles: async () => {
@@ -5519,7 +5520,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     },
     assetVisualReview: async (input) => {
       const captures = await requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest)
-      return {...captures, review: await reviewAssetCaptures(captures.captures)}
+      return {...captures, review: await reviewAssetCaptures(captures.captures, input.referenceHeightToWidth as number | undefined)}
     },
     runtimeState: async () => requireMinecraftRuntime().getState(),
     javaHomeScan: () => scanConfiguredJavaHomes(),
@@ -5608,23 +5609,16 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       return withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
     imageGenerate: async (input) => {
-      const request = normalizeAgentImageRequest(input)
-      if (!request.prompt) throw new Error('image prompt is required')
-      return requireImageStudio().generate(request)
+      return generateStudioImage(input, 'agent')
     },
-    imageProcess: (operation, dataUrl) => requireImageStudio().process(operation, dataUrl),
+    imageStudioInfo: (includeModels) => requireImageStudio().describe(includeModels),
+    imageProcess: (operation, dataUrl, options) => requireImageStudio().process(operation, dataUrl, options),
     imageProjectAssets: async () => {
       const flatten = (nodes: FileNode[]): FileNode[] => nodes.flatMap((node) => node.type === 'directory' ? flatten(node.children ?? []) : [node])
       return flatten(await listDirectory(project.path)).filter((node) => /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(node.path)).slice(0, 500).map((node) => node.path)
     },
     imageReadProjectAsset: async (relativePath) => {
-      const normalized = normalizeReadablePath(relativePath)
-      if (!/\.(?:png|jpe?g|webp|gif|bmp)$/i.test(normalized)) throw new Error('only project image resources can be read')
-      const target = resolveProjectPath(normalized)
-      const stat = await fs.stat(target)
-      if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('reference image is missing or exceeds 20 MiB')
-      const mime = /\.jpe?g$/i.test(normalized) ? 'image/jpeg' : /\.webp$/i.test(normalized) ? 'image/webp' : /\.gif$/i.test(normalized) ? 'image/gif' : /\.bmp$/i.test(normalized) ? 'image/bmp' : 'image/png'
-      return { path: normalized, dataUrl: `data:${mime};base64,${(await fs.readFile(target)).toString('base64')}` }
+      return { path: relativePath, dataUrl: await readProjectImage(project.path, relativePath) }
     }
   }
   return handlers
@@ -6346,7 +6340,17 @@ async function runExternalCodingAgent(
       inspirationFeatures,
       workbenchFeatures,
       kind: externalBackend,
-      approvalMode: normalizeAgentApprovalMode(settings.codexApprovalMode),
+      approvalMode: isInspiration ? 'yolo' : normalizeAgentApprovalMode(settings.codexApprovalMode),
+      ...(!isInspiration ? { onApproval: async (request, approvalSignal) => {
+        const sender = event.sender.id === REMOTE_SENDER_ID ? mainWindow?.webContents : event.sender
+        if (!sender || sender.isDestroyed()) return 'deny' as const
+        const owner = sender.id
+        const onDestroyed = (): void => workbenchApprovals.cancelOwner(owner)
+        sender.once('destroyed', onDestroyed)
+        try {
+          return await workbenchApprovals.request(owner, { projectPath: project.path, conversationId: activeTask.conversationId, runId: activeTask.runId ?? sessionId ?? randomUUID() }, request, approvalSignal)
+        } finally { if (!sender.isDestroyed()) sender.removeListener('destroyed', onDestroyed) }
+      } } satisfies Pick<ExternalAgentRunOptions, 'onApproval'> : {}),
       runId: activeTask.runId,
       appVersion: app.getVersion(),
       executable: configuredExecutable,
@@ -6511,6 +6515,8 @@ async function runExternalCodingAgent(
         resourcePackOperation: input => resourcePackAgentOperation(project, input),
         serverOperation: input => localServerAgentOperation(project, input, signal),
         creationContext: input => creationContextOperation(project, input),
+        projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
+        projectKnowledgeSave: input => projectKnowledgeStore().save(project.path, input),
         playerTest: (category, input) => { if (!playerTestService) throw new Error('玩家测试服务不可用'); return playerTestService.execute(project, category, input, signal) },
         projectSearch: (query, limit) => searchProjectText(project, query, limit),
         projectFiles: async () => {
@@ -6951,7 +6957,7 @@ async function runExternalCodingAgent(
         },
         assetVisualReview: async (input) => {
           const captures = await requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest)
-          return {...captures, review: await reviewAssetCaptures(captures.captures)}
+          return {...captures, review: await reviewAssetCaptures(captures.captures, input.referenceHeightToWidth as number | undefined)}
         },
         runtimeState: async () => runtime.getState(),
         javaHomeScan: () => scanConfiguredJavaHomes(),
@@ -6959,9 +6965,7 @@ async function runExternalCodingAgent(
         appSettingsRead: async () => publicAgentSettings(await readSettings()),
         appSettingsWrite: (input) => applyAppSettingWrite(input)
         ,imageGenerate: async (input) => {
-          const imageRequest = normalizeAgentImageRequest(input)
-          if (!imageRequest.prompt) throw new Error('图片生成工具需要 prompt')
-          const generated = await requireImageStudio().generate(imageRequest)
+          const generated = await generateStudioImage(input, 'agent')
           const outputRoot = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated')
           await fs.mkdir(outputRoot, { recursive: true })
           const files: string[] = []
@@ -6982,19 +6986,14 @@ async function runExternalCodingAgent(
           }
           return { success: !generated.error, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(generated.error ? { error: generated.error } : {}) }
         },
-        imageProcess: (operation, dataUrl) => requireImageStudio().process(operation, dataUrl),
+        imageStudioInfo: (includeModels) => requireImageStudio().describe(includeModels),
+        imageProcess: (operation, dataUrl, options) => requireImageStudio().process(operation, dataUrl, options),
         imageProjectAssets: async () => {
           const flatten = (nodes: FileNode[]): FileNode[] => nodes.flatMap((node) => node.type === 'directory' ? flatten(node.children ?? []) : [node])
           return flatten(await listDirectory(project.path)).filter((node) => /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(node.path)).slice(0, 500).map((node) => node.path)
         },
         imageReadProjectAsset: async (relativePath) => {
-          const normalized = normalizeReadablePath(relativePath)
-          if (!/\.(?:png|jpe?g|webp|gif|bmp)$/i.test(normalized)) throw new Error('只能读取项目图片资源')
-          const target = resolveProjectPath(normalized)
-          const stat = await fs.stat(target)
-          if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('参考图不存在或超过 20 MB')
-          const mime = /\.jpe?g$/i.test(normalized) ? 'image/jpeg' : /\.webp$/i.test(normalized) ? 'image/webp' : /\.gif$/i.test(normalized) ? 'image/gif' : /\.bmp$/i.test(normalized) ? 'image/bmp' : 'image/png'
-          return { path: normalized, dataUrl: `data:${mime};base64,${(await fs.readFile(target)).toString('base64')}` }
+          return { path: relativePath, dataUrl: await readProjectImage(project.path, relativePath) }
         }
       }
     }
@@ -7311,7 +7310,7 @@ function registerIpc(): void {
   diagnosticHandle('image-studio:getSettings', () => requireImageStudio().getSettings())
   diagnosticHandle('image-studio:saveSettings', (_event, value) => requireImageStudio().saveSettings(value))
   diagnosticHandle('image-studio:capabilities', () => requireImageStudio().capabilities())
-  diagnosticHandle('image-studio:generate', (_event, value: ImageGenerationRequest) => runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(value)))
+  diagnosticHandle('image-studio:generate', (_event, value: ImageGenerationRequest) => generateStudioImage(value, 'manual'))
   diagnosticHandle('image-studio:process', (_event, operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options) => runDiagnosticOperation('image-studio', operation, 'Image processing', () => requireImageStudio().process(operation, dataUrl, options), { inputBytes: Buffer.byteLength(dataUrl, 'utf8') }))
   diagnosticHandle('image-studio:history', () => requireImageStudio().history())
   diagnosticHandle('image-studio:saveAsset', async (_event, dataUrl: string, suggestedName: string) => {
@@ -8383,14 +8382,15 @@ function registerIpc(): void {
     }
     return assets
   })
-  diagnosticHandle('project:readImageAsset', async (_event, relativePath: string): Promise<string> => {
-    const normalized = normalizeReadablePath(relativePath)
-    if (!/\.(?:png|jpe?g|webp|gif|bmp)$/i.test(normalized)) throw new Error('只能读取图片资源作为参考图')
-    const target = resolveProjectPath(normalized)
-    const stat = await fs.stat(target)
-    if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('参考图不存在或超过 20 MB')
-    const mime = /\.jpe?g$/i.test(normalized) ? 'image/jpeg' : /\.webp$/i.test(normalized) ? 'image/webp' : /\.gif$/i.test(normalized) ? 'image/gif' : /\.bmp$/i.test(normalized) ? 'image/bmp' : 'image/png'
-    return `data:${mime};base64,${(await fs.readFile(target)).toString('base64')}`
+  diagnosticHandle('project:readImageAsset', async (_event, relativePath: string, projectPath?: string): Promise<string> => {
+    const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return readProjectImage(project.path, relativePath)
+  })
+  diagnosticHandle('project:readModelAsset', async (_event, relativePath: string, projectPath: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return readProjectModel(project.path, relativePath)
   })
   diagnosticHandle('project:readFile', async (_event, relativePath: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
@@ -8845,7 +8845,7 @@ function registerIpc(): void {
   diagnosticHandle('release:preflight', () => requireReleaseService().preflight())
   diagnosticHandle('release:publish', (_event, input: ReleasePublishInput) => runDiagnosticOperation('release', 'publish', 'Project release', () => requireReleaseService().publish(input), { targets: input.targets }))
 
-  const inspirationKnowledge = new InspirationKnowledgeStore(path.join(app.getPath('userData'), 'inspiration-knowledge'))
+  const inspirationKnowledge = projectKnowledgeStore()
   diagnosticHandle('inspiration:readEvidence', async (_event, projectPath: string, input: InspirationEvidenceRequest) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project || !input || typeof input !== 'object') throw new Error('来源请求无效')
@@ -9201,7 +9201,7 @@ function registerIpc(): void {
     const executable = kind === 'codex'
       ? configuredCodex?.executable ?? await ensureManagedCodexRuntime({ rootDir: app.getPath('userData') })
       : configured.executable
-    await launchExternalAgent(kind, project, executable, env, settings.codexApprovalMode)
+    await launchExternalAgent(kind, project, executable, env)
   })
   diagnosticHandle('beginner-codex:prepare', async (event, projectPath?: string) => {
     const routedProjectPath = typeof projectPath === 'string' && projectPath.trim() ? path.resolve(projectPath) : undefined
@@ -9233,6 +9233,8 @@ function registerIpc(): void {
       clearPreparedCodexCredentials()
     }
   })
+  diagnosticHandle('ai:listApprovals', event => workbenchApprovals.list(event.sender.id))
+  diagnosticHandle('ai:respondApproval', (event, id: string, decision: unknown) => workbenchApprovals.respond(event.sender.id, id, decision))
   diagnosticHandle('ai:pickAttachments', (_event, kind: AiAttachmentSelectionKind, projectPath?: string) => {
     if (kind !== 'files' && kind !== 'directory') throw new Error('附件选择类型无效')
     return pickAiAttachments(kind, projectPath)
@@ -9529,7 +9531,12 @@ function registerIpc(): void {
     broadcastPluginSnapshot(service.getSnapshot())
     return service.getSnapshot()
   })
-  diagnosticHandle('plugins:importZip', async (_event, scope?: 'global' | 'project') => importPluginZipInteractive(scope === 'project' && currentProject ? 'project' : 'global'))
+  diagnosticHandle('plugins:importZip', async (event, scope: 'global' | 'project', requestId: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || typeof requestId !== 'string' || !requestId || requestId.length > 100) throw new Error('无效的插件导入请求')
+    if (scope === 'project' && !currentProject) throw new Error('请先打开项目')
+    return importPluginZipInteractive(scope === 'project' ? 'project' : 'global', window, requestId, () => currentProject?.path ?? null)
+  })
   diagnosticHandle('plugins:reload', async () => refreshPluginRegistry(true))
   diagnosticHandle('plugins:openDirectory', async () => {
     const target = path.join(app.getPath('userData'), 'plugins')

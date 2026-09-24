@@ -148,7 +148,8 @@ const api: ModMindApi = {
     current: () => invoke('project:current'),
     listFiles: (projectPath?: string) => invoke('project:listFiles', projectPath),
     listImageAssets: () => invoke('project:listImageAssets'),
-    readImageAsset: (relativePath: string) => invoke('project:readImageAsset', relativePath),
+    readImageAsset: (relativePath: string, projectPath?: string) => invoke('project:readImageAsset', relativePath, projectPath),
+    readModelAsset: (relativePath: string, projectPath: string) => invoke('project:readModelAsset', relativePath, projectPath),
     readFile: (relativePath: string, projectPath?: string) => invoke('project:readFile', relativePath, projectPath),
     writeFile: (relativePath: string, content: string, projectPath?: string) => invoke('project:writeFile', relativePath, content, projectPath),
     readWorkbenchData: (relativePath: string, projectPath?: string) => invoke('project:readWorkbenchData', relativePath, projectPath),
@@ -333,6 +334,13 @@ const api: ModMindApi = {
     }
   },
   ai: {
+    listApprovals: () => invoke('ai:listApprovals'),
+    respondApproval: (id, decision) => invoke('ai:respondApproval', id, decision),
+    onApprovalsChanged: listener => {
+      const handler = (): void => listener()
+      ipcRenderer.on('ai:approvalsChanged', handler)
+      return () => ipcRenderer.removeListener('ai:approvalsChanged', handler)
+    },
     createCode: (prompt: string, sessionId?: string, backend?: AgentSettings['codingBackend'], executionProfile?: AiExecutionProfile, options?: AiCreateCodeOptions) => invoke('ai:createCode', prompt, sessionId, backend, executionProfile, options),
     pickAttachments: (kind, projectPath) => invoke('ai:pickAttachments', kind, projectPath),
     importAttachments: async (files, projectPath) => {
@@ -574,6 +582,11 @@ const api: ModMindApi = {
   }
   ,
   inspiration: {
+    onKnowledgeChanged: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, change: Parameters<typeof listener>[0]): void => listener(presentResult(change, 'inspiration:knowledgeChanged'))
+      ipcRenderer.on('inspiration:knowledgeChanged', handler)
+      return () => ipcRenderer.removeListener('inspiration:knowledgeChanged', handler)
+    },
     readEvidence: (projectPath: string, input: import('../shared/inspirationEvidence').InspirationEvidenceRequest) => invoke('inspiration:readEvidence', projectPath, input) as Promise<import('../shared/inspirationEvidence').InspirationEvidence>,
     readKnowledge: (projectPath: string) => invoke('inspiration:readKnowledge', projectPath) as Promise<import('../shared/inspirationKnowledge').InspirationNote[]>,
     updateKnowledge: (projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }) => invoke('inspiration:updateKnowledge', projectPath, input) as Promise<import('../shared/inspirationKnowledge').InspirationNote[]>
@@ -601,7 +614,19 @@ const api: ModMindApi = {
   plugins: {
     list: () => invoke('plugins:list'),
     setEnabled: (pluginId: string, enabled: boolean) => invoke('plugins:setEnabled', pluginId, enabled),
-    importZip: (scope?: 'global' | 'project') => invoke('plugins:importZip', scope),
+    importZip: async (scope, confirm) => {
+      const requestId = crypto.randomUUID()
+      const listener = async (_event: Electron.IpcRendererEvent, id: string, preview: import('../shared/plugins').PluginImportPreview): Promise<void> => {
+        if (id !== requestId) return
+        let accepted = false
+        try { accepted = await confirm(preview) === true }
+        catch { accepted = false }
+        finally { ipcRenderer.send('plugins:confirmImport', requestId, accepted) }
+      }
+      ipcRenderer.on('plugins:importPreview', listener)
+      try { return await invoke('plugins:importZip', scope, requestId) }
+      finally { ipcRenderer.removeListener('plugins:importPreview', listener) }
+    },
     reload: () => invoke('plugins:reload'),
     openDirectory: () => invoke('plugins:openDirectory'),
     invokeTool: (pluginId: string, toolName: string, input?: unknown) => invoke('plugins:invokeTool', pluginId, toolName, input),

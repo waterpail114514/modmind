@@ -1,9 +1,39 @@
-import { normalizeAgentApprovalMode, type AgentApprovalMode } from '../shared/agentApproval'
+import { normalizeAgentApprovalMode, type AgentApprovalMode, type AgentApprovalDecision, type AgentApprovalDetails } from '../shared/agentApproval'
+
+export function codexApprovalRequest(method: string, params: Record<string, unknown>): AgentApprovalDetails | null {
+  const legacy = method === 'execCommandApproval' || method === 'applyPatchApproval'
+  const command = method === 'item/commandExecution/requestApproval' || method === 'execCommandApproval'
+  const files = method === 'item/fileChange/requestApproval' || method === 'applyPatchApproval'
+  const permissions = method === 'item/permissions/requestApproval'
+  if (!command && !files && !permissions) return null
+  const value = command ? params.command ?? params.commandActions ?? params.command_actions ?? params
+    : files ? params.changes ?? params.fileChanges ?? (params.grantRoot ? { grantRoot: params.grantRoot } : '运行时未提供文件差异，请根据请求原因确认') : params.permissions ?? {}
+  return {
+    engine: 'codex', kind: command ? 'command' : files ? 'files' : 'permissions',
+    title: command ? '允许执行这条命令？' : files ? '允许修改这些文件？' : '允许这次权限请求？',
+    detail: Array.isArray(value) && value.every(part => typeof part === 'string') ? value.join(' ') : typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+    ...(typeof params.reason === 'string' ? { reason: params.reason } : {}),
+    ...(typeof params.cwd === 'string' ? { cwd: params.cwd } : {}),
+    allowSession: permissions || legacy || !Array.isArray(params.availableDecisions) || params.availableDecisions.includes('acceptForSession')
+  }
+}
+
+export function codexApprovalResponse(method: string, params: Record<string, unknown>, decision: AgentApprovalDecision): Record<string, unknown> {
+  if (method === 'item/permissions/requestApproval') return {
+    permissions: decision === 'deny' ? {} : Object.fromEntries(Object.entries((params.permissions ?? {}) as Record<string, unknown>).filter(([key, value]) => ['network', 'fileSystem'].includes(key) && value != null)),
+    scope: decision === 'allow-session' ? 'session' : 'turn'
+  }
+  if (method === 'execCommandApproval' || method === 'applyPatchApproval') return {
+    decision: decision === 'deny' ? { denied: { rejection: '用户拒绝了本次操作' } } : decision === 'allow-session' ? 'approved_for_session' : 'approved'
+  }
+  return { decision: decision === 'deny' ? 'decline' : decision === 'allow-session' ? 'acceptForSession' : 'accept' }
+}
 
 export function agentApprovalPrompt(mode?: AgentApprovalMode): string {
-  return `执行审批设置：当前为 ${normalizeAgentApprovalMode(mode) === 'yolo' ? 'YOLO（默认，免审批）' : '自动审批'}。用户可以在「设置 → 执行审批 → Codex 审批模式」单独调整，和对话框的制作功能勾选是两处独立设置；Claude Code 的原生权限不由这个 Codex 设置控制。
-遇到明确的审查拒绝时，先说明被拒绝的操作及原因；不要把拒绝误报成审批服务不可用。可以根据反馈尝试最多两种实质不同、风险更低且仍符合用户目标的方案，例如缩小修改范围或使用允许的托管操作。不能反复重试同一操作、改写命令伪装相同效果或绕过保护。没有合规替代方案时立即停止该受阻操作；尝试后仍被拒绝时停止并保留进度，说明已尝试方案和剩余工作。若确实由 Codex 自动审批阻塞，告知用户上述设置位置，由用户调整后重新发送指令，禁止替用户修改审批模式或把普通“继续”理解为设置已修改。
-Automatic approval review failed 表示审批服务故障，允许有限重连；持续故障应停下，请用户稍后重试，或自行调整上述设置后重新发送指令。只读限制、未勾选功能、ModMind 内部文件保护和确定的安全拒绝不是同一种问题，YOLO 不会解除这些限制，不能建议切换 YOLO 来突破它们。`
+  const label = normalizeAgentApprovalMode(mode) === 'yolo' ? 'YOLO（默认）' : mode === 'manual' ? '手动审批' : '自动审批'
+  return `工作台执行审批：当前为 ${label}。用户可在「设置 → 执行审批 → 工作台审批模式」选择 YOLO、自动审批或手动审批，适用于 Codex 和 Claude Code，仅影响工作台。
+手动审批由 ModMind 弹窗收集用户决定；等待审批时不要重复请求同一操作，也不要把未作答当作同意。自动审批服务故障时，宿主会直接回退为本次任务的手动审批，不修改默认设置，不切换 YOLO。
+明确的审查拒绝不是服务故障。先说明操作及原因，可尝试最多两种实质不同且允许的低风险方案；仍受阻则停止该操作并保留进度，不得伪装重试或绕过拒绝。审批不能解除只读边界、未开放功能或 ModMind 内部文件保护。`
 }
 
 // Only the native review service failure is retryable; a review denial is not.
@@ -13,7 +43,7 @@ export function isAutomaticApprovalFailure(message: string): boolean {
 
 export class AutomaticApprovalUnavailableError extends Error {
   constructor() {
-    super('自动审批服务不可用；当前任务已保留。可稍后重试，或在「设置 → 执行审批 → Codex 审批模式」自行调整后重新发送指令。YOLO 不会解除内部文件保护、只读限制或未勾选功能的限制。')
+    super('自动审批服务不可用，需要转为手动审批；当前任务进度已保留。')
     this.name = 'AutomaticApprovalUnavailableError'
   }
 }

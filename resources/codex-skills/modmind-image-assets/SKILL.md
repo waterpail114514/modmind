@@ -14,6 +14,10 @@ Treat every generated or processed image as a candidate until its returned pixel
 
 ## Tool Routing
 
+- Read `modmind_image_studio_info` for the same saved configuration and presets used by the Image Studio UI. `includeModels: true` queries the current provider model list; lookup errors do not invalidate the saved settings. Credentials stay inside ModMind; do not read credential files or manually request image leases.
+- Generation accepts `model` (this request only; otherwise the saved model), `presetId`, editable `presetPrompt`, supplemental `prompt`, `style`, `size`, `quality`, `moderation`, integer `count` (1–10), `background` (`solid`/`auto`), `backgroundColor` (`#RRGGBB`), `removeBackground`, and `referenceImage`. Presets use the same templates as the UI and reference-required presets need actual input pixels.
+- `modmind_image_perfect_pixel` accepts `perfectPixel: {sampleMethod, gridSize, minSize, peakWidth, refineIntensity, fixSquare}`. Omit `gridSize` for automatic detection. Generation and processing use the same service as the UI; they do not change the user's saved credentials or default model.
+
 - Use `modmind_image_project_assets` to discover existing project images and `modmind_image_read_project_asset` to obtain the exact `dataUrl` for a reference. Do not describe available pixels from memory.
 - Use `modmind_image_generate` for generation or reference-guided editing. ModMind owns credentials, quota, billing, and provider moderation.
 - Use `modmind_image_perfect_pixel` when inspected Minecraft-style output needs pixel-grid cleanup.

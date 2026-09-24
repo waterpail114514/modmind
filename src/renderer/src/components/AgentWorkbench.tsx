@@ -1,3 +1,4 @@
+import WorkbenchApprovalDialog from './WorkbenchApprovalDialog'
 import { useAiAttachments } from '../useAiAttachments'
 import MoreActions from './MoreActions'
 import TurnCompletionCard, { isTurnCompletion } from './TurnCompletionCard'
@@ -13,7 +14,7 @@ import type { WorkbenchFeatures } from '../../../shared/workbenchFeatures'
  * adapters remain local.
  */
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { renderWorkbenchMarkdown } from '../workbenchMarkdown'
+import { ReplyMarkdown } from './ReplyImages'
 import { useWorkbenchPopover } from '../useWorkbenchPopover'
 import WorkbenchConversation from './WorkbenchConversation'
 import ChatWelcome, { ChatRecommendations } from './ChatWelcome'
@@ -138,8 +139,7 @@ export type AgentWorkbenchProps = {
 }
 
 export const MarkdownMessage = memo(function MarkdownMessage({ content }: { content: string }): React.JSX.Element {
-  const html = useMemo(() => renderWorkbenchMarkdown(content), [content])
-  return <div className="agent-markdown" dangerouslySetInnerHTML={{ __html: html }} />
+  return <ReplyMarkdown content={content} className="agent-markdown" />
 })
 
 function backendLabel(backend: AgentSettings['codingBackend']): string {
@@ -435,12 +435,13 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
 
     {recovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{recovery.backend ? `，将使用 ${backendLabel(recovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
 
-    {timelineRows.length ? <WorkbenchConversation key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} renderRow={(row) => row.kind !== 'tool-group' && isTurnCompletion(row) ? <TurnCompletionCard item={row} onOpenFile={props.onOpenChangedFile} /> : row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <><TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />{project.kind === 'server-plugin' ? '进入测试' : '进入游戏测试'}</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" modpack={modpack} serverPlugin={project.kind === 'server-plugin'} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); composerRef.current?.focus() }} />}
+    {timelineRows.length ? <WorkbenchConversation projectPath={project.path} key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} isUserRow={row => row.kind === 'user'} renderRow={(row) => row.kind !== 'tool-group' && isTurnCompletion(row) ? <TurnCompletionCard item={row} onOpenFile={props.onOpenChangedFile} /> : row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <><TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning ? props.onEditTimelineItem : undefined} onDelete={!planning ? props.onDeleteTimelineItem : undefined} onRewind={!planning ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />{project.kind === 'server-plugin' ? '进入测试' : '进入游戏测试'}</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" modpack={modpack} serverPlugin={project.kind === 'server-plugin'} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); composerRef.current?.focus() }} />}
 
     <div className="agent-composer-stack">
       {planning ? <PlanBar todo={aiTodo} /> : null}
       {planning && !hasLiveThinking ? <ProcessingBar label="正在处理" startedAt={props.processingStartedAt} /> : null}
       {settingsOpen ? <SettingsPopover props={props} /> : null}
+      <WorkbenchApprovalDialog projectPath={project.path} conversationId={props.activeConversationId} />
       <footer className={`agent-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...attachmentInput.handlers}>
         {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
         <textarea ref={composerRef} aria-label="发送给 AI 的消息" value={props.prompt} onChange={(event) => props.setPrompt(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && attachmentInput.isBusy()) { event.preventDefault(); return }; if (event.key === 'Enter' && event.shiftKey) return; if (props.savingAiPreferences && event.key === 'Enter' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); return } if (event.ctrlKey || event.metaKey) { if (event.key === 'Enter' && !planning) { event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart; const end = textarea.selectionEnd; props.setPrompt(`${props.prompt.slice(0, start)}\n${props.prompt.slice(end)}`); window.requestAnimationFrame(() => textarea.setSelectionRange(start + 1, start + 1)) } return } if (event.key === 'Enter' && !planning && (props.prompt.trim() || props.attachments.length)) { event.preventDefault(); props.onStart() } }} placeholder={props.placeholder} disabled={planning} rows={2} />

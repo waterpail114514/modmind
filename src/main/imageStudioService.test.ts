@@ -18,6 +18,7 @@ const roots: string[] = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
 })
 
@@ -281,5 +282,90 @@ describe('ImageStudioService settings', () => {
 
     const stored = JSON.parse(await fs.readFile(path.join(root, 'image-studio-settings.json'), 'utf8')) as Record<string, unknown>
     expect(stored).not.toHaveProperty('encryptedKey')
+  })
+})
+
+
+describe('Image Studio workbench and UI parity', () => {
+  it.each([false, true])('uses the same configuration and parameters for both sources (hosted=%s)', async hosted => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-parity-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'hosted-key', jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings(hosted ? '' : 'own-key'))
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ data: [{ b64_json: 'AA==' }] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const input = generationRequest({ model: 'override-model', size: '1536x1024', quality: 'high', moderation: 'low', count: 2, background: 'solid', backgroundColor: '#123456', referenceImage: 'data:image/png;base64,AA==' })
+    for (const source of ['manual', 'agent'] as const) {
+      const result = await service.generate(input, source)
+      expect(result.assets).toHaveLength(2)
+      expect(result.assets[0]).toMatchObject({ model: 'override-model', size: '1536x1024', quality: 'high', hosted })
+    }
+    expect(getHostedLease).toHaveBeenCalledTimes(hosted ? 4 : 0)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe(`https://${hosted ? 'hosted' : 'images'}.example.test/v1/images/edits`)
+      expect(new Headers(init.headers).get('Authorization')).toBe(`Bearer ${hosted ? 'hosted-key' : 'own-key'}`)
+      const body = init.body as FormData
+      expect(Object.fromEntries(['model', 'size', 'quality', 'moderation', 'n'].map(key => [key, body.get(key)]))).toEqual({ model: 'override-model', size: '1536x1024', quality: 'high', moderation: 'low', n: '1' })
+      expect(body.get('prompt')).toBe('Flat solid #123456 background. A cat')
+    }
+    expect((await service.getSettings()).model).toBe('image-model')
+  })
+
+  it('workbench presets match the UI workflow request at the actual provider boundary', async () => {
+    const { imageWorkflowPrompt } = await import('../shared/imageStudioPresets')
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-preset-parity-')); roots.push(root)
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: vi.fn() })
+    await service.saveSettings(settings('own-key'))
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ data: [{ b64_json: 'AA==' }] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const data = { kind: 'generate' as const, title: '生成', subtitle: '', presetId: 'creature-views', presetPrompt: '三视图红色机器人', count: 1 }
+    await service.generate(generationRequest({ prompt: imageWorkflowPrompt(data), quality: 'medium' }), 'manual')
+    await service.generate({ prompt: '', presetId: data.presetId, presetPrompt: data.presetPrompt }, 'agent')
+    const comparable = ([url, init]: [string, RequestInit]) => ({ url, method: init.method, headers: init.headers, body: init.body })
+    expect(comparable(fetchMock.mock.calls[0])).toEqual(comparable(fetchMock.mock.calls[1]))
+  })
+
+  it('performs real local background removal and keeps the original when processing fails', async () => {
+    const sharp = (await import('sharp')).default
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-remove-')); roots.push(root)
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: vi.fn() })
+    await service.saveSettings(settings('own-key'))
+    const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#ffffff' } }).png().toBuffer()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await service.generate({ prompt: 'cat', removeBackground: true }, 'agent')
+    const { data, info } = await sharp(Buffer.from(result.assets[0].dataUrl.split(',')[1], 'base64')).raw().toBuffer({ resolveWithObject: true })
+    expect(info.channels).toBe(4)
+    expect(data[3]).toBe(0)
+    vi.spyOn(service, 'process').mockRejectedValueOnce(new Error('processing failed'))
+    const partial = await service.generate({ prompt: 'cat', count: 3, removeBackground: true }, 'agent')
+    expect(partial.error).toContain('已保留原图')
+    expect(partial.assets).toHaveLength(1)
+    expect(partial.assets[0].dataUrl).toBe(`data:image/png;base64,${png.toString('base64')}`)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not fall back to hosted billing when a saved custom key is unreadable', async () => {
+    const { safeStorage } = await import('electron')
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-key-')); roots.push(root)
+    const getHostedLease = vi.fn()
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings('own-key'))
+    vi.spyOn(safeStorage, 'decryptString').mockImplementation(() => { throw new Error('cannot decrypt') })
+    for (const source of ['manual', 'agent'] as const) await expect(service.generate({ prompt: 'cat' }, source)).rejects.toThrow('无法解密')
+    expect(getHostedLease).not.toHaveBeenCalled()
+  })
+
+  it('describes saved settings without network or secrets and preserves them after model lookup failure', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-info-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => { throw new Error('lease unavailable') })
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings(''))
+    await expect(service.describe()).resolves.toMatchObject({ credentialSource: 'hosted', settings: { model: 'image-model' }, presets: expect.any(Array) })
+    expect(getHostedLease).not.toHaveBeenCalled()
+    await expect(service.describe(true)).resolves.toMatchObject({ settings: { model: 'image-model' }, capabilitiesError: 'lease unavailable' })
+    await service.saveSettings(settings('own-secret-key'))
+    expect(JSON.stringify(await service.describe())).not.toContain('own-secret-key')
   })
 })

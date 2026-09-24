@@ -1,4 +1,5 @@
 import { normalizeInspirationFeatures } from '../shared/inspirationFeatures'
+import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 import { diagnosticJournal } from './diagnosticLog'
 import { normalizeWorkbenchFeatures } from '../shared/workbenchFeatures'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -444,6 +445,7 @@ describe('ModMind external agent MCP bridge', () => {
       "    if (!line.trim()) continue",
       "    const request = JSON.parse(line); if (log) appendFileSync(log, JSON.stringify(request) + '\\n')",
       "    if (!request.method) continue",
+      "    if (request.method === 'turn/interrupt' && process.env.FAKE_REVIEW_HANG) { send({id:request.id,result:{}}); send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:request.params.turnId,status:'interrupted'}}}); continue }",
       "    if (request.method === process.env.FAKE_REJECT_METHOD && request.params.threadId === 'broken-thread' && (!request.params.path || process.env.FAKE_REJECT_PATH)) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_REJECT_MESSAGE}}); continue }",
       "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
@@ -454,6 +456,7 @@ describe('ModMind external agent MCP bridge', () => {
       "    else if (request.method === 'turn/start') {",
       "      if (process.env.FAKE_TURN_EVENTS) { const ack=()=>send({id:request.id,result:{turn:{id:'native-turn-new'}}}); if(process.env.FAKE_LATE_TURN_ACK) setTimeout(ack,40); else ack(); for(const {delayMs=0,...event} of JSON.parse(process.env.FAKE_TURN_EVENTS)) setTimeout(()=>send(event),delayMs); continue }",
       "      send({id:request.id,result:{turn:{id:'native-turn-new'}}}); send({method:'turn/started',params:{threadId:request.params.threadId,turn:{id:'native-turn-new'}}})",
+      "      if (process.env.FAKE_REVIEW_HANG && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { send({method:'item/autoApprovalReview/started',params:{threadId:request.params.threadId,turnId:'native-turn-new',reviewId:'hung-review'}}); continue }",
       "      if (process.env.FAKE_WARNINGS) for (const message of JSON.parse(process.env.FAKE_WARNINGS)) send({method:'warning',params:{threadId:request.params.threadId,message}})",
       "      if (process.env.FAKE_COMPACTIONS) { for (const item of JSON.parse(process.env.FAKE_COMPACTIONS)) { const event=item.method ? {method:item.method,params:{threadId:request.params.threadId,turnId:'native-turn-new',...item.params}} : {method:'item/completed',params:{threadId:request.params.threadId,turnId:'native-turn-new',item}}; if(item.delayMs) setTimeout(()=>send(event),item.delayMs); else send(event); } }",
       "      if (process.env.FAKE_STRUCTURED_ERROR && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { const error={message:process.env.FAKE_ERROR_MESSAGE || '请求未完成',codexErrorInfo:JSON.parse(process.env.FAKE_STRUCTURED_ERROR)}; if (process.env.FAKE_ERROR_COMPLETION) send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:'native-turn-new',status:'failed',error}}}); else send({method:'error',params:{threadId:request.params.threadId,turnId:'native-turn-new',error,willRetry:false}}); continue }",
@@ -822,7 +825,7 @@ describe('ModMind external agent MCP bridge', () => {
     const requests = await fs.readFile(fake.log, 'utf8')
     expect(requests).toContain('"method":"thread/start"')
     expect(requests).toContain('"approvalsReviewer":"user"')
-    expect(requests).toContain('"permissions":"modmind-protected"')
+    expect(requests).toContain('"sandbox":"danger-full-access"')
     expect(requests).toContain('"approvalPolicy":"never"')
     const turn = requests.trim().split('\n').map(line => JSON.parse(line)).find(request => request.method === 'turn/start')
     expect(turn.params.input[0].text).toContain(workbenchSkillPrompt('', project).split('\n\n本轮备用 skill 目录：')[0])
@@ -1015,32 +1018,93 @@ describe('ModMind external agent MCP bridge', () => {
     })
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     const method = mode === 'resume' ? 'thread/resume' : mode === 'fork' ? 'thread/fork' : 'thread/start'
-    const policy = mode === 'read-only' ? { sandbox: 'read-only' } : { permissions: 'modmind-protected' }
+    const policy = { sandbox: mode === 'read-only' ? 'read-only' : 'danger-full-access' }
     expect(requests.find(r => r.method === method).params).toMatchObject({ approvalPolicy: 'never', approvalsReviewer: 'user', ...policy })
     const identity = requests.find(r => r.method === method).params.developerInstructions
     expect(identity).toContain(`我是 ModMind ${mode === 'read-only' ? '灵感台' : '工作台'}，基于 Codex`)
     expect(identity).toContain('当前通过 Codex 使用默认模型，接入信息未提供具体模型名称。')
     const args = JSON.parse((await fs.readFile(fake.log + '.args.jsonl', 'utf8')).trim())
     expect(args).toEqual(expect.arrayContaining(nativePermissionArgs('codex', mode === 'read-only', 'yolo', root)))
-    expect(args).not.toContain('danger-full-access')
+    if (mode === 'read-only') expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+    else expect(args).toContain('--dangerously-bypass-approvals-and-sandbox')
   })
 
-  it.each([1, 3])('bounds approval retries even with persistent retry enabled (%s failures)', async (failures) => {
+  it.each([1, 3])('falls back immediately to manual in the same session and never loops (%s service failures)', async (failures) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-approval-retry-'))
     temporaryRoots.push(root)
     const project: ProjectInfo = { name: 'Approval Retry', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'approval_retry', createdAt: new Date().toISOString() }
     const fake = await fakeAppServer(root)
+    const warnings: string[] = []
     const run = runExternalAgent({
       kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'continue', persistentRetry: true, retryDelayMs: 0, approvalMode: 'auto-review',
       env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_APPROVAL_FAILURES: String(failures) }, signal: new AbortController().signal,
-      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
+      onApproval: async () => 'deny', onOutput: (_kind, content) => { warnings.push(content) }, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
     })
     if (failures === 1) await expect(run).resolves.toMatchObject({ summary: '完成' })
-    else await expect(run).rejects.toMatchObject({ name: 'AutomaticApprovalUnavailableError', message: expect.stringContaining('YOLO') })
+    else await expect(run).rejects.toMatchObject({ name: 'AutomaticApprovalUnavailableError' })
     const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
-    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(failures === 1 ? 2 : 3)
-    expect(requests.filter(r => r.method === 'thread/resume').every(r => r.params.approvalsReviewer === 'auto_review' && r.params.threadId === 'thread-new')).toBe(true)
+    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(2)
+    expect(requests.find(r => r.method === 'thread/resume').params).toMatchObject({ approvalsReviewer: 'user', approvalPolicy: 'on-request', threadId: 'thread-new', permissions: 'modmind-protected' })
+    expect(warnings.some(message => message.includes('已回退到手动审批'))).toBe(true)
   }, 15_000)
+
+  it.each(['allow', 'allow-session', 'deny'] as const)('waits for manual Codex command approval and sends %s', async decision => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-manual-approval-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Manual', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'manual', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    const events = [
+      { id: 'approval-1', method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-new', turnId: 'native-turn-new', itemId: 'command-1', command: 'npm test', cwd: root, reason: '验证修改' } },
+      { delayMs: 250, method: 'item/completed', params: { threadId: 'thread-new', turnId: 'native-turn-new', item: { type: 'agentMessage', id: 'answer', text: '完成' } } },
+      { delayMs: 300, method: 'turn/completed', params: { threadId: 'thread-new', turn: { id: 'native-turn-new', status: 'completed' } } }
+    ]
+    const onApproval = vi.fn(async request => { expect(request.detail).toBe('npm test'); return decision })
+    await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', approvalMode: 'manual',
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events), FAKE_LATE_TURN_ACK: '1' }, signal: new AbortController().signal,
+      onApproval, onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project) })
+    expect(onApproval).toHaveBeenCalledTimes(1)
+    expect(onApproval.mock.calls[0][0].fallbackReason).toBeUndefined()
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.find(r => r.id === 'approval-1').result).toEqual({ decision: decision === 'allow' ? 'accept' : decision === 'allow-session' ? 'acceptForSession' : 'decline' })
+  })
+
+  it('interrupts a hung automatic review and resumes with manual approval without a retry delay', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-review-timeout-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Timeout', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'manual', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', approvalMode: 'auto-review', approvalReviewTimeoutMs: 30,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_REVIEW_HANG: '1' }, signal: AbortSignal.timeout(5_000), onApproval: async () => 'deny',
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project) })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/interrupt')).toHaveLength(1)
+    expect(requests.find(r => r.method === 'thread/resume').params.approvalsReviewer).toBe('user')
+  })
+
+  it.each(['resolved', 'read-only', 'foreign', 'denied-review'] as const)('does not leave stale manual requests or convert denials into failures: %s', async variant => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-approval-cancel-'))
+    temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Manual Cancel', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'manual', createdAt: new Date().toISOString() }
+    const fake = await fakeAppServer(root)
+    let aborted = false
+    const approval = { id: 'approval-cancel', method: 'item/commandExecution/requestApproval', params: { threadId: variant === 'foreign' ? 'other-thread' : 'thread-new', turnId: 'native-turn-new', itemId: 'command', command: 'npm test' } }
+    const events = [
+      ...(variant === 'denied-review' ? [{ method: 'item/autoApprovalReview/completed', params: { threadId: 'thread-new', turnId: 'native-turn-new', reviewId: 'review', review: { status: 'denied', rationale: 'Risk too high' } } }] : [approval]),
+      { delayMs: 80, method: 'serverRequest/resolved', params: { requestId: 'approval-cancel' } },
+      { delayMs: 150, method: 'item/completed', params: { threadId: 'thread-new', turnId: 'native-turn-new', item: { type: 'agentMessage', id: 'answer', text: '完成' } } },
+      { delayMs: 200, method: 'turn/completed', params: { threadId: 'thread-new', turn: { id: 'native-turn-new', status: 'completed' } } }
+    ]
+    const onApproval = vi.fn((_request, signal: AbortSignal) => new Promise<'deny'>(resolve => signal.addEventListener('abort', () => { aborted = true; resolve('deny') }, { once: true })))
+    await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test', approvalMode: variant === 'denied-review' ? 'auto-review' : 'manual', readOnly: variant === 'read-only',
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) }, signal: new AbortController().signal,
+      onApproval, onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project) })
+    expect(onApproval).toHaveBeenCalledTimes(variant === 'resolved' ? 1 : 0)
+    expect(aborted).toBe(variant === 'resolved')
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(r => r.method === 'turn/start')).toHaveLength(1)
+    if (variant === 'resolved') expect(requests.find(r => r.id === 'approval-cancel')).toBeUndefined()
+    else if (variant !== 'denied-review') expect(requests.find(r => r.id === 'approval-cancel').result).toEqual({ decision: 'decline' })
+  })
 
   it('finishes after CLI exit even when a descendant retains its output pipes', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-cli-pipes-'))
@@ -1355,7 +1419,7 @@ describe('ModMind external agent MCP bridge', () => {
   })
 
   it('uses each CLI\'s managed permission mode', () => {
-    expect(nativePermissionArgs('codex')).toEqual(expect.arrayContaining(['default_permissions="modmind-protected"', '-a', 'never']))
+    expect(nativePermissionArgs('codex')).toEqual(['--dangerously-bypass-approvals-and-sandbox'])
     expect(nativePermissionArgs('codex', false, 'auto-review')).toEqual(expect.arrayContaining(['approval_policy={granular={sandbox_approval=false,rules=true,skill_approval=true,request_permissions=false,mcp_elicitations=true}}', 'approvals_reviewer="auto_review"']))
     expect(nativePermissionArgs('claude')).toEqual(['--permission-mode', 'dontAsk', '--tools', 'Read', 'Glob', 'Grep', '--allowedTools', 'mcp__modmind'])
     expect(nativePermissionArgs('codex', true)).toEqual(['-s', 'read-only', '-a', 'never', '-c', 'approvals_reviewer="user"'])
@@ -2003,6 +2067,31 @@ describe('ModMind external agent MCP bridge', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('exposes and forwards all Image Studio controls through the workbench MCP bridge', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-controls-')); temporaryRoots.push(root)
+    const project = { name: 'Images', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'images', createdAt: '' } as ProjectInfo
+    const imageGenerate = vi.fn(async () => ({ assets: [] }))
+    const imageProcess = vi.fn(async () => ({ dataUrl: 'data:image/png;base64,AA==' }))
+    const imageStudioInfo = vi.fn(async () => ({ settings: { model: 'saved-model' }, presets: [] }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), imageGenerate, imageProcess, imageStudioInfo }, 'test')
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const tools = (listed.result as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> }).tools
+    const input = { prompt: 'cat', model: 'selected', presetId: 'item-icon', presetPrompt: 'edited template', style: 'free', size: '2048x1152', quality: 'high', moderation: 'low', count: 2, background: 'auto', backgroundColor: '#123456', removeBackground: true, referenceImage: 'data:image/png;base64,AA==' }
+    expect(Object.keys(tools.find(tool => tool.name === 'modmind_image_generate')!.inputSchema.properties).sort()).toEqual(Object.keys(input).sort())
+    const perfectPixel = { sampleMethod: 'median', gridSize: [32, 16], minSize: 0.1, peakWidth: 9, refineIntensity: 0, fixSquare: false }
+    expect(tools.find(tool => tool.name === 'modmind_image_perfect_pixel')!.inputSchema.properties).toHaveProperty('perfectPixel')
+    await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'modmind_image_studio_info', arguments: { includeModels: true } } })
+    await rpc(child, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'modmind_image_generate', arguments: input } })
+    await rpc(child, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'modmind_image_perfect_pixel', arguments: { dataUrl: input.referenceImage, perfectPixel } } })
+    expect(imageStudioInfo).toHaveBeenCalledWith(true)
+    expect(imageGenerate).toHaveBeenCalledWith(input)
+    expect(imageProcess).toHaveBeenCalledWith('perfect-pixel', input.referenceImage, { perfectPixel })
+  }, 30000)
+
   it('isolates concurrent run bridges and only removes its own directory', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-run-bridge-'))
     temporaryRoots.push(root)
@@ -2152,6 +2241,71 @@ describe('ModMind external agent MCP bridge', () => {
       expect(player).toHaveBeenCalledWith('action', expect.objectContaining({ sessionId: 'test' }))
       expect(creation).toHaveBeenCalledTimes(4)
       expect(JSON.stringify(action)).toContain('gameplayVerified')
+    }
+  })
+
+  it.each([false, true])('saves knowledge through the read-only MCP bridge with automatic context %s', async enabled => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-knowledge-')); temporaryRoots.push(root)
+    const project = { name: 'Knowledge', path: path.join(root, 'project'), loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'knowledge', createdAt: '' } as ProjectInfo
+    await fs.mkdir(project.path)
+    await fs.writeFile(path.join(project.path, 'source.txt'), 'unchanged')
+    const changed = vi.fn()
+    const store = new InspirationKnowledgeStore(path.join(root, 'app-knowledge'), changed)
+    const bridge = new ModMindBridge(project, {
+      ...stubBridgeHandlers(project),
+      projectKnowledgeRead: () => store.read(project.path),
+      projectKnowledgeSave: input => store.save(project.path, input)
+    }, 'test', undefined, true, undefined, undefined, undefined, normalizeInspirationFeatures({ projectKnowledge: enabled }))
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const list = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const tools = (list.result as { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> }).tools
+    expect(tools.find(tool => tool.name === 'modmind_project_knowledge_save')?.annotations.readOnlyHint).toBe(false)
+    expect(tools.some(tool => tool.name === 'modmind_project_knowledge_read')).toBe(true)
+    let id = 2
+    const call = (name: string, args: object) => rpc(child, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: args } })
+    const content = '已确认：雷电剑。待确认：伤害数值。'
+    expect(JSON.stringify(await call('modmind_project_knowledge_save', { title: '玩法', content }))).toContain(content)
+    expect(JSON.stringify(await call('modmind_project_knowledge_read', {}))).toContain(content)
+    const saved = (await store.read(project.path))[0]
+    expect(changed).toHaveBeenCalledWith(project.path, [saved])
+    await call('modmind_project_knowledge_save', { id: saved.id, title: '玩法', content: '已确认：冷却 10 秒。' })
+    expect(await new InspirationKnowledgeStore(path.join(root, 'app-knowledge')).read(project.path)).toEqual([expect.objectContaining({ id: saved.id, content: '已确认：冷却 10 秒。' })])
+    expect(JSON.stringify(await call('modmind_project_knowledge_save', { title: 'bad', content: 'bad', projectPath: root }))).toContain('参数无效')
+    expect(JSON.stringify(await call('modmind_project_knowledge_save', { id: saved.id, title: 'bad', content: 'bad', remove: true }))).toContain('参数无效')
+    for (const name of ['modmind_apply_edits', 'modmind_build_project', 'modmind_test_minecraft']) expect(JSON.stringify(await call(name, {}))).toContain('只读')
+    expect(await fs.readFile(path.join(project.path, 'source.txt'), 'utf8')).toBe('unchanged')
+    expect(await store.read(root)).toEqual([])
+    expect(changed).toHaveBeenCalledTimes(2)
+  }, 15000)
+
+  it.each([false, true])('permits only selected host-managed image operations in inspiration (%s)', async enabled => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-images-')); temporaryRoots.push(root)
+    const project = { name: 'Images', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'images', createdAt: '' } as ProjectInfo
+    const imageGenerate = vi.fn(async () => ({ files: ['.modmind/image-studio/generated/concept.png'] }))
+    const imageProcess = vi.fn(async () => ({ dataUrl: 'data:image/png;base64,AAAA' }))
+    const imageReadProjectAsset = vi.fn(async () => ({ path: 'screenshots/test.png' }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), imageGenerate, imageProcess, imageReadProjectAsset }, 'test', undefined, true, undefined, undefined, undefined, normalizeInspirationFeatures({ imageGeneration: enabled }))
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const list = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const names = (list.result as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
+    expect(names.includes('modmind_image_generate')).toBe(enabled)
+    let id = 2
+    const call = (name: string, args: object) => rpc(child, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: args } })
+    await call('modmind_image_generate', { prompt: '概念效果图' })
+    await call('modmind_image_perfect_pixel', { dataUrl: 'data:image/png;base64,AAAA' })
+    await call('modmind_image_remove_background', { dataUrl: 'data:image/png;base64,AAAA' })
+    expect(imageGenerate).toHaveBeenCalledTimes(enabled ? 1 : 0)
+    expect(imageProcess).toHaveBeenCalledTimes(enabled ? 2 : 0)
+    await call('modmind_image_read_project_asset', { path: 'screenshots/test.png' })
+    expect(imageReadProjectAsset).toHaveBeenCalledTimes(1)
+    for (const name of ['modmind_apply_edits', 'modmind_build_project', 'modmind_test_minecraft']) {
+      expect(JSON.stringify(await call(name, {}))).toContain('只读')
     }
   })
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { InspirationNote } from '../../../shared/inspirationKnowledge'
+import { ReplyMarkdown } from './ReplyImages'
 
 export default function InspirationKnowledgeDialog({ projectPath, notes, initialContent, onChange, onClose }: {
   projectPath: string; notes: InspirationNote[]; initialContent?: string
@@ -11,14 +12,15 @@ export default function InspirationKnowledgeDialog({ projectPath, notes, initial
   const [content, setContent] = useState(initialContent ?? '')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState<'preview' | 'edit'>(initialContent ? 'preview' : 'edit')
   useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close() }, [])
   const save = async (remove = false): Promise<void> => {
     setBusy(true); setError('')
     try {
       const next = await window.modmind.inspiration.updateKnowledge(projectPath, { id, title, content, remove })
       onChange(next)
-      if (remove) { setId(undefined); setTitle(''); setContent('') }
-      else setId(next[0]?.id)
+      if (remove) { setId(undefined); setTitle(''); setContent(''); setView('edit') }
+      else { setId(next[0]?.id); setView('preview') }
     } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
     finally { setBusy(false) }
   }
@@ -27,13 +29,14 @@ export default function InspirationKnowledgeDialog({ projectPath, notes, initial
 
     <select aria-label="选择知识条目" disabled={busy} value={id ?? ''} onChange={event => {
       const note = notes.find(item => item.id === event.target.value)
-      setId(note?.id); setTitle(note?.title ?? ''); setContent(note?.content ?? ''); setError('')
+      setId(note?.id); setTitle(note?.title ?? ''); setContent(note?.content ?? ''); setView(note ? 'preview' : 'edit'); setError('')
     }}><option value="">新建条目</option>{notes.map(note => <option value={note.id} key={note.id}>{note.title}</option>)}</select>
-    <form onSubmit={event => { event.preventDefault(); void save() }}>
+    <div className="inspiration-knowledge-views" role="group" aria-label="知识内容视图"><button type="button" aria-pressed={view === 'preview'} disabled={!content.trim()} onClick={() => setView('preview')}>预览</button><button type="button" aria-pressed={view === 'edit'} onClick={() => setView('edit')}>编辑</button></div>
+    {view === 'preview' ? <div className="inspiration-knowledge-preview" aria-label="知识预览"><h2>{title || '未命名条目'}</h2><ReplyMarkdown content={content} /></div> : <form onSubmit={event => { event.preventDefault(); void save() }}>
       <label>标题<input aria-label="标题" value={title} maxLength={120} required disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
       <label>内容<textarea aria-label="内容" value={content} maxLength={20000} required disabled={busy} onChange={event => setContent(event.target.value)} /></label>
       {error ? <p role="alert">{error}</p> : null}
       <footer>{id ? <button type="button" disabled={busy} onClick={() => void save(true)}>删除条目</button> : null}<button type="submit" disabled={busy || !title.trim() || !content.trim()}>{busy ? '保存中…' : '保存'}</button></footer>
-    </form>
+    </form>}
   </dialog>
 }

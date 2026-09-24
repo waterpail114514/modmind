@@ -8,10 +8,10 @@ describe('approval policy', () => {
   it('defaults old or invalid settings to YOLO and keeps read-only tasks restricted', () => {
     for (const value of [undefined, null, '', 'never', {}, 'yolo']) expect(normalizeAgentApprovalMode(value)).toBe('yolo')
     expect(normalizeAgentApprovalMode('auto-review')).toBe('auto-review')
-    expect(codexApprovalPolicy()).toMatchObject({ approvalPolicy: 'never', permissions: 'modmind-protected' })
+    expect(codexApprovalPolicy()).toMatchObject({ approvalPolicy: 'never', sandbox: 'danger-full-access' })
     expect(codexApprovalPolicy(false, 'auto-review')).toMatchObject({ approvalPolicy: { granular: { sandbox_approval: false, request_permissions: false } }, approvalsReviewer: 'auto_review', permissions: 'modmind-protected' })
     expect(codexApprovalPolicy(true)).toMatchObject({ approvalPolicy: 'never', sandbox: 'read-only', approvalsReviewer: 'user' })
-    expect(codexApprovalPolicy(false, 'yolo')).toMatchObject({ approvalPolicy: 'never', permissions: 'modmind-protected' })
+    expect(codexApprovalPolicy(false, 'yolo')).toMatchObject({ approvalPolicy: 'never', sandbox: 'danger-full-access' })
     expect(codexApprovalPolicy(true, 'yolo')).toMatchObject({ approvalPolicy: 'never', sandbox: 'read-only', approvalsReviewer: 'user' })
   })
 

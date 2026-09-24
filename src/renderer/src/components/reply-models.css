@@ -1,0 +1,16 @@
+.reply-model-slot { display: inline-block; width: min(100%, 480px); max-width: 100%; margin: 10px 10px 10px 0; vertical-align: top; }
+.reply-model-card { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--text); }
+.reply-model-stage { display: flex; position: relative; height: 300px; min-width: 0; overflow: hidden; background: var(--surface-alt); }
+.reply-model-stage > .reply-image-status { margin: auto; }
+.reply-model-card .resource-model-view, .reply-model-dialog .resource-model-view { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.reply-model-card .resource-model-canvas, .reply-model-dialog .resource-model-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--surface-alt); }
+.reply-model-card .resource-model-canvas canvas, .reply-model-dialog .resource-model-canvas canvas { position: absolute; inset: 0; display: block; }
+.reply-model-card .resource-preview-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.reply-model-card .resource-preview-controls button { font-size: 11px; }
+.reply-model-action { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; min-height: 30px; padding: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.reply-model-action:disabled { cursor: default; opacity: .5; }
+.reply-model-interact { position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.reply-model-interact:focus-visible, .reply-model-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.reply-model-warning { display: block; padding: 0 13px 12px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+@media (hover: hover) and (pointer: fine) { .reply-model-action:not(:disabled):hover, .reply-model-interact:hover { background: var(--surface-alt); color: var(--accent); } }
+@media (max-width: 600px) { .reply-model-stage { height: 260px; } }

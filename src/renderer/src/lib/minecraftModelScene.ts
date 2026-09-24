@@ -7,7 +7,7 @@ const vector = (value: unknown, fallback: number[]): number[] => Array.isArray(v
 const radians = (value: number): number => value * Math.PI / 180
 
 /** Shared by FTB thumbnails and the interactive resource preview. */
-export async function createMinecraftModel(preview: MinecraftModelPreview): Promise<{ group: THREE.Group; dispose: () => void }> {
+export async function createMinecraftModel(preview: MinecraftModelPreview, showMissingTextures = false): Promise<{ group: THREE.Group; dispose: () => void }> {
   const group = new THREE.Group()
   const geometries: THREE.BufferGeometry[] = [], materials: THREE.Material[] = []
   const textures = new Map<string, THREE.Texture>()
@@ -33,7 +33,7 @@ export async function createMinecraftModel(preview: MinecraftModelPreview): Prom
       const elementGroup = new THREE.Group()
       for (const [name, rawFace] of Object.entries(record(element.faces))) {
         const face = record(rawFace), definition = faces[name], texture = textures.get(face.texture)
-        if (!definition || !texture) continue
+        if (!definition || !texture && !showMissingTextures) continue
         const uv = Array.isArray(face.uv) && face.uv.length === 4 ? face.uv : definition.uv
         const corners = [[uv[0]/16,1-uv[1]/16],[uv[2]/16,1-uv[1]/16],[uv[2]/16,1-uv[3]/16],[uv[0]/16,1-uv[3]/16]]
         const turn = ((Math.round((Number(face.rotation) || 0) / 90) % 4) + 4) % 4
@@ -44,7 +44,7 @@ export async function createMinecraftModel(preview: MinecraftModelPreview): Prom
         const shade = element.shade === false ? 1 : definition.light
         const color = new THREE.Color(shade, shade, shade)
         if (typeof face.tintindex === 'number' && face.tintindex >= 0) color.multiply(new THREE.Color(0x91bd59))
-        const material = new THREE.MeshBasicMaterial({ map: texture, color, alphaTest: .1, side: THREE.DoubleSide })
+        const material = new THREE.MeshBasicMaterial({ map: texture ?? null, color, alphaTest: .1, side: THREE.DoubleSide })
         materials.push(material); elementGroup.add(new THREE.Mesh(geometry, material))
       }
       const rotation = record(element.rotation)

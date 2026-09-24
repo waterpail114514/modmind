@@ -166,7 +166,7 @@ export async function runImageWorkflow(plan: ImageWorkflowPlan, api: {
       for (const reference of images.length ? images : [null]) {
         for (let index = 0; index < (node.data.count ?? 1); index += 1) {
           checkStopped()
-          const result = await api.generate({ prompt, style: node.data.presetId ? 'free' : node.data.style ?? 'free', size: node.data.size ?? '1024x1024', quality: node.data.quality ?? 'medium', moderation: node.data.moderation ?? 'auto', count: 1, background: 'solid', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...(reference ? { referenceImage: reference.dataUrl } : {}) })
+          const result = await api.generate({ prompt, style: node.data.presetId ? 'free' : node.data.style ?? 'free', size: node.data.size ?? '1024x1024', quality: node.data.quality ?? 'medium', moderation: node.data.moderation ?? 'auto', count: 1, background: !node.data.presetId && node.data.style === 'minecraft' ? 'solid' : 'auto', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...(reference ? { referenceImage: reference.dataUrl } : {}) })
           for (const asset of result.assets) { output.push(asset); options.onAsset(asset, node.id) }
           if (result.error) throw new Error(result.error)
           if (!result.assets.length) throw new Error('图片服务没有返回图片，已停止后续生成')

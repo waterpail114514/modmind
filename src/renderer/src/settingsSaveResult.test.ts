@@ -7,9 +7,9 @@ describe('approval settings save acknowledgement', () => {
     expect(() => verifySettingsSave({ codexApprovalMode: 'yolo' }, {} as AgentSettings)).toThrow('从系统托盘退出')
   })
 
-  it('rejects an unaccepted mode and accepts both acknowledged modes', () => {
+  it('rejects an unaccepted mode and accepts all acknowledged modes', () => {
     expect(() => verifySettingsSave({ codexApprovalMode: 'yolo' }, { codexApprovalMode: 'auto-review' } as AgentSettings)).toThrow('未保存成功')
-    for (const codexApprovalMode of ['auto-review', 'yolo'] as const) {
+    for (const codexApprovalMode of ['auto-review', 'manual', 'yolo'] as const) {
       expect(() => verifySettingsSave({ codexApprovalMode }, { codexApprovalMode } as AgentSettings)).not.toThrow()
     }
   })

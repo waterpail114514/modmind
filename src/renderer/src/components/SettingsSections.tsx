@@ -16,7 +16,7 @@ const sections = [
   { id: 'settings-notifications', category: 'general', keywords: '通知 关闭窗口 系统托盘 最小化 后台 任务完成通知 notification' },
   { id: 'settings-ai', category: 'ai', keywords: 'AI 模型 思考强度 推理 快速模式 Fast 模式 model' },
   { id: 'settings-image', category: 'ai', keywords: '图片模型 图像服务 自定义图像 API Key Base URL 模型 额度 图像工坊 image' },
-  { id: 'settings-approval', category: 'ai', keywords: '执行审批 审批模式 权限 沙箱 自动审批 YOLO Codex' },
+  { id: 'settings-approval', category: 'ai', keywords: '执行审批 审批模式 权限 沙箱 自动审批 手动审批 YOLO Codex Claude Code 工作台' },
   { id: 'settings-java', category: 'development', keywords: 'Java JDK 游戏运行时 Minecraft Gradle 构建 JDK 编译 内置工具 JAVA_HOME' },
   { id: 'settings-build', category: 'development', keywords: '本地构建 构建工具 Gradle Wrapper 编译' },
   { id: 'settings-remote', category: 'development', keywords: '远程构建 云 Gitee Go 仓库地址 构建分支 Token 流水线' },

@@ -5,6 +5,8 @@ import { safeStorage } from 'electron'
 import sharp from 'sharp'
 import { downloadActivities } from './downloadActivityService'
 import { runEmbeddedPerfectPixel } from './perfectPixel'
+import { normalizeImageGenerationRequest, normalizePerfectPixelOptions } from '../shared/imageStudioRequest'
+import { imageStudioPresets } from '../shared/imageStudioPresets'
 import type {
   ImageGenerationRequest,
   ImageGenerationResult,
@@ -203,8 +205,13 @@ export class ImageStudioService {
 
   private async decryptKey(stored?: StoredSettings): Promise<string> {
     const value = stored ?? await this.readStored()
-    if (!value.encryptedKey || !safeStorage.isEncryptionAvailable()) return ''
-    try { return safeStorage.decryptString(Buffer.from(value.encryptedKey, 'base64')).trim() } catch { return '' }
+    if (!value.encryptedKey) return ''
+    try {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('encryption unavailable')
+      const key = safeStorage.decryptString(Buffer.from(value.encryptedKey, 'base64')).trim()
+      if (!key) throw new Error('empty key')
+      return key
+    } catch { throw new Error('已保存的图片 API Key 无法解密，请在图像服务设置中重新保存 Key 或切换为额度图像服务') }
   }
 
   async revealApiKey(): Promise<string> {
@@ -253,7 +260,16 @@ export class ImageStudioService {
     return { models, sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
   }
 
-  async generate(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
+  async describe(includeModels = false): Promise<unknown> {
+    const settings = await this.getSettings()
+    const info = { settings, credentialSource: settings.hasStoredKey ? 'custom' : 'hosted', presets: imageStudioPresets }
+    if (!includeModels) return info
+    try { return { ...info, capabilities: await this.capabilities() } }
+    catch (error) { return { ...info, capabilitiesError: error instanceof Error ? error.message : String(error) } }
+  }
+
+  async generate(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent' = input.source === 'agent' ? 'agent' : 'manual'): Promise<ImageGenerationResult> {
+    const request = normalizeImageGenerationRequest(input, source)
     const count = Math.min(Math.max(Number.isInteger(request.count) ? request.count : 1, 1), 10)
     let result: ImageGenerationResult | undefined
     for (let index = 0; index < count; index += 1) {
@@ -265,6 +281,7 @@ export class ImageStudioService {
           result.assets.push(...next.assets)
           result.credits += next.credits
         }
+        if (next.error) return { ...result, error: next.error }
       } catch (error) {
         if (!result) throw error
         return { ...result, error: `已生成 ${index}/${count} 张，第 ${index + 1} 张失败，已停止后续生成：${error instanceof Error ? error.message : String(error)}` }
@@ -280,18 +297,19 @@ export class ImageStudioService {
     const stored = await this.readStored()
     const ownKey = await this.decryptKey(stored)
     const hosted = !ownKey
-    if (!stored.model) throw new Error('请先在图像服务设置中选择并保存图片模型')
+    const model = request.model || stored.model
+    if (!model) throw new Error('请先在图像服务设置中选择并保存图片模型，或为本次请求指定 model')
     if (ownKey && !stored.baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
     const lease = hosted ? await this.options.getHostedLease({ ...request, count }) : null
     const baseUrl = lease?.baseUrl ?? stored.baseUrl
     const apiKey = lease?.apiKey ?? ownKey
-    const model = stored.model
     const stylePrefix = request.style === 'minecraft'
-      ? `Minecraft pixel art asset, crisp hard-edged pixels, flat solid ${request.backgroundColor || '#ffffff'} background, no gradients, no shadows. `
+      ? 'Minecraft pixel art asset, crisp hard-edged pixels, no gradients, no shadows. '
       : ''
+    const backgroundPrefix = request.background === 'solid' ? `Flat solid ${request.backgroundColor} background. ` : ''
     const body = {
       model,
-      prompt: `${stylePrefix}${prompt}`,
+      prompt: `${stylePrefix}${backgroundPrefix}${prompt}`,
       n: count,
       size: String(request.size || '1024x1024'),
       quality: clampQuality(request.quality),
@@ -319,16 +337,28 @@ export class ImageStudioService {
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null
     const parsed = await parseImagePayload(payload)
     if (!parsed.length) throw new Error('图片服务没有返回可用图片数据')
+    let processingError: string | undefined
+    const processed = [] as typeof parsed
+    for (const item of parsed) {
+      try {
+        processed.push(request.removeBackground ? { ...item, dataUrl: (await this.process('remove-background', item.dataUrl)).dataUrl } : item)
+      } catch (error) {
+        processed.push(item)
+        processingError = `图片已生成，去背失败，已保留原图并停止后续生成：${error instanceof Error ? error.message : String(error)}`
+      }
+    }
     const jobId = lease?.jobId ?? randomUUID()
     const createdAt = new Date().toISOString()
-    const assets: ImageHistoryItem[] = parsed.map((item) => ({ id: randomUUID(), createdAt, model, style: request.style, size: body.size, quality: body.quality, hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0 }))
+    const assets: ImageHistoryItem[] = processed.map((item) => ({ id: randomUUID(), createdAt, model, style: request.style, size: body.size, quality: body.quality, hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0 }))
     const history = await this.readHistory()
     await fs.mkdir(this.options.userDataDir, { recursive: true })
     await fs.writeFile(historyPath(this.options.userDataDir), JSON.stringify([...assets, ...history].slice(0, 100), null, 2), 'utf8')
-    return { jobId, assets: assets.map((asset, index) => ({ ...asset, dataUrl: parsed[index].dataUrl })), hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0, ...(parsed[0].revisedPrompt ? { revisedPrompt: parsed[0].revisedPrompt } : {}) }
+    return { jobId, assets: assets.map((asset, index) => ({ ...asset, dataUrl: processed[index].dataUrl })), hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0, ...(processed[0].revisedPrompt ? { revisedPrompt: processed[0].revisedPrompt } : {}), ...(processingError ? { error: processingError } : {}) }
   }
 
   async process(operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options?: ImageProcessingOptions): Promise<ImageProcessingResult> {
+    if (operation !== 'perfect-pixel' && operation !== 'remove-background') throw new Error('未知图像处理方式')
+    const perfectPixel = operation === 'perfect-pixel' ? normalizePerfectPixelOptions(options?.perfectPixel) : undefined
     const match = /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,([A-Za-z0-9+/=]+)$/i.exec(dataUrl)
     if (!match) throw new Error('图片数据格式无效')
     const encoded = match[1]
@@ -342,7 +372,7 @@ export class ImageStudioService {
     let output: Buffer
     if (operation === 'perfect-pixel') {
       try {
-        output = await runEmbeddedPerfectPixel(source, options?.perfectPixel)
+        output = await runEmbeddedPerfectPixel(source, perfectPixel)
         return { dataUrl: `data:image/png;base64,${output.toString('base64')}`, operation, detail: '已使用内置 PerfectPixel 完成像素优化' }
       } catch {
         const smallWidth = Math.max(16, Math.min(128, Math.round(Math.min(width, height) / 8)))

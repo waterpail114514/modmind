@@ -10,6 +10,14 @@ async function capture(view: BlockbenchCaptureFrame['view'], foreground: boolean
   return {view, width: 160, height: 160, dataUrl: `data:image/png;base64,${png.toString('base64')}`}
 }
 
+async function rectangleCapture(view: BlockbenchCaptureFrame['view'], width: number, height: number, shapeWidth: number, shapeHeight: number): Promise<BlockbenchCaptureFrame> {
+  const svg = Buffer.from(`<svg width="${shapeWidth}" height="${shapeHeight}"><rect width="100%" height="100%" fill="#333333"/></svg>`)
+  const png = await sharp({create: {width, height, channels: 4, background: '#ededed'}})
+    .composite([{input: svg, left: Math.floor((width - shapeWidth) / 2), top: Math.floor((height - shapeHeight) / 2)}])
+    .png().toBuffer()
+  return {view, width, height, dataUrl: `data:image/png;base64,${png.toString('base64')}`}
+}
+
 describe('asset visual review', () => {
   it('scores multi-view framing, contrast, edges, symmetry, and consistency', async () => {
     const review = await reviewAssetCaptures(await Promise.all([capture('isometric_right', true), capture('north', true), capture('west', true)]))
@@ -23,5 +31,19 @@ describe('asset visual review', () => {
     const review = await reviewAssetCaptures([await capture('north', false)])
     expect(review.score).toBeLessThan(50)
     expect(review.findings.map((finding) => finding.checkId)).toEqual(expect.arrayContaining(['low-occupancy', 'low-detail']))
+  })
+
+  it('flags a squat front silhouette against a tall reference, but accepts matching proportions', async () => {
+    const squat = await rectangleCapture('north', 160, 160, 90, 60)
+    const tall = await rectangleCapture('north', 160, 160, 60, 90)
+    expect((await reviewAssetCaptures([squat], 1.5)).findings).toContainEqual(expect.objectContaining({severity: 'error', checkId: 'reference-proportion-mismatch'}))
+    expect((await reviewAssetCaptures([tall], 1.5)).findings.some(finding => finding.checkId === 'reference-proportion-mismatch')).toBe(false)
+  })
+
+  it('requires a front view and preserves proportions in a non-square capture', async () => {
+    const side = await rectangleCapture('west', 160, 160, 60, 90)
+    expect((await reviewAssetCaptures([side], 1.5)).findings).toContainEqual(expect.objectContaining({checkId: 'proportion-view-missing'}))
+    const front = await rectangleCapture('north', 240, 160, 60, 90)
+    expect((await reviewAssetCaptures([front], 1.5)).findings.some(finding => finding.checkId === 'reference-proportion-mismatch')).toBe(false)
   })
 })

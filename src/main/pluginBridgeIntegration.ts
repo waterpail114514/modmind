@@ -4,6 +4,7 @@ import { PluginService } from './pluginService'
 import { PluginRuntime, type PluginRuntimeOptions } from './pluginRuntime'
 import { registerPluginProtocol, registerPluginProtocolScheme } from './pluginProtocol'
 import { InitialReadiness } from './initialReadiness'
+import { requestPluginImportConfirmation } from './pluginImportConfirmation'
 import type { ExternalAgentPluginBridgeTarget } from './externalAgents'
 import type { PluginDiagnostics, PluginRecord, PluginSnapshot } from '../shared/plugins'
 
@@ -139,11 +140,10 @@ export function createPluginBridgeTarget(): ExternalAgentPluginBridgeTarget | un
 }
 
 /** 导入 .zip 的完整流程：选择文件 → 解压校验 → 确认对话框 → 落盘。 */
-export async function importPluginZipInteractive(scope: 'global' | 'project'): Promise<{ imported: string } | { cancelled: true }> {
+export async function importPluginZipInteractive(scope: 'global' | 'project', window: BrowserWindow, requestId: string, projectRoot: () => string | null): Promise<{ imported: string } | { cancelled: true }> {
   const service = getPluginService()
   if (!service || !app) throw new Error('插件系统未初始化')
-  const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-  if (!window) throw new Error('没有可用窗口')
+  const originalProject = projectRoot()
   const result = await dialog.showOpenDialog(window, {
     title: '导入 ModMind 插件',
     filters: [{ name: 'ModMind 插件', extensions: ['zip'] }],
@@ -152,28 +152,19 @@ export async function importPluginZipInteractive(scope: 'global' | 'project'): P
   if (result.canceled || !result.filePaths[0]) return { cancelled: true }
 
   const preview = await service.previewZipImport(result.filePaths[0], scope)
-  const permissionText = preview.manifest.permissions.join(', ') || '无'
-  const confirmation = await dialog.showMessageBox(window, {
-    type: 'warning',
-    title: '完全信任此插件？',
-    message: `完全信任并安装 ${preview.manifest.name} (${preview.manifest.id}) v${preview.manifest.version}?`,
-    detail: [
-      preview.manifest.description,
-      '',
-      '插件后端作为完整 Node 扩展运行，可直接读写本机文件、访问网络、读取环境变量和启动进程。permissions 只描述它通过 ModMind 宿主桥调用的能力，不是安全沙箱。',
-      '',
-      `声明的宿主桥能力：${permissionText}`,
-      preview.conflictsWith ? `警告：将替换已安装的同名插件（${preview.conflictsWith.scope}）。` : ''
-    ].filter(Boolean).join('\n'),
-    buttons: ['取消', '完全信任并安装'],
-    defaultId: 0,
-    cancelId: 0
-  })
-  if (confirmation.response !== 1) {
+  try {
+    const accepted = await requestPluginImportConfirmation(window.webContents, requestId, {
+      manifest: preview.manifest,
+      fileName: path.basename(result.filePaths[0]),
+      scope,
+      conflictsWith: preview.conflictsWith
+    })
+    if (!accepted) return { cancelled: true }
+    if (scope === 'project' && projectRoot() !== originalProject) throw new Error('当前项目已切换，请重新导入插件')
+    const manifest = await service.confirmImport(preview.stagedDirectory, scope)
+    await refreshPluginRegistry()
+    return { imported: manifest.id }
+  } finally {
     await service.cancelImport(preview.stagedDirectory)
-    return { cancelled: true }
   }
-  const manifest = await service.confirmImport(preview.stagedDirectory, scope)
-  await refreshPluginRegistry()
-  return { imported: manifest.id }
 }

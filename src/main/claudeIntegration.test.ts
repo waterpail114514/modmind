@@ -44,6 +44,54 @@ async function fakeCli(root: string, source: string, help = CLAUDE_REQUIRED_FLAG
 }
 
 describe('Claude managed process', () => {
+  it.each(['allow', 'deny'] as const)('answers native permission requests with %s while preserving the input', async decision => {
+    const f = await fixture()
+    const executable = await fakeCli(f.root, `
+      if (!process.argv.includes('--permission-prompt-tool') || !process.argv.includes('stdio')) process.exit(3);
+      const readline = await import('node:readline');
+      readline.createInterface({input:process.stdin}).on('line', line => {
+        const message = JSON.parse(line);
+        if (message.type === 'user') console.log(JSON.stringify({type:'control_request',request_id:'permission-1',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'src/Main.java'},decision_reason:'需要读取文件'}}));
+        if (message.type === 'control_response') {
+          fs.writeFileSync(${JSON.stringify(path.join(f.root, 'permission.json'))}, JSON.stringify(message));
+          console.log(JSON.stringify({type:'result',subtype:'success',result:'完成权限请求',session_id:'manual-session'}));
+        }
+      });
+    `)
+    await runExternalAgent({ ...f.options, executable, approvalMode: 'manual', onApproval: async request => {
+      expect(request).toMatchObject({ engine: 'claude', allowSession: false, reason: '需要读取文件' })
+      expect(request.detail).toContain('src/Main.java')
+      return decision
+    } })
+    const reply = JSON.parse(await fs.readFile(path.join(f.root, 'permission.json'), 'utf8'))
+    expect(reply.response).toMatchObject({ subtype: 'success', request_id: 'permission-1', response: { behavior: decision } })
+    if (decision === 'allow') expect(reply.response.response.updatedInput).toEqual({ file_path: 'src/Main.java' })
+  })
+
+  it.each(['manual', 'auto-review', 'yolo'] as const)('gates managed mutations in %s mode and falls back when review is unavailable', async mode => {
+    const f = await fixture()
+    let mutations = 0
+    let approvals = 0
+    const approvalReasons: (string | undefined)[] = []
+    const executable = await fakeCli(f.root, `
+      const args=process.argv.slice(2);
+      const config=JSON.parse(fs.readFileSync(args[args.indexOf('--mcp-config')+1],'utf8'));
+      const server=config.mcpServers.modmind;
+      const bridge=JSON.parse(fs.readFileSync(new URL('./bridge.json', 'file:///'+server.args[0].replaceAll('\\\\','/')),'utf8'));
+      const result=await fetch('http://127.0.0.1:'+bridge.port+'/tool',{method:'POST',headers:{'x-modmind-token':bridge.token},body:JSON.stringify({action:'apply_edits',input:{edits:[]}})});
+      await result.text();
+      console.log(JSON.stringify({type:'result',subtype:'success',result:'托管工具检查完成',session_id:'tools-session'}));
+    `)
+    await runExternalAgent({ ...f.options, executable, approvalMode: mode,
+      bridge: { ...f.bridge, applyEdits: async () => { mutations++; return {} }, reviewAction: async () => ({ approved: true, complete: true, risk: 'low', feedback: 'review unavailable', unavailable: mode === 'auto-review', dangerousOperations: [] }) },
+      onApproval: async request => { approvals++; approvalReasons.push(request.fallbackReason); return 'deny' }
+    })
+    expect(approvals).toBe(mode === 'yolo' ? 0 : 1)
+    if (mode === 'manual') expect(approvalReasons).toEqual([undefined])
+    if (mode === 'auto-review') expect(approvalReasons[0]).toContain('回退')
+    expect(mutations).toBe(mode === 'yolo' ? 1 : 0)
+  })
+
   it('rejects an installed incompatible CLI without starting or endlessly retrying a task', async () => {
     const f = await fixture()
     const marker = path.join(f.root, 'started')
