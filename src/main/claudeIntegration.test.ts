@@ -36,14 +36,14 @@ async function fixture() {
 
 async function fakeCli(root: string, source: string, help = CLAUDE_REQUIRED_FLAGS.join(' ') + ' dontAsk --bare'): Promise<string> {
   const runner = path.join(root, 'claude-fixture.mjs')
-  await fs.writeFile(runner, `#!/usr/bin/env node\nimport fs from 'node:fs';\nif (process.argv.includes('--version')) { console.log('2.1.231 (Claude Code)'); process.exit(0); }\nif (process.argv.includes('--help')) { console.log(${JSON.stringify(help)}); process.exit(0); }\n${source}`)
+  await fs.writeFile(runner, `#!/usr/bin/env node\nimport fs from 'node:fs';\nif (process.argv.includes('--version')) { console.log('2.1.231 (Claude Code)'); process.exit(0); }\nif (process.argv.includes('--help')) { console.log(${JSON.stringify(help)}); process.exit(0); }\nlet resolveTools; const toolsReady = new Promise(resolve => { resolveTools = resolve; });\nprocess.stdin.on('data', chunk => { for (const line of String(chunk).split(/\\r?\\n/)) { if (!line) continue; try { const message = JSON.parse(line); const request = message.request; if (message.type === 'control_request' && (request?.subtype === 'initialize' || request?.subtype === 'mcp_status')) { console.log(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: request.subtype === 'mcp_status' ? { mcpServers: [{ name: 'modmind', status: 'connected', tools: ['modmind_project_info', 'modmind_project_files', 'modmind_read_project_file'] }] } : {} } })); if (request.subtype === 'mcp_status') resolveTools(); } } catch {} } });\nawait toolsReady;\n${source}`)
   if (process.platform !== 'win32') { await fs.chmod(runner, 0o755); return runner }
   const executable = path.join(root, 'claude-fixture.cmd')
   await fs.writeFile(executable, '@echo off\r\nnode "%~dp0claude-fixture.mjs" %*\r\n')
   return executable
 }
 
-describe('Claude managed process', () => {
+describe('Claude managed process', { timeout: 30_000 }, () => {
   it.each(['allow', 'deny'] as const)('answers native permission requests with %s while preserving the input', async decision => {
     const f = await fixture()
     const executable = await fakeCli(f.root, `
