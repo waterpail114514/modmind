@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { LoaderVersionOption, ProjectCreateInput, ProjectInfo } from '../shared/types'
 import { draftTargetFromMessage, missingDraftDetails } from '../shared/draftProject'
-import { isJavaLoader, PROJECT_PLATFORMS } from '../shared/projectPlatform'
+import { isJavaLoader, isServerPluginPlatform, PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { CURRENT_PROJECT_VERSION } from './projectVersion'
 
 const manifest = 'modmind.project.json'
@@ -73,15 +73,23 @@ async function templateFiles(root: string, relative = ''): Promise<string[]> {
 export async function initializeDraftProject(root: string, services: {
   resolve: (loader: ProjectCreateInput['loader'], version: string) => Promise<LoaderVersionOption>
   scaffold: (project: ProjectInfo) => Promise<void>
-}): Promise<ProjectInfo> {
+}, selection?: Pick<Required<ProjectCreateInput>, 'kind' | 'loader' | 'minecraftVersion'>): Promise<ProjectInfo> {
   return serial(root, async () => {
     const original = await readProject(root)
-    if (!original.draft) return original
+    if (!original.draft) {
+      if (selection && (selection.kind !== original.kind || selection.loader !== original.loader || selection.minecraftVersion !== original.minecraftVersion)) throw new Error('项目已经创建；更换平台或版本需要迁移，不能重新初始化')
+      return original
+    }
+    if (selection) {
+      if (typeof selection.minecraftVersion !== 'string' || !selection.minecraftVersion.trim() || selection.minecraftVersion.length > 80) throw new Error('请选择具体的 Minecraft 或代理 API 版本')
+      original.draft.target = { ...original.draft.target, ...selection, minecraftVersion: selection.minecraftVersion.trim() }
+    }
     const missing = missingDraftDetails(original)
     if (missing.length) throw new Error(`请先在对话中补充：${missing.join('、')}`)
     const target = original.draft.target as ProjectCreateInput
     if (!(PROJECT_PLATFORMS as readonly string[]).includes(target.loader) || !['mod', 'modpack', 'server-plugin'].includes(target.kind ?? '')) throw new Error('不支持的工程类型或平台')
     if (target.kind === 'modpack' && !isJavaLoader(target.loader)) throw new Error('整合包目前仅支持 Java 版平台')
+    if ((target.kind === 'server-plugin') !== isServerPluginPlatform(target.loader)) throw new Error('服务端插件需要 Paper、Spigot、Folia 或 Velocity 平台；模组需要对应的模组平台')
     const compatibility = await services.resolve(target.loader, target.minecraftVersion)
     const project: ProjectInfo = { ...original, kind: target.kind, loader: target.loader, minecraftVersion: target.minecraftVersion, loaderVersion: compatibility.loaderVersion, apiVersion: compatibility.apiVersion, qslVersion: compatibility.qslVersion, javaVersion: compatibility.javaVersion }
     delete project.draft

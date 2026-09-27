@@ -8,7 +8,7 @@
 - Declare at least one backend, panel, or overlay surface.
 - Backend tool names use lowercase letters, digits, underscores, or hyphens and must be unique.
 
-Current host permissions are `project.read`, `storage`, `net.fetch`, `clipboard.write`, `ui.overlay`, `chat.read`, `chat.write`, and `chat.context`. Request only those used by the implementation.
+Current host permissions are `project.read`, `storage`, `net.fetch`, `clipboard.write`, `ui.overlay`, `chat.read`, `chat.write`, `chat.context`, and `minecraft.sync`. Request only those used by the implementation.
 
 ## Panel and overlay bridge
 
@@ -17,6 +17,8 @@ Panels send `ready`, `invokeTool`, `getProjectInfo`, `netFetch`, `copyToClipboar
 `context` messages use `{ type: 'context', requestId, op, args }`. With `ui.overlay`, use `overlayGetState`, `overlayClose`, `overlayShow`, `overlayPopOut`, `overlayDock`, or `overlaySetAlwaysOnTop` (`{ alwaysOnTop }`). These control only the calling plugin. Closing hides the overlay; docking returns it to the app. Users can restore it from the manager.
 
 With `chat.read`, use `chatGetCurrent` to read the main window's current workbench conversation (`projectPath`, `conversationId`, `title`, `busy`, `draft`, `messages`). With `chat.write`, use `chatSetDraft` (`{ text, mode?: 'append' | 'replace', target? }`), defaulting to append without sending. With `chat.context`, use `chatSetContext` (`{ key, text, target? }`) and `chatRemoveContext` (`{ key, target? }`). Backend equivalents are `ctx.overlay.getState/close/show/popOut/dock/setAlwaysOnTop`, `ctx.chat.getCurrent(target?)`, `ctx.chat.setDraft(text, options?)`, `ctx.chat.setContext(key, text, target?)`, and `ctx.chat.removeContext(key, target?)`.
+
+With `minecraft.sync`, use `ctx.minecraft.syncKubeJsServerScripts()` (panel context op `minecraftSyncKubeJsServerScripts`) after writing recipes to project-owned `kubejs/server_scripts/*.js`. It copies only those scripts into the current managed test instance, even while the game runs. Its result includes `copied`, `removed`, `reloadRequired`, and `state`; when `reloadRequired` is true, tell the user to execute `/reload` in game. Use `ctx.minecraft.syncModpack()` (panel op `minecraftSyncModpack`) for full pack changes only after stopping the game. Neither operation writes back from the instance to the project. Never write `.modmind` directly from plugin code.
 
 Pass `{ projectPath, conversationId }` as `target` after asynchronous work; stale targets are rejected. Context is scoped to plugin, project, conversation, and key. It is attached as attributed reference material on future new workbench AI requests, including native-session fallback, without native memory files, automatic sending, or mid-turn injection. It does not affect inspiration or recovery runs. Removing context does not erase already sent model history. Context is in-memory and cleared on plugin disable/removal/reload or app exit. Limits: 32000 characters per entry, 64000 total per conversation, 100 entries per plugin, 1-80 ASCII word/dot/hyphen characters per key. Backends remain lazily activated; panels can call these operations directly without a backend.
 

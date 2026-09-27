@@ -1,0 +1,2 @@
+import fs from 'node:fs/promises';
+const chars=[...new Set('你已经开始用想法创造世界一句话构建可玩整合包模组开发现在进入下一章今天最好的制作客户端')];const out={};for(const ch of chars){const r=await fetch('https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0.1/'+encodeURIComponent(ch)+'.json');if(r.ok)out[ch]=await r.json();}await fs.writeFile('prototypes/promo-studio/assets/strokes.json',JSON.stringify(out));console.log('Stroke glyphs:',Object.keys(out).length)

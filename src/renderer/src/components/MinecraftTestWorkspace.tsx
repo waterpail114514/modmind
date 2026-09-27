@@ -52,6 +52,11 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
   const [events, setEvents] = useState<MinecraftRuntimeEvent[]>([])
   const [username, setUsername] = useState(() => localStorage.getItem('modmind.minecraft.username') || 'ModMindDev')
   const [memory, setMemory] = useState(() => Number(localStorage.getItem('modmind.minecraft.memory')) || 4096)
+  const [launchMode, setLaunchMode] = useState<'project' | 'clean'>(() => localStorage.getItem('modmind.minecraft.launchMode') === 'clean' ? 'clean' : 'project')
+  const [windowWidth, setWindowWidth] = useState(() => Number(localStorage.getItem('modmind.minecraft.windowWidth')) || 1280)
+  const [windowHeight, setWindowHeight] = useState(() => Number(localStorage.getItem('modmind.minecraft.windowHeight')) || 720)
+  const [disableNarrator, setDisableNarrator] = useState(() => localStorage.getItem('modmind.minecraft.disableNarrator') !== 'false')
+  const [jvmArgsText, setJvmArgsText] = useState(() => localStorage.getItem('modmind.minecraft.jvmArgs') || '')
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
   const [progressClock, setProgressClock] = useState(() => Date.now())
@@ -104,6 +109,14 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
   }, [memory])
 
   useEffect(() => {
+    localStorage.setItem('modmind.minecraft.launchMode', launchMode)
+    localStorage.setItem('modmind.minecraft.windowWidth', String(windowWidth))
+    localStorage.setItem('modmind.minecraft.windowHeight', String(windowHeight))
+    localStorage.setItem('modmind.minecraft.disableNarrator', String(disableNarrator))
+    localStorage.setItem('modmind.minecraft.jvmArgs', jvmArgsText)
+  }, [launchMode, windowWidth, windowHeight, disableNarrator, jvmArgsText])
+
+  useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(''), 3200)
     return () => window.clearTimeout(timer)
@@ -143,7 +156,23 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
   const launchGame = (): void => {
     void run('launch', async () => {
       if (modpack) await window.modmind.minecraft.syncModpack()
-      return window.modmind.minecraft.launch({ username, maxMemoryMb: memory, width: 1280, height: 720 })
+      return window.modmind.minecraft.launch({
+        username, maxMemoryMb: memory, width: windowWidth, height: windowHeight,
+        withoutProjectMod: !modpack && launchMode === 'clean', disableNarrator,
+        extraJVMArgs: jvmArgsText.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
+      })
+    })
+  }
+
+  const syncKubeJsServerScripts = (): void => {
+    void run('sync-kubejs', async () => {
+      const result = await window.modmind.minecraft.syncKubeJsServerScripts()
+      setNotice(result.reloadRequired
+        ? `已同步 ${result.copied.length} 个 KubeJS 服务端脚本；请在游戏内执行 /reload`
+        : result.copied.length || result.removed.length
+          ? `KubeJS 服务端脚本已更新：${result.copied.length} 个更新，${result.removed.length} 个移除`
+          : 'KubeJS 服务端脚本没有变化')
+      return result.state
     })
   }
 
@@ -262,6 +291,9 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
           </button> : <button className="secondary-button" disabled={Boolean(busy) || state.running} onClick={() => void run('build', () => window.modmind.minecraft.buildProject())}>
             {busy === 'build' ? <LoaderCircle className="spin" size={16} /> : <Hammer size={16} />}构建并同步
           </button>}
+          {modpack ? <button className="secondary-button" title="只同步 kubejs/server_scripts/*.js；运行中的游戏还需执行 /reload" disabled={Boolean(busy)} onClick={syncKubeJsServerScripts}>
+            {busy === 'sync-kubejs' ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}KubeJS 热同步
+          </button> : null}
           {!modpack ? <button className="secondary-button" title="需要在 HeadlessMC 中配置正版 Minecraft 账号" disabled={Boolean(busy) || state.running} onClick={runHeadlessSmokeTest}>
             {busy === 'headless' ? <LoaderCircle className="spin" size={16} /> : <TerminalSquare size={16} />}无头冒烟
           </button> : null}
@@ -274,7 +306,7 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
             <button className="danger-button" disabled={Boolean(busy)} onClick={() => void run('stop', () => window.modmind.minecraft.stop())}><Square size={15} />停止游戏</button>
           ) : (
             <button className="primary-button" disabled={Boolean(busy) || !username.trim()} onClick={launchGame}>
-              {busy === 'launch' ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}启动测试
+              {busy === 'launch' ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}{!modpack && launchMode === 'clean' ? '仅启动游戏' : '启动测试'}
             </button>
           )}
         </div>
@@ -287,18 +319,22 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
       <div className="mc-test-layout">
         <aside className="mc-instance-panel">
           <section>
-            <h2>离线身份</h2>
+            <h2>启动设置</h2>
+            {!modpack ? <div className="mc-launch-mode" role="group" aria-label="启动方式"><button type="button" aria-pressed={launchMode === 'project'} onClick={() => setLaunchMode('project')} disabled={state.running}>测试项目 Mod</button><button type="button" aria-pressed={launchMode === 'clean'} onClick={() => setLaunchMode('clean')} disabled={state.running}>仅启动游戏</button></div> : null}
             <label>用户名<input value={username} maxLength={16} onChange={(event) => setUsername(event.target.value)} disabled={state.running} /></label>
             <label>最大内存<select value={memory} onChange={(event) => setMemory(Number(event.target.value))} disabled={state.running}>
               <option value={2048}>2 GB</option><option value={4096}>4 GB</option><option value={6144}>6 GB</option><option value={8192}>8 GB</option><option value={12288}>12 GB</option>
             </select></label>
+            <div className="mc-window-size"><label>窗口宽度<input type="number" min={640} max={3840} value={windowWidth} onChange={event => setWindowWidth(Number(event.target.value))} disabled={state.running} /></label><label>窗口高度<input type="number" min={360} max={2160} value={windowHeight} onChange={event => setWindowHeight(Number(event.target.value))} disabled={state.running} /></label></div>
+            <label className="mc-narrator-setting"><input type="checkbox" checked={disableNarrator} onChange={event => setDisableNarrator(event.target.checked)} disabled={state.running} /><span>关闭旁白和首次提示</span></label>
+            <details className="mc-launch-advanced"><summary>高级启动参数</summary><label>附加 JVM 参数（每行一项）<textarea value={jvmArgsText} maxLength={4000} rows={3} onChange={event => setJvmArgsText(event.target.value)} disabled={state.running} placeholder="-Dexample=value" /></label></details>
           </section>
           <section className="mc-instance-facts">
             <h2>实例</h2>
             <dl>
               <div><dt><HardDrive size={13} />游戏文件</dt><dd>{state.installed ? '已就绪' : '按需下载'}</dd></div>
               <div><dt><Cpu size={13} />Java</dt><dd>{state.javaPath ? '托管运行时' : '待准备'}</dd></div>
-              <div><dt><Box size={13} />{modpack ? '整合包 Mod' : '项目 Mod'}</dt><dd>{modpack ? `${state.mods.length} 个已同步` : projectMod ? formatBytes(projectMod.size) : '未同步'}</dd></div>
+              <div><dt><Box size={13} />{modpack ? '整合包 Mod' : '项目 Mod'}</dt><dd>{!modpack && launchMode === 'clean' ? '本次不加载' : modpack ? `${state.mods.length} 个已同步` : projectMod ? formatBytes(projectMod.size) : '未同步'}</dd></div>
             </dl>
           </section>
           <div className={`mc-runtime-message ${state.stage === 'error' ? 'error' : ''}`}><i />{state.message}</div>
@@ -328,18 +364,18 @@ export default function MinecraftTestWorkspace({ projectPath, beginner = false, 
           ) : null}
           <section className="mc-mods-section">
             <div className="mc-section-heading">
-              <div><h2>测试模组</h2><p>{state.mods.length} 个 JAR · {dependencies.length} 个前置</p></div>
+              <div><h2>{!modpack && launchMode === 'clean' ? '本次启动' : '测试模组'}</h2>{!modpack && launchMode === 'clean' ? null : <p>{state.mods.length} 个 JAR · {dependencies.length} 个前置</p>}</div>
               <div>
                 <button className="icon-button" title={modpack ? '同步整合包' : '同步项目构建'} disabled={Boolean(busy) || state.running} onClick={() => void run('sync', () => modpack ? window.modmind.minecraft.syncModpack() : window.modmind.minecraft.syncProjectMod())}><RefreshCw size={15} /></button>
                 {!modpack ? <button className="secondary-button compact" disabled={Boolean(busy) || state.running} onClick={onManageRelationships}><PackagePlus size={14} />管理前置与联动</button> : null}
               </div>
             </div>
             <div className="mc-mod-list">
-              {!modpack && projectMod ? <ModRow mod={projectMod} /> : !modpack ? (
+              {!modpack && launchMode === 'clean' ? <div className="mc-clean-game-row"><Gamepad2 size={17} /><span>仅启动 Minecraft，不加载项目 Mod</span></div> : !modpack && projectMod ? <ModRow mod={projectMod} /> : !modpack ? (
                 <div className="mc-project-missing"><Box size={17} /><span><strong>项目构建产物</strong></span></div>
               ) : null}
-              {dependencies.map((mod) => <ModRow key={mod.name} mod={mod} />)}
-              {!dependencies.length ? <div className="mc-mod-empty">没有额外前置模组</div> : null}
+              {modpack || launchMode === 'project' ? dependencies.map((mod) => <ModRow key={mod.name} mod={mod} />) : null}
+              {(modpack || launchMode === 'project') && !dependencies.length ? <div className="mc-mod-empty">没有额外前置模组</div> : null}
             </div>
           </section>
 

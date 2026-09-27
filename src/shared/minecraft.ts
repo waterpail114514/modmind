@@ -121,6 +121,9 @@ export interface MinecraftLaunchOptions {
   maxMemoryMb: number
   width?: number
   height?: number
+  withoutProjectMod?: boolean
+  disableNarrator?: boolean
+  extraJVMArgs?: string[]
   server?: { ip: string; port: number }
 }
 
@@ -184,6 +187,7 @@ export interface MinecraftApi {
   stop: () => Promise<MinecraftRuntimeState>
   syncProjectMod: () => Promise<MinecraftManagedMod | null>
   syncModpack: () => Promise<MinecraftRuntimeState>
+  syncKubeJsServerScripts: () => Promise<{ copied: string[]; removed: string[]; reloadRequired: boolean; state: MinecraftRuntimeState }>
   importMods: () => Promise<MinecraftManagedMod[]>
   removeMod: (name: string) => Promise<MinecraftManagedMod[]>
   listMods: () => Promise<MinecraftManagedMod[]>

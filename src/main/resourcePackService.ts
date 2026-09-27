@@ -75,8 +75,8 @@ async function packIsArchive(project: ProjectInfo, id: string): Promise<boolean>
 
 async function readPackBytes(project: ProjectInfo, id: string, file: string): Promise<Buffer> {
   const relative = safeRelativeFile(file), root = packRoot(project, id)
-  // Project source browsing stays within assets; pack browsing includes ancillary files.
-  if (projectSourcePath(project, id) && !['pack.mcmeta', 'pack.png'].includes(relative) && !relative.startsWith('assets/')) throw new Error('项目资源必须位于 assets/ 下')
+  // Project authoring exposes assets and data, but not loader descriptors or other source files.
+  if (projectSourcePath(project, id) && !['pack.mcmeta', 'pack.png'].includes(relative) && !relative.startsWith('assets/') && !relative.startsWith('data/')) throw new Error('项目资源必须位于 assets/ 或 data/ 下')
   if (await packIsArchive(project, id)) return archiveRead(root, relative)
   const target = await safeTarget(root, relative)
   if ((await fs.stat(target)).size > MAX_FILE) throw new Error('文件过大')
@@ -92,10 +92,10 @@ function safeRelativeFile(value: string): string {
   return value
 }
 
-function relativeFile(value: string): string {
+function relativeFile(value: string, allowProjectData = false): string {
   safeRelativeFile(value)
   if (/^(?:LICENSE|COPYING|NOTICE)(?:\.txt|\.md)?$/i.test(value)) return value
-  if (!['pack.mcmeta', 'pack.png'].includes(value) && !value.startsWith('assets/') && !/^[a-z0-9_.-]+\/assets\//.test(value) && !/^(?:readme|credits)\.(?:txt|md)$/i.test(value)) throw new Error('资源必须位于 assets/ 或 overlay/assets/ 下')
+  if (!['pack.mcmeta', 'pack.png'].includes(value) && !value.startsWith('assets/') && !(allowProjectData && value.startsWith('data/')) && !/^[a-z0-9_.-]+\/assets\//.test(value) && !/^(?:readme|credits)\.(?:txt|md)$/i.test(value)) throw new Error('资源必须位于 assets/ 或 overlay/assets/ 下')
   if (!allowedExtensions.has(path.extname(value).toLowerCase())) throw new Error('不支持的资源文件类型')
   return value
 }
@@ -127,13 +127,13 @@ async function serial<T>(root: string, operation: () => Promise<T>): Promise<T> 
   try { return await task } finally { if (pending.get(key) === task) pending.delete(key) }
 }
 
-async function scan(root: string, projectAssetsOnly = false): Promise<ResourcePackInfo['files']> {
+async function scan(root: string, projectContentOnly = false): Promise<ResourcePackInfo['files']> {
   await safeTarget(root, '')
   const files: ResourcePackInfo['files'] = []
   let total = 0
   const visit = async (relative = ''): Promise<void> => {
     for (const entry of await fs.readdir(path.join(root, relative), { withFileTypes: true })) {
-      if (projectAssetsOnly && !relative && !['assets', 'pack.mcmeta', 'pack.png'].includes(entry.name)) continue
+      if (projectContentOnly && !relative && !['assets', 'data', 'pack.mcmeta', 'pack.png'].includes(entry.name)) continue
       if (entry.isSymbolicLink()) throw new Error('资源包包含不支持的符号链接')
       const file = relative ? `${relative}/${entry.name}` : entry.name
       if (entry.isDirectory()) await visit(file)
@@ -175,11 +175,13 @@ export async function listResourcePacks(project: ProjectInfo): Promise<ResourceP
   const packs = await Promise.all(entries.filter(entry => entry.isDirectory() && /^[a-z0-9][a-z0-9_-]{0,90}$/.test(entry.name)).map(entry => inspectResourcePack(project, entry.name)))
   const sources: ResourcePackInfo[] = []
   for (const relative of projectResourceRoots(project)) {
-    const assets = await safeTarget(project.path, `${relative}/assets`)
-    const stat = await fs.lstat(assets).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
-    if (stat?.isDirectory()) {
+    const directories = await Promise.all(['assets', 'data'].map(async directory => {
+      const target = await safeTarget(project.path, `${relative}/${directory}`)
+      return fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
+    }))
+    if (directories.some(stat => stat?.isDirectory())) {
       const source = await inspectResourcePack(project, `project:${relative}`)
-      if (source.files.some(file => file.path.startsWith('assets/'))) sources.push(source)
+      if (source.files.some(file => file.path.startsWith('assets/') || file.path.startsWith('data/'))) sources.push(source)
     }
   }
   const installed: ResourcePackInfo[] = []
@@ -256,7 +258,7 @@ export async function readResourcePackFile(project: ProjectInfo, id: string, fil
   const data = await readPackBytes(project, id, file)
   const extension = path.extname(file).toLowerCase()
   let readOnly = false
-  try { relativeFile(file) } catch { readOnly = true }
+  try { relativeFile(file, Boolean(projectSourcePath(project, id))) } catch { readOnly = true }
   const result = { baseline: digest(data), size: data.length, readOnly }
   const mimeType = imageMimeTypes[extension] ?? audioMimeTypes[extension]
   if (mimeType) return { ...result, dataUrl: `data:${mimeType};base64,${data.toString('base64')}` }
@@ -300,7 +302,7 @@ export async function writeResourcePackFile(project: ProjectInfo, id: string, fi
   await assertEditablePack(project, id)
   const root = packRoot(project, id)
   return serial(root, async () => {
-    const target = await safeTarget(root, relativeFile(file))
+    const target = await safeTarget(root, relativeFile(file, Boolean(projectSourcePath(project, id))))
     const png = path.extname(file).toLowerCase() === '.png'
     const bytes = png && content.startsWith('data:image/png;base64,') ? Buffer.from(content.slice('data:image/png;base64,'.length), 'base64') : Buffer.from(content, 'utf8')
     if (bytes.length > MAX_FILE) throw new Error('文件过大')
@@ -320,7 +322,7 @@ export async function removeResourcePackFile(project: ProjectInfo, id: string, f
   if (file === 'pack.mcmeta') throw new Error('不能删除资源包描述文件')
   const root = packRoot(project, id)
   return serial(root, async () => {
-    const target = await safeTarget(root, relativeFile(file))
+    const target = await safeTarget(root, relativeFile(file, Boolean(projectSourcePath(project, id))))
     if (digest(await fs.readFile(target)) !== baseline) throw new Error('文件已改变，请重新读取')
     await fs.rm(target)
     if (installedPackPath(project, id)) invalidateModpackContentCache(project)
@@ -337,7 +339,7 @@ export async function importResourcePackAssets(project: ProjectInfo, id: string,
     try {
       for (const source of files) {
         const file = `${directory}/${path.basename(source)}`
-        const target = await safeTarget(root, relativeFile(file))
+        const target = await safeTarget(root, relativeFile(file, Boolean(projectSourcePath(project, id))))
         if (!(await fs.lstat(source)).isFile() || (await fs.stat(source)).size > MAX_FILE) throw new Error('素材文件无效或过大')
         await fs.mkdir(path.dirname(target), { recursive: true })
         await fs.copyFile(source, target, constants.COPYFILE_EXCL)
@@ -368,7 +370,7 @@ export async function validateResourcePack(project: ProjectInfo, id: string): Pr
   }
   for (const file of info.files) {
     try {
-      relativeFile(file.path)
+      relativeFile(file.path, Boolean(projectSourcePath(project, id)))
       if (/^assets\//.test(file.path) && /[A-Z\s]/.test(file.path)) issues.push({ severity: 'error', path: file.path, message: '游戏资源路径必须使用小写且不能包含空格' })
       const bytes = await readPackBytes(project, id, file.path)
       if (file.path.endsWith('.json') || file.path.endsWith('.mcmeta')) {

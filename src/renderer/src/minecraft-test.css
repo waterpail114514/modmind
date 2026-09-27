@@ -151,3 +151,17 @@
 .app-shell.dark-mode .mc-mod-row em { color: var(--theme-accent); background: var(--theme-selected); }
 .app-shell.dark-mode .mc-project-missing { color: var(--theme-accent); }
 .app-shell.dark-mode .mc-mod-empty { color: var(--theme-text); border-color: var(--theme-line); }
+
+.mc-launch-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; margin-top: 15px; padding: 3px; border-radius: 6px; background: var(--theme-inset); }
+.mc-launch-mode button { min-height: 34px; padding: 4px 7px; border: 0; border-radius: 4px; background: transparent; color: var(--theme-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.mc-launch-mode button[aria-pressed='true'] { background: var(--theme-surface); color: var(--theme-text); box-shadow: 0 1px 2px color-mix(in srgb, var(--theme-shadow) 12%, transparent); }
+.mc-launch-mode button:disabled { opacity: .5; cursor: default; }
+.mc-window-size { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.mc-instance-panel .mc-narrator-setting { flex-direction: row; align-items: center; gap: 9px; color: var(--theme-text); font-size: 12px; font-weight: 500; }
+.mc-instance-panel .mc-narrator-setting input { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; accent-color: var(--theme-action); }
+.mc-launch-advanced { margin-top: 16px; }
+.mc-launch-advanced summary { width: fit-content; color: var(--theme-text); font-size: 12px; cursor: pointer; }
+.mc-launch-advanced label { margin-top: 14px; }
+.mc-clean-game-row { display: flex; align-items: center; gap: 10px; min-height: 50px; border-bottom: 1px solid var(--theme-line); color: var(--theme-text); font-size: 13px; }
+.mc-clean-game-row svg { color: var(--theme-accent); }
+.mc-instance-panel .mc-launch-advanced textarea { width: 100%; min-height: 84px; padding: 8px 9px; resize: vertical; border: 1px solid var(--theme-line); border-radius: 6px; outline: 0; color: var(--theme-text); background: var(--theme-surface); font: 12px/1.45 "Cascadia Code", Consolas, monospace; }

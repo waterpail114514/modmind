@@ -153,6 +153,10 @@ describe('decompile pipeline', () => {
     const second = await runDecompilation({ jarPath: jar }, { cacheRoot, javaPath: '/definitely/missing/java' })
     expect(second.reused).toBe(true)
     expect(second.sha256).toBe(result.sha256)
+    await fs.writeFile(path.join(result.entryPath, 'sources', 'MyMod.java'), 'truncated')
+    const repaired = await runDecompilation({ jarPath: jar }, { cacheRoot, javaPath: javaPath as string })
+    expect(repaired.reused).toBe(false)
+    expect(await readCachedSourceFile(cacheRoot, repaired.sha256, 'MyMod.java')).toContain('compute')
   }, 180_000)
 
   it('rejects non-jar inputs and missing files with clear errors', async () => {

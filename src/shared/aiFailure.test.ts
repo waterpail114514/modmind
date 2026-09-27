@@ -3,8 +3,8 @@ import { describeAiFailureForUser } from './aiFailure'
 
 describe('describeAiFailureForUser', () => {
   it('does not interpret numbers in request IDs or usage as HTTP statuses', () => {
-    for (const message of ['request id: req-429-abc', 'input_tokens=500', 'received 404 tokens']) {
-      expect(describeAiFailureForUser(message)).not.toMatch(/线路繁忙|HTTP|模型不存在/)
+    for (const message of ['request id: req-429-abc', 'input_tokens=500', 'received 404 tokens', 'request id: req-413-abc', 'input_tokens=413000']) {
+      expect(describeAiFailureForUser(message)).not.toMatch(/线路繁忙|HTTP|模型不存在|请求内容过大/)
     }
   })
   it('explains an upstream no-output timeout instead of showing a blank inspiration reply', () => {
@@ -20,6 +20,21 @@ describe('describeAiFailureForUser', () => {
     expect(describeAiFailureForUser('last status: 429 Too Many Requests')).toContain('线路繁忙')
     expect(describeAiFailureForUser('模型服务暂时不可用（503）')).toContain('HTTP 503')
     expect(describeAiFailureForUser('模型服务暂时不可用（503）')).not.toContain('429')
+  })
+
+  it.each([
+    'unexpected status 413 Payload Too Large: <html><h1>413 Request Entity Too Large</h1><center>nginx</center></html>',
+    'HTTP 413',
+    'upstream returned 413 Payload Too Large',
+    'upstream returned 413 Request Entity Too Large',
+    'upstream returned 413 Content Too Large',
+    'stream disconnected before completion: 413 Payload Too Large',
+    '模型服务与当前 Agent 请求不兼容（413）',
+    'AI 请求内容过大（413）'
+  ])('explains request size limits with actionable guidance: %s', (raw) => {
+    const message = describeAiFailureForUser(new Error(raw))
+    expect(message).toBe('AI 请求内容过大（413），超过了服务或网关的大小限制。请新建会话并精简历史、附件或日志；如仍失败，请联系线路管理员调整请求大小限制。')
+    expect(describeAiFailureForUser(message)).toBe(message)
   })
 
   it('does not blame the user for a generic invalid-request relay failure', () => {

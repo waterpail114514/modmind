@@ -24,6 +24,8 @@ export function setAppLoading(loading: boolean, immediate = false): void {
   const splash = document.getElementById('app-loading')
   const root = document.getElementById('root')
   const setBusy = (busy: boolean): void => {
+    // Include portals mounted beside #root, and keep them hidden through the exit.
+    document.body.toggleAttribute('data-loading-covered', busy && Boolean(splash))
     if (!root) return
     root.inert = busy
     root.setAttribute('aria-busy', String(busy))

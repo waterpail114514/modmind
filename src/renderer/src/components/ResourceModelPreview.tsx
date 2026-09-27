@@ -5,20 +5,23 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { Box, LoaderCircle, RotateCcw } from 'lucide-react'
 import type { ResourceModelPreview as Preview } from '../../../shared/resourcePack'
 import { createMinecraftModel } from '../lib/minecraftModelScene'
+import { createItemSpriteScene } from '../lib/itemSpriteScene'
 import ResourceImagePreview from './ResourceImagePreview'
 import { createProjectModelScene } from '../lib/projectModelScene'
 import type { ProjectModelPreview } from '../../../shared/projectModels'
 
-export function ModelCanvas({ model, projectModel, interactive = true }: { model?: NonNullable<NonNullable<Preview['icon']>['modelPreview']>; projectModel?: ProjectModelPreview; interactive?: boolean }): React.JSX.Element {
+export function ModelCanvas({ model, projectModel, itemSprite, interactive = true, captureThumbnail = false, onRendered }: { model?: NonNullable<NonNullable<Preview['icon']>['modelPreview']>; projectModel?: ProjectModelPreview; itemSprite?: string; interactive?: boolean; captureThumbnail?: boolean; onRendered?: (thumbnail?: string) => void }): React.JSX.Element {
   const host = useRef<HTMLDivElement>(null)
   const reset = useRef<() => void>(() => undefined)
+  const renderedCallback = useRef(onRendered)
+  renderedCallback.current = onRendered
   const [error, setError] = useState('')
   useEffect(() => {
     const container = host.current!
     let cancelled = false
     let release: (() => void) | undefined
     setError('')
-    const sceneModel = projectModel ? createProjectModelScene(projectModel) : createMinecraftModel(model!)
+    const sceneModel = projectModel ? createProjectModelScene(projectModel) : itemSprite ? createItemSpriteScene(itemSprite) : createMinecraftModel(model!)
     void sceneModel.then(({ group, dispose }) => {
       if (cancelled) { dispose(); return }
       let renderer: THREE.WebGLRenderer | undefined
@@ -26,7 +29,7 @@ export function ModelCanvas({ model, projectModel, interactive = true }: { model
       let observer: ResizeObserver | undefined
       const cleanup = (): void => { observer?.disconnect(); controls?.dispose(); renderer?.dispose(); renderer?.forceContextLoss(); renderer?.domElement.remove(); dispose() }
       try {
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: captureThumbnail })
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
         container.appendChild(renderer.domElement)
         const scene = new THREE.Scene()
@@ -49,7 +52,25 @@ export function ModelCanvas({ model, projectModel, interactive = true }: { model
         controls.maxDistance = radius * 20
         camera.position.copy(center).add(new THREE.Vector3(1, .7, 1).normalize().multiplyScalar(radius * 1.8))
         controls.update(); controls.saveState()
-        const draw = (): void => { renderer!.render(scene, camera) }
+        let reported = false
+        const draw = (): void => {
+          renderer!.render(scene, camera)
+          if (!reported && renderedCallback.current) {
+            reported = true
+            let thumbnail: string | undefined
+            if (captureThumbnail) {
+              try {
+                const source = renderer!.domElement
+                const square = Math.min(source.width, source.height)
+                const canvas = document.createElement('canvas')
+                canvas.width = 128; canvas.height = 128
+                canvas.getContext('2d')?.drawImage(source, (source.width - square) / 2, (source.height - square) / 2, square, square, 0, 0, 128, 128)
+                thumbnail = canvas.toDataURL('image/png')
+              } catch { /* The model remains usable without a thumbnail. */ }
+            }
+            renderedCallback.current(thumbnail)
+          }
+        }
         const resize = (): void => {
           const { width, height } = container.getBoundingClientRect()
           if (!width || !height) return
@@ -63,7 +84,7 @@ export function ModelCanvas({ model, projectModel, interactive = true }: { model
       } catch (error) { cleanup(); setError(reportClientFailure(error)) }
     }).catch(error => { if (!cancelled) setError(reportClientFailure(error)) })
     return () => { cancelled = true; reset.current = () => undefined; release?.() }
-  }, [model, projectModel, interactive])
+  }, [model, projectModel, itemSprite, interactive, captureThumbnail])
   return <div className="resource-model-view">
     {interactive ? <div className="resource-preview-controls"><span>拖动旋转 · 滚轮缩放 · 右键平移</span><button className="secondary-button" onClick={() => reset.current()}><RotateCcw size={15} />重置视角</button></div> : null}
     {error ? <div className="resource-pack-notice" role="alert">无法显示模型：{error}</div> : null}

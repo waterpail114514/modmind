@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createStoredZip } from './bedrockAddon'
 import {
   ensureYarnMappings,
@@ -13,6 +13,7 @@ import {
   tinyRemapperCommand,
   yarnMappingsCachePath,
   yarnV2MappingsUrl,
+  validateYarnMappings,
   type YarnVersionEntry
 } from './jarRemapService'
 
@@ -32,9 +33,9 @@ const YARN_ENTRIES: YarnVersionEntry[] = [
 ]
 
 const SAMPLE_TINY = [
-  'v1\tintermediary\tnamed',
+  'tiny\t2\t0\tintermediary\tnamed',
   'c\tclass_1234\tcom/example/Widget',
-  '\tm\tmethod_5678\t(Ljava/lang/String;)Ljava/lang/String;\tm\tgreet',
+  '\tm\t(Ljava/lang/String;)Ljava/lang/String;\tmethod_5678\tgreet',
   'c\tclass_5678\tcom/example/Helper',
   ''
 ].join('\n')
@@ -100,6 +101,40 @@ async function fixtureIntermediaryJar(): Promise<string> {
 }
 
 describe('jar remap service', () => {
+  it('rebuilds nonempty broken mappings and coalesces concurrent requests', async () => {
+    const root = await scratch()
+    const target = yarnMappingsCachePath(root, '1.21.1')
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, 'corrupt')
+    const payload = createStoredZip([{ name: 'mappings/mappings.tiny', data: Buffer.from(SAMPLE_TINY) }])
+    const download = vi.fn(async (request) => {
+      await fs.writeFile(request.destination, payload)
+      return { source: request.sources[0], destination: request.destination, bytes: payload.length, attempts: 1, failures: [] }
+    })
+    await Promise.all(Array.from({ length: 3 }, () => ensureYarnMappings(root, '1.21.1', { download, listVersions: async () => YARN_ENTRIES })))
+    expect(download).toHaveBeenCalledTimes(1)
+    expect(await fs.readFile(target, 'utf8')).toBe(SAMPLE_TINY)
+    expect(await fs.readdir(path.dirname(target))).toEqual(['1.21.1.tiny'])
+  })
+
+  it('rejects empty, wrong-format and truncated mapping records', () => {
+    for (const content of ['', 'error\n', 'tiny\t2\t0\tintermediary\tnamed\n', 'tiny\t2\t0\tintermediary\tnamed\nc\tExample\tNamed\n\tm\t()V\n', SAMPLE_TINY.trimEnd()]) {
+      expect(() => validateYarnMappings(content)).toThrow('Yarn 映射格式无效')
+    }
+    expect(() => validateYarnMappings(SAMPLE_TINY)).not.toThrow()
+  })
+
+  it('never publishes an invalid mapping from a successful archive download', async () => {
+    const root = await scratch()
+    const payload = createStoredZip([{ name: 'mappings/mappings.tiny', data: Buffer.from('broken') }])
+    await expect(ensureYarnMappings(root, '1.21.1', {
+      download: async request => {
+        await fs.writeFile(request.destination, payload)
+        return { source: request.sources[0], destination: request.destination, bytes: payload.length, attempts: 1, failures: [] }
+      }, listVersions: async () => YARN_ENTRIES
+    })).rejects.toThrow('Yarn 映射格式无效')
+    expect(await fs.readdir(path.join(root, 'yarn'))).toEqual([])
+  })
   it('resolves bundled candidates across dev and packaged layouts', () => {
     const candidates = tinyRemapperBundledJarCandidates('/app', '/resources')
     expect(candidates).toEqual([

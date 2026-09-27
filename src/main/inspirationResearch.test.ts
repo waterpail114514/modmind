@@ -5,6 +5,7 @@ import path from 'node:path'
 import { createStoredZip } from './bedrockAddon'
 import { runInspirationResearch } from './inspirationResearch'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
+import { createDecompileCacheStaging } from './decompileCache'
 import type { ProjectInfo } from '../shared/types'
 
 const roots: string[] = []
@@ -43,10 +44,10 @@ describe('inspiration material analysis', () => {
   it('reads cached source by the current JAR hash with paging and refuses arbitrary cache paths', async () => {
     const { project, options } = await fixture()
     const inspect = await runInspirationResearch(project, { operation: 'inspect', path: 'before.jar' }, options) as any
-    const sources = path.join(options.cacheRoot, 'jars', inspect.sha256, 'sources')
-    await fs.mkdir(sources, { recursive: true })
+    const staging = await createDecompileCacheStaging(options.cacheRoot, inspect.sha256)
+    const sources = path.join(staging.staging, 'sources')
     await fs.writeFile(path.join(sources, 'Feature.java'), 'class Feature {\n int damage = 42;\n}')
-    await fs.writeFile(path.join(path.dirname(sources), 'provenance.json'), JSON.stringify({ schemaVersion: 1, readOnly: true, sourceSha256: inspect.sha256 }))
+    await staging.finalize({ schemaVersion: 1, readOnly: true, sourceSha256: inspect.sha256, sourceFileName: 'before.jar', sourceSize: 100, createdAt: new Date().toISOString(), engine: 'vineflower', engineVersion: '1.11.1', engineArgs: [], obfuscationHint: 'clear' })
     const cached = await runInspirationResearch(project, { operation: 'decompile', path: 'before.jar' }, options) as any
     expect(cached.reused).toBe(true)
     expect(options.ensureJava).not.toHaveBeenCalled()

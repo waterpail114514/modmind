@@ -93,6 +93,23 @@ describe('PluginRuntime tool descriptors', () => {
     await expect(runtime.handleContextOp('demo', 'chatSetContext', {})).rejects.toThrow('插件不可用')
   })
 
+  it('allows managed instance sync only with the declared permission', async () => {
+    const hostContextOp = vi.fn(async () => ({ stage: 'idle', message: '整合包同步完成' }))
+    const runtime = new PluginRuntime({ hostScriptPath: '/host.mjs', dataRootDirectory: '/data', projectInfo: () => null, hostContextOp })
+    const unpermitted = record()
+    runtime.syncRecords(new Map([['demo', unpermitted]]))
+    await expect(runtime.handleContextOp('demo', 'minecraftSyncModpack', {})).rejects.toThrow('minecraft.sync')
+    await expect(runtime.handleContextOp('demo', 'minecraftSyncKubeJsServerScripts', {})).rejects.toThrow('minecraft.sync')
+    expect(hostContextOp).not.toHaveBeenCalled()
+
+    const permitted = record({ manifest: { ...unpermitted.manifest, permissions: [...unpermitted.manifest.permissions, 'minecraft.sync'] } })
+    runtime.syncRecords(new Map([['demo', permitted]]))
+    await expect(runtime.handleContextOp('demo', 'minecraftSyncModpack', {})).resolves.toMatchObject({ stage: 'idle' })
+    expect(hostContextOp).toHaveBeenCalledWith(permitted, 'minecraftSyncModpack', {})
+    await expect(runtime.handleContextOp('demo', 'minecraftSyncKubeJsServerScripts', {})).resolves.toMatchObject({ stage: 'idle' })
+    expect(hostContextOp).toHaveBeenCalledWith(permitted, 'minecraftSyncKubeJsServerScripts', {})
+  })
+
   it('round-trips call ids and host context requests', async () => {
     class FakeHost extends EventEmitter {
       sent: Array<Record<string, unknown>> = []

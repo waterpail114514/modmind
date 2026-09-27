@@ -4,6 +4,7 @@ import App from './App'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
 import AppBackground from './components/AppBackground'
 import AppScrollbars from './components/AppScrollbars'
+import SoundRenderBridge from './components/SoundRenderBridge'
 import { ExternalPluginOverlayRoot } from './components/ExternalPluginOverlayRoot'
 import './theme-tokens.css'
 import './styles.css'
@@ -32,7 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <AppErrorBoundary>
       <AppScrollbars />
       {!externalPluginOverlay && <AppBackground />}
-      {externalPluginOverlay ? <ExternalPluginOverlayRoot /> : <App />}
+      {externalPluginOverlay ? <ExternalPluginOverlayRoot /> : <><SoundRenderBridge /><App /></>}
     </AppErrorBoundary>
   </React.StrictMode>
 )

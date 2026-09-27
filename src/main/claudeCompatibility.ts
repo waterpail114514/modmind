@@ -37,7 +37,7 @@ export function claudeHostedEnvironment(configuration: ExternalAgentConfiguratio
     ANTHROPIC_BASE_URL: url.toString().replace(/\/$/, ''), ANTHROPIC_API_KEY: apiKey,
     ANTHROPIC_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
     ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_OPUS_MODEL: model,
-    CLAUDE_CODE_EFFORT_LEVEL: configuration.reasoningEffort === 'ultra' ? 'max' : configuration.reasoningEffort ?? 'high'
+    CLAUDE_CODE_EFFORT_LEVEL: configuration.reasoningEffort
   }
   // Undefined entries deliberately override inherited credentials/provider switches.
   for (const key of [

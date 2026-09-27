@@ -1,0 +1,281 @@
+import fs from 'node:fs/promises'
+import { constants } from 'node:fs'
+import path from 'node:path'
+import sharp from 'sharp'
+import type { ItemEditorSaveInput, ItemEditorState, ManagedItem, ManagedItemKind } from '../shared/itemEditor'
+import type { ProjectInfo } from '../shared/types'
+import { compareMinecraftVersions } from './loaderCompatibility'
+import { generatedItemJava, itemEditorPaths, itemEditorSupportReason } from './itemEditorGenerator'
+
+const metadataPath = '.modmind/item-editor.json'
+
+interface ItemDocument { revision: number; items: ManagedItem[] }
+const activeMutations = new Set<string>()
+
+async function mutateProject<T>(project: ProjectInfo, action: () => Promise<T>): Promise<T> {
+  const key = path.resolve(project.path).toLowerCase()
+  if (activeMutations.has(key)) throw new Error('物品编辑器正在保存，请稍后重试')
+  activeMutations.add(key)
+  try { return await action() }
+  finally { activeMutations.delete(key) }
+}
+
+function target(project: ProjectInfo, relative: string): string {
+  return path.join(project.path, ...relative.split('/'))
+}
+
+async function assertNoSymlinks(project: ProjectInfo, relative: string): Promise<void> {
+  let current = project.path
+  for (const part of relative.split('/')) {
+    current = path.join(current, part)
+    const stat = await fs.lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (stat?.isSymbolicLink()) throw new Error(`${relative} 经过符号链接，无法由物品编辑器修改`)
+  }
+}
+
+async function readOptional(file: string): Promise<string | null> {
+  try { return await fs.readFile(file, 'utf8') }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+}
+
+function validItem(value: unknown, legacy = false): value is ManagedItem {
+  if (!value || typeof value !== 'object') return false
+  const item = value as ManagedItem
+  return typeof item.id === 'string' && /^[a-z0-9_]+$/.test(item.id) && item.id.length <= 64
+    && typeof item.name === 'string' && item.name.trim().length > 0 && item.name.length <= 80
+    && typeof item.englishName === 'string' && item.englishName.trim().length > 0 && item.englishName.length <= 80
+    && Number.isInteger(item.stackSize) && item.stackSize >= 1 && item.stackSize <= 99
+    && Number.isInteger(item.durability) && item.durability >= 0 && item.durability <= 100000
+    && (item.durability === 0 || item.stackSize === 1)
+    && typeof item.texture === 'string' && /^(?:minecraft:item\/[a-z0-9_./-]+|[a-z][a-z0-9_]*:item\/[a-z0-9_./-]+)$/.test(item.texture)
+    && ((legacy && item.kind === undefined) || ['item', 'sword', 'pickaxe', 'axe', 'shovel', 'hoe', 'armor'].includes(item.kind))
+    && (item.kind === undefined || item.kind === 'item' || item.stackSize === 1)
+    && (item.kind === undefined || item.kind === 'item' || item.durability > 0)
+    && (item.kind === undefined || !['sword', 'pickaxe', 'axe', 'shovel', 'hoe'].includes(item.kind)
+      || (['wood', 'stone', 'iron', 'gold', 'diamond', 'netherite'].includes(item.tier ?? '')
+        && typeof item.attackDamage === 'number' && Number.isFinite(item.attackDamage) && item.attackDamage >= 0 && item.attackDamage <= 100
+        && typeof item.attackSpeed === 'number' && Number.isFinite(item.attackSpeed) && item.attackSpeed >= -4 && item.attackSpeed <= 4))
+    && (item.kind !== 'sword' || Number.isInteger(item.attackDamage))
+    && (item.kind !== 'armor' || (['helmet', 'chestplate', 'leggings', 'boots'].includes(item.armorSlot ?? '')
+      && ['leather', 'chain', 'iron', 'gold', 'diamond', 'netherite'].includes(item.armorMaterial ?? '')))
+}
+
+async function readDocument(project: ProjectInfo): Promise<ItemDocument> {
+  const source = await readOptional(target(project, metadataPath))
+  if (!source) return { revision: 0, items: [] }
+  const value = JSON.parse(source) as ItemDocument
+  if (!value || !Number.isSafeInteger(value.revision) || value.revision < 0 || !Array.isArray(value.items)
+    || !value.items.every(item => validItem(item, true)) || new Set(value.items.map(item => item.id)).size !== value.items.length) {
+    throw new Error('物品编辑器数据无效，请检查 .modmind/item-editor.json')
+  }
+  return { revision: value.revision, items: value.items.map(item => ({ ...item, kind: (item.kind ?? 'item') as ManagedItemKind })) }
+}
+
+function modelText(texture: string): string {
+  return `${JSON.stringify({ parent: 'minecraft:item/generated', textures: { layer0: texture } }, null, 2)}\n`
+}
+
+function legacyJavaText(project: ProjectInfo, items: ManagedItem[]): string {
+  const identifier = compareMinecraftVersions(project.minecraftVersion, '1.21') >= 0
+    ? 'Identifier.of(MOD_ID, id)' : 'new Identifier(MOD_ID, id)'
+  const lines = items.map(item => {
+    const settings = `new Item.Settings().maxCount(${item.stackSize})${item.durability ? `.maxDamage(${item.durability})` : ''}`
+    return `        register(${JSON.stringify(item.id)}, new Item(${settings}));`
+  })
+  return `// Generated by ModMind item editor. Edit items in the app.
+package dev.modmind.${project.namespace}.generated;
+
+import net.fabricmc.api.ModInitializer;
+import net.minecraft.item.Item;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.Registry;
+import net.minecraft.util.Identifier;
+
+public final class ModMindItems implements ModInitializer {
+    private static final String MOD_ID = ${JSON.stringify(project.namespace)};
+
+    @Override
+    public void onInitialize() {
+${lines.join('\n')}
+    }
+
+    private static void register(String id, Item item) {
+        Registry.register(Registries.ITEM, ${identifier}, item);
+    }
+}
+`
+}
+
+function parseObject(source: string, label: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(source)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} 不是 JSON 对象`)
+  return value as Record<string, unknown>
+}
+
+function languagePath(project: ProjectInfo, locale: string): string {
+  return `${itemEditorPaths(project).assets}/lang/${locale}.json`
+}
+
+function modelPath(project: ProjectInfo, id: string): string {
+  return `${itemEditorPaths(project).assets}/models/item/${id}.json`
+}
+
+async function assertManagedFiles(project: ProjectInfo, oldItems: ManagedItem[], nextItems: ManagedItem[]): Promise<Map<string, string>> {
+  const paths = itemEditorPaths(project)
+  for (const relative of [metadataPath, paths.java, ...(paths.descriptor ? [paths.descriptor] : []), languagePath(project, 'zh_cn'), languagePath(project, 'en_us'), ...new Set([...oldItems, ...nextItems].map(item => modelPath(project, item.id)))]) {
+    await assertNoSymlinks(project, relative)
+  }
+  const writes = new Map<string, string>()
+  const currentJava = await readOptional(target(project, paths.java))
+  if (currentJava !== null && currentJava !== generatedItemJava(project, oldItems)
+    && !(project.loader === 'fabric' && currentJava === legacyJavaText(project, oldItems))) throw new Error('生成的 Java 文件已被手动修改；请先处理冲突')
+  if (nextItems.length || currentJava !== null) writes.set(paths.java, generatedItemJava(project, nextItems))
+
+  if (paths.descriptor) {
+    const descriptorSource = await readOptional(target(project, paths.descriptor))
+    if (!descriptorSource) throw new Error(`缺少 ${paths.descriptor}`)
+    const descriptor = parseObject(descriptorSource, paths.descriptor)
+    const root = project.loader === 'quilt' ? descriptor.quilt_loader as Record<string, unknown> : descriptor
+    if (!root || root.id !== project.namespace) throw new Error('模组描述文件的 ID 与项目命名空间不一致')
+    const entrypoints = root.entrypoints && typeof root.entrypoints === 'object' && !Array.isArray(root.entrypoints)
+      ? root.entrypoints as Record<string, unknown> : {}
+    const key = project.loader === 'quilt' ? 'init' : 'main'
+    const main = entrypoints[key] === undefined ? [] : entrypoints[key]
+    if (!Array.isArray(main) || !main.every(value => typeof value === 'string')) throw new Error('模组入口格式暂不支持自动修改')
+    const entry = `dev.modmind.${project.namespace}.generated.ModMindItems`
+    if (nextItems.length && !main.includes(entry)) {
+      root.entrypoints = { ...entrypoints, [key]: [...main, entry] }
+      writes.set(paths.descriptor, `${JSON.stringify(descriptor, null, 2)}\n`)
+    }
+  }
+
+  const oldById = new Map(oldItems.map(item => [item.id, item]))
+  for (const item of nextItems) {
+    const relative = modelPath(project, item.id)
+    const current = await readOptional(target(project, relative))
+    const previous = oldById.get(item.id)
+    if (current !== null && (!previous || current !== modelText(previous.texture))) throw new Error(`${relative} 已存在或被手动修改`)
+    writes.set(relative, modelText(item.texture))
+  }
+  for (const item of oldItems) {
+    if (nextItems.some(next => next.id === item.id)) continue
+    const relative = modelPath(project, item.id)
+    const current = await readOptional(target(project, relative))
+    if (current !== null && current !== modelText(item.texture)) throw new Error(`${relative} 已被手动修改`)
+  }
+
+  for (const [locale, field] of [['zh_cn', 'name'], ['en_us', 'englishName']] as const) {
+    const relative = languagePath(project, locale)
+    const source = await readOptional(target(project, relative))
+    const language = source ? parseObject(source, relative) : {}
+    for (const previous of oldItems) {
+      const key = `item.${project.namespace}.${previous.id}`
+      if (language[key] !== undefined && language[key] !== previous[field]) throw new Error(`${relative} 中 ${key} 已被手动修改`)
+      if (!nextItems.some(item => item.id === previous.id)) delete language[key]
+    }
+    for (const item of nextItems) {
+      const key = `item.${project.namespace}.${item.id}`
+      if (!oldById.has(item.id) && language[key] !== undefined) throw new Error(`${relative} 中 ${key} 已存在`)
+      language[key] = item[field]
+    }
+    if (nextItems.length || source) writes.set(relative, `${JSON.stringify(language, null, 2)}\n`)
+  }
+  return writes
+}
+
+async function textureList(project: ProjectInfo): Promise<string[]> {
+  const relative = `${itemEditorPaths(project).assets}/textures/item`
+  const entries = await fs.readdir(target(project, relative), { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
+  return entries.filter(entry => entry.isFile() && /^[a-z0-9_]+\.png$/.test(entry.name))
+    .map(entry => `${project.namespace}:item/${entry.name.slice(0, -4)}`).sort()
+}
+
+export async function listManagedItems(project: ProjectInfo): Promise<ItemEditorState> {
+  const reason = itemEditorSupportReason(project)
+  if (reason) return { supported: false, reason, revision: 0, items: [], textures: [] }
+  const document = await readDocument(project)
+  return { supported: true, revision: document.revision, items: document.items, textures: await textureList(project) }
+}
+
+async function applyItems(project: ProjectInfo, document: ItemDocument, nextItems: ManagedItem[]): Promise<ItemEditorState> {
+  const writes = await assertManagedFiles(project, document.items, nextItems)
+  const next = { revision: document.revision + 1, items: nextItems }
+  writes.set(metadataPath, `${JSON.stringify(next, null, 2)}\n`)
+  const removals = document.items.filter(item => !nextItems.some(nextItem => nextItem.id === item.id)).map(item => modelPath(project, item.id))
+  const originals = new Map<string, string | null>()
+  for (const relative of [...writes.keys(), ...removals]) originals.set(relative, await readOptional(target(project, relative)))
+  const applied: string[] = []
+  try {
+    for (const [relative, content] of writes) {
+      const file = target(project, relative)
+      await fs.mkdir(path.dirname(file), { recursive: true })
+      await fs.writeFile(file, content, 'utf8')
+      applied.push(relative)
+    }
+    for (const relative of removals) {
+      await fs.rm(target(project, relative), { force: true })
+      applied.push(relative)
+    }
+  } catch (error) {
+    for (const relative of applied.reverse()) {
+      const original = originals.get(relative)
+      if (original === null) await fs.rm(target(project, relative), { force: true }).catch(() => undefined)
+      else if (original !== undefined) await fs.writeFile(target(project, relative), original, 'utf8').catch(() => undefined)
+    }
+    throw error
+  }
+  return listManagedItems(project)
+}
+
+export async function saveManagedItem(project: ProjectInfo, input: ItemEditorSaveInput): Promise<ItemEditorState> {
+  return mutateProject(project, async () => {
+    const reason = itemEditorSupportReason(project)
+    if (reason) throw new Error(reason)
+    if (!input || !validItem(input.item)) throw new Error('物品字段无效：检查 ID、名称、堆叠数、耐久和贴图')
+    if (compareMinecraftVersions(project.minecraftVersion, '1.20.5') < 0
+      && ['pickaxe', 'hoe'].includes(input.item.kind)
+      && !Number.isInteger(input.item.attackDamage)) throw new Error('当前 Minecraft 版本的镐、锄攻击伤害必须为整数')
+    const document = await readDocument(project)
+    if (input.revision !== document.revision) throw new Error('物品列表已更新，请刷新后重试')
+    const item = { ...input.item, name: input.item.name.trim(), englishName: input.item.englishName.trim() }
+    const index = document.items.findIndex(existing => existing.id === item.id)
+    const nextItems = [...document.items]
+    if (index < 0) nextItems.push(item)
+    else nextItems[index] = item
+    return applyItems(project, document, nextItems)
+  })
+}
+
+export async function removeManagedItem(project: ProjectInfo, id: string, revision: number): Promise<ItemEditorState> {
+  return mutateProject(project, async () => {
+    const reason = itemEditorSupportReason(project)
+    if (reason) throw new Error(reason)
+    const document = await readDocument(project)
+    if (revision !== document.revision) throw new Error('物品列表已更新，请刷新后重试')
+    if (!document.items.some(item => item.id === id)) throw new Error('物品不存在')
+    return applyItems(project, document, document.items.filter(item => item.id !== id))
+  })
+}
+
+export async function importItemTexture(project: ProjectInfo, source: string): Promise<string> {
+  const reason = itemEditorSupportReason(project)
+  if (reason) throw new Error(reason)
+  const name = path.basename(source).toLowerCase()
+  if (!/^[a-z0-9_]+\.png$/.test(name)) throw new Error('贴图文件名只能包含小写字母、数字和下划线')
+  const bytes = await fs.readFile(source)
+  if (bytes.length > 4 * 1024 * 1024 || bytes.length < 8 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('请选择不超过 4 MB 的 PNG 图片')
+  const metadata = await sharp(bytes).metadata().catch(() => { throw new Error('PNG 图片无法读取') })
+  if (metadata.format !== 'png' || !metadata.width || !metadata.height || metadata.width > 1024 || metadata.height > 1024) throw new Error('贴图尺寸不能超过 1024 × 1024')
+  const relative = `${itemEditorPaths(project).assets}/textures/item/${name}`
+  await assertNoSymlinks(project, relative)
+  const destination = target(project, relative)
+  await fs.mkdir(path.dirname(destination), { recursive: true })
+  await fs.copyFile(source, destination, constants.COPYFILE_EXCL)
+  return `${project.namespace}:item/${name.slice(0, -4)}`
+}

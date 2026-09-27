@@ -1,16 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { discussionPrompt, engineeringHandoffPrompt, shouldAutoStartDraft, usesInspirationWorkflow, workbenchFlowBackend, workbenchFlowOptions } from './workbenchFlow'
+import { discussionPrompt, engineeringHandoffPrompt, isWorkbenchDiscussion, usesInspirationWorkflow, workbenchFlowBackend, workbenchFlowOptions } from './workbenchFlow'
+import { splitDiscussionChoices } from './discussionChoices'
 
 describe('minimal workbench phases', () => {
-  it('automatically hands off only a complete draft with a concrete user selection', () => {
-    const project = { draft: { target: { kind: 'mod' as const, loader: 'fabric' as const, minecraftVersion: '1.21.1' } } }
-    expect(shouldAutoStartDraft(project, 'Fabric')).toBe(true)
-    expect(shouldAutoStartDraft(project, '制作 Fabric 1.21.1 模组')).toBe(true)
-    expect(shouldAutoStartDraft({ draft: { target: { kind: 'mod' } } }, '模组')).toBe(false)
-    expect(shouldAutoStartDraft({}, 'Fabric')).toBe(false)
-    for (const message of ['推荐 Fabric 吗？', 'Fabric 还是 Forge', '先讨论 Fabric', '解释 Fabric 1.21.1', '不要制作', '好的']) {
-      expect(shouldAutoStartDraft(project, message), message).toBe(false)
+  it('uses one capable runner for beginner setup, options, discussion and execution', () => {
+    for (const project of [{}, { draft: { target: {} } }]) {
+      for (const phase of [undefined, 'discussion', 'engineering'] as const) {
+        expect(isWorkbenchDiscussion(project, phase, true)).toBe(false)
+      }
     }
+    expect(usesInspirationWorkflow({ surface: 'workspace', agentMode: 'beginner', workbenchPhase: 'discussion' })).toBe(false)
+    expect(usesInspirationWorkflow({ surface: 'inspiration', agentMode: 'beginner' })).toBe(true)
+  })
+  it('keeps normal messages and follow-up repairs on the capable workspace runner', () => {
+    expect(usesInspirationWorkflow(workbenchFlowOptions(isWorkbenchDiscussion({})))).toBe(false)
+    expect(isWorkbenchDiscussion({}, 'engineering')).toBe(false)
+    expect(isWorkbenchDiscussion({}, 'discussion')).toBe(true)
+  })
+
+  it('keeps drafts read-only until the caller has initialized the project', () => {
+    const draft = { draft: { target: { kind: 'mod' as const } } }
+    expect(isWorkbenchDiscussion(draft)).toBe(true)
+    expect(isWorkbenchDiscussion(draft, 'engineering')).toBe(true)
+    expect(isWorkbenchDiscussion(draft, 'discussion')).toBe(true)
+  })
+
+  it.each(['按此方案修复，只出 JAR', '交给工作台执行已确认修复', '在工作台执行既定修复'])('routes the recorded repair choice into execution: %s', label => {
+    const prompt = '执行已经确认的修复，生成新 JAR；不要启动客户端或服务器，由我手动测试。'
+    const reply = `<modmind-choices>${JSON.stringify([
+      { label, prompt, action: 'engineering' },
+      { label: '细化人工验收步骤', prompt: '只讨论验收步骤，不修改', action: 'discussion' },
+      { label: '先分析原因', prompt: '只读分析原因，不构建', action: 'discussion' }
+    ])}</modmind-choices>`
+    // Parse stored output again, as happens after reload, then follow the same
+    // choice -> phase -> runner path as the workbench click handler.
+    const choice = splitDiscussionChoices(JSON.parse(JSON.stringify(reply))).choices[0]
+    expect(usesInspirationWorkflow(workbenchFlowOptions(isWorkbenchDiscussion({}, choice.action)))).toBe(false)
+    expect(engineeringHandoffPrompt(choice.prompt)).toContain(prompt)
   })
 
   it('keeps discussion under workspace ownership while using the existing read-only workflow', () => {
@@ -36,7 +62,7 @@ describe('minimal workbench phases', () => {
     expect(discussion).toContain('不要写文件')
     const handoff = engineeringHandoffPrompt(history)
     expect(handoff).toContain(history)
-    expect(handoff).toContain('用户已点击“开始制作”')
+    expect(handoff).toContain('用户已选择执行此请求')
     expect(handoff).toContain('讨论中的建议不等于已完成的修改')
   })
 })

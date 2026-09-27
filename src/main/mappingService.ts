@@ -1,4 +1,3 @@
-import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type {
   MappingClassDetail,
@@ -7,6 +6,7 @@ import type {
   MappingSearchResult
 } from '../shared/mappings'
 import { fetchTextWithRetry } from './networkRequest'
+import { readValidatedTextCache } from './validatedTextCache'
 
 const SOURCE_ROOT = 'https://mappings.dev'
 
@@ -135,32 +135,22 @@ export class MappingService {
     return path.join(this.cacheRoot, version, name)
   }
 
-  private async readOrDownload(version: string, name: string, url: string): Promise<{ content: string; cached: boolean }> {
+  private async readOrDownload(version: string, name: string, url: string, validate: (content: string) => void): Promise<{ content: string; cached: boolean }> {
     const target = this.cachePath(version, name)
-    try {
-      const content = await fs.readFile(target, 'utf8')
-      if (content.trim()) return { content, cached: true }
-    } catch {
-      // A missing or incomplete cache entry is downloaded below.
-    }
-    let content: string
-    try {
-      content = await fetchTextWithRetry(url, {
-        headers: { 'User-Agent': `ModMind/${this.productVersion} (mappings)` }
-      })
-    } catch (error) {
-      throw new Error(`无法连接 mappings.dev：${error instanceof Error ? error.message : String(error)}`)
-    }
-    await fs.mkdir(path.dirname(target), { recursive: true })
-    await fs.writeFile(target, content, 'utf8')
-    return { content, cached: false }
+    return readValidatedTextCache(target, async () => {
+      try {
+        return await fetchTextWithRetry(url, { headers: { 'User-Agent': `ModMind/${this.productVersion} (mappings)` } })
+      } catch (error) {
+        throw new Error(`无法连接 mappings.dev：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }, validate)
   }
 
   private async getIndex(versionInput: string): Promise<{ index: MappingIndex; cached: boolean }> {
     const version = validateVersion(versionInput)
     const memory = this.indexes.get(version)
     if (memory) return { index: memory, cached: true }
-    const loaded = await this.readOrDownload(version, 'class-index.js', `${SOURCE_ROOT}/${version}/class-index.js`)
+    const loaded = await this.readOrDownload(version, 'class-index.js', `${SOURCE_ROOT}/${version}/class-index.js`, content => { parseIndexScript(version, content) })
     const index = parseIndexScript(version, loaded.content)
     this.indexes.set(version, index)
     return { index, cached: loaded.cached }
@@ -208,7 +198,9 @@ export class MappingService {
     if (!result) throw new Error(`Minecraft ${version} 中未找到类：${className}`)
     const pageName = `${result.pagePath}.html`
     const sourceUrl = `${SOURCE_ROOT}/${version}/${pageName}`
-    const loaded = await this.readOrDownload(version, path.join('pages', pageName), sourceUrl)
+    const loaded = await this.readOrDownload(version, path.join('pages', pageName), sourceUrl, content => {
+      if (!/<div class="A"><p>[\s\S]+?<\/p>/.test(content) || !/<\/main>/.test(content)) throw new Error(`Mappings ${version} 类详情格式无效`)
+    })
     return parseClassPage(result, loaded.content, sourceUrl, loaded.cached, memberQuery)
   }
 }

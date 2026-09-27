@@ -11,7 +11,18 @@ describe('managed Codex model metadata', () => {
   it('pins the built-in catalog to the managed runtime', () => {
     expect(CODEX_MODEL_CATALOG_VERSION).toBe(CODEX_RUNTIME_VERSION)
     expect(builtinCatalog.models.some(model => model.slug === 'codex-auto-review')).toBe(true)
-    for (const model of builtinCatalog.models) expect(buildCodexModelCatalog(model.slug)).toBeUndefined()
+    expect(buildCodexModelCatalog('codex-auto-review')).toBeUndefined()
+    for (const native of builtinCatalog.models) {
+      const catalog = buildCodexModelCatalog(native.slug)
+      if (!catalog) continue
+      const { context_window, max_context_window, auto_compact_token_limit, ...metadata } = catalog.models.at(-1)!
+      const { context_window: _context, max_context_window: _max, auto_compact_token_limit: _compact, ...original } = native
+      expect(metadata).toEqual(original)
+      expect(context_window).toBe(resolveModelContextBudget(native.slug).contextWindow)
+      expect(max_context_window).toBe(context_window)
+      expect(auto_compact_token_limit).toBeLessThan(context_window)
+      expect(catalog.models.find(model => model.slug === 'codex-auto-review')).toEqual(builtinCatalog.models.find(model => model.slug === 'codex-auto-review'))
+    }
   })
 
   it.each(['grok-4', 'google/gemini-2.5-pro', 'deepseek-chat', 'qwen/qwen3-coder', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'custom-model'])('registers the exact upstream name %s while retaining native metadata', model => {
@@ -46,9 +57,21 @@ describe('managed Codex model metadata', () => {
 
   it('preserves the capabilities and instructions of native dated variants', () => {
     const base = builtinCatalog.models.find(model => model.slug === 'gpt-5.4-mini')!
+    const budget = resolveModelContextBudget('gpt-5.4-mini-2026-03-17')
     expect(buildCodexModelCatalog('gpt-5.4-mini-2026-03-17')!.models.at(-1)).toEqual({
-      ...base, slug: 'gpt-5.4-mini-2026-03-17', display_name: 'gpt-5.4-mini-2026-03-17'
+      ...base, slug: 'gpt-5.4-mini-2026-03-17', display_name: 'gpt-5.4-mini-2026-03-17',
+      context_window: budget.contextWindow, max_context_window: budget.contextWindow, auto_compact_token_limit: budget.autoCompactTokenLimit
     })
+  })
+
+  it('uses the refreshed and inferred budgets in actual catalog entries without renaming models', () => {
+    for (const model of ['gpt-6-sol', 'gpt-7-sol']) {
+      const entry = buildCodexModelCatalog(model)!.models.at(-1)!
+      expect(entry).toMatchObject({ slug: model, context_window: 1050000, auto_compact_token_limit: 788310 })
+      expect(entry.supports_reasoning_summaries).toBe(false)
+    }
+    expect(buildCodexModelCatalog('gpt-7-sol')!.models.at(-1)!.description).toContain('Estimated')
+    expect(buildCodexModelCatalog('gpt-6-astra', { baseUrl: 'https://api.openai.com/v1' })!.models.at(-1)).toMatchObject({ context_window: 1050000, max_context_window: 1050000 })
   })
 
   it.each([

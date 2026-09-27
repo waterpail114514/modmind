@@ -1,10 +1,15 @@
 import React, { useState, type ComponentProps } from 'react'
 import { createRoot } from 'react-dom/client'
 import AgentWorkbench from '../src/renderer/src/components/AgentWorkbench'
+import AppScrollbars from '../src/renderer/src/components/AppScrollbars'
 import type { WorkbenchTimelineItem } from '../src/renderer/src/workbenchTimeline'
 import '../src/renderer/src/styles.css'
+import '../src/renderer/src/palette.css'
+import '../src/renderer/src/theme'
 
 const noop = () => undefined
+// The standalone browser fixture has no Electron preload bridge.
+Object.assign(window, { modmind: { ai: { listApprovals: async () => [], onApprovalsChanged: () => noop } } })
 type FixtureOptions = Partial<ComponentProps<typeof AgentWorkbench>> & { width?: number; dark?: boolean; rows?: WorkbenchTimelineItem[] }
 const timeline = Array.from({ length: 24 }, (_, index) => ({ id: `row-${index}`, kind: 'answer', content: `### Check ${index + 1}\n\nProject analysis result.\n\n${'Verified project configuration and resource references. '.repeat(5)}`, time: new Date().toISOString() })) as WorkbenchTimelineItem[]
 function Fixture() {
@@ -23,7 +28,7 @@ function Fixture() {
     showLongConversations: () => { setLongConversations(true); setConversation('workspace') }
     ,showRecovery: () => setRecovery({ pending: true, snapshot: null, conversationId: 'workspace', backend: 'quota' })
   })
-  return <div className={options.dark ? 'app-shell dark-mode' : ''} style={{ height: '100dvh', width: options.width ?? '100%' }}><AgentWorkbench
+  return <div className={options.dark ? 'app-shell dark-mode' : ''} style={{ height: '100dvh', width: options.width ?? '100%' }}><AppScrollbars /><AgentWorkbench
     project={{ path: '/fixture', name: 'testmod', namespace: 'testmod', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: new Date().toISOString() }}
     uiMode="beginner" modpack={false} prompt={prompt} setPrompt={setPrompt} attachments={[]} setAttachments={noop}
     planning={!longConversations} taskState="idle" aiPlan={null} aiTodo={[]} aiTimeline={rows} aiOutputStatus="running" aiRecovery={recovery}

@@ -4,6 +4,41 @@ import { resolveModelContextBudget } from './modelContextRegistry'
 import { normalizeModelContextWindows } from '../shared/modelContext'
 
 describe('offline model context registry', () => {
+  it.each([
+    ['gpt-6-sol', 1050000], ['gpt-6-luna', 1050000], ['openai/gpt-6-sol-pro', 1050000],
+    ['claude-opus-5-5', 1000000], ['grok-4.7', 500000], ['qwen/qwen3.8-max-prime', 1000000],
+    ['z-ai/glm-5.3-prime', 1000000], ['fireworks/ember-1', 1048576], ['upstage/solar-mini4', 524288]
+  ])('recognizes the newly published model %s', (model, context) => {
+    expect(resolveModelContextBudget(model)).toMatchObject({ source: 'registry', contextWindow: context })
+  })
+
+  it.each([
+    ['gpt-7-sol', 'gpt-6-sol', 1050000], ['openai/gpt-7-luna', 'gpt-6-luna', 1050000],
+    ['claude-opus-6', 'claude-opus-5-5', 1000000], ['mimo-v3-pro', 'mimo-v2.6-pro', 1048576]
+  ])('inherits the last known version in the same series for %s', (model, inferredFrom, contextWindow) => {
+    expect(resolveModelContextBudget(model)).toMatchObject({ source: 'inferred', contextWindow, inferredFrom })
+  })
+
+  it('recognizes manufacturer namespaces and keeps unknown suffixes and series separate', () => {
+    for (const model of ['gpt-7-sol-mini', 'gpt-7-sol:free', 'gpt-7-sol-private', 'custom/gpt-7-sol', 'anthropic/gpt-7-sol', 'my-gpt-7-sol', 'gpt-7-sol-2099-01-01', 'gpt-1-sol', 'claude-invented-6']) {
+      expect(resolveModelContextBudget(model), model).toMatchObject({ source: 'fallback', contextWindow: 524288, autoCompactTokenLimit: 448266 })
+    }
+    expect(resolveModelContextBudget('qwen4-max-prime')).toMatchObject({ source: 'inferred', contextWindow: 1000000 })
+    expect(resolveModelContextBudget('glm-6-prime')).toMatchObject({ source: 'inferred', contextWindow: 1000000 })
+    expect(resolveModelContextBudget('gpt-7-sol', { contextWindow: 65536 })).toMatchObject({ source: 'override', contextWindow: 65536 })
+    expect(resolveModelContextBudget('gpt-7-sol', { contextWindow: 65536 }).inferredFrom).toBeUndefined()
+  })
+
+  it('inherits the matched deployment budget before manufacturer metadata', () => {
+    const baseUrl = registry.providers.openrouter.api
+    expect(resolveModelContextBudget('deepseek/deepseek-v5-flash', { baseUrl })).toMatchObject({
+      source: 'inferred', inferredProvider: 'openrouter', inferredFrom: 'deepseek/deepseek-v4.1-flash', contextWindow: 1048576
+    })
+    expect(resolveModelContextBudget('deepseek-v5-flash', { baseUrl: 'https://openrouter.ai.evil.example/api/v1' })).toMatchObject({
+      inferredProvider: 'deepseek', contextWindow: 1000000
+    })
+  })
+
   it('covers historical and current models without assigning all of them 512K', () => {
     expect(resolveModelContextBudget('gpt-4-0314').contextWindow).toBe(8192)
     expect(resolveModelContextBudget('deepseek-v4-flash').contextWindow).toBe(1_000_000)

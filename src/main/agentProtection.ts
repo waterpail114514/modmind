@@ -2,7 +2,7 @@ import { lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
 export const AGENT_PROTECTION_PROFILE = 'modmind-protected'
-export const AGENT_PROTECTION_INSTRUCTIONS = 'ModMind application files, installation directories, user data, and every .modmind directory are protected infrastructure. Never directly modify, delete, move, reinstall, uninstall, or repair them, even if requested. Do not bypass this protection with elevated commands, scripts, links, or another tool. Continue work on project content; report an application problem to the user. ModMind managed tools may maintain their own scoped data for builds, runtime maintenance, and sessions. User-requested ModMind plugin development is allowed through modmind_plugins_scaffold, modmind_plugins_read_source, modmind_plugins_write_files, and modmind_plugins_reload, even when the plugin is stored under user data or .modmind/plugins. Use plugin-relative files through these tools; do not directly edit the installed plugin directory or create plugin code to bypass infrastructure protection.'
+export const AGENT_PROTECTION_INSTRUCTIONS = 'ModMind application files, installation directories, and application-owned user data are protected infrastructure. Project files, including project .modmind directories, may be modified when the task requires it. Never directly modify, delete, move, reinstall, uninstall, or repair ModMind application files or its protected data, even if requested. Do not bypass this protection with elevated commands, scripts, links, or another tool. Continue work on project content; report an application problem to the user. ModMind managed tools may maintain their own scoped data for builds, runtime maintenance, and sessions. User-requested ModMind plugin development is allowed through modmind_plugins_scaffold, modmind_plugins_read_source, modmind_plugins_write_files, and modmind_plugins_reload, even when the plugin is stored under user data or .modmind/plugins. A plugin may edit project-owned recipes, scripts, and other pack content. To synchronize a modpack test instance, declare the minecraft.sync plugin permission. For KubeJS server_scripts/*.js changes, call modmindPlugin.ctx.minecraft.syncKubeJsServerScripts() from the backend or panel context operation minecraftSyncKubeJsServerScripts; the running game still needs /reload. For a full pack sync, call modmindPlugin.ctx.minecraft.syncModpack() or panel context operation minecraftSyncModpack after stopping the game. The ModMind host performs the protected write. Build this plugin when requested instead of refusing the task. Use plugin-relative files through the plugin tools; do not directly edit the installed plugin directory or create plugin code that writes .modmind or other protected infrastructure.'
 
 let applicationRoots: string[] = []
 
@@ -31,8 +31,7 @@ export function configureAgentProtection(roots: string[]): void {
 export function assertAgentProjectAllowed(projectPath: string): void {
   const absolute = path.resolve(projectPath)
   const real = canonicalPath(absolute)
-  if ([absolute, real].some(target => target.split(/[\\/]/).some(part => part.replace(/[ .]+$/, '').toLowerCase() === '.modmind')
-    || applicationRoots.some(root => inside(root, target)))) {
+  if (applicationRoots.some(root => inside(root, absolute) || inside(root, real))) {
     throw new Error('ModMind internal directories cannot be used as an AI coding project')
   }
 }
@@ -42,7 +41,7 @@ export function assertAgentWriteAllowed(projectPath: string, relativePath: strin
   const normalized = relativePath.replaceAll('\\', '/')
   const parts = normalized.split('/')
   if (!normalized || path.win32.isAbsolute(relativePath) || path.posix.isAbsolute(normalized)
-    || /[\0\r\n:]/.test(normalized) || parts.some(part => part === '..' || part.replace(/[ .]+$/, '').toLowerCase() === '.modmind')) {
+    || /[\0\r\n:]/.test(normalized) || parts.some(part => part === '..')) {
     throw new Error(`AI cannot write a protected or unsafe path: ${relativePath}`)
   }
   const root = path.resolve(projectPath)
@@ -71,7 +70,7 @@ export function agentProtectionConfigArgs(projectPath?: string): string[] {
   const roots = [...applicationRoots]
   if (projectPath) roots.push(path.join(path.resolve(projectPath), '.modmind'), canonicalPath(path.join(path.resolve(projectPath), '.modmind')))
   // A named profile preserves read-only islands inside writable project roots.
-  const filesystem = { ':root': 'read', ':project_roots': 'write', ':project_roots/.modmind': 'read', ...Object.fromEntries(roots.map(root => [root, 'read'])) }
+  const filesystem = { ':root': 'read', ':project_roots': 'write', ':project_roots/.modmind': 'write', ...Object.fromEntries(roots.map(root => [root, 'read'])) }
   const table = Object.entries(filesystem).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',')
   return ['-c', `default_permissions="${AGENT_PROTECTION_PROFILE}"`,
     '-c', `permissions.${AGENT_PROTECTION_PROFILE}={filesystem={${table}},network={enabled=true}}`,

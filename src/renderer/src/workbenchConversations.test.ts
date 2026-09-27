@@ -7,6 +7,7 @@ import {
   migrateLegacyConversation,
   normalizeWorkbenchConversations,
   removeWorkbenchConversation,
+  sortWorkbenchConversations,
   titleFromUserText,
   touchWorkbenchConversation,
   workbenchPromptHistoryStorageKey,
@@ -14,6 +15,21 @@ import {
 } from './workbenchConversations'
 
 describe('workbench conversations', () => {
+  it('keeps pinned conversations above newer unpinned ones after reload', () => {
+    const stored = normalizeWorkbenchConversations([
+      { id: 'ws-old', title: '旧对话', createdAt: '2026-01-01', updatedAt: '2026-01-01', pinned: true, titleSource: 'manual' },
+      { id: 'ws-new', title: '新对话', createdAt: '2026-02-01', updatedAt: '2026-02-01' }
+    ])
+    expect(sortWorkbenchConversations(stored).map(item => item.id)).toEqual(['ws-old', 'ws-new'])
+    expect(stored[0]).toMatchObject({ pinned: true, titleSource: 'manual' })
+  })
+  it('keeps beginner identity in the compatibility index after reload and title changes', () => {
+    const created = createWorkbenchConversation([], new Date(), 'beginner')
+    const loaded = normalizeWorkbenchConversations(JSON.parse(JSON.stringify(created.conversations)))
+    expect(loaded[0].agentMode).toBe('beginner')
+    expect(touchWorkbenchConversation(loaded, loaded[0].id, { title: '新标题' })[0].agentMode).toBe('beginner')
+    expect(createWorkbenchConversation().conversation.agentMode).toBeUndefined()
+  })
   it('creates unique ids that are safe as path segments', () => {
     const { conversations, conversation } = createWorkbenchConversation([])
     expect(conversations).toContainEqual(conversation)

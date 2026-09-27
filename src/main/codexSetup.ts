@@ -7,9 +7,12 @@ import { retryTransientFileLock } from './fileLockRetry'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
-import { prepareCodexModelCatalog } from './codexModelCatalog'
+import { buildCodexModelCatalog, prepareCodexModelCatalog } from './codexModelCatalog'
+import builtinCatalog from './codexBuiltinModels.json'
 import { syncWorkbenchSkills } from './workbenchSkills'
 import { validModelContext } from '../shared/modelContext'
+import { isReasoningEffort } from '../shared/modelReasoning'
+import type { ModelReasoningCapabilities, ReasoningEffort } from '../shared/types'
 export { CODEX_RUNTIME_VERSION } from './runtimeTarget'
 const CODEX_ENV_KEY = 'MODMIND_THIRD_PARTY_API_KEY'
 const DOWNLOAD_ATTEMPTS_PER_SOURCE = 2
@@ -27,13 +30,16 @@ export interface CodexServerConfig {
   apiKey: string
   baseUrl: string
   model: string
-  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+  reasoningEffort?: ReasoningEffort
+  reasoningCapabilities?: ModelReasoningCapabilities
   contextWindow?: number
   /** Original provider address before routing through the local protocol adapter. */
   upstreamBaseUrl?: string
 }
 
 export interface CodexSetupResult {
+  model: string
+  contextWindow?: number
   executable: string
   version: string
   configPath: string
@@ -134,11 +140,11 @@ function validateConfig(value: unknown): CodexServerConfig {
   const apiKey = typeof record.apiKey === 'string' ? record.apiKey.trim() : ''
   const baseUrl = typeof record.baseUrl === 'string' ? normalizeBaseUrl(record.baseUrl) : ''
   const model = typeof record.model === 'string' ? record.model.trim() : ''
-  const reasoningEffort = record.reasoningEffort === 'low' || record.reasoningEffort === 'medium' || record.reasoningEffort === 'high' || record.reasoningEffort === 'xhigh' || record.reasoningEffort === 'max' || record.reasoningEffort === 'ultra' ? record.reasoningEffort : 'high'
+  const reasoningEffort = isReasoningEffort(record.reasoningEffort) ? record.reasoningEffort : undefined
   if (!apiKey || !baseUrl || !model) throw new Error('服务端配置缺少 API Key、Base URL 或模型名')
   if (record.contextWindow !== undefined && !validModelContext(record.contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
   const upstreamBaseUrl = typeof record.upstreamBaseUrl === 'string' ? normalizeBaseUrl(record.upstreamBaseUrl) : undefined
-  return {apiKey, baseUrl, model, reasoningEffort, contextWindow: record.contextWindow as number | undefined, upstreamBaseUrl}
+  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow: record.contextWindow as number | undefined, upstreamBaseUrl}
 }
 
 function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): string {
@@ -146,7 +152,7 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): 
     '# ModMind managed Codex provider',
     `model = ${JSON.stringify(config.model)}`,
     ...(modelCatalogPath ? [`model_catalog_json = ${JSON.stringify(modelCatalogPath)}`] : []),
-    `model_reasoning_effort = ${JSON.stringify(config.reasoningEffort)}`,
+    ...(config.reasoningEffort ? [`model_reasoning_effort = ${JSON.stringify(config.reasoningEffort)}`] : []),
     'model_provider = "thirdparty"',
     '',
     '[features]',
@@ -163,7 +169,7 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): 
 }
 
 async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow })
+  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities })
   const desired = codexConfigText(config, catalog.path)
   const current = await fs.readFile(configPath, 'utf8').catch(() => '')
   if (current === desired) return catalog.changed
@@ -278,6 +284,9 @@ export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexS
   progress(options, {stage: 'ready', title: '开发工具已准备好', detail: configChanged ? '配置已更新，可以开始制作' : '配置没有变化，可以开始制作', status: 'success'})
   return {
     executable,
+    model: config.model,
+    contextWindow: (buildCodexModelCatalog(config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities })?.models.find(entry => entry.slug === config.model)
+      ?? builtinCatalog.models.find(entry => entry.slug === config.model))?.context_window,
     version,
     configPath,
     runtimePath,

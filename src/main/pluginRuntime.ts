@@ -43,6 +43,7 @@ interface HostProcess {
 }
 
 const TOOL_CALL_TIMEOUT_MS = 30_000
+const MINECRAFT_SYNC_TIMEOUT_MS = 11 * 60_000
 const MAX_FETCH_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_DIAGNOSTIC_LOGS = 500
 const MAX_LOG_MESSAGE_LENGTH = 10_000
@@ -162,7 +163,7 @@ export class PluginRuntime {
         kind: 'call',
         tool: toolName,
         input: input ?? {}
-      }, TOOL_CALL_TIMEOUT_MS)
+      }, record.manifest.permissions.includes('minecraft.sync') ? MINECRAFT_SYNC_TIMEOUT_MS : TOOL_CALL_TIMEOUT_MS)
       this.recordLog(pluginId, 'host', 'info', `工具 ${toolName} 完成（${Date.now() - startedAt}ms）`)
       return result
     } catch (error) {
@@ -332,7 +333,7 @@ export class PluginRuntime {
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         host.pending.delete(id)
-        reject(new Error('插件工具调用超时（30s）'))
+        reject(new Error(`插件工具调用超时（${Math.round(timeoutMs / 1000)}s）`))
       }, timeoutMs)
       host.pending.set(id, {
         resolve: (value) => { clearTimeout(timer); resolve(value) },
@@ -366,12 +367,15 @@ export class PluginRuntime {
       case 'chatGetCurrent':
       case 'chatSetDraft':
       case 'chatSetContext':
-      case 'chatRemoveContext': {
+      case 'chatRemoveContext':
+      case 'minecraftSyncModpack':
+      case 'minecraftSyncKubeJsServerScripts': {
         const permission = op.startsWith('overlay') ? 'ui.overlay'
           : op === 'chatGetCurrent' ? 'chat.read'
-            : op === 'chatSetDraft' ? 'chat.write' : 'chat.context'
+            : op === 'chatSetDraft' ? 'chat.write'
+              : op.startsWith('minecraftSync') ? 'minecraft.sync' : 'chat.context'
         if (!record.manifest.permissions.includes(permission)) throw new Error(`缺少权限：${permission}`)
-        if (!this.options.hostContextOp) throw new Error('宿主 UI / 对话能力未配置')
+        if (!this.options.hostContextOp) throw new Error('宿主上下文能力未配置')
         return this.options.hostContextOp(record, op, args)
       }
       case 'projectInfo': {

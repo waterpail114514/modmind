@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { DecompileRemapInfo } from '../shared/decompile'
 import { verifiedDownload } from './downloadService'
+import { readValidatedTextCache } from './validatedTextCache'
 
 /** Pinned tiny-remapper release bundled with ModMind. */
 export const TINY_REMAPPER_VERSION = '0.14.0'
@@ -178,30 +179,50 @@ export function yarnV2MappingsUrl(entry: Pick<YarnVersionEntry, 'gameVersion' | 
  * Downloads (or reuses) yarn tiny-v2 mappings for one Minecraft version.
  * The `.tiny` file inside the yarn v2 jar is extracted without keeping the jar itself.
  */
+export function validateYarnMappings(content: string): void {
+  const lines = content.split(/\r?\n/)
+  const header = lines.shift()?.split('\t') ?? []
+  const namespaces = header.slice(3)
+  if (header[0] !== 'tiny' || header[1] !== '2' || header[2] !== '0' || !namespaces.includes('intermediary') || !namespaces.includes('named')) throw new Error('Yarn 映射格式无效：缺少 tiny-v2 命名空间')
+  let classes = 0
+  for (const line of lines) {
+    if (!line) continue
+    const indent = line.match(/^\t*/)?.[0].length ?? 0
+    const columns = line.slice(indent).split('\t')
+    const kind = columns[0]
+    if (indent === 0 && kind === 'c' && columns[1] && columns.length <= namespaces.length + 1) classes++
+    else if (indent === 1 && classes === 0) continue // tiny-v2 header properties
+    else if (indent > 0 && kind === 'c') continue // comments
+    else if (indent === 1 && (kind === 'm' || kind === 'f') && columns[1] && columns[2] && columns.length <= namespaces.length + 2) continue
+    else if (indent === 2 && kind === 'p' && /^\d+$/.test(columns[1] ?? '') && columns.length >= 3) continue
+    else if (indent === 2 && kind === 'v' && columns.slice(1, 4).length === 3 && columns.slice(1, 4).every(value => /^\d+$/.test(value)) && columns.length >= 5) continue
+    else throw new Error('Yarn 映射格式无效：记录损坏或不完整')
+  }
+  if (!classes || !content.endsWith('\n')) throw new Error('Yarn 映射格式无效：内容为空或被截断')
+}
+
 export async function ensureYarnMappings(cacheRoot: string, minecraftVersion: string, options: { download: (request: Parameters<typeof verifiedDownload.download>[0]) => ReturnType<typeof verifiedDownload.download>; listVersions?: (base: string) => Promise<YarnVersionEntry[]> }): Promise<string> {
   const destination = yarnMappingsCachePath(cacheRoot, minecraftVersion)
-  const existing = await fs.stat(destination).catch(() => null)
-  if (existing?.isFile() && existing.size > 0) return destination
-  const listVersions = options.listVersions ?? defaultListYarnVersions
-  const entries = await listVersions(YARN_META_BASE)
-  const chosen = pickYarnBuild(entries, minecraftVersion)
-  if (!chosen) throw new Error(`no yarn mappings published for Minecraft ${minecraftVersion}`)
-  const staging = `${destination}.staging-${process.pid}-${Date.now()}`
-  try {
-    await fs.mkdir(path.dirname(staging), { recursive: true })
-    await options.download({
-      sources: YARN_DOWNLOAD_HOSTS.map((host, index) => ({ id: `yarn-${index}`, label: `yarn ${chosen.version}`, url: yarnV2MappingsUrl(chosen).replace('https://maven.fabricmc.net', host) })),
-      destination: staging,
-      maxBytes: 32 * 1024 * 1024,
-      retriesPerSource: 1
-    })
-    const tiny = await extractTinyFromYarnJar(staging)
-    await fs.mkdir(path.dirname(destination), { recursive: true })
-    await fs.writeFile(destination, tiny, 'utf8')
-    return destination
-  } finally {
-    await fs.rm(staging, { force: true }).catch(() => undefined)
-  }
+  await readValidatedTextCache(destination, async () => {
+    const listVersions = options.listVersions ?? defaultListYarnVersions
+    const entries = await listVersions(YARN_META_BASE)
+    const chosen = pickYarnBuild(entries, minecraftVersion)
+    if (!chosen) throw new Error(`no yarn mappings published for Minecraft ${minecraftVersion}`)
+    const staging = `${destination}.staging-${randomUUID()}`
+    try {
+      await fs.mkdir(path.dirname(staging), { recursive: true })
+      await options.download({
+        sources: YARN_DOWNLOAD_HOSTS.map((host, index) => ({ id: `yarn-${index}`, label: `yarn ${chosen.version}`, url: yarnV2MappingsUrl(chosen).replace('https://maven.fabricmc.net', host) })),
+        destination: staging,
+        maxBytes: 32 * 1024 * 1024,
+        retriesPerSource: 1
+      })
+      return await extractTinyFromYarnJar(staging)
+    } finally {
+      await fs.rm(staging, { force: true }).catch(() => undefined)
+    }
+  }, validateYarnMappings)
+  return destination
 }
 
 async function defaultListYarnVersions(base: string): Promise<YarnVersionEntry[]> {

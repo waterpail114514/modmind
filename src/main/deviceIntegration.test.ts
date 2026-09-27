@@ -115,6 +115,42 @@ describe('device integration protocol', () => {
       method: 'POST',
       body: JSON.stringify({ code: 'K7M3QX' })
     }))
+    expect(new Headers((vi.mocked(fetcher).mock.calls[0] as [string, RequestInit])[1].headers).has('X-ModMind-Custom-Local')).toBe(false)
+  })
+
+  it('validates a local custom API deep link and sends only the declaration header to poll', async () => {
+    const customApi = {
+      version: 1, providerId: 'provider-1', baseUrl: 'https://text.example.com/v1/', apiKey: 'text-secret', model: 'text-model',
+      imageApi: { baseUrl: 'https://images.example.com/v1/', apiKey: 'image-secret', model: 'image-model' }
+    }
+    const link = `mcdev://sync?site=${encodeURIComponent('https://site.example.com')}&code=K7M3QX&customApi=${Buffer.from(JSON.stringify(customApi)).toString('base64url')}`
+    expect(parseDeviceDeepLink(link, 'https://site.example.com')).toEqual({
+      siteUrl: 'https://site.example.com', code: 'K7M3QX',
+      customApi: { ...customApi, baseUrl: 'https://text.example.com/v1', imageApi: { ...customApi.imageApi, baseUrl: 'https://images.example.com/v1' } }
+    })
+    const fetcher = vi.fn(async () => jsonResponse({ success: true, data: {
+      status: 'ok', provider: 'custom', usageTracked: false, requiresLocalSync: true,
+      apiKey: '', username: 'someuser'
+    } })) as unknown as typeof fetch
+    await expect(pollDeviceCode('https://site.example.com', 'K7M3QX', new AbortController().signal, fetcher, true)).resolves.toEqual({
+      status: 'ok', provider: 'custom', usageTracked: false, requiresLocalSync: true, username: 'someuser'
+    })
+    const [url, init] = vi.mocked(fetcher).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://site.example.com/api/device/poll')
+    expect(init.headers).toMatchObject({ 'X-ModMind-Custom-Local': '1' })
+    expect(String(init.body)).toBe(JSON.stringify({ code: 'K7M3QX' }))
+    expect(String(init.body)).not.toContain('text-secret')
+  })
+
+  it('rejects malformed custom parameters and a mismatched custom poll response', async () => {
+    const base = 'mcdev://sync?site=https%3A%2F%2Fsite.example.com&code=K7M3QX&customApi='
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
+    expect(() => parseDeviceDeepLink(base, 'https://site.example.com')).toThrow('自定义 API')
+    expect(() => parseDeviceDeepLink(base + encode({ version: 2 }), 'https://site.example.com')).toThrow('版本')
+    expect(() => parseDeviceDeepLink(base + encode({ version: 1, providerId: 'p', baseUrl: 'http://remote.example.com', apiKey: 'key', model: 'm', imageApi: null }), 'https://site.example.com')).toThrow('HTTPS')
+    expect(() => parseDeviceDeepLink(base + encode({ version: 1, providerId: 'p', baseUrl: 'https://remote.example.com', apiKey: '', model: 'm', imageApi: null }), 'https://site.example.com')).toThrow('apiKey')
+    const fetcher = vi.fn(async () => jsonResponse({ success: true, data: { status: 'ok', apiKey: '', username: 'someuser' } })) as unknown as typeof fetch
+    await expect(pollDeviceCode('https://site.example.com', 'K7M3QX', new AbortController().signal, fetcher, true)).rejects.toThrow('自定义 API 授权响应无效')
   })
 
   it('queries usage with the bearer credential and preserves quota strings', async () => {

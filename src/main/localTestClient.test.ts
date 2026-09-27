@@ -50,3 +50,24 @@ describe('visible plugin test client', () => {
     expect(launch).not.toHaveBeenCalled()
   })
 })
+
+it('launches a clean Java Mod project game without a built project JAR', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-clean-launch-'))
+  roots.push(root)
+  const project: ProjectInfo = { path: root, name: 'Sample', namespace: 'sample', kind: 'mod', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' }
+  const instance = path.join(root, '.modmind', 'minecraft')
+  await fs.mkdir(instance, { recursive: true })
+  await fs.writeFile(path.join(instance, 'runtime.json'), JSON.stringify({ minecraftVersion: '1.21.1', loader: 'fabric', loaderVersion: '0.16.0', loaderVersionId: 'fabric-loader-0.16.0-1.21.1', javaPath: 'test-java', javaSource: 'custom', preparedAt: new Date().toISOString() }))
+  const runtime = new MinecraftRuntimeManager({ getProject: () => project, instanceDirectory: instance, onState: () => undefined, onEvent: () => undefined })
+  vi.spyOn(runtime, 'prepare').mockResolvedValue(runtime.getState())
+  const child = new EventEmitter() as ChildProcess
+  vi.mocked(launch).mockResolvedValue(child)
+  const clean = path.join(instance, 'clean-game')
+  await runtime.launch({ username: 'ModMindDev', maxMemoryMb: 4096, width: 1600, height: 900, withoutProjectMod: true, extraJVMArgs: ['-Dexample=value'] })
+  expect(launch).toHaveBeenCalledWith(expect.objectContaining({ gamePath: clean, resolution: { width: 1600, height: 900 }, extraJVMArgs: ['-Dexample=value'] }))
+  expect(await fs.readFile(path.join(clean, 'options.txt'), 'utf8')).toContain('onboardAccessibility:false')
+  child.emit('spawn')
+  expect(runtime.getState()).toMatchObject({ running: true, instancePath: clean, mods: [] })
+  child.emit('close', 0, null)
+  await vi.waitFor(() => expect(runtime.getState().stage).toBe('stopped'))
+})

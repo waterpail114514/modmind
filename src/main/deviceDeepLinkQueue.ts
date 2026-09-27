@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 /** Bounded, serial queue; retain cold-start links until IPC and the window are ready. */
 export class DeviceDeepLinkQueue {
   private pending: string[] = []
@@ -6,11 +8,12 @@ export class DeviceDeepLinkQueue {
   private draining = false
   constructor(private readonly handle: (url: string) => Promise<void>) {}
   enqueue(url: string): void {
-    if (!url.startsWith('mcdev://') || url.length > 8192) return
+    if (!url.startsWith('mcdev://') || url.length > 16384) return
     const now = Date.now()
     for (const [key, time] of this.recent) if (now - time > 60_000) this.recent.delete(key)
-    if (this.recent.has(url) || this.pending.length >= 16) return
-    this.recent.set(url, now)
+    const digest = createHash('sha256').update(url).digest('hex')
+    if (this.recent.has(digest) || this.pending.length >= 16) return
+    this.recent.set(digest, now)
     if (this.recent.size > 64) this.recent.delete(this.recent.keys().next().value!)
     this.pending.push(url)
     void this.drain()

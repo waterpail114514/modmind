@@ -1,0 +1,51 @@
+.composer-ai-pill { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; color: var(--theme-muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.composer-ai-pill:hover:not(:disabled) { background: var(--theme-raised); }
+.inspiration-composer-actions .composer-ai-pill { color: var(--muted); background: transparent; }
+.inspiration-composer-actions .composer-ai-pill:hover:not(:disabled) { color: var(--text); background: var(--surface-alt); }
+.composer-ai-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.composer-ai-pill strong { font-weight: 550; color: var(--theme-text); }
+.composer-ai-pill > svg { position: static; flex-shrink: 0; }
+.composer-ai-pill:disabled { opacity: .5; cursor: default; }
+.composer-ai-panel { position: fixed; z-index: 1200; width: min(280px, calc(100vw - 16px)); box-sizing: border-box; padding: 16px; border: 1px solid var(--theme-line); border-radius: 18px; background: var(--theme-raised); color: var(--theme-text); box-shadow: 0 10px 35px color-mix(in srgb, var(--theme-shadow) 18%, transparent); max-height: min(520px, 70dvh); overflow-y: auto; }
+.composer-ai-heading { position: relative; display: flex; align-items: flex-start; justify-content: center; padding: 0 28px; }
+.composer-ai-heading > div { min-width: 0; flex: 1; text-align: center; }
+.composer-ai-heading strong { color: var(--theme-action); font-size: 14px; font-weight: 600; }
+.composer-ai-heading strong small { margin-left: 6px; font-size: 11px; font-weight: 400; }
+.composer-ai-model { display: flex; justify-content: center; align-items: center; gap: 4px; width: 100%; padding: 6px 0 0; border: 0; background: transparent; color: var(--theme-muted); font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
+.composer-ai-reset { position: absolute; right: 0; top: 0; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; color: var(--theme-muted); background: transparent; cursor: pointer; }
+.composer-ai-slider { position: relative; height: 26px; margin-top: 16px; border-radius: 999px; background: linear-gradient(to right, var(--theme-action) 0 var(--reasoning-progress), var(--theme-line) var(--reasoning-progress) 100%); }
+.composer-ai-dots { position: absolute; inset: 0 12px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
+.composer-ai-dots i { width: 3px; height: 3px; border-radius: 50%; background: var(--theme-muted); opacity: .65; }
+.composer-ai-slider input { appearance: none; position: absolute; inset: 0; width: 100%; height: 26px; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.composer-ai-slider input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border: 1px solid var(--theme-line); border-radius: 50%; background: var(--theme-on-action); box-shadow: 0 1px 5px color-mix(in srgb, var(--theme-shadow) 16%, transparent); }
+.composer-ai-caption { margin: 12px 0 0; font-size: 11px; line-height: 1.6; color: var(--theme-muted); }
+.composer-ai-engines { display: flex; flex-wrap: nowrap; gap: 4px; margin-bottom: 14px; overflow-x: auto; }
+.composer-ai-engines button { flex: 1 0 auto; padding: 5px 7px; border: 0; border-radius: 6px; color: var(--theme-muted); background: transparent; font-size: 11px; cursor: pointer; }
+.composer-ai-engines button[aria-pressed='true'] { color: var(--theme-on-action); background: var(--theme-action); }
+.composer-ai-models { display: grid; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--theme-line); }
+.composer-ai-models > div:first-child { display: flex; gap: 6px; }
+.composer-ai-models input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); color: var(--theme-text); font-size: 12px; }
+.composer-ai-models [role='group'] { display: grid; gap: 3px; max-height: 180px; overflow-y: auto; }
+.composer-ai-models button { padding: 7px; border: 0; border-radius: 5px; background: transparent; color: var(--theme-text); font-size: 12px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.composer-ai-models button:hover, .composer-ai-models button[aria-pressed='true'] { background: var(--theme-surface); }
+.composer-ai-pill:focus, .composer-ai-panel button:focus, .composer-ai-panel input:focus { outline: none; box-shadow: none; }
+.inspiration-ai-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.inspiration-ai-actions .composer-ai-pill { min-width: 0; max-width: min(220px, 45vw); }
+.inspiration-ai-actions > .agent-context-control { order: -1; }
+.inspiration-ai-actions > .composer-ai-pill { order: 0; }
+.inspiration-ai-actions > .agent-send-button { order: 1; }
+.agent-composer-actions > .agent-context-control { order: -1; }
+.agent-composer-actions > .composer-ai-pill { order: 0; }
+.context-usage-trigger { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; padding: 0; border: 0; border-radius: 50%; color: var(--theme-muted); background: transparent; cursor: pointer; }
+.context-usage-ring { width: 22px; height: 22px; flex: 0 0 22px; box-sizing: border-box; border-radius: 50%; background: conic-gradient(currentColor var(--context-progress), var(--agent-fill-3) 0); position: relative; }
+.context-usage-ring::after { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: var(--agent-surface, var(--theme-surface)); }
+.context-usage-trigger:hover { color: var(--theme-text); background: var(--theme-raised); }
+.context-usage-trigger.warning { color: var(--theme-warning); }
+.context-usage-trigger.critical { color: var(--theme-danger); }
+.context-usage-trigger:focus { outline: none; box-shadow: none; }
+.inspiration-composer-actions { flex-wrap: wrap; }
+.inspiration-minimal .inspiration-composer-actions > .ai-attachments { order: 0; }
+.inspiration-minimal .inspiration-composer-actions > .inspiration-ai-actions { order: 1; }
+.inspiration-ai-actions .composer-ai-pill { max-width: min(180px, 41vw); }
+.context-usage-details { gap: 8px; }
+.context-usage-details span { font-size: 12px; color: var(--theme-text); }

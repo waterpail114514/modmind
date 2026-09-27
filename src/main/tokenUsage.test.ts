@@ -59,7 +59,7 @@ describe('extractClaudeTokenUsage', () => {
         usage: { input_tokens: 1_500, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 2_500, output_tokens: 900 }
       }
     })
-    expect(usage).toEqual({ inputTokens: 1_500, cachedInputTokens: 52_500, outputTokens: 900 })
+    expect(usage).toEqual({ inputTokens: 1_500, cachedInputTokens: 52_500, outputTokens: 900, cumulative: true })
   })
 
   it('leaves the context window unknown for unrecognized models', () => {
@@ -67,7 +67,7 @@ describe('extractClaudeTokenUsage', () => {
       type: 'result',
       message: { model: 'mystery-model', usage: { input_tokens: 10, output_tokens: 5 } }
     })
-    expect(usage).toEqual({ inputTokens: 10, outputTokens: 5 })
+    expect(usage).toEqual({ inputTokens: 10, outputTokens: 5, cumulative: true })
   })
 
   it('ignores non-result events and missing usage payloads', () => {
@@ -80,5 +80,10 @@ describe('extractClaudeTokenUsage', () => {
     expect(extractClaudeTokenUsage({ type: 'result', usage: { input_tokens: 10 }, modelUsage: {
       'claude-test': { contextWindow: 1_000_000 }
     } })).toMatchObject({ contextWindow: 1_000_000 })
+  })
+  it('measures active Claude input including cache without using the cumulative bill as context occupancy', () => {
+    const message = { model: 'claude-test', usage: { input_tokens: 1500, cache_read_input_tokens: 50000, cache_creation_input_tokens: 2500 } }
+    expect(extractClaudeTokenUsage({ type: 'assistant', message })).toMatchObject({ contextTokens: 54000, cumulative: false })
+    expect(extractClaudeTokenUsage({ type: 'stream_event', event: { type: 'message_start', message } })).toMatchObject({ contextTokens: 54000, cumulative: false })
   })
 })

@@ -10,6 +10,37 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  it.each(['responses', 'chat-completions'])('preserves literal effort choices through %s and isolates approval requests', async protocol => {
+    const received: Record<string, any>[] = []
+    const upstream = createServer(async (request, response) => {
+      let raw = ''; for await (const chunk of request) raw += chunk
+      if (protocol === 'chat-completions' && request.url === '/responses') { response.writeHead(404).end('{"error":{"message":"responses endpoint not found"}}'); return }
+      received.push(JSON.parse(raw))
+      response.setHeader('Content-Type', 'application/json')
+      response.end(protocol === 'responses' ? '{"output":[]}' : '{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}')
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const adapter = new ChatCompletionsAdapter(); adapters.push(adapter)
+      const origin = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`
+      const routes = new Set<string>()
+      for (const effort of ['ultra', 'none', null] as const) {
+        const base = await adapter.baseUrl(origin, 'same-key', undefined, 'selected', 'selected', effort)
+        routes.add(base)
+        const response = await fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify({ model: 'old-model', input: 'continue', reasoning: { effort: 'medium' } }) })
+        await response.text(); expect(response.ok).toBe(true)
+        const sent = received.at(-1)!
+        expect(sent.model).toBe('selected')
+        expect(protocol === 'responses' ? sent.reasoning?.effort : sent.reasoning_effort).toBe(effort ?? undefined)
+      }
+      expect(routes.size).toBe(3)
+      const base = await adapter.baseUrl(origin, 'same-key', undefined, 'selected', 'selected', 'ultra')
+      const approval = await fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify({ model: 'codex-auto-review', input: 'review', reasoning: { effort: 'low' } }) })
+      await approval.text()
+      expect(protocol === 'responses' ? received.at(-1)!.reasoning?.effort : received.at(-1)!.reasoning_effort).toBe('low')
+    } finally { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())) }
+  })
+
   const nativeTools = { type: 'additional_tools', role: 'developer', tools: [{ type: 'namespace', name: 'functions', tools: [
     { type: 'custom', name: 'exec', description: 'Call tools from ALL_TOOLS', format: { type: 'text' } },
     { type: 'function', name: 'wait', parameters: { type: 'object', properties: { cell_id: { type: 'string' } } } }

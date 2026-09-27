@@ -7,12 +7,15 @@ import type { WorkbenchTimelineItem } from './workbenchTimeline'
  * timeline, and prompt history.
  */
 export interface WorkbenchConversation {
+  agentMode?: 'beginner'
   id: string
   /** The user's first message; the switcher truncates its display only. */
   title: string
   createdAt: string
   updatedAt: string
   sessionScope: string
+  pinned?: boolean
+  titleSource?: 'ai' | 'manual'
 }
 
 export const WORKBENCH_LEGACY_SCOPE = 'workspace'
@@ -43,11 +46,12 @@ export function workbenchPromptHistoryStorageKey(
   return isLegacyWorkbenchConversation(conversation) ? legacyKey : `${legacyKey}:${conversation.id}`
 }
 
-export function createWorkbenchConversation(existing: WorkbenchConversation[] = [], now = new Date()): { conversations: WorkbenchConversation[]; conversation: WorkbenchConversation } {
+export function createWorkbenchConversation(existing: WorkbenchConversation[] = [], now = new Date(), agentMode?: 'beginner'): { conversations: WorkbenchConversation[]; conversation: WorkbenchConversation } {
   const used = new Set(existing.map((item) => item.id))
   let id = newConversationId(now.getTime())
   while (used.has(id)) id = newConversationId(now.getTime() + Math.floor(Math.random() * 1000))
   const conversation: WorkbenchConversation = {
+    ...(agentMode ? { agentMode } : {}),
     id,
     title: '新的对话',
     createdAt: now.toISOString(),
@@ -88,7 +92,7 @@ export function touchWorkbenchConversation(
   .map((item) => item.id === conversationId
     ? { ...item, ...updates, updatedAt: now.toISOString() }
     : item)
-  .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt))
 }
 
 export function removeWorkbenchConversation(
@@ -105,11 +109,18 @@ export function normalizeWorkbenchConversations(value: unknown): WorkbenchConver
   .filter((entry) => typeof entry.id === 'string' && isValidWorkbenchConversationId(entry.id) || entry.id === WORKBENCH_LEGACY_SCOPE)
   .map((entry) => ({
     id: String(entry.id),
+    ...(entry.agentMode === 'beginner' ? { agentMode: 'beginner' as const } : {}),
     title: typeof entry.title === 'string' && entry.title.trim() ? entry.title : '新的对话',
     createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : new Date(0).toISOString(),
     updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : new Date(0).toISOString(),
     sessionScope: typeof entry.sessionScope === 'string' && entry.sessionScope.trim() ? entry.sessionScope : workbenchSessionScope(String(entry.id))
+    ,...(entry.pinned === true ? { pinned: true } : {})
+    ,...(entry.titleSource === 'ai' || entry.titleSource === 'manual' ? { titleSource: entry.titleSource } : {})
   }))
+}
+
+export function sortWorkbenchConversations(conversations: WorkbenchConversation[]): WorkbenchConversation[] {
+  return [...conversations].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt))
 }
 
 /**

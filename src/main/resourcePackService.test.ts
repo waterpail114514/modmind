@@ -94,6 +94,31 @@ it('lists existing Java source assets alongside managed packs without requiring 
   await expect(resourcePackArchive(p, source.id)).rejects.toThrow('原位置编辑')
 })
 
+it('edits data-only mod resources without exposing descriptors or treating data as a standalone resource pack', async () => {
+  const p = await project()
+  const root = path.join(p.path, 'src/main/resources')
+  const file = 'data/test/recipe/example.json'
+  await fs.mkdir(path.join(root, 'data/test/recipe'), { recursive: true })
+  await fs.writeFile(path.join(root, file), '{"type":"minecraft:crafting_shapeless"}')
+  await fs.writeFile(path.join(root, 'fabric.mod.json'), '{"id":"test"}')
+  const source = (await listResourcePacks(p)).find(pack => pack.id === 'project:src/main/resources')!
+  expect(source.files.map(entry => entry.path)).toEqual([file])
+  const original = await readResourcePackFile(p, source.id, file)
+  expect(original.readOnly).toBe(false)
+  await writeResourcePackFile(p, source.id, file, '{"type":"minecraft:crafting_shaped"}', original.baseline)
+  expect(await fs.readFile(path.join(root, file), 'utf8')).toContain('crafting_shaped')
+  await expect(writeResourcePackFile(p, source.id, file, '{}', original.baseline)).rejects.toThrow('其它操作')
+  expect((await validateResourcePack(p, source.id)).success).toBe(true)
+  await expect(readResourcePackFile(p, source.id, 'fabric.mod.json')).rejects.toThrow('assets/ 或 data/')
+  await expect(writeResourcePackFile(p, source.id, 'data/../../escape.json', '{}', null)).rejects.toThrow('路径')
+  await expect(resourcePackArchive(p, source.id)).rejects.toThrow('原位置编辑')
+  const standalone = await createResourcePack(p, { name: 'assets-only', description: '', packFormat: 34 })
+  await expect(writeResourcePackFile(p, standalone.id, file, '{}', null)).rejects.toThrow('assets/')
+  const updated = await readResourcePackFile(p, source.id, file)
+  await removeResourcePackFile(p, source.id, file, updated.baseline)
+  await expect(fs.access(path.join(root, file))).rejects.toThrow()
+})
+
 it.each(['overrides', 'instance'])('lists installed ZIPs and directories as individual packs in %s layout', async layout => {
   const p = { ...await project(), kind: 'modpack' as const }
   await fs.writeFile(path.join(p.path, 'modmind.pack.json'), JSON.stringify({ source: { layout } }))

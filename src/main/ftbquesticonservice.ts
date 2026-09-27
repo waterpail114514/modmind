@@ -5,6 +5,7 @@ import { ftbIconDescriptor, ftbIconKey, type FtbIconDescriptor } from '../shared
 import type { FtbQuestIconInspection, FtbQuestIconResult, FtbQuestShapeSet, ProjectInfo } from '../shared/types'
 import { archiveEntries, archiveRead } from './ftbResourceArchive'
 import { constantSpawnEggColors } from './ftbSpawnEggColors'
+import { disposeResponseBody, proxiedUndiciRequest } from './networkRequest'
 
 type RecordValue = Record<string, unknown>
 const record = (v: unknown): RecordValue => v && typeof v === 'object' && !Array.isArray(v) ? v as RecordValue : {}
@@ -134,22 +135,18 @@ async function read(index: ResourceIndex, entry: string): Promise<Buffer | null>
 }
 async function remoteRead(version: string, entry: string): Promise<Buffer | null> {
   try {
-    const response = await fetch(`https://cdn.jsdelivr.net/gh/misode/mcmeta@${version}-assets/${entry}`, { signal: AbortSignal.timeout(8000) })
-    if (response.status === 404) return null
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const response = await proxiedUndiciRequest(`https://cdn.jsdelivr.net/gh/misode/mcmeta@${version}-assets/${entry}`, { signal: AbortSignal.timeout(8000), bodyTimeout: 8000, headersTimeout: 8000 })
+    if (response.statusCode === 404) { disposeResponseBody(response); return null }
+    if (!response.ok) { disposeResponseBody(response); throw new Error(`HTTP ${response.statusCode}`) }
     const chunks: Buffer[] = []
-    const reader = response.body?.getReader()
-    if (!reader) return null
     let size = 0
     try {
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        size += value.byteLength
+      for await (const value of response.body) {
+        size += value.length
         if (size > 16 * 1024 * 1024) throw new Error('Resource exceeds 16 MiB')
         chunks.push(Buffer.from(value))
       }
-    } finally { await reader.cancel() }
+    } finally { disposeResponseBody(response) }
     return Buffer.concat(chunks)
   } catch (error) { throw new Error(`Remote network failure (${entry}): ${String(error)}`) }
 }
@@ -212,6 +209,9 @@ async function decodeTexture(index: ResourceIndex, entry: string): Promise<Textu
   const task = decodeTextureUncached(index, entry).then(texture => {
     if (texture.frames.reduce((size, buffer) => size + buffer.length, 0) > 256 * 1024) index.decoded.delete(entry)
     return texture
+  }, error => {
+    index.decoded.delete(entry)
+    throw error
   })
   return boundedSet(index.decoded, entry, task, 128)
 }
@@ -220,7 +220,7 @@ async function decodeTextureUncached(index: ResourceIndex, entry: string): Promi
   if (!raw) throw new Error(`Texture unavailable: ${entry}`)
   // Full decoding catches truncated/corrupt PNGs; pixel limits bound decompression.
   const { data, info } = await sharp(raw, { failOn: 'warning', limitInputPixels: 16_777_216 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-  const metadata = await read(index, `${entry}.mcmeta`)
+  const metadata = index.remote && info.width === info.height ? null : await read(index, `${entry}.mcmeta`)
   const animation = metadata ? record(record(JSON.parse(metadata.toString('utf8'))).animation) : {}
   const animated = Object.keys(animation).length > 0 || Boolean(metadata && Object.hasOwn(record(JSON.parse(metadata.toString('utf8'))), 'animation'))
   const integer = (v: unknown, fallback: number): number => {

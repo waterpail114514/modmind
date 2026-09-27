@@ -1,25 +1,19 @@
+import { isReasoningEffort } from './modelReasoning'
 import type { BeginnerReasoningLevel, ReasoningEffort } from './types'
 
-const SOL_EFFORTS: Record<BeginnerReasoningLevel, ReasoningEffort> = {
-  low: 'medium',
-  medium: 'high',
-  high: 'xhigh',
-  extreme: 'max'
+/** Values mean exactly what is sent upstream; auto omits the override. */
+export function beginnerReasoningEffort(_model: string, level: BeginnerReasoningLevel): ReasoningEffort | undefined {
+  return isReasoningEffort(level) ? level : undefined
 }
 
-const BALANCED_EFFORTS: Record<BeginnerReasoningLevel, ReasoningEffort> = {
-  low: 'high',
-  medium: 'xhigh',
-  high: 'max',
-  extreme: 'ultra'
+export function beginnerReasoningLevelFor(_model: string, effort: unknown): BeginnerReasoningLevel {
+  return isReasoningEffort(effort) ? effort : 'auto'
 }
 
-export function beginnerReasoningEffort(model: string, level: BeginnerReasoningLevel): ReasoningEffort {
-  return /gpt-5\.6-sol/i.test(model) ? SOL_EFFORTS[level] : BALANCED_EFFORTS[level]
-}
-
-export function beginnerReasoningLevelFor(model: string, effort: unknown): BeginnerReasoningLevel {
-  const values = /gpt-5\.6-sol/i.test(model) ? SOL_EFFORTS : BALANCED_EFFORTS
-  const match = (Object.entries(values) as Array<[BeginnerReasoningLevel, ReasoningEffort]>).find(([, value]) => value === effort)
-  return match?.[0] ?? 'medium'
+/** Only used once when reading the old four-label preference format. */
+export function migrateLegacyReasoningLevel(model: string, level: unknown): BeginnerReasoningLevel {
+  const index = ['low', 'medium', 'high', 'extreme'].indexOf(String(level))
+  if (index < 0) return 'auto'
+  const efforts: ReasoningEffort[] = /gpt-5\.6-sol/i.test(model) ? ['medium', 'high', 'xhigh', 'max'] : ['high', 'xhigh', 'max', 'ultra']
+  return efforts[index]
 }

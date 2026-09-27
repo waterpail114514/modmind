@@ -3,30 +3,34 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import builtinCatalog from './codexBuiltinModels.json'
 import { resolveModelContextBudget, UNKNOWN_MODEL_CONTEXT, type ModelBudgetOptions } from './modelContextRegistry'
+import type { ModelReasoningCapabilities } from '../shared/types'
+interface CatalogOptions extends ModelBudgetOptions { reasoning?: ModelReasoningCapabilities }
 
 // Snapshot of the managed 0.154.0 runtime, including its original instructions.
 // model_catalog_json REPLACES the built-in catalog; always retain these entries.
 export const CODEX_MODEL_CATALOG_VERSION = '0.154.0'
 
-/** A conservative working budget, not a claim about the provider's maximum. */
+/** Default working budget for unknown models, not a provider capacity claim. */
 export const THIRD_PARTY_CONTEXT_BUDGET = UNKNOWN_MODEL_CONTEXT
 
-export function buildCodexModelCatalog(model: string, options: ModelBudgetOptions = {}) {
+export function buildCodexModelCatalog(model: string, options: CatalogOptions = {}) {
   const budget = resolveModelContextBudget(model, options)
   const exact = builtinCatalog.models.find(entry => entry.slug === model)
-  const customizeNative = budget.source === 'override' || budget.source === 'provider' && exact && budget.contextWindow < exact.context_window
-  if (exact && !customizeNative) return undefined
+  const customizeNative = budget.source === 'override' || budget.source === 'provider' || budget.source === 'registry'
+  if (exact && !customizeNative && !options.reasoning) return undefined
 
   // Codex recognizes dated/suffixed variants by prefix. Preserve those capabilities.
   const native = exact ?? [...builtinCatalog.models]
     .sort((a, b) => b.slug.length - a.slug.length)
     .find(entry => model.startsWith(`${entry.slug}-`) && /^\d{4}-\d{2}-\d{2}$/.test(model.slice(entry.slug.length + 1)))
-  const nativeBudget = native && (budget.source === 'override' || budget.source === 'provider' && budget.contextWindow < native.context_window)
-    ? { context_window: budget.contextWindow, auto_compact_token_limit: budget.autoCompactTokenLimit } : {}
-  const custom = native ? { ...native, ...nativeBudget, slug: model, display_name: model } : {
+  const nativeBudget = native && customizeNative
+    ? { context_window: budget.contextWindow, max_context_window: budget.contextWindow, auto_compact_token_limit: budget.autoCompactTokenLimit } : {}
+  const custom = native ? { ...native, ...nativeBudget, slug: model, display_name: exact ? native.display_name : model } : {
     slug: model,
     display_name: model,
-    description: 'Third-party model through the ModMind provider',
+    description: budget.source === 'inferred'
+      ? `Estimated context window inherited from ${budget.inferredProvider}/${budget.inferredFrom}`
+      : 'Third-party model through the ModMind provider',
     default_reasoning_level: null,
     supported_reasoning_levels: [],
     shell_type: 'default',
@@ -49,16 +53,21 @@ export function buildCodexModelCatalog(model: string, options: ModelBudgetOption
     supports_parallel_tool_calls: false,
     experimental_supported_tools: [],
     context_window: budget.contextWindow,
+    max_context_window: budget.contextWindow,
     auto_compact_token_limit: budget.autoCompactTokenLimit,
     truncation_policy: { mode: 'tokens', limit: 10_000 },
     // Family names alone do not imply vision (e.g. deepseek-chat, qwen-coder).
     input_modalities: /(?:^|\/)(?:gemini-|grok-(?:4|2-vision)|qwen[^/]*-vl(?:-|:|$))/i.test(model)
       ? ['text', 'image'] : ['text']
   }
-  return { models: [...builtinCatalog.models.filter(entry => entry.slug !== model), custom] }
+  const reasoningMetadata = options.reasoning ? {
+    default_reasoning_level: null,
+    supported_reasoning_levels: options.reasoning.efforts.map(effort => ({ effort, description: effort }))
+  } : {}
+  return { models: [...builtinCatalog.models.filter(entry => entry.slug !== model), { ...custom, ...reasoningMetadata }] }
 }
 
-export async function prepareCodexModelCatalog(home: string, model: string, options: ModelBudgetOptions = {}): Promise<{ path?: string; changed: boolean }> {
+export async function prepareCodexModelCatalog(home: string, model: string, options: CatalogOptions = {}): Promise<{ path?: string; changed: boolean }> {
   const catalog = buildCodexModelCatalog(model, options)
   if (!catalog) return { changed: false }
   const content = JSON.stringify(catalog)

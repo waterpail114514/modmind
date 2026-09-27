@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BeginnerAiPreferences } from '../shared/types'
 import {
   activeQuotaModelPreferences,
+  normalizeQuotaModelPreferences,
   parseStoredQuotaModelPreferences,
   quotaPreferenceKey,
   quotaProfileKey,
@@ -12,11 +13,32 @@ import {
 const defaults: BeginnerAiPreferences = { model: 'terra', reasoningLevel: 'medium', fastMode: false }
 
 describe('quota model preferences', () => {
+  it('migrates old labels once and retains literal choices in the new format', () => {
+    const legacy = { version: 2, current: { model: 'gpt-5.6-sol', reasoningLevel: 'low', fastMode: false }, profiles: {} }
+    const migrated = parseStoredQuotaModelPreferences(legacy, defaults)
+    expect(migrated.current.reasoningLevel).toBe('medium')
+    expect(parseStoredQuotaModelPreferences(JSON.parse(JSON.stringify(migrated)), defaults)).toEqual(migrated)
+    expect(parseStoredQuotaModelPreferences(null, { ...defaults, reasoningLevel: 'auto' }).current.reasoningLevel).toBe('auto')
+  })
+  it('persists context overrides per model and route and supports restoring automatic limits', () => {
+    const first = quotaProfileKey('https://site.example', 'alice', 'https://first.example/v1')
+    const second = quotaProfileKey('https://site.example', 'alice', 'https://second.example/v1')
+    const preferences = normalizeQuotaModelPreferences({ ...defaults, modelContextWindows: { terra: 1048576, sol: 524288, invalid: -1 } }, defaults)
+    const saved = updateQuotaModelPreferences(parseStoredQuotaModelPreferences(defaults, defaults), preferences, first)
+    const reloaded = parseStoredQuotaModelPreferences(JSON.parse(JSON.stringify(saved)), defaults)
+    expect(activeQuotaModelPreferences(reloaded, first).modelContextWindows).toEqual({ terra: 1048576, sol: 524288 })
+    const changed = resolveQuotaModelPreferences(reloaded, first, [{ id: 'sol' }]).preferences
+    expect(changed.modelContextWindows?.[changed.model]).toBe(524288)
+    expect(resolveQuotaModelPreferences(reloaded, second, [{ id: 'terra' }]).preferences.modelContextWindows).toBeUndefined()
+    const automatic = normalizeQuotaModelPreferences({ ...preferences, modelContextWindows: {} }, preferences)
+    expect(automatic.modelContextWindows).toBeUndefined()
+  })
+
   it('migrates the legacy global preference format', () => {
     const store = parseStoredQuotaModelPreferences({ model: 'legacy', reasoningLevel: 'high', fastMode: true }, defaults)
     expect(store).toEqual({
-      version: 2,
-      current: { model: 'legacy', reasoningLevel: 'high', fastMode: true },
+      version: 3,
+      current: { model: 'legacy', reasoningLevel: 'max', fastMode: true },
       profiles: {}
     })
   })
@@ -24,7 +46,7 @@ describe('quota model preferences', () => {
   it('restores an existing preference when a known key becomes active again', () => {
     const key = quotaPreferenceKey('https://relay.example/v1', 'key-a')
     const stored = parseStoredQuotaModelPreferences({
-      version: 2,
+      version: 3,
       current: defaults,
       profiles: { [key]: { model: 'glm-4.7', reasoningLevel: 'high', fastMode: true } }
     }, defaults)
@@ -63,7 +85,7 @@ describe('quota model preferences', () => {
   it('updates the active key profile after a manual preference change', () => {
     const key = quotaPreferenceKey('https://relay.example/v1', 'key-c')
     const stored = parseStoredQuotaModelPreferences(defaults, defaults)
-    const next = { model: 'manual', reasoningLevel: 'extreme', fastMode: true } as const
+    const next = { model: 'manual', reasoningLevel: 'max', fastMode: true } as const
     const updated = updateQuotaModelPreferences(stored, next, key)
     expect(updated.current).toEqual(next)
     expect(updated.profiles[key]).toEqual(next)

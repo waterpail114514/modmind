@@ -50,7 +50,7 @@ test('workbench renders streams, narrow panes and accessible interactions withou
     await input.fill('短消息')
     await expect.poll(() => input.evaluate(el => el.clientHeight)).toBeLessThan(60)
 
-    const engine = page.getByRole('button', { name: '开发引擎：智能引擎' })
+    const engine = page.getByRole('button', { name: '开发引擎：ModMind' })
     await engine.focus()
     await engine.press('Enter')
     await page.locator('.agent-picker > .agent-picker-menu').waitFor()

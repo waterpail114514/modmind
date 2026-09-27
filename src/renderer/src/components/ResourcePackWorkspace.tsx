@@ -1,3 +1,6 @@
+import ContentWorkspace from './ContentWorkspace'
+import WorkspaceTabs from './WorkspaceTabs'
+import { isJavaLoader } from '../../../shared/projectPlatform'
 import MoreActions from './MoreActions'
 import { describeClientFailure } from '../../../shared/clientFailure'
 import { reportClientFailure } from '../lib/clientFailure'
@@ -16,7 +19,19 @@ const ResourceModelPreview = lazy(() => import('./ResourceModelPreview'))
 const categories: Array<[ResourceCategory, string]> = [['all', '全部资源'], ['image', '贴图'], ['model', '模型'], ['audio', '音频'], ['language', '语言'], ['font', '字体'], ['other', '其他配置']]
 const categoryIcons = { image: Image, model: Box, audio: Music2, language: Languages, font: Type, other: FilePlus2 }
 
-export default function ResourcePackWorkspace({ project, darkMode, onImages, onModels, onTest, initialSelection }: { project: ProjectInfo; darkMode: boolean; onImages: (target?: ResourceImageTarget) => void; onModels: (target?: import('../../../shared/modelSource').ResourceModelTarget) => void; onTest: () => void; initialSelection?: { id: string; file: string } }): React.JSX.Element {
+type ResourcePackWorkspaceProps = { project: ProjectInfo; darkMode: boolean; onImages: (target?: ResourceImageTarget) => void; onModels: (target?: import('../../../shared/modelSource').ResourceModelTarget) => void; onTest: () => void; initialSelection?: { id: string; file: string }; onFilesChanged?: () => void }
+
+export default function ResourcePackWorkspace(props: ResourcePackWorkspaceProps): React.JSX.Element {
+  const [contentRevision, setContentRevision] = useState(0)
+  const { project } = props
+  if (!isJavaLoader(project.loader) || project.kind === 'modpack' || project.kind === 'server-plugin') return <ResourcePackFilesPane {...props} />
+  return <WorkspaceTabs label="资源包" sections={[
+    { id: 'files', label: '资源文件', render: active => <ResourcePackFilesPane {...props} active={active} contentRevision={contentRevision} /> },
+    { id: 'content', label: '内容与数据', render: () => <ContentWorkspace onFilesChanged={() => { setContentRevision(value => value + 1); props.onFilesChanged?.() }} /> }
+  ]} />
+}
+
+function ResourcePackFilesPane({ project, darkMode, onImages, onModels, onTest, initialSelection, active = true, contentRevision = 0 }: ResourcePackWorkspaceProps & { active?: boolean; contentRevision?: number }): React.JSX.Element {
   const [packs, setPacks] = useState<ResourcePackInfo[]>([])
   const [id, setId] = useState('')
   const [file, setFile] = useState('')
@@ -74,6 +89,19 @@ export default function ResourcePackWorkspace({ project, darkMode, onImages, onM
     })().catch(error => { if (active) setNotice(reportClientFailure(error)) })
     return () => { active = false; loadToken.current++ }
   }, [project.path, initialSelection?.id, initialSelection?.file])
+  // Refresh the inventory after generating mod content without discarding an
+  // editor draft or replacing its baseline for conflict detection.
+  useEffect(() => {
+    if (!active || !contentRevision) return
+    let cancelled = false
+    void window.modmind.resourcePacks.list(project.path).then(items => {
+      if (cancelled) return
+      setPacks(items)
+      setPreviewRevision(value => value + 1)
+      setId(current => items.some(item => item.id === current) ? current : items[0]?.id ?? '')
+    }).catch(error => { if (!cancelled) setNotice(reportClientFailure(error)) })
+    return () => { cancelled = true }
+  }, [project.path, active, contentRevision])
   const run = async (action: () => Promise<void>): Promise<void> => { if (busy) return; setBusy(true); setNotice(''); try { await action() } catch (error) { setNotice(reportClientFailure(error)) } finally { setBusy(false) } }
   const canLeave = (): Promise<boolean> => dirty || painting ? confirm({ title: '离开当前编辑', message: '尚未保存的修改将丢失。', confirmLabel: '离开', tone: 'danger' }) : Promise.resolve(true)
   const openFile = async (next: string): Promise<void> => {

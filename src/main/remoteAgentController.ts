@@ -4,7 +4,7 @@ export interface RemoteQuotaConfig {
   baseUrl: string
   apiKey: string
   model: string
-  reasoningEffort: ReasoningEffort
+  reasoningEffort?: ReasoningEffort
 }
 
 export interface RemoteProjectSummary {
@@ -107,7 +107,7 @@ export const REMOTE_APP_CONTROL_CAPABILITIES = [
 ]
 
 export const REMOTE_APP_PAGES = [
-  'workspace', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
+  'workspace', 'sounds', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
   'modpack-mod-list', 'third-party-mods', 'modpack-manifest', 'modpack-config', 'modpack-scripts',
   'modpack-datapacks', 'modpack-resourcepacks', 'modpack-shaders', 'modpack-ui', 'modpack-worlds',
   'modpack-client', 'modpack-server-content', 'modpack-files', 'inspiration', 'image-studio',

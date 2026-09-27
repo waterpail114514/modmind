@@ -12,7 +12,8 @@ const permissionLabels: Record<PluginPermission, string> = {
   'ui.overlay': '显示悬浮界面',
   'chat.read': '读取工作台对话',
   'chat.write': '填写对话输入框',
-  'chat.context': '提供 AI 上下文'
+  'chat.context': '提供 AI 上下文',
+  'minecraft.sync': '同步整合包测试实例'
 }
 
 export function PluginInstallDialog({ preview, onResolve }: { preview: PluginImportPreview; onResolve: (accepted: boolean) => void }): React.JSX.Element {

@@ -348,6 +348,40 @@ export async function updateModpackModuleSide(project: ProjectInfo, namespace: s
   return writeModpackManifest(project, { ...manifest, modules: manifest.modules.map((module) => module.namespace === namespace ? { ...module, side } : module) })
 }
 
+export async function removeModpackModule(project: ProjectInfo, namespace: string, trash: (target: string) => Promise<void>): Promise<ModpackManifest> {
+  if (!/^[a-z0-9_]{1,64}$/.test(namespace)) throw new Error('自制模组标识无效')
+  const manifest = await readModpackManifest(project)
+  const module = manifest.modules.find((entry) => entry.namespace === namespace)
+  if (!module) throw new Error('找不到自制模组')
+  let ownedTarget: string | null = null
+  if (!module.linked) {
+    const modulesRoot = path.join(project.path, 'modules')
+    const target = path.join(modulesRoot, namespace)
+    if (module.path !== `modules/${namespace}`) throw new Error('自制模组路径与标识不一致，无法安全移除')
+    const rootStat = await fs.lstat(modulesRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (rootStat && (!rootStat.isDirectory() || rootStat.isSymbolicLink())) throw new Error('自制模组目录无效，无法安全移除')
+    const targetStat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (targetStat?.isSymbolicLink()) throw new Error('自制模组目录是符号链接，无法安全移除')
+    if (targetStat && !targetStat.isDirectory()) throw new Error('自制模组路径不是目录，无法安全移除')
+    if (targetStat) ownedTarget = target
+  }
+  const updated = await writeModpackManifest(project, { ...manifest, modules: manifest.modules.filter((entry) => entry.namespace !== namespace) })
+  if (ownedTarget) {
+    try { await trash(ownedTarget) }
+    catch (error) {
+      await writeModpackManifest(project, manifest)
+      throw error
+    }
+  }
+  return updated
+}
+
 async function collectPackEntries(root: string, prefix: string, include: (relative: string) => boolean = () => true): Promise<Array<{ name: string; path: string }>> {
   const entries: Array<{ name: string; path: string }> = []
   const visit = async (directory: string, relative = ''): Promise<void> => {
@@ -417,6 +451,52 @@ export async function syncModpackOverrides(project: ProjectInfo, destinationRoot
     await fs.copyFile(source, destination)
   }
   return files
+}
+
+function reloadableKubeJsScript(relative: string): boolean {
+  return relative.startsWith('kubejs/server_scripts/') && relative.endsWith('.js')
+}
+
+async function assertNoDestinationLinks(root: string, relative: string): Promise<void> {
+  let current = path.resolve(root)
+  for (const part of ['', ...relative.split('/')]) {
+    if (part) current = path.join(current, part)
+    const stat = await fs.lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (stat?.isSymbolicLink() || stat?.isFile() && stat.nlink > 1) throw new Error(`测试实例中存在链接，不能同步：${relative}`)
+  }
+}
+
+/** Copies only KubeJS server scripts; the game still needs its own script reload. */
+export async function syncReloadableKubeJsScripts(project: ProjectInfo, destinationRoot: string, previousFiles: string[]): Promise<{ copied: string[]; removed: string[]; overrides: string[] }> {
+  const manifest = await readModpackManifest(project)
+  const sourceRoot = modpackOverridesRoot(project, manifest)
+  const managedPaths = new Set((await readManagedModpackContent(project)).items.map(item => item.path))
+  const files = (await collectOverrideFiles(sourceRoot, excludesModsFromOverrides(manifest), managedPaths)).filter(reloadableKubeJsScript)
+  const previous = previousFiles.filter(relative => safeRelativeOverride(relative) && reloadableKubeJsScript(relative))
+  const current = new Set(files)
+  const removed = previous.filter(relative => !current.has(relative))
+  for (const relative of removed) {
+    await assertNoDestinationLinks(destinationRoot, relative)
+    await fs.rm(managedDestination(destinationRoot, relative), { force: true })
+  }
+  const copied: string[] = []
+  for (const relative of files) {
+    await assertNoDestinationLinks(destinationRoot, relative)
+    const source = managedDestination(sourceRoot, relative)
+    const destination = managedDestination(destinationRoot, relative)
+    const sourceStat = await fs.stat(source)
+    const destinationStat = await fs.stat(destination).catch(() => null)
+    if (destinationStat?.size === sourceStat.size && await sha256File(source) === await sha256File(destination)) continue
+    await fs.mkdir(path.dirname(destination), { recursive: true })
+    const pending = `${destination}.pending-${process.pid}-${Date.now()}`
+    try { await fs.copyFile(source, pending); await fs.rename(pending, destination) }
+    finally { await fs.rm(pending, { force: true }).catch(() => undefined) }
+    copied.push(relative)
+  }
+  return { copied, removed, overrides: [...new Set([...previousFiles.filter(relative => safeRelativeOverride(relative) && !reloadableKubeJsScript(relative)), ...files])] }
 }
 
 function safeRelativeOverride(value: string): boolean {

@@ -65,6 +65,8 @@ export class AppUpdateService {
   private downloadedInCurrentProcess = false
   private downloadPromise: Promise<AppUpdateState> | null = null
   private activityId = ''
+  private actionInProgress = false
+  private installAfterDownload = false
 
   constructor(private readonly options: AppUpdateServiceOptions) {
     this.updater = options.updater ?? autoUpdater
@@ -105,10 +107,11 @@ export class AppUpdateService {
   }
 
   setAvailableUpdate(result: AppVersionCheckResult | null): void {
+    if (this.state.phase === 'downloading' || this.state.phase === 'installing') return
     this.candidate = result?.updateAvailable ? result : null
-    if (this.state.phase === 'downloading' || this.state.phase === 'downloaded') return
+    if (this.state.phase === 'downloaded' && this.pending?.targetVersion === result?.latestVersion) return
     if (!this.candidate) {
-      this.setState({ phase: 'idle', currentVersion: this.options.currentVersion })
+      this.setState({ phase: result ? 'up-to-date' : 'idle', currentVersion: this.options.currentVersion })
       return
     }
     this.setState({
@@ -124,27 +127,103 @@ export class AppUpdateService {
   }
 
   downloadUpdate(): Promise<AppUpdateState> {
+    if (this.actionInProgress || this.state.phase === 'installing') return Promise.reject(new Error('更新或重装正在进行，请等待完成'))
     if (this.downloadPromise) return this.downloadPromise
     this.downloadPromise = this.performDownload().finally(() => { this.downloadPromise = null })
     return this.downloadPromise
   }
 
   async installDownloadedUpdate(): Promise<boolean> {
-    if (this.downloadedInCurrentProcess && this.pending) {
-      this.options.beforeInstall()
-      this.updater.quitAndInstall(false, true)
-      return true
+    this.assertIdle()
+    this.actionInProgress = true
+    try { return await this.performInstall(false) } finally { this.actionInProgress = false }
+  }
+
+  private assertIdle(): void {
+    if (this.actionInProgress || this.downloadPromise || this.state.phase === 'installing') throw new Error('更新或重装正在进行，请等待完成')
+  }
+
+  async checkForUpdates(check: () => Promise<AppVersionCheckResult>): Promise<AppVersionCheckResult> {
+    this.assertIdle()
+    this.actionInProgress = true
+    try { return await this.performCheck(check) } finally { this.actionInProgress = false }
+  }
+
+  private async performCheck(check: () => Promise<AppVersionCheckResult>): Promise<AppVersionCheckResult> {
+    this.setState({ phase: 'checking', currentVersion: this.options.currentVersion })
+    try {
+      const result = await check()
+      this.setAvailableUpdate(result)
+      return result
+    } catch (error) {
+      this.setState({ phase: 'error', currentVersion: this.options.currentVersion, message: describeError(error) })
+      throw error
     }
+  }
+
+  async updateNow(check: () => Promise<AppVersionCheckResult>): Promise<AppUpdateState> {
+    this.assertIdle()
+    this.actionInProgress = true
+    this.installAfterDownload = true
+    try {
+      const result = await this.performCheck(check)
+      if (!result.updateAvailable) return this.snapshot()
+      if (!this.supported()) throw new Error('当前程序没有可用的安装记录，无法执行自动安装')
+      if (!this.pending || this.pending.targetVersion !== result.latestVersion || !await this.validatePendingUpdate(this.pending)) {
+        await this.performDownload()
+      }
+      if (!await this.performInstall(true)) throw new Error('安装包不可用，请重新下载更新')
+      return this.snapshot()
+    } catch (error) {
+      this.setState({ phase: 'error', currentVersion: this.options.currentVersion, message: describeError(error) })
+      throw error
+    } finally {
+      this.actionInProgress = false
+      this.installAfterDownload = false
+    }
+  }
+
+  async reinstallLatest(
+    confirm: () => Promise<boolean>,
+    prepare: (report: (state: Partial<AppUpdateState>) => void) => Promise<() => Promise<void>>
+  ): Promise<AppUpdateState | null> {
+    this.assertIdle()
+    this.actionInProgress = true
+    try {
+      if (!await confirm()) return null
+      if (!this.options.isPackaged || (this.options.platform ?? process.platform) !== 'win32') throw new Error('当前程序没有可用的 Windows 安装记录，无法执行清理重装')
+      this.setState({ phase: 'downloading', operation: 'reinstall', currentVersion: this.options.currentVersion, message: '正在读取最新版安装清单' })
+      const launch = await prepare(patch => this.setState({ ...this.state, ...patch, operation: 'reinstall', currentVersion: this.options.currentVersion }))
+      // The helper acknowledges readiness before we close. No files are removed
+      // until this process has finished its normal shutdown and released locks.
+      await launch()
+      this.setState({ ...this.state, phase: 'installing', message: '安装包已校验，正在退出并清理重装…' })
+      this.options.beforeInstall()
+      this.options.quit()
+      return this.snapshot()
+    } catch (error) {
+      this.setState({ phase: 'error', operation: 'reinstall', currentVersion: this.options.currentVersion, message: describeError(error) })
+      throw error
+    } finally { this.actionInProgress = false }
+  }
+
+  private async performInstall(silent: boolean): Promise<boolean> {
     const pending = this.pending ?? await this.readPendingUpdate()
     if (!pending) return false
-    if (!await this.validatePendingUpdate(pending)) {
+    if (!await (this.downloadedInCurrentProcess ? this.validateInstallerIntegrity(pending) : this.validatePendingUpdate(pending))) {
       // A stale marker must not wedge the UI in the downloaded phase; drop it so the update can be re-downloaded.
       await this.removePendingMarker()
       this.setState({ phase: 'idle', currentVersion: this.options.currentVersion })
       return false
     }
     try {
-      return await this.launchInstaller(pending)
+      if (this.downloadedInCurrentProcess && this.pending) {
+        this.setState({ ...this.state, phase: 'installing', message: '正在重启并安装更新…' })
+        this.options.beforeInstall()
+        this.updater.quitAndInstall(silent, true)
+        return true
+      }
+      return await this.launchInstaller(pending, silent)
     } catch (error) {
       // Keep the validated marker so the install can be retried from the UI.
       this.setState({
@@ -292,7 +371,7 @@ export class AppUpdateService {
         totalBytes: stat.size,
         message: '更新已下载，下次启动 ModMind 时将自动安装'
       })
-      this.options.notifyDownloaded(candidate.latestVersion)
+      if (!this.installAfterDownload) this.options.notifyDownloaded(candidate.latestVersion)
       return this.snapshot()
     } catch (error) {
       if (this.activityId) downloadActivities.fail(this.activityId, error)
@@ -349,6 +428,10 @@ export class AppUpdateService {
   private async validatePendingUpdate(pending: PendingAppUpdate): Promise<boolean> {
     const extension = (this.options.platform ?? process.platform) === 'win32' ? '.exe' : '.zip'
     if (!isPathInside(this.updateCacheRoot(), pending.installerPath) || path.extname(pending.installerPath).toLowerCase() !== extension) return false
+    return this.validateInstallerIntegrity(pending)
+  }
+
+  private async validateInstallerIntegrity(pending: PendingAppUpdate): Promise<boolean> {
     try {
       const stat = await fs.stat(pending.installerPath)
       if (!stat.isFile() || stat.size < MIN_INSTALLER_BYTES) return false
@@ -360,14 +443,15 @@ export class AppUpdateService {
 
   private async removePendingMarker(): Promise<void> {
     this.pending = null
+    this.downloadedInCurrentProcess = false
     await fs.rm(this.pendingMarkerPath(), { force: true })
   }
 
-  private async launchInstaller(pending: PendingAppUpdate): Promise<boolean> {
+  private async launchInstaller(pending: PendingAppUpdate, silent = false): Promise<boolean> {
     if (this.options.launchInstaller) await this.options.launchInstaller(pending.installerPath)
     else {
       await new Promise<void>((resolve, reject) => {
-        const child = spawn(pending.installerPath, ['--updated', '--force-run'], {
+        const child = spawn(pending.installerPath, [...(silent ? ['/S'] : []), '--updated', '--force-run'], {
           detached: true,
           stdio: 'ignore',
           windowsHide: false
@@ -379,6 +463,7 @@ export class AppUpdateService {
         child.once('error', reject)
       })
     }
+    this.setState({ ...this.state, phase: 'installing', message: '正在重启并安装更新…' })
     this.options.beforeInstall()
     this.options.quit()
     return true
@@ -390,7 +475,7 @@ export class AppUpdateService {
   }
 
   private setState(state: AppUpdateState): void {
-    this.state = state
+    this.state = { ...state, ...(this.installAfterDownload ? { installAfterDownload: true } : {}) }
     for (const listener of this.listeners) listener(this.snapshot())
   }
 }

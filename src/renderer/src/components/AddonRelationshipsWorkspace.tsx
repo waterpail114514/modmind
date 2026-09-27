@@ -1,3 +1,5 @@
+import WorkspaceTabs from './WorkspaceTabs'
+import DevelopmentDependenciesPane from './DevelopmentDependenciesPane'
 import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -61,7 +63,16 @@ function AddonSearchSkeleton(): React.JSX.Element {
   </div>
 }
 
-export default function AddonRelationshipsWorkspace({ project, beginner, onFilesChanged, onDecompile }: { project: ProjectInfo; beginner: boolean; onFilesChanged?: () => void; onDecompile?: (jarPath: string) => void }): React.JSX.Element {
+type RelationshipsProps = { project: ProjectInfo; beginner: boolean; onFilesChanged?: () => void; onDecompile?: (jarPath: string) => void }
+
+export default function AddonRelationshipsWorkspace(props: RelationshipsProps): React.JSX.Element {
+  return <WorkspaceTabs key={props.project.path} label="前置与联动" sections={[
+    { id: 'mods', label: '前置与联动', render: () => <ModRelationshipsPane {...props} /> },
+    { id: 'development', label: '开发依赖', render: active => <DevelopmentDependenciesPane active={active} onFilesChanged={() => props.onFilesChanged?.()} /> }
+  ]} />
+}
+
+function ModRelationshipsPane({ project, beginner, onFilesChanged, onDecompile }: RelationshipsProps): React.JSX.Element {
   const { confirm, dialog } = useConfirmDialog()
   const [manifest, setManifest] = useState<AddonRelationshipManifest | null>(null)
   const [providers, setProviders] = useState<Array<{ id: AddonSearchProvider; label: string }>>([])

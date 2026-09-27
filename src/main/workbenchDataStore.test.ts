@@ -106,6 +106,25 @@ describe('WorkbenchDataStore', () => {
     expect((await filesBelow(path.join(project, '.modmind', 'workbench-store'))).filter((file) => file.endsWith('.snapshot.gz')).length).toBeGreaterThanOrEqual(2)
   })
 
+  it('clears only the deleted project mirror so a new project at the same path cannot recover old conversations', async () => {
+    const { root, project, userData, store } = await fixture()
+    const otherProject = path.join(root, 'other-project')
+    await fs.mkdir(otherProject, { recursive: true })
+    const key = '.modmind/conversations-v2/index.json'
+    await store.write(project, key, JSON.stringify([{ id: 'old' }]))
+    await store.write(otherProject, key, JSON.stringify([{ id: 'keep' }]))
+    await store.appendJournal(project, '.modmind/conversations-v3/ws-old.jsonl', '{"eventId":"old"}\n')
+
+    await fs.rm(project, { recursive: true, force: true })
+    await store.clearProjectMirror(project)
+    await fs.mkdir(path.join(project, '.modmind'), { recursive: true })
+
+    const fresh = new WorkbenchDataStore(userData)
+    expect((await fresh.read(project, key)).status).toBe('missing')
+    expect(await fresh.readJournal(project, '.modmind/conversations-v3/ws-old.jsonl')).toEqual([])
+    expect((await fresh.read(otherProject, key)).status).toBe('ok')
+  })
+
   it('serializes concurrent journal appends across store instances', async () => {
     const { project, userData } = await fixture()
     const journal = '.modmind/conversations-v3/ws-race.jsonl'

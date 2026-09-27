@@ -7,7 +7,7 @@ import { importAiAttachmentSources } from './aiAttachmentImport'
 import { claudeHostedEnvironment, claudeSessionHome, fetchClaudeModels } from './claudeCompatibility'
 import type { AiAttachmentSource } from '../shared/aiAttachments'
 import { normalizeThemePreset, normalizeAppearance, normalizeCustomThemeColors } from '../shared/appTheme'
-import { importBackgroundMedia, serveBackgroundMedia } from './appearanceMedia'
+import { importBackgroundMedia, pruneSavedBackgroundMedia, serveBackgroundMedia } from './appearanceMedia'
 import { summarizeLog } from '../shared/creationFeedback'
 import { CreationFeedbackService } from './creationFeedbackService'
 import { PlayerTestService } from './playerTestService'
@@ -53,6 +53,9 @@ import { MappingService } from './mappingService'
 import { LoaderCatalog } from './loaderCatalog'
 import { descriptorPath, projectTemplateFiles } from './projectTemplates'
 import { ContentService } from './contentService'
+import { registerSoundLibraryIpc, soundServiceForProject } from './soundLibraryIpc'
+import { createSoundMcpHandlers } from './soundMcpService'
+import { renderMusicInWindow } from './soundRenderBridge'
 import { DependencyService } from './dependencyService'
 import { AddonRelationshipService, readAddonRelationships } from './addonRelationshipService'
 import { GitService } from './gitService'
@@ -79,6 +82,9 @@ import { isAddonPlatform, isJavaLoader, isServerPluginPlatform, platformLabel, P
 import { findPluginArtifact, parsePluginDescriptor } from './serverPluginService'
 import { registerServerPluginIpc } from './serverPluginIpc'
 import { registerResourcePackIpc } from './resourcePackIpc'
+import { importItemTexture, listManagedItems, removeManagedItem, saveManagedItem } from './itemEditorService'
+import { listVanillaItems } from './itemCatalogService'
+import type { ItemEditorSaveInput } from '../shared/itemEditor'
 import { serverPluginContext } from '../shared/serverPluginContext'
 import { createResourcePack, deployResourcePack, listResourcePacks, resourcePackArchive, validateResourcePack } from './resourcePackService'
 import { normalizeProjectName, validateProjectNameInput } from '../shared/projectName'
@@ -88,7 +94,11 @@ import { createPluginBridgeTarget, getPluginService, getPluginRuntime, importPlu
 import { PluginChatBridge } from './pluginChatBridge'
 import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from '../shared/plugins'
 import { clearPreparedCodexCredentials, ensureManagedCodexRuntime, isManagedCodexVersion, managedCodexExecutablePath, prepareCodex, type CodexServerConfig, type CodexSetupProgress } from './codexSetup'
-import { normalizeModelContextWindows } from '../shared/modelContext'
+import { normalizeModelContextWindows, validModelContext } from '../shared/modelContext'
+import { resolveModelContextBudget } from './modelContextRegistry'
+import { modelReasoningCatalog } from './modelReasoningCatalog'
+import { normalizeAiModelSelection, settingsForAiSelection, type AiModelSelection } from '../shared/aiSelection'
+import { isReasoningEffort, reasoningSelectionEffort } from '../shared/modelReasoning'
 import { ChatCompletionsAdapter } from './chatCompletionsAdapter'
 import { BackendSwitchCoordinator } from './backendSwitchCoordinator'
 import { LiveConfiguration, SerialState, type ConfigurationRevision } from './liveConfiguration'
@@ -104,7 +114,7 @@ import {
   type StoredQuotaModelPreferences
 } from './quotaModelPreferences'
 import { GiteeBuildService } from './giteeBuildService'
-import { beginnerReasoningEffort } from '../shared/aiPreferences'
+
 import { normalizeInspirationFeatures, inspirationFeaturePrompt } from '../shared/inspirationFeatures'
 import { runInspirationResearch } from './inspirationResearch'
 import { isAiAbandonmentRequest, isAiContinuationRequest } from '../shared/aiPrompt'
@@ -114,7 +124,8 @@ import { aiNoticeDetails } from '../shared/aiNotice'
 import { selectFinalAiAnswer } from '../shared/aiOutput'
 import { WorkbenchDataStore } from './workbenchDataStore'
 import { ConversationStore } from './conversationStore'
-import { usesInspirationWorkflow } from '../shared/workbenchFlow'
+import { usesInspirationWorkflow, WORKBENCH_REQUEST_GUIDANCE } from '../shared/workbenchFlow'
+import { BEGINNER_AGENT_WORKFLOW_GUIDANCE } from './beginnerAgentPolicy'
 import { normalizeWorkbenchFeatures, type WorkbenchFeatures } from '../shared/workbenchFeatures'
 import { runRenderedMinecraftTest } from './renderedMinecraftTest'
 import { createDraftProject, recordDraftMessage, initializeDraftProject } from './draftProjectService'
@@ -133,7 +144,8 @@ import {
   queryDeviceUsage,
   requestDeviceCode,
   requestDeviceImageLease,
-  sendDeviceFastMode
+  sendDeviceFastMode,
+  type CustomApiConfig
 } from './deviceIntegration'
 import {
   listManagedFiles,
@@ -208,7 +220,7 @@ import type {
 } from '../shared/types'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 import { ImageStudioService } from './imageStudioService'
-import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, updateModpackModuleSide, auditImportedPackArtifacts } from './modpackService'
+import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from './modpackService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { importModpackModule } from './modpackModuleImport'
 import { readModpackModuleProject } from './modpackService'
@@ -238,6 +250,7 @@ import { DiagnosticSession } from './diagnosticSession'
 import { diagnosticHandle, diagnosticIpcOperations } from './diagnosticIpc'
 import { downloadActivities } from './downloadActivityService'
 import { AppUpdateService, normalizeAppUpdateUrl } from './appUpdateService'
+import { prepareCleanReinstall } from './appReinstall'
 import { inspectForDecompilation, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar, type DecompileRunRequest } from './decompilePipeline'
 import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from './decompiledPluginProject'
 import { DECOMPILE_MIN_JAVA } from './jarDecompileService'
@@ -282,6 +295,7 @@ let tray: Tray | null = null
 let allowWindowClose = false
 let quitRequested = false
 let closeRequestInFlight = false
+let resolveCloseChoice: ((choice: { behavior: 'tray' | 'quit' | 'cancel'; remember: boolean }) => void) | null = null
 let appUpdateService: AppUpdateService | null = null
 let currentProject: ProjectInfo | null = null
 const aiProjectContext = new AsyncLocalStorage<ProjectInfo>()
@@ -322,7 +336,7 @@ function projectKnowledgeStore(): InspirationKnowledgeStore {
 }
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
-  'workspace', 'relationships', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
+  'workspace', 'sounds', 'relationships', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
   'modpack-mod-list', 'third-party-mods', 'modpack-manifest', 'modpack-config', 'modpack-scripts',
   'modpack-datapacks', 'modpack-resourcepacks', 'modpack-shaders', 'modpack-ui', 'modpack-worlds',
   'modpack-client', 'modpack-server-content', 'modpack-files', 'inspiration', 'image-studio',
@@ -548,8 +562,11 @@ if (!hasSingleInstanceLock) app.quit()
 else if (process.defaultApp && process.argv[1]) app.setAsDefaultProtocolClient('mcdev', process.execPath, [path.resolve(process.argv[1])])
 else app.setAsDefaultProtocolClient('mcdev')
 
-const initialDeviceDeepLink = process.argv.find((argument) => argument.startsWith('mcdev://'))
-if (initialDeviceDeepLink) pendingDeviceDeepLinks.enqueue(initialDeviceDeepLink)
+const initialDeviceDeepLinkIndex = process.argv.findIndex((argument) => argument.startsWith('mcdev://'))
+if (initialDeviceDeepLinkIndex >= 0) {
+  pendingDeviceDeepLinks.enqueue(process.argv[initialDeviceDeepLinkIndex])
+  process.argv[initialDeviceDeepLinkIndex] = '[device-link-consumed]'
+}
 
 function mcpBridgeRequest(argv: string[] = process.argv): { enabled: boolean; stop: boolean; projectPath?: string } {
   const enabled = argv.includes('--mcp-bridge')
@@ -568,7 +585,10 @@ app.on('second-instance', (_event, argv) => {
   if (bridgeRequest.stop) void stopPublicMcpBridge().catch((error) => console.error('[mcp-bridge] failed to stop from second instance', error))
   else if (bridgeRequest.enabled) void startPublicMcpBridge(bridgeRequest.projectPath).catch((error) => console.error('[mcp-bridge] failed to start from second instance', error))
   const deepLink = argv.find((argument) => argument.startsWith('mcdev://'))
-  if (deepLink) pendingDeviceDeepLinks.enqueue(deepLink)
+  if (deepLink) {
+    pendingDeviceDeepLinks.enqueue(deepLink)
+    argv[argv.indexOf(deepLink)] = '[device-link-consumed]'
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -591,6 +611,8 @@ function shutdownApplication(): Promise<void> {
   quitRequested = true
   allowWindowClose = true
   closeRequestInFlight = false
+  resolveCloseChoice?.({ behavior: 'cancel', remember: false })
+  resolveCloseChoice = null
   beginProcessShutdown()
   verifiedDownload.beginShutdown()
   deviceAuthorizationController?.abort()
@@ -819,7 +841,7 @@ function requireGiteeBuildService(): GiteeBuildService {
 }
 
 interface StoredDeviceCredentials {
-  version: 1
+  version: 1 | 2
   siteUrl: string
   baseUrl: string
   encryptedApiKey: string
@@ -827,10 +849,15 @@ interface StoredDeviceCredentials {
   balanceCents: string
   connectedAt: string
   usage?: DeviceUsage
+  provider?: 'custom'
+  providerId?: string
+  model?: string
+  imageApi?: { baseUrl: string; model: string; encryptedApiKey: string } | null
 }
 
 interface DeviceCredentials extends Omit<StoredDeviceCredentials, 'encryptedApiKey'> {
   apiKey: string
+  localImageApi?: { baseUrl: string; apiKey: string; model: string } | null
 }
 
 let deviceAuthorizationController: AbortController | null = null
@@ -840,28 +867,50 @@ const preferenceWrites = deviceStateWrites
 let transientDeviceState: DeviceConnectionState | null = null
 const QUOTA_USAGE_MAX_AGE_MS = 2 * 60_000
 const QUOTA_MODEL_MAX_AGE_MS = 5 * 60_000
-const quotaModelAvailabilityCache = new Map<string, { checkedAt: number; models: string[] }>()
+const quotaModelAvailabilityCache = new Map<string, { checkedAt: number; models: AiModelInfo[] }>()
+const scannedModelCapabilities = new Map<string, { checkedAt: number; models: AiModelInfo[] }>()
+function modelReasoningFor(baseUrl: string, apiKey: string, model: string) {
+  return scannedModelCapabilities.get(quotaPreferenceKey(baseUrl, apiKey))?.models.find(entry => entry.id === model)?.reasoning
+    ?? modelReasoningCatalog.resolve(model, baseUrl)
+}
+
+async function refreshConfiguredReasoning(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration): Promise<void> {
+  if (!configuration.baseUrl?.trim() || !configuration.apiKey?.trim()) return
+  const baseUrl = normalizeApiBaseUrl(configuration.baseUrl), apiKey = configuration.apiKey.trim()
+  const key = quotaPreferenceKey(baseUrl, apiKey)
+  const cached = scannedModelCapabilities.get(key)
+  if (cached && Date.now() - cached.checkedAt < 5 * 60_000) return
+  await modelReasoningCatalog.refresh()
+  try {
+    if (kind === 'claude') {
+      const models = modelReasoningCatalog.enrich(parseModelPayload(await fetchClaudeModels(baseUrl, apiKey)), baseUrl)
+      scannedModelCapabilities.set(key, { checkedAt: Date.now(), models })
+    } else await fetchAvailableModels(baseUrl, apiKey, '无法读取模型能力')
+  } catch { /* Relays without model-list support still use exact public metadata. */ }
+}
 
 function quotaModelCacheKey(credentials: Pick<DeviceCredentials, 'baseUrl' | 'apiKey'>): string {
   return quotaPreferenceKey(credentials.baseUrl, credentials.apiKey)
 }
 
 function deviceProfileKey(credentials: DeviceCredentials): string {
-  return quotaProfileKey(credentials.siteUrl, credentials.username, openAiV1BaseUrl(credentials.baseUrl))
+  return quotaProfileKey(credentials.siteUrl, credentials.username, credentials.provider === 'custom'
+    ? `${openAiV1BaseUrl(credentials.baseUrl)}#${credentials.providerId}`
+    : openAiV1BaseUrl(credentials.baseUrl))
 }
 
 function sameDeviceCredentials(left: DeviceCredentials | null, right: DeviceCredentials): boolean {
-  return Boolean(left && left.apiKey === right.apiKey && left.baseUrl === right.baseUrl && left.siteUrl === right.siteUrl && left.username === right.username)
+  return Boolean(left && left.apiKey === right.apiKey && left.baseUrl === right.baseUrl && left.siteUrl === right.siteUrl && left.username === right.username && left.provider === right.provider && left.providerId === right.providerId)
 }
 
 async function quotaModelsForCredentials(credentials: DeviceCredentials, force = false): Promise<AiModelInfo[]> {
   const key = quotaModelCacheKey(credentials)
   const cached = quotaModelAvailabilityCache.get(key)
   if (!force && cached && Date.now() - cached.checkedAt <= QUOTA_MODEL_MAX_AGE_MS) {
-    return cached.models.map((id) => ({ id }))
+    return cached.models
   }
   const models = await fetchAvailableModels(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
-  quotaModelAvailabilityCache.set(key, { checkedAt: Date.now(), models: models.map((model) => model.id) })
+  quotaModelAvailabilityCache.set(key, { checkedAt: Date.now(), models })
   return models
 }
 
@@ -931,31 +980,34 @@ function disconnectedDeviceState(message?: string): DeviceConnectionState {
   return { status: 'disconnected', configured, ...(message ? { message } : {}) }
 }
 
-async function checkForAppUpdates(): Promise<AppVersionCheckResult | null> {
+async function checkForAppUpdates(): Promise<AppVersionCheckResult> {
   const siteUrl = configuredDeviceSiteUrl()
-  if (!siteUrl) return null
-  try {
-    const result = await checkAppVersion(siteUrl, app.getVersion(), AbortSignal.timeout(12_000))
-    appUpdateService?.setAvailableUpdate(result)
-    return result
-  } catch (error) {
-    console.warn('[update] version check failed', error)
-    return null
-  }
+  if (!siteUrl) throw new Error('未配置版本检查服务，暂时无法检查更新')
+  return checkAppVersion(siteUrl, app.getVersion(), AbortSignal.timeout(12_000))
 }
 
 async function readDeviceCredentials(): Promise<DeviceCredentials | null> {
   if (!safeStorage.isEncryptionAvailable()) return null
   try {
     const stored = JSON.parse(await fs.readFile(deviceCredentialsFile(), 'utf8')) as StoredDeviceCredentials
-    if (stored.version !== 1 || !stored.encryptedApiKey || !stored.username || !/^\d+$/.test(stored.balanceCents)) return null
+    if ((stored.version !== 1 && stored.version !== 2) || !stored.encryptedApiKey || !stored.username || !/^\d+$/.test(stored.balanceCents)) return null
+    if (stored.version === 2 && (stored.provider !== 'custom' || !stored.providerId || !stored.model)) return null
     const apiKey = safeStorage.decryptString(Buffer.from(stored.encryptedApiKey, 'base64')).trim()
     if (!apiKey) return null
+    const localImageApi = stored.provider === 'custom' && stored.imageApi
+      ? {
+        baseUrl: normalizeRelayBaseUrl(stored.imageApi.baseUrl),
+        model: stored.imageApi.model,
+        apiKey: safeStorage.decryptString(Buffer.from(stored.imageApi.encryptedApiKey, 'base64')).trim()
+      }
+      : null
+    if (stored.imageApi && !localImageApi?.apiKey) return null
     return {
       ...stored,
       siteUrl: normalizeSiteUrl(stored.siteUrl),
       baseUrl: normalizeRelayBaseUrl(stored.baseUrl),
-      apiKey
+      apiKey,
+      ...(stored.provider === 'custom' ? { localImageApi } : {})
     }
   } catch {
     return null
@@ -966,16 +1018,21 @@ async function writeDeviceCredentialsUnlocked(credentials: Omit<DeviceCredential
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法安全保存接入凭证')
   const normalized: DeviceCredentials = {
     ...credentials,
-    version: 1,
+    version: credentials.provider === 'custom' ? 2 : 1,
     siteUrl: normalizeSiteUrl(credentials.siteUrl),
     baseUrl: normalizeRelayBaseUrl(credentials.baseUrl),
     apiKey: credentials.apiKey.trim()
   }
   if (!normalized.apiKey) throw new Error('接入凭证为空')
-  const { apiKey, ...metadata } = normalized
+  const { apiKey, localImageApi, imageApi: _imageApi, ...metadata } = normalized
   const stored: StoredDeviceCredentials = {
     ...metadata,
-    encryptedApiKey: safeStorage.encryptString(apiKey).toString('base64')
+    encryptedApiKey: safeStorage.encryptString(apiKey).toString('base64'),
+    ...(normalized.provider === 'custom' ? { imageApi: localImageApi ? {
+      baseUrl: normalizeRelayBaseUrl(localImageApi.baseUrl),
+      model: localImageApi.model,
+      encryptedApiKey: safeStorage.encryptString(localImageApi.apiKey).toString('base64')
+    } : null } : {})
   }
   await writeDeviceFileAtomically(stored)
   return normalized
@@ -998,6 +1055,10 @@ async function removeCurrentDeviceCredentials(credentials: DeviceCredentials): P
 }
 
 function publicDeviceState(credentials: DeviceCredentials): DeviceConnectionState {
+  if (credentials.provider === 'custom') return {
+    status: 'connected', configured: true, siteUrl: credentials.siteUrl,
+    username: credentials.username, provider: 'custom', providerId: credentials.providerId, model: credentials.model
+  }
   return {
     status: 'connected',
     configured: true,
@@ -1057,7 +1118,7 @@ async function deviceAuthorizationFailure(message: string): Promise<void> {
   })
 }
 
-function startDevicePolling(siteUrl: string, code: string, expiresIn: number, controller: AbortController, configuration?: ConfigurationRevision): void {
+function startDevicePolling(siteUrl: string, code: string, expiresIn: number, controller: AbortController, configuration?: ConfigurationRevision, customApi?: CustomApiConfig): void {
   const deadline = Date.now() + Math.min(Math.max(expiresIn, 1), 600) * 1_000
   void (async () => {
     let retryIndex = 0
@@ -1065,7 +1126,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
     while (Date.now() < deadline && !controller.signal.aborted) {
       try {
         await waitForDevicePoll(retryDelays[Math.min(retryIndex, retryDelays.length - 1)], controller.signal)
-        const result = await pollDeviceCode(siteUrl, code, controller.signal)
+        const result = await pollDeviceCode(siteUrl, code, controller.signal, fetch, Boolean(customApi))
         if (result.status === 'pending') {
           retryIndex = 0
           continue
@@ -1074,21 +1135,31 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           await deviceAuthorizationFailure('授权码已过期，请重新连接账号')
           return
         }
+        if (Boolean(customApi) !== ('provider' in result)) throw new Error('授权模式与同步结果不匹配')
         throwIfAborted(controller.signal)
+        if (customApi) await stopRemoteClient()
         configuration ??= quotaConfiguration.begin()
         const credentials = await deviceStateWrites.run(async () => {
           throwIfAborted(controller.signal)
-          return writeDeviceCredentialsUnlocked({
+          const saved = await writeDeviceCredentialsUnlocked({
             siteUrl,
-            baseUrl: result.baseUrl,
-            apiKey: result.apiKey,
+            baseUrl: customApi?.baseUrl ?? ('baseUrl' in result ? result.baseUrl : ''),
+            apiKey: customApi?.apiKey ?? ('apiKey' in result ? result.apiKey : ''),
             username: result.username,
-            balanceCents: result.balanceCents,
-            connectedAt: new Date().toISOString()
+            balanceCents: 'balanceCents' in result ? result.balanceCents : '0',
+            connectedAt: new Date().toISOString(),
+            ...(customApi ? { provider: 'custom' as const, providerId: customApi.providerId, model: customApi.model, localImageApi: customApi.imageApi } : {})
           })
+          if (customApi) {
+            const store = await readStoredBeginnerAiPreferences()
+            await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(store, {
+              ...activeQuotaModelPreferences(store, deviceProfileKey(saved)), model: customApi.model, reasoningLevel: 'auto', fastMode: false
+            }, deviceProfileKey(saved)))
+          }
+          return saved
         })
         throwIfAborted(controller.signal)
-        await reconcileQuotaModelPreferences(credentials, true).catch((error) => {
+        if (!customApi) await reconcileQuotaModelPreferences(credentials, true).catch((error) => {
           console.warn('[device] unable to reconcile model preferences after key update', error)
         })
         throwIfAborted(controller.signal)
@@ -1098,7 +1169,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
         // place. Recreate it after the new credential is durably stored.
         const remoteWasEnabled = remoteClient?.getState().enabled === true || await readRemoteEnabled()
         await stopRemoteClient()
-        if (remoteWasEnabled) void startRemoteClientIfPossible().catch((error) => console.warn('[remote] unable to restart after credential sync', error))
+        if (remoteWasEnabled && !customApi) void startRemoteClientIfPossible().catch((error) => console.warn('[remote] unable to restart after credential sync', error))
         return
       } catch (error) {
         if (controller.signal.aborted) return
@@ -1146,7 +1217,7 @@ async function beginDeviceDeepLinkAuthorization(rawUrl: string): Promise<DeviceC
   const expectedSite = configuredDeviceSiteUrl()
   if (!expectedSite) throw new Error('未配置正式站点地址，拒绝处理设备深链')
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法处理设备深链')
-  const { siteUrl, code } = parseDeviceDeepLink(rawUrl, expectedSite)
+  const { siteUrl, code, customApi } = parseDeviceDeepLink(rawUrl, expectedSite)
   deviceAuthorizationController?.abort()
   const controller = new AbortController()
   deviceAuthorizationController = controller
@@ -1158,7 +1229,7 @@ async function beginDeviceDeepLinkAuthorization(rawUrl: string): Promise<DeviceC
     message: '已收到网页授权，正在同步凭证'
   }
   await updateDeviceState(state)
-  startDevicePolling(siteUrl, code, 600, controller, quotaConfiguration.begin())
+  startDevicePolling(siteUrl, code, 600, controller, quotaConfiguration.begin(), customApi)
   return state
 }
 
@@ -1198,6 +1269,7 @@ async function disconnectDeviceLocally(): Promise<DeviceConnectionState> {
 async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
   const credentials = await readDeviceCredentials()
   if (!credentials) return updateDeviceState(disconnectedDeviceState('请先连接 ModMind 账号'))
+  if (credentials.provider === 'custom') return updateDeviceState(publicDeviceState(credentials))
   const checkedAt = credentials.usage ? Date.parse(credentials.usage.checkedAt) : Number.NaN
   if (credentials.usage && Number.isFinite(checkedAt) && Date.now() - checkedAt < QUOTA_USAGE_MAX_AGE_MS) {
     return updateDeviceState(publicDeviceState(credentials))
@@ -1221,6 +1293,7 @@ async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
 async function ensureQuotaAccountReady(): Promise<void> {
   let credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
+  if (credentials.provider === 'custom') return
 
   let usage = credentials.usage
   const checkedAt = usage ? Date.parse(usage.checkedAt) : Number.NaN
@@ -1613,11 +1686,12 @@ async function remoteQuotaConfig(): Promise<RemoteQuotaConfig> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
   const preferences = await readBeginnerAiPreferences()
+  await quotaModelsForCredentials(credentials)
   return {
     baseUrl: openAiV1BaseUrl(credentials.baseUrl),
     apiKey: credentials.apiKey,
     model: preferences.model,
-    reasoningEffort: beginnerReasoningEffort(preferences.model, preferences.reasoningLevel)
+    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, modelReasoningFor(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, preferences.model))
   }
 }
 
@@ -1638,7 +1712,7 @@ function beginnerAiPreferencesFile(): string {
   return path.join(app.getPath('userData'), 'beginner-ai-preferences.json')
 }
 
-const DEFAULT_BEGINNER_AI_PREFERENCES: BeginnerAiPreferences = { model: DEFAULT_DEVICE_MODEL, reasoningLevel: 'medium', fastMode: false }
+const DEFAULT_BEGINNER_AI_PREFERENCES: BeginnerAiPreferences = { model: DEFAULT_DEVICE_MODEL, reasoningLevel: 'auto', fastMode: false }
 
 async function readStoredBeginnerAiPreferences(): Promise<StoredQuotaModelPreferences> {
   const stored = await fs.readFile(beginnerAiPreferencesFile(), 'utf8').then((text) => JSON.parse(text) as unknown).catch(() => null)
@@ -1670,8 +1744,9 @@ async function readBeginnerAiPreferences(): Promise<BeginnerAiPreferences> {
   const legacyKey = quotaModelCacheKey(credentials)
   const cached = quotaModelAvailabilityCache.get(legacyKey)
   const preferences = activeQuotaModelPreferences(store, store.profiles[key] ? key : legacyKey)
-  if (cached?.models.length && !cached.models.includes(preferences.model)) {
-    return resolveQuotaModelPreferences(store, key, cached.models.map(id => ({ id }))).preferences
+  if (credentials.provider === 'custom' && !store.profiles[key]) return { ...preferences, model: credentials.model! }
+  if (cached?.models.length && !cached.models.some(model => model.id === preferences.model)) {
+    return resolveQuotaModelPreferences(store, key, cached.models).preferences
   }
   return preferences
 }
@@ -1680,15 +1755,23 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   const initialRevision = await quotaConfiguration.acquire(AbortSignal.timeout(30_000))
   const model = typeof value?.model === 'string' ? value.model.trim().slice(0, 256) : ''
   if (!model) throw new Error('请选择制作使用的模型')
-  const reasoningLevel = value.reasoningLevel === 'low' || value.reasoningLevel === 'high' || value.reasoningLevel === 'extreme'
-    ? value.reasoningLevel
-    : 'medium'
-  const preferences = normalizeQuotaModelPreferences({ model, reasoningLevel, fastMode: Boolean(value.fastMode) }, DEFAULT_BEGINNER_AI_PREFERENCES)
+  const contextWindow = value.modelContextWindows?.[model]
+  if (contextWindow !== undefined && !validModelContext(contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
+  const reasoningLevel = isReasoningEffort(value.reasoningLevel) ? value.reasoningLevel : 'auto'
+  const preferences = normalizeQuotaModelPreferences({ model, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows }, DEFAULT_BEGINNER_AI_PREFERENCES)
   const previous = await readBeginnerAiPreferences()
   if (initialRevision !== quotaConfiguration.current()) throw new Error('线路正在切换，请稍后重新选择模型')
-  if (previous.model === preferences.model && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode) return preferences
+  const previousWindows = previous.modelContextWindows ?? {}
+  const nextWindows = preferences.modelContextWindows ?? {}
+  const sameWindows = Object.keys(previousWindows).length === Object.keys(nextWindows).length
+    && Object.entries(previousWindows).every(([id, window]) => nextWindows[id] === window)
+  if (previous.model === preferences.model && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows) return preferences
   const credentials = await readDeviceCredentials()
-  if (previous.fastMode !== preferences.fastMode) {
+  if (preferences.reasoningLevel !== 'auto') {
+    const capabilities = credentials ? modelReasoningFor(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, model) : modelReasoningCatalog.resolve(model)
+    reasoningSelectionEffort(preferences.reasoningLevel, capabilities)
+  }
+  if (previous.fastMode !== preferences.fastMode && credentials?.provider !== 'custom') {
     if (!credentials) throw new Error('请先连接 ModMind 账号，再切换 Fast 模式')
     await sendDeviceFastMode(
       credentials.siteUrl,
@@ -1733,20 +1816,37 @@ async function reconcileQuotaModelPreferences(credentials: DeviceCredentials, fo
   return resolved.preferences
 }
 
-async function readBeginnerAgentServerConfig(): Promise<CodexServerConfig> {
+async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Promise<CodexServerConfig> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
+  if (credentials.provider === 'custom') {
+    const preferences = selection ? { ...await readBeginnerAiPreferences(), ...selection } : await readBeginnerAiPreferences()
+    if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig(selection)
+    const model = preferences.model
+    const baseUrl = openAiV1BaseUrl(credentials.baseUrl)
+    const reasoningCapabilities = modelReasoningFor(baseUrl, credentials.apiKey, model)
+    return {
+      baseUrl, apiKey: credentials.apiKey, model,
+      reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities),
+      reasoningCapabilities,
+      contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[model]
+    }
+  }
   // Upstream groups may change without rotating the key or changing the URL.
   // Execution must use a fresh catalog; a failed scan must not revive a stale model.
   const models = await quotaModelsForCredentials(credentials, true)
   if (!models.length) throw new Error('当前分组没有可用于任务的模型，请检查账号分组')
-  const preferences = await reconcileQuotaModelPreferences(credentials, false, models)
-  if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig()
+  const preferences = selection ? { ...await readBeginnerAiPreferences(), ...selection } : await reconcileQuotaModelPreferences(credentials, false, models)
+  if (selection && !models.some(model => model.id === selection.model)) throw new Error(`当前线路没有模型 ${selection.model}，请重新选择`)
+  if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig(selection)
+  const reasoningCapabilities = models.find(model => model.id === preferences.model)?.reasoning ?? modelReasoningCatalog.resolve(preferences.model, credentials.baseUrl)
   return {
     baseUrl: openAiV1BaseUrl(credentials.baseUrl),
     apiKey: credentials.apiKey,
     model: preferences.model,
-    reasoningEffort: beginnerReasoningEffort(preferences.model, preferences.reasoningLevel)
+    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities),
+    reasoningCapabilities,
+    contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[preferences.model]
   }
 }
 
@@ -1777,12 +1877,14 @@ function codexProviderIdentity(config: Pick<CodexServerConfig, 'baseUrl' | 'apiK
   return `${config.model}\n${createHash('sha256').update(config.apiKey).digest('hex')}`
 }
 
-function configuredCodexServerConfig(configuration: ExternalAgentConfiguration): CodexServerConfig {
+async function configuredCodexServerConfig(configuration: ExternalAgentConfiguration): Promise<CodexServerConfig> {
   const apiKey = configuration.apiKey?.trim() ?? ''
   const baseUrl = normalizeApiBaseUrl(configuration.baseUrl ?? '')
   const model = configuration.model?.trim() ?? ''
   if (!apiKey || !model) throw new Error('Codex 配置缺少 API Key 或模型名')
-  return { apiKey, baseUrl, model, reasoningEffort: configuration.reasoningEffort ?? 'high', contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model] }
+  await refreshConfiguredReasoning('codex', configuration)
+  const reasoningCapabilities = modelReasoningFor(baseUrl, apiKey, model)
+  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities), reasoningCapabilities, contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model] }
 }
 
 async function prepareManagedCodex(
@@ -1809,13 +1911,19 @@ async function prepareManagedCodex(
     const preparation = (async () => {
       await previousPreparation
       try {
+        const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow })
+        if (contextBudget.source === 'inferred') diagnosticJournal.record({
+          subsystem: 'ai', operation: 'model-context-budget', phase: 'inferred',
+          message: `上下文预算参考 ${contextBudget.inferredFrom}`,
+          data: { model: serverConfig.model, ...contextBudget }
+        })
         return await prepareCodex({
           rootDir: app.getPath('userData'),
           homeDir: home,
           serverConfig: {
             ...serverConfig,
             upstreamBaseUrl: serverConfig.baseUrl,
-            baseUrl: await chatCompletionsAdapter.baseUrl(serverConfig.baseUrl, `${codexProviderIdentity(serverConfig)}:${routeRevision?.sequence ?? 0}`, routeRevision?.signal, serverConfig.model, serverConfig.model)
+            baseUrl: await chatCompletionsAdapter.baseUrl(serverConfig.baseUrl, `${codexProviderIdentity(serverConfig)}:${routeRevision?.sequence ?? 0}`, routeRevision?.signal, serverConfig.model, serverConfig.model, serverConfig.reasoningEffort ?? null)
           },
           configSource,
           existingExecutable: existingExecutable?.trim() || undefined,
@@ -1856,7 +1964,7 @@ async function prepareConfiguredCodex(
   return prepareManagedCodex(
     project,
     sessionScope,
-    configuredCodexServerConfig(configuration),
+    await configuredCodexServerConfig(configuration),
     'local-settings',
     undefined,
     onProgress,
@@ -1911,7 +2019,11 @@ async function externalAgentRunEnvironment(kind: ExternalAgentKind, settings: Ag
   const configured = settings.externalAgents?.[kind] ?? {}
   if (!configured.apiKey?.trim() || !externalAgentSupportsHostedConfiguration(kind)) return undefined
   if (kind === 'claude' && configured.mode !== 'hosted') return undefined
-  if (kind === 'claude') return externalAgentEnvironment('claude', configured)
+  if (kind === 'claude') {
+    await refreshConfiguredReasoning(kind, configured)
+    reasoningSelectionEffort(configured.reasoningEffort ?? 'auto', modelReasoningFor(normalizeApiBaseUrl(configured.baseUrl ?? ''), configured.apiKey.trim(), configured.model?.trim() ?? ''))
+    return externalAgentEnvironment('claude', configured)
+  }
   return {MODMIND_THIRD_PARTY_API_KEY: configured.apiKey.trim()}
 }
 
@@ -2010,33 +2122,31 @@ async function handleWindowClose(): Promise<void> {
   if (process.platform === 'darwin') { mainWindow.hide(); return }
   if (closeRequestInFlight) return
   closeRequestInFlight = true
-  const settings = await readSettings()
-  let behavior = settings.closeBehavior
-  if (behavior === 'ask') {
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: 'question',
-      title: '关闭 ModMind',
-      message: '你希望如何处理 ModMind？',
-      detail: '最小化到系统托盘后，任务仍可继续运行；直接关闭会退出应用',
-      buttons: ['最小化到系统托盘', '直接关闭', '取消'],
-      cancelId: 2,
-      defaultId: 0,
-      checkboxLabel: '不再提示，记住我的选择'
-    })
-    if (result.response === 2) { closeRequestInFlight = false; return }
-    behavior = result.response === 0 ? 'tray' : 'quit'
-    if (result.checkboxChecked) await saveClosePreferences(behavior)
-  }
-  if (behavior === 'tray') {
-    createTray()
-    mainWindow.hide()
+  try {
+    const settings = await readSettings()
+    let behavior = settings.closeBehavior
+    if (behavior === 'ask') {
+      const choice = await new Promise<{ behavior: 'tray' | 'quit' | 'cancel'; remember: boolean }>((resolve) => {
+        resolveCloseChoice = resolve
+        mainWindow!.webContents.send('window:closeRequested')
+      })
+      resolveCloseChoice = null
+      if (choice.behavior === 'cancel' || !mainWindow || mainWindow.isDestroyed()) return
+      behavior = choice.behavior
+      if (choice.remember) await saveClosePreferences(behavior)
+    }
+    if (behavior === 'tray') {
+      createTray()
+      mainWindow.hide()
+      return
+    }
+    await conversationStore.flush()
+    allowWindowClose = true
+    mainWindow.close()
+  } finally {
+    resolveCloseChoice = null
     closeRequestInFlight = false
-    return
   }
-  await conversationStore.flush()
-  allowWindowClose = true
-  mainWindow.close()
-  closeRequestInFlight = false
 }
 
 function loadDetachedRenderer(window: BrowserWindow, target: DetachedWindowTarget): void {
@@ -2291,6 +2401,7 @@ function createWindow(): void {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
   })
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    resolveCloseChoice?.({ behavior: 'cancel', remember: false })
     diagnosticJournal.record({ subsystem: 'renderer', operation: 'process', phase: 'gone', level: 'error', message: `Renderer process exited: ${details.reason}`, data: details })
   })
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -2386,7 +2497,11 @@ function createWindow(): void {
   imageStudioService = new ImageStudioService({
     userDataDir: app.getPath('userData'),
     projectRoot: () => currentProject?.path ?? null,
-    getHostedLease: createHostedImageLease
+    getHostedLease: createHostedImageLease,
+    getSyncedImageApi: async () => {
+      const credentials = await readDeviceCredentials()
+      return { customMode: credentials?.provider === 'custom', imageApi: credentials?.provider === 'custom' ? credentials.localImageApi ?? null : null }
+    }
   })
   mainWindow.on('closed', () => {
     for (const window of detachedWindows.values()) window.close()
@@ -2622,6 +2737,15 @@ function buildProjectWithLock(signal?: AbortSignal): Promise<MinecraftManagedMod
   })
 }
 
+function syncCurrentKubeJsServerScripts(): ReturnType<MinecraftRuntimeManager['syncKubeJsServerScripts']> {
+  const project = requireProject()
+  if (project.kind !== 'modpack') throw new Error('KubeJS 脚本同步仅适用于当前整合包项目')
+  return withMinecraftResourceLock(() => {
+    if (!currentProject || !sameProjectPath(project.path, currentProject.path)) throw new Error('项目已切换，请在当前整合包重新同步')
+    return requireMinecraftRuntime().syncKubeJsServerScripts()
+  })
+}
+
 async function renameProjectRecord(project: ProjectInfo, input: ProjectRenameInput): Promise<ProjectInfo> {
   assertProjectMutationAllowed(project.path, '重命名')
   if (!input || typeof input.name !== 'string' || typeof input.namespace !== 'string') throw new Error('项目重命名参数无效')
@@ -2702,6 +2826,7 @@ function generateStudioImage(input: ImageGenerationRequest | Record<string, unkn
 async function createHostedImageLease(request?: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号，或在专业设置中保存图片 API Key')
+  if (credentials.provider === 'custom') throw new Error('自定义 API 模式下请配置图片 API，无法使用 ModMind 额度图像服务')
   const { baseUrl, apiKey } = await requestDeviceImageLease(credentials, AbortSignal.timeout(20_000))
   if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请重新运行图像任务')
   const jobId = randomUUID()
@@ -3400,6 +3525,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries }
   if (Object.keys(encryptedAgentKeys).length) stored.encryptedAgentKeys = encryptedAgentKeys
       await writeAgentSettingsAtomically(stored)
+      await pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
       const savedSettings = await readSettings()
       const appearance = normalizeAppearance(savedSettings)
       for (const window of BrowserWindow.getAllWindows()) {
@@ -3710,6 +3836,7 @@ async function deleteProjectDirectory(projectPath: string): Promise<ProjectInfo[
   const remaining = recent.filter((entry) => path.resolve(entry.path).toLowerCase() !== key)
   await writeRecentProjects(remaining)
   if (currentProject && sameProjectPath(currentProject.path, resolved)) currentProject = null
+  await workbenchDataStore.clearProjectMirror(resolved)
   return remaining
 }
 
@@ -3783,7 +3910,7 @@ async function readSettings(): Promise<AgentSettings> {
         baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.slice(0, 4096) : undefined,
         model: typeof entry.model === 'string' ? entry.model.slice(0, 512) : undefined,
         modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows),
-        reasoningEffort: entry.reasoningEffort === 'low' || entry.reasoningEffort === 'medium' || entry.reasoningEffort === 'high' || entry.reasoningEffort === 'xhigh' || entry.reasoningEffort === 'max' || entry.reasoningEffort === 'ultra' ? entry.reasoningEffort : undefined,
+        reasoningEffort: isReasoningEffort(entry.reasoningEffort) ? entry.reasoningEffort : undefined,
         apiKey: agentApiKey,
         hasStoredKey: Boolean(encrypted)
       }
@@ -3827,6 +3954,7 @@ function normalizeApiBaseUrl(value: string): string {
 }
 
 async function listAvailableAgentModels(kind: ExternalAgentKind, input: ExternalAgentConfiguration): Promise<AiModelInfo[]> {
+  await modelReasoningCatalog.refresh(true)
   const stored = await readSettings()
   const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
   const storedEntry = stored.externalAgents?.[kind]
@@ -3834,7 +3962,11 @@ async function listAvailableAgentModels(kind: ExternalAgentKind, input: External
   const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
-  if (kind === 'claude') return parseModelPayload(await fetchClaudeModels(baseUrl, apiKey))
+  if (kind === 'claude') {
+    const models = modelReasoningCatalog.enrich(parseModelPayload(await fetchClaudeModels(baseUrl, apiKey)), baseUrl)
+    scannedModelCapabilities.set(quotaPreferenceKey(baseUrl, apiKey), { checkedAt: Date.now(), models })
+    return models
+  }
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
 }
 
@@ -3852,18 +3984,26 @@ async function permanentlyDeleteProjectDirectory(projectPath: string): Promise<P
   const remaining = recent.filter((entry) => !sameProjectPath(entry.path, resolved))
   await writeRecentProjects(remaining)
   if (currentProject && sameProjectPath(currentProject.path, resolved)) currentProject = null
+  await workbenchDataStore.clearProjectMirror(resolved)
   return remaining
 }
 
 async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接账号后扫描模型')
-  const models = await quotaModelsForCredentials(credentials, force)
+  await modelReasoningCatalog.refresh(force)
+  let models: AiModelInfo[]
+  if (credentials.provider === 'custom') {
+    try { models = await quotaModelsForCredentials(credentials, force) }
+    catch { models = [] }
+    if (!models.some((entry) => entry.id === credentials.model)) models = [{ id: credentials.model! }, ...models]
+  } else models = await quotaModelsForCredentials(credentials, force)
   if (models.length) await reconcileQuotaModelPreferences(credentials, false, models)
   return models
 }
 
 async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
+  await modelReasoningCatalog.refresh()
   const endpoints = [`${baseUrl}/models`, `${baseUrl}/model`]
   for (const [index, endpoint] of endpoints.entries()) {
     let response: Response
@@ -3881,7 +4021,8 @@ async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessag
     }
     let payload: unknown
     try { payload = await response.json() as unknown } catch { throw new Error('模型服务返回了无效数据') }
-    const models = parseModelPayload(payload)
+    const models = modelReasoningCatalog.enrich(parseModelPayload(payload), baseUrl)
+    scannedModelCapabilities.set(quotaPreferenceKey(baseUrl, apiKey), { checkedAt: Date.now(), models })
     if (models.length) return models
     if (index === endpoints.length - 1) return []
   }
@@ -4309,7 +4450,7 @@ function writeAiAttemptAudit(audit: ExternalAgentAttemptAudit, sessionId?: strin
 
 function sendAiOutput(
   event: Electron.IpcMainInvokeEvent,
-  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error',
+  kind: AiOutputEvent['kind'],
   content: string,
   sessionId?: string,
   projectPath?: string,
@@ -4434,7 +4575,7 @@ async function assertBackendSwitchTargetReady(backend: AgentSettings['codingBack
   if (backend === 'codex') {
     const usesConfiguredService = Boolean(configured.apiKey?.trim() || configured.baseUrl?.trim() || configured.model?.trim())
     if (usesConfiguredService) {
-      configuredCodexServerConfig(configured)
+      await configuredCodexServerConfig(configured)
       return
     }
     const detected = await detectExternalAgent('codex', {
@@ -4610,8 +4751,10 @@ async function runRemoteWorkbenchTask(prompt: string, callbacks: { signal?: Abor
 
 async function startRemoteClientIfPossible(force = false): Promise<RemoteConnectionState> {
   if (!force && !(await readRemoteEnabled())) return { status: 'disabled', enabled: false }
+  const credentials = await readDeviceCredentials()
+  if (credentials?.provider === 'custom') return { status: 'disabled', enabled: false, lastError: '自定义 API 模式暂不支持远程工作台' }
   if (force) await writeRemoteEnabled(true)
-  if (!(await readDeviceCredentials())) return { status: 'disabled', enabled: false, lastError: '请先连接 ModMind 账号' }
+  if (!credentials) return { status: 'disabled', enabled: false, lastError: '请先连接 ModMind 账号' }
   if (remoteClient) return remoteClient.start()
   const endpoint = remoteEndpoint()
   if (!endpoint) return { status: 'disabled', enabled: false }
@@ -4667,10 +4810,10 @@ interface SnapshotManifest extends SnapshotInfo {
 
 async function prepareConversationRequest(project: ProjectInfo, prompt: string, surface: AiSurface, options: AiCreateCodeOptions, recovery?: ActiveAiTask): Promise<{ options: AiCreateCodeOptions; document: Awaited<ReturnType<typeof conversationStore.read> >; turnId: string }> {
   const conversationId = options.conversationId?.trim() || recovery?.conversationId || `${surface === 'workspace' ? 'ws' : 'idea'}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
-  const created = await conversationStore.create(project.path, { id: conversationId, surface })
+  const created = await conversationStore.create(project.path, { id: conversationId, surface, agentMode: options.agentMode ?? recovery?.agentMode })
   const generation = options.generation ?? created.generation
   const turnId = options.turnId?.trim() || `turn-${randomUUID()}`
-  const nextOptions = { ...options, conversationId, generation, turnId }
+  const nextOptions = { ...options, ...(created.agentMode ? { agentMode: created.agentMode } : {}), conversationId, generation, turnId }
   // The user turn is the recovery boundary. Native provider output is appended
   // later, but the request itself is durable before the provider is spawned.
   const existing = created.events.some((event) => event.turnId === turnId && event.kind === 'user')
@@ -4703,6 +4846,8 @@ interface AiWorkflowState {
 }
 
 interface ActiveAiTask {
+  agentMode?: 'beginner'
+  modelSelection?: AiModelSelection
   workbenchFeatures?: WorkbenchFeatures
   taskId: string
   runId?: string
@@ -5395,12 +5540,26 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
   }
   const addonService = createAddonRelationshipService(() => project)
   const addonContext = await addonService.describeForAi().catch(() => null)
+  const soundMcp = createSoundMcpHandlers({
+    service: soundServiceForProject(project, path.join(app.getPath('userData'), 'minecraft-runtime', 'game'), path.join(app.getPath('userData'), 'sound-library')),
+    renderMusic: draft => {
+      if (!mainWindow) throw new Error('工作台窗口不可用，无法渲染音乐')
+      return renderMusicInWindow(mainWindow, draft, signal)
+    },
+    assertCurrent: () => {
+      signal.throwIfAborted()
+      if (!isJavaLoader(project.loader) || project.kind === 'modpack' || project.kind === 'server-plugin') throw new Error('声音工作台仅适用于 Java Mod 项目')
+      if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已经切换，请重新打开当前项目的工作台')
+    }
+  })
   const handlers: ExternalAgentBridgeHandlers = {
     modpackModules: input => inspectModpackModules(project, input),
     modpackDelegateModule: async input => moduleTasks.start(input),
     modpackModuleTask: input => moduleTasks.read(input),
     projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
     resourcePackOperation: input => resourcePackAgentOperation(project, input),
+    soundRead: soundMcp.read,
+    soundCreate: soundMcp.create,
     serverOperation: input => localServerAgentOperation(project, input, signal),
     creationContext: input => creationContextOperation(project, input),
     projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
@@ -6095,16 +6254,18 @@ async function runExternalCodingAgent(
   const signal = taskSignal ?? new AbortController().signal
   throwIfAborted(signal, 'Agent 任务已停止')
   const surface: AiSurface = context.surface === 'inspiration' ? 'inspiration' : 'workspace'
-  const isInspiration = usesInspirationWorkflow(context)
-  const selectedFeatures = context.workbenchFeatures ?? recovery?.workbenchFeatures
+  const beginnerAgent = surface === 'workspace' && (context.agentMode === 'beginner' || recovery?.agentMode === 'beginner')
+  const isInspiration = usesInspirationWorkflow({ ...context, ...(beginnerAgent ? { agentMode: 'beginner' } : {}) })
+  const modelSelection = normalizeAiModelSelection(context.modelSelection ?? recovery?.modelSelection)
+  const selectedFeatures = beginnerAgent ? undefined : context.workbenchFeatures ?? recovery?.workbenchFeatures
   const workbenchFeatures = selectedFeatures === undefined ? undefined : normalizeWorkbenchFeatures(selectedFeatures)
-  if (project.draft && !isInspiration) throw new Error('当前项目仅用于对话，请先补齐版本和平台信息，再开始制作')
+  if (project.draft && !isInspiration && !beginnerAgent) throw new Error('当前项目仅用于对话，请先补齐版本和平台信息，再开始制作')
   const recoveryBackend = recovery?.backend
   const backendChanged = Boolean(recoveryBackend && recoveryBackend !== backend)
   const storedConversation = context.conversationId ? await conversationStore.read(project.path, context.conversationId).catch(() => null) : null
-  const nativeSessionId = recovery?.nativeSessions?.[backend]
+  const nativeSessionId = (recovery?.nativeSessions?.[backend]
     ?? (!backendChanged && recoveryBackend === backend ? recovery?.sessionId : undefined)
-    ?? storedConversation?.native[backend]?.sessionId
+    ?? storedConversation?.native[backend]?.sessionId)
   // Resumed checkpoints keep their original conversation scope so the CLI
   // session continues inside the same workbench thread.
   const sessionScope = recovery ? aiRecoverySessionScope(recovery) : normalizeAiSessionScope(context.sessionScope)
@@ -6123,7 +6284,7 @@ async function runExternalCodingAgent(
     prompt = await creation.begin(creationTaskId, prompt, context.conversationId)
     context = { ...context, fallbackPrompt: await creation.recover(prompt, context.conversationId, context.fallbackPrompt) }
   }
-  const settings = await awaitWithAbort(readSettings(), signal, 'Agent 任务已停止')
+  const settings = settingsForAiSelection(await awaitWithAbort(readSettings(), signal, 'Agent 任务已停止'), backend, modelSelection)
   const sendCodingProgress = (item: PipelineEvent): void => {
     sendAiProgress(event, item, sessionId, project.path, context.runId)
     lifecycle.onProgress?.(item)
@@ -6131,6 +6292,7 @@ async function runExternalCodingAgent(
   const inspirationFeatures = surface === 'inspiration' ? normalizeInspirationFeatures(context.inspirationFeatures) : undefined
   const savedExternalConfiguration = settings.externalAgents?.[externalBackend] ?? {}
   const runExternalConfiguration = savedExternalConfiguration
+  let executionUsage: import('../shared/types').AiTokenUsage | undefined
   const safetyReviewerConfig: AiReviewerConfig = { reviewMode: 'codex-auto' }
   let codexSetup: Awaited<ReturnType<typeof prepareCodex>> | undefined
   if (usesQuota) {
@@ -6141,7 +6303,7 @@ async function runExternalCodingAgent(
         await awaitWithAbort(ensureQuotaAccountReady(), preparingSignal, 'Agent 任务已停止')
         codexSetup = await prepareQuotaCodex(project, sessionScope, (progress) => {
           if (!preparingSignal.aborted) sendCodingProgress(pipelineEvent('planning', progress.title, progress.detail, progress.status))
-        }, preparingSignal)
+        }, preparingSignal, modelSelection ? await readBeginnerAgentServerConfig(modelSelection) : undefined)
         throwIfAborted(preparingSignal)
         break
       } catch (error) {
@@ -6195,6 +6357,7 @@ async function runExternalCodingAgent(
   const generation = context.generation ?? storedConversation?.generation ?? 0
   const turnId = context.turnId ?? `turn-${taskId}`
   const activeTask: ActiveAiTask = {
+    ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}),
     workbenchFeatures,
     taskId,
     runId: context.runId ?? recovery?.runId ?? taskId,
@@ -6203,6 +6366,7 @@ async function runExternalCodingAgent(
     startedAt: recovery?.startedAt ?? new Date().toISOString(),
     changedFiles: recovery?.changedFiles ?? [],
     prompt,
+    ...(modelSelection ? { modelSelection } : {}),
     ...(context.fallbackPrompt || recovery?.fallbackPrompt ? { fallbackPrompt: context.fallbackPrompt ?? recovery?.fallbackPrompt } : {}),
     surface,
     sessionScope,
@@ -6318,7 +6482,7 @@ async function runExternalCodingAgent(
           externalAgents: { ...settings.externalAgents, [externalBackend]: runExternalConfiguration }
         }), signal, 'Agent 任务已停止')
     const providerRouteIdentity = usesQuota
-      ? await awaitWithAbort(readBeginnerAgentServerConfig(), signal, 'Agent 任务已停止').then((config) => `${config.baseUrl}\n${config.model}\n${codexSetup?.version ?? ''}`)
+      ? await awaitWithAbort(readBeginnerAgentServerConfig(modelSelection), signal, 'Agent 任务已停止').then((config) => `${config.baseUrl}\n${config.model}\n${codexSetup?.version ?? ''}`)
       : `${runExternalConfiguration.baseUrl ?? 'local'}\n${runExternalConfiguration.model ?? 'local'}\n${configuredExecutable ?? 'detected'}`
     const retryScope = createHash('sha256').update(`${backend}\n${providerRouteIdentity}`).digest('hex').slice(0, 24)
     const sessionFingerprint = createHash('sha256').update(`${backend}\n${externalBackend}`).digest('hex').slice(0, 24)
@@ -6354,17 +6518,18 @@ async function runExternalCodingAgent(
       runId: activeTask.runId,
       appVersion: app.getVersion(),
       executable: configuredExecutable,
-      env: managedExternalEnvironment,
+      env: externalBackend === 'claude' && modelSelection ? { ...managedExternalEnvironment, ANTHROPIC_MODEL: modelSelection.model, CLAUDE_CODE_EFFORT_LEVEL: modelSelection.reasoningLevel === 'auto' ? undefined : modelSelection.reasoningLevel } : managedExternalEnvironment,
       sessionHome: codexSetup?.home ?? (externalBackend === 'claude' ? claudeSessionHome(managedExternalEnvironment ?? process.env) : undefined),
-      ...(!usesQuota && externalBackend === 'codex' && runExternalConfiguration.model ? { model: runExternalConfiguration.model, modelProvider: 'thirdparty' } : {}),
+      ...(!usesQuota && runExternalConfiguration.model ? { model: runExternalConfiguration.model, reasoningEffort: runExternalConfiguration.reasoningEffort, ...(externalBackend === 'codex' ? { modelProvider: 'thirdparty' } : {}) } : {}),
       ...(usesQuota ? {
         liveConfiguration: quotaConfiguration,
         refreshConfiguration: async (configurationSignal: AbortSignal) => {
           const revision = quotaConfiguration.current()
-          const config = await awaitWithAbort(readBeginnerAgentServerConfig(), configurationSignal)
+          const config = await awaitWithAbort(readBeginnerAgentServerConfig(modelSelection), configurationSignal)
           const prepared = await prepareQuotaCodex(project, sessionScope, undefined, configurationSignal, config)
+          codexSetup = prepared
           throwIfAborted(configurationSignal)
-          const adapterUrl = await chatCompletionsAdapter.baseUrl(config.baseUrl, `${codexProviderIdentity(config)}:${revision.sequence}`, revision.signal, config.model, config.model)
+          const adapterUrl = await chatCompletionsAdapter.baseUrl(config.baseUrl, `${codexProviderIdentity(config)}:${revision.sequence}`, revision.signal, config.model, config.model, config.reasoningEffort ?? null)
           diagnosticJournal.record({ subsystem: 'ai', operation: 'execution-configuration', phase: 'prepared', message: `执行模型 ${config.model}`, data: { runId: activeTask.runId, revision: revision.sequence, baseUrl: config.baseUrl, model: config.model } })
           return {
             executable: prepared.executable, env: prepared.environment, sessionHome: prepared.home,
@@ -6383,8 +6548,8 @@ async function runExternalCodingAgent(
       workflowSourceDirectory: bundledCodexSkillsDirectory(),
       pluginTarget: createPluginBridgeTarget(),
       systemPrompt: isInspiration
-        ? `你处于灵感台讨论与研究模式，使用与工作台相同的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
-        : codingWorkflowPrompt(project),
+        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
+        : `${WORKBENCH_REQUEST_GUIDANCE}\n\n${beginnerAgent ? BEGINNER_AGENT_WORKFLOW_GUIDANCE : ''}\n\n${project.draft ? `当前工程尚未创建。已记录的选择：${JSON.stringify(project.draft.target)}。结合本次对话补齐必要信息后使用 modmind_project_setup；不要手写模板或修改占位项目配置。` : codingWorkflowPrompt(project)}`,
       sessionScope,
       sessionLane: backend,
       // A conversation owns its native CLI thread. Inspiration may resume
@@ -6398,12 +6563,21 @@ async function runExternalCodingAgent(
       signal: signal ?? new AbortController().signal,
       persistentRetry: true,
       onStarted: () => {
+        if (codexSetup?.contextWindow) {
+          executionUsage = { contextWindow: codexSetup.contextWindow, contextWindowSource: 'configuration', model: codexSetup.model, backend }
+          sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
+        }
         activeTask.lifecycle = 'running'
         delete activeTask.recovery
         workflowWrite = workflowWrite.then(writeTask).catch(() => undefined)
         lifecycle.onBackendReady?.()
       },
       onUsage: usage => {
+        executionUsage = { ...usage, contextTokens: usage.contextTokens ?? (usage.cumulative ? executionUsage?.contextTokens : usage.inputTokens),
+          contextWindow: codexSetup?.contextWindow ?? usage.contextWindow ?? executionUsage?.contextWindow,
+          contextWindowSource: codexSetup?.contextWindow ? 'configuration' : 'runtime',
+          model: usage.model ?? codexSetup?.model ?? runExternalConfiguration.model, backend }
+        sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
         if (!isInspiration) void creation.mutate(state => {
           const task = state.tasks.find(item => item.id === creationTaskId)
           if (task) task.usage = { input: usage.inputTokens ?? 0, cached: usage.cachedInputTokens ?? 0, output: usage.outputTokens ?? 0 }
@@ -6511,7 +6685,36 @@ async function runExternalCodingAgent(
           if (task.result?.changedFiles.length) recordWorkflow('implementation', `Module workbench completed edits for ${task.namespace}`)
           return task
         },
-        projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
+        get projectInfo() { return { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) } },
+        projectSetup: async input => {
+          signal.throwIfAborted()
+          const wasDraft = Boolean(project.draft)
+          const updated = await initializeDraftProject(project.path, {
+            resolve: (loader, version) => requireLoaderCatalog().resolve(loader, version),
+            scaffold: async candidate => {
+              signal.throwIfAborted()
+              if (candidate.kind === 'modpack') await createModpackTemplate(candidate)
+              else await writeProjectTemplate(candidate)
+            }
+          }, input as Pick<Required<ProjectCreateInput>, 'kind' | 'loader' | 'minecraftVersion'>)
+          // Every bridge closure and runtime operation keeps this live project
+          // identity; no second agent or phase handoff is needed after setup.
+          Object.assign(project, updated)
+          delete project.draft
+          if (currentProject && sameProjectPath(currentProject.path, project.path)) {
+            currentProject = project
+            if (!event.sender.isDestroyed()) event.sender.send('project:changed', project)
+          }
+          await rememberRecentProject(project)
+          if (wasDraft) {
+            declaredIntent = 'engineering'
+            activeTask.state.intent = 'engineering'
+            recordWorkflow('implementation', 'Created the project from confirmed user selections')
+            await writeTask()
+          }
+          sendCodingProgress(pipelineEvent('writing', '项目已创建', `${project.name} · ${project.loader} ${project.minecraftVersion}`, 'success'))
+          return { project: { ...project }, guidance: codingWorkflowPrompt(project), next: '项目已创建。需求明确就直接继续制作；否则询问一个必要问题并给出选项和推荐。无需再次确认开始，也不要重建工程。' }
+        },
         resourcePackOperation: input => resourcePackAgentOperation(project, input),
         serverOperation: input => localServerAgentOperation(project, input, signal),
         creationContext: input => creationContextOperation(project, input),
@@ -6974,7 +7177,8 @@ async function runExternalCodingAgent(
             const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(asset.dataUrl)
             let relative: string | undefined
             if (match) {
-              relative = path.posix.join(project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated', `${generated.jobId}-${index + 1}.png`)
+              const extension = asset.dataUrl.startsWith('data:image/jpeg;') ? 'jpg' : asset.dataUrl.startsWith('data:image/webp;') ? 'webp' : 'png'
+              relative = path.posix.join(project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated', `${generated.jobId}-${index + 1}.${extension}`)
               await fs.writeFile(path.join(project.path, ...relative.split('/')), Buffer.from(match[1], 'base64'))
               files.push(relative)
             }
@@ -7052,14 +7256,17 @@ async function runExternalCodingAgent(
       delivery: creationState?.tasks.find(task => task.id === creationTaskId)?.delivery,
       workflow: finalWorkflowAudit
     }
-    await fs.mkdir(path.join(project.path, 'docs'), { recursive: true })
-    // This file describes the latest completed AI turn, including
-    // informational turns with an empty files list.
-    if (!isInspiration) await fs.writeFile(resolveProjectPath('docs/last-ai-change.json'), JSON.stringify(report, null, 2), 'utf8')
+    // Guided questions stay in conversation storage instead of changing the
+    // project's docs on every clarification or informational reply.
+    const saveProjectReport = !isInspiration && (!beginnerAgent || changedFiles.length > 0)
+    if (saveProjectReport) {
+      await fs.mkdir(path.join(project.path, 'docs'), { recursive: true })
+      await fs.writeFile(resolveProjectPath('docs/last-ai-change.json'), JSON.stringify(report, null, 2), 'utf8')
+    }
     if (!changedFiles.length) {
       await fs.rm(path.join(project.path, projectDataDirectory(project), 'snapshots', snapshot.id), { recursive: true, force: true }).catch(() => undefined)
     }
-    if (!isInspiration) await fs.writeFile(resolveProjectPath('docs/last-ai-response.txt'), sanitizeAiUserText(finalResponse), 'utf8')
+    if (saveProjectReport) await fs.writeFile(resolveProjectPath('docs/last-ai-response.txt'), sanitizeAiUserText(finalResponse), 'utf8')
     if (!isInspiration) await clearActiveAiTask(project, taskId)
     // Publish the completed task result as one dedicated event. The last
     // candidate response is intentionally withheld from the ordinary stream
@@ -7068,7 +7275,8 @@ async function runExternalCodingAgent(
     const finalIdentity = result.finalAnswer
       ? { itemId: result.finalAnswer.itemId, streamId: result.finalAnswer.streamId }
       : bufferedFinalIdentity
-    const answerOptions = result.usage ? { usage: result.usage, ...(finalIdentity ?? {}) } : finalIdentity
+    const finalUsage = executionUsage ?? result.usage
+    const answerOptions = finalUsage ? { usage: finalUsage, ...(finalIdentity ?? {}) } : finalIdentity
     bufferedFinalIdentity = undefined
     sendAiOutput(event, 'answer', finalResponse, sessionId, project.path, context.runId, answerOptions)
     sendCodingProgress({ ...pipelineEvent('complete', `${agentLabel} 本轮结束`, changedFiles.length ? `检测到 ${changedFiles.length} 个文件变化` : '已回复，本轮未检测到文件变化', 'success'), changedFiles })
@@ -7278,15 +7486,62 @@ async function runAutomatedE2E(): Promise<void> {
 }
 
 function registerIpc(): void {
+  diagnosticHandle('itemEditor:list', async (_event, projectPath: string) => {
+    const project = requireProject()
+    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
+    return listManagedItems(project)
+  })
+  diagnosticHandle('itemEditor:catalog', async (_event, projectPath: string) => {
+    const project = requireProject()
+    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
+    return listVanillaItems(project.minecraftVersion, undefined, app.getPath('userData'))
+  })
+  diagnosticHandle('itemEditor:save', async (_event, projectPath: string, input: ItemEditorSaveInput) => {
+    const project = requireProject()
+    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
+    return saveManagedItem(project, input)
+  })
+  diagnosticHandle('itemEditor:remove', async (_event, projectPath: string, id: string, revision: number) => {
+    const project = requireProject()
+    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
+    return removeManagedItem(project, id, revision)
+  })
+  diagnosticHandle('itemEditor:importTexture', async (_event, projectPath: string) => {
+    const project = requireProject()
+    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
+    const selection = await dialog.showOpenDialog(mainWindow!, { title: '导入物品贴图', properties: ['openFile'], filters: [{ name: 'PNG 图片', extensions: ['png'] }] })
+    if (selection.canceled || !selection.filePaths[0]) return null
+    if (!sameProjectPath(project.path, requireProject().path)) throw new Error('项目已经切换，请重新导入贴图')
+    return importItemTexture(project, selection.filePaths[0])
+  })
   ipcMain.on('app:platformInfo', (event) => { event.returnValue = runtimePlatformInfo(process.platform, process.arch, app.isPackaged) })
   diagnosticHandle('app:version', () => app.getVersion())
-  diagnosticHandle('app:checkForUpdates', () => checkForAppUpdates())
+  diagnosticHandle('app:checkForUpdates', () => {
+    if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
+    return appUpdateService.checkForUpdates(checkForAppUpdates)
+  })
   diagnosticHandle('app:getUpdateState', () => appUpdateService?.snapshot() ?? { phase: 'idle', currentVersion: app.getVersion() })
   diagnosticHandle('app:downloadUpdate', () => {
     if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
     return appUpdateService.downloadUpdate()
   })
   diagnosticHandle('app:installUpdate', () => appUpdateService?.installDownloadedUpdate() ?? false)
+  diagnosticHandle('app:updateNow', () => {
+    if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
+    return appUpdateService.updateNow(checkForAppUpdates)
+  })
+  diagnosticHandle('app:reinstallLatest', async (_event, confirmed: unknown) => {
+    if (confirmed !== true) throw new Error('请先确认重装')
+    if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
+    return appUpdateService.reinstallLatest(async () => confirmed === true, async report => prepareCleanReinstall({
+        executablePath: process.execPath,
+        userDataPath: app.getPath('userData'), appDataPath: app.getPath('appData'),
+        localAppDataPath: process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
+        homePath: app.getPath('home'), tempPath: app.getPath('temp'),
+        protectedPaths: [...(await readRecentProjects()).map(project => project.path), ...(currentProject ? [currentProject.path] : []), app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')],
+        updateUrl: configuredAppUpdateUrl(), helperScriptPath: path.join(process.resourcesPath, 'reinstall-app.ps1'), report
+    }))
+  })
   diagnosticHandle('downloads:list', () => downloadActivities.snapshot())
   diagnosticHandle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))
   diagnosticHandle('downloads:cancel', (_event, id: unknown) => downloadActivities.cancel(typeof id === 'string' ? id : ''))
@@ -7353,9 +7608,15 @@ function registerIpc(): void {
     if (window && window !== mainWindow) return window.close()
     return handleWindowClose()
   })
+  diagnosticHandle('window:resolveClose', (event, choice: unknown, remember: unknown) => {
+    if (event.sender !== mainWindow?.webContents || !resolveCloseChoice) return
+    if (choice !== 'tray' && choice !== 'quit' && choice !== 'cancel') return
+    resolveCloseChoice({ behavior: choice, remember: remember === true })
+    resolveCloseChoice = null
+  })
   diagnosticHandle('window:openDetached', (_event, view: unknown, title: unknown) => {
     const target = typeof view === 'string' ? view : ''
-    if (!sidebarViewIds.has(target as SidebarViewId) && !/^group:\d{1,3}$/.test(target)) throw new Error('Unsupported detached window target')
+    if (!sidebarViewIds.has(target as SidebarViewId) && !/^group:(?:\d{1,3}|custom-[a-z0-9-]{1,64}|ungrouped)$/.test(target)) throw new Error('Unsupported detached window target')
     const window = createDetachedWindow(target as DetachedWindowTarget, typeof title === 'string' ? title : '')
     return { alwaysOnTop: window.isAlwaysOnTop() }
   })
@@ -7513,6 +7774,7 @@ function registerIpc(): void {
   })
   diagnosticHandle('minecraft:syncProjectMod', () => requireMinecraftRuntime().syncProjectMod())
   diagnosticHandle('minecraft:syncModpack', () => requireMinecraftRuntime().syncModpack())
+  diagnosticHandle('minecraft:syncKubeJsServerScripts', () => syncCurrentKubeJsServerScripts())
   diagnosticHandle('minecraft:listMods', () => requireMinecraftRuntime().listMods())
   diagnosticHandle('minecraft:removeMod', (_event, name: string) => requireMinecraftRuntime().removeMod(name))
   diagnosticHandle('minecraft:importMods', async () => {
@@ -7928,6 +8190,7 @@ function registerIpc(): void {
     if (typeof namespace !== 'string' || !['client', 'server', 'both', 'unknown'].includes(String(side))) throw new Error('invalid self-made mod side')
     return updateModpackModuleSide(pack, namespace, side as ModpackModuleSide)
   })
+  diagnosticHandle('modpack:removeModule', (_event, namespace: string) => removeModpackModule(requireProject(), namespace, (target) => shell.trashItem(target)))
   diagnosticHandle('modpack:openModule', async (_event, namespace: string) => {
     const pack = requireProject()
     const manifest = await readModpackManifest(pack)
@@ -8308,6 +8571,7 @@ function registerIpc(): void {
   })
   registerServerPluginIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(localServerManager?.isBusy() || runsForProject(requireProject().path).length) })
   registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), blockbench: requireBlockbench })
+  registerSoundLibraryIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), minecraftRoot: () => requireMinecraftRuntime().managedMinecraftDirectory(), cacheRoot: path.join(app.getPath('userData'), 'sound-library') })
   diagnosticHandle('local-test:getState', () => localTestService?.getState())
   diagnosticHandle('local-test:start', (_event, options: LocalTestOptions) => {
     if (!localTestService) throw new Error('本机测试服务不可用')
@@ -8455,6 +8719,68 @@ function registerIpc(): void {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.archive(project.path, conversationId, archived === true)
+  })
+  diagnosticHandle('conversations:rename', async (_event, projectPath: string, conversationId: string, title: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.rename(project.path, conversationId, title)
+  })
+  diagnosticHandle('conversations:pin', async (_event, projectPath: string, conversationId: string, pinned: boolean) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.pin(project.path, conversationId, pinned === true)
+  })
+  diagnosticHandle('conversations:generateTitle', async (_event, projectPath: string, conversationId: string, userText: string, answer: string, backend: AgentSettings['codingBackend'], modelSelection?: AiModelSelection) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    const document = await conversationStore.read(project.path, conversationId)
+    if (!document) throw new Error('对话不存在')
+    if (document.titleSource) return document
+    if (typeof userText !== 'string' || !userText.trim() || typeof answer !== 'string' || !answer.trim()) throw new Error('首轮问答内容不完整')
+    const settings = await readSettings()
+    const selected = backend === 'quota' || backend === 'codex' || backend === 'claude' ? backend : settings.codingBackend
+    const config = selected === 'quota'
+      ? await readBeginnerAgentServerConfig(modelSelection).catch(() => null)
+      : await getAiReviewerConfig(false, selected, settings).catch(() => null)
+    const titlePrompt = `根据首轮对话给这段聊天起一个简短、具体的中文标题，最多 20 个汉字。只输出标题，不要引号、解释或标点。\n用户：${userText.slice(0, 1200)}\nAI：${answer.slice(0, 1800)}`
+    let title = selected === 'quota' ? '' : answer.replaceAll(/```[\s\S]*?```/gu, '').replaceAll(/[#>*`_]/gu, '').split(/\r?\n|[。！？!?]/u).map(item => item.trim()).find(Boolean) ?? ''
+    if (config?.baseUrl && config.apiKey && config.model) {
+      try {
+        const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: modelSelection?.model || config.model, messages: [{ role: 'user', content: titlePrompt }] }),
+          signal: AbortSignal.timeout(20_000)
+        })
+        if (!response.ok) throw new Error('对话命名请求失败')
+        const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
+        title = typeof body.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : title
+      } catch (error) { if (selected === 'quota') throw error }
+    } else if (selected !== 'quota') {
+      const unavailable = async (): Promise<never> => { throw new Error('对话命名不能操作项目') }
+      const bridge: ExternalAgentBridgeHandlers = {
+        projectInfo: { name: project.name },
+        projectFiles: async () => ({ files: [], truncated: false }),
+        projectSearch: async () => ({ matches: [], truncated: false }),
+        setIntent: unavailable, applyEdits: unavailable, updateTodo: unavailable,
+        mappingsSearch: unavailable, mappingsClass: unavailable, dependencySearch: unavailable,
+        dependencyInstall: unavailable, contentValidate: unavailable, testMatrix: unavailable,
+        releasePreflight: unavailable, build: unavailable, testMinecraft: unavailable,
+        blockbenchActions: unavailable, runtimeState: unavailable
+      }
+      try {
+        const result = await runExternalAgent({
+          kind: selected, project, prompt: titlePrompt, readOnly: true, resumeSession: false,
+          sessionScope: `conversation-title/${conversationId}`, signal: AbortSignal.timeout(45_000),
+          onOutput: () => undefined, onProgress: () => undefined, bridge
+        })
+        title = result.finalAnswer?.text ?? title
+        if (result.sessionId) await deleteExternalAgentSession(project, selected, result.sessionId).catch(() => undefined)
+      } catch { /* Keep the short phrase from the completed first answer. */ }
+    }
+    const clean = title.replaceAll(/<[^>]*>/gu, '').replaceAll(/^[\s"'“”「」《》#*`]+|[\s"'“”「」《》。.!！?？#*`]+$/gu, '').split(/\r?\n/u)[0]?.trim() ?? ''
+    if (!clean) throw new Error('AI 未返回有效对话名称')
+    return conversationStore.setGeneratedTitle(project.path, conversationId, clean)
   })
   diagnosticHandle('conversations:delete', async (_event, projectPath: string, conversationId: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
@@ -8862,6 +9188,16 @@ function registerIpc(): void {
       })
     }
   })
+  diagnosticHandle('inspiration:listModels', async (_event, backend: AgentSettings['codingBackend']) => {
+    if (backend === 'quota') return listBeginnerModels(true)
+    if (backend !== 'codex' && backend !== 'claude') throw new Error('不支持的 AI 引擎')
+    const settings = await readSettings()
+    const configuration = settings.externalAgents?.[backend] ?? {}
+    if (backend === 'claude' && configuration.mode !== 'hosted') {
+      return configuration.model ? modelReasoningCatalog.enrich([{ id: configuration.model }], '') : []
+    }
+    return listAvailableAgentModels(backend, configuration)
+  })
   diagnosticHandle('inspiration:readKnowledge', async (_event, projectPath: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在')
@@ -9157,6 +9493,11 @@ function registerIpc(): void {
       ...settings,
       externalAgents: {...settings.externalAgents, [kind]: nextConfiguration}
     }
+    if (kind === 'codex' || nextConfiguration.mode === 'hosted') {
+      await refreshConfiguredReasoning(kind, nextConfiguration)
+      const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
+      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''))
+    }
     const saved = await saveAgentSettings(next)
     return configureExternalAgentProvider(kind, saved)
   })
@@ -9292,7 +9633,7 @@ function registerIpc(): void {
     const run: ActiveAiRun = {
       id: aiRunId(event.sender.id, project.path, sessionId), senderId: event.sender.id, startedAt: recovery?.startedAt ?? new Date().toISOString(), sessionId, sessionScope: conversationOptions.sessionScope, projectPath: project.path,
       executionProfile: normalizedExecutionProfile, backend: selectedBackend, surface: requestedSurface,
-      ...(options?.workbenchPhase === 'discussion' ? { workbenchPhase: 'discussion' as const } : {}),
+      ...(conversationOptions.agentMode !== 'beginner' && options?.workbenchPhase === 'discussion' ? { workbenchPhase: 'discussion' as const } : {}),
       conversationId: conversationOptions.conversationId,
       generation: conversationOptions.generation,
       turnId: conversationOptions.turnId
@@ -9640,6 +9981,7 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return
+  await pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
   protocol.handle('modmind-media', request => serveBackgroundMedia(request, path.join(app.getPath('userData'), 'appearance-media')))
   let expectedSampleAt = Date.now() + 30_000
   const metricsTimer = setInterval(() => {
@@ -9699,6 +10041,15 @@ app.whenReady().then(async () => {
     hostContextOp: async (plugin, op, args) => {
       const pluginId = plugin.manifest.id
       switch (op) {
+        case 'minecraftSyncModpack': {
+          const project = requireProject()
+          if (project.kind !== 'modpack') throw new Error('实例同步仅适用于当前整合包项目')
+          return withMinecraftResourceLock(() => {
+            if (!currentProject || !sameProjectPath(project.path, currentProject.path)) throw new Error('项目已切换，请在当前整合包重新同步')
+            return requireMinecraftRuntime().syncModpack()
+          })
+        }
+        case 'minecraftSyncKubeJsServerScripts': return syncCurrentKubeJsServerScripts()
         case 'overlayGetState': return pluginOverlayWindowState(pluginId)
         case 'overlayClose': return setPluginOverlayVisibility(pluginId, false)
         case 'overlayShow':

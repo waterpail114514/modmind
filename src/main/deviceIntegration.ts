@@ -1,4 +1,5 @@
 import type { AiModelInfo, AppVersionCheckResult, DeviceKeyStatus, DeviceUsage } from '../shared/types'
+import { parseReasoningCapabilities } from '../shared/modelReasoning'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
 
@@ -11,10 +12,20 @@ export interface DeviceCodeResult {
   expiresIn: number
 }
 
+export interface CustomApiConfig {
+  version: 1
+  providerId: string
+  baseUrl: string
+  apiKey: string
+  model: string
+  imageApi: { baseUrl: string; apiKey: string; model: string } | null
+}
+
 export type DevicePollResult =
   | { status: 'pending' }
   | { status: 'expired' }
   | { status: 'ok'; baseUrl: string; apiKey: string; balanceCents: string; username: string }
+  | { status: 'ok'; provider: 'custom'; usageTracked: false; requiresLocalSync: true; username: string }
 
 export class DeviceApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -63,14 +74,49 @@ export function openAiV1BaseUrl(value: string): string {
   return /\/v1$/i.test(base) ? base : `${base}/v1`
 }
 
-export function parseDeviceDeepLink(rawUrl: string, expectedSiteUrl: string): { siteUrl: string; code: string } {
+function parseCustomApi(encoded: string): CustomApiConfig {
+  if (encoded.length > 12000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error('自定义 API 同步数据无效')
+  let value: unknown
+  try { value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as unknown }
+  catch { throw new Error('自定义 API 同步数据无效') }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('自定义 API 同步数据无效')
+  const data = value as Record<string, unknown>
+  if (data.version !== 1) throw new Error('不支持的自定义 API 同步版本')
+  const field = (record: Record<string, unknown>, name: string): string => {
+    const value = record[name]
+    if (typeof value !== 'string' || !value.trim() || value.length > 4096) throw new Error(`自定义 API ${name} 无效`)
+    return value.trim()
+  }
+  const providerId = field(data, 'providerId')
+  if (providerId.length > 256) throw new Error('自定义 API providerId 无效')
+  const model = field(data, 'model')
+  if (model.length > 256) throw new Error('自定义 API model 无效')
+  const image = data.imageApi
+  if (image === undefined || (image !== null && (typeof image !== 'object' || Array.isArray(image)))) throw new Error('自定义图片 API 无效')
+  const imageData = image && typeof image === 'object' ? image as Record<string, unknown> : null
+  if (imageData && field(imageData, 'model').length > 256) throw new Error('自定义图片 API model 无效')
+  return {
+    version: 1, providerId,
+    baseUrl: normalizeRelayBaseUrl(field(data, 'baseUrl')),
+    apiKey: field(data, 'apiKey'), model,
+    imageApi: imageData ? {
+      baseUrl: normalizeRelayBaseUrl(field(imageData, 'baseUrl')),
+      apiKey: field(imageData, 'apiKey'),
+      model: field(imageData, 'model')
+    } : null
+  }
+}
+
+export function parseDeviceDeepLink(rawUrl: string, expectedSiteUrl: string): { siteUrl: string; code: string; customApi?: CustomApiConfig } {
   const url = new URL(rawUrl)
   if (url.protocol !== 'mcdev:' || url.hostname !== 'sync') throw new Error('不支持的 ModMind 深链')
   const siteUrl = normalizeSiteUrl(url.searchParams.get('site') ?? '')
   if (siteUrl !== normalizeSiteUrl(expectedSiteUrl)) throw new Error('深链站点与应用配置不匹配')
   const code = (url.searchParams.get('code') ?? '').trim().toUpperCase()
   if (!/^[A-Z0-9]{6,16}$/.test(code)) throw new Error('深链授权码无效')
-  return { siteUrl, code }
+  const customValues = url.searchParams.getAll('customApi')
+  if (customValues.length > 1) throw new Error('自定义 API 同步参数重复')
+  return { siteUrl, code, ...(customValues.length ? { customApi: parseCustomApi(customValues[0]) } : {}) }
 }
 
 function apiErrorMessage(value: unknown, fallback: string): string {
@@ -121,16 +167,23 @@ export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fe
   return { code, authUrl: auth.toString(), expiresIn: Math.min(expiresIn, 600) }
 }
 
-export async function pollDeviceCode(siteUrl: string, code: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<DevicePollResult> {
+export async function pollDeviceCode(siteUrl: string, code: string, signal: AbortSignal, fetcher: FetchLike = fetch, customLocal = false): Promise<DevicePollResult> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/poll`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(customLocal ? { 'X-ModMind-Custom-Local': '1' } : {}) },
     body: JSON.stringify({ code }),
     signal
   }, '查询授权状态失败')
   if (data.status === 'pending' || data.status === 'expired') return { status: data.status }
   if (data.status !== 'ok') throw new DeviceApiError('查询授权状态失败：未知状态', 200)
+  if (customLocal) {
+    const username = typeof data.username === 'string' ? data.username.trim() : ''
+    if (data.provider !== 'custom' || data.usageTracked !== false || data.requiresLocalSync !== true || !username) {
+      throw new DeviceApiError('自定义 API 授权响应无效', 200)
+    }
+    return { status: 'ok', provider: 'custom', usageTracked: false, requiresLocalSync: true, username }
+  }
   const baseUrl = typeof data.baseUrl === 'string' ? normalizeRelayBaseUrl(data.baseUrl) : ''
   const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : ''
   const balanceCents = typeof data.balanceCents === 'string' ? data.balanceCents : ''
@@ -280,7 +333,8 @@ export function parseModelPayload(payload: unknown): AiModelInfo[] {
     const id = [record.id, record.name, record.model].find((value) => typeof value === 'string' && value.trim())
     if (typeof id !== 'string' || id.length > 256) return null
     const ownedBy = typeof record.owned_by === 'string' ? record.owned_by : typeof record.ownedBy === 'string' ? record.ownedBy : undefined
-    return { id: id.trim(), ...(ownedBy ? { ownedBy } : {}) }
+    const reasoning = parseReasoningCapabilities(entry)
+    return { id: id.trim(), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}) }
   }).filter((entry): entry is AiModelInfo => Boolean(entry))
   return [...new Map(models.map((model) => [model.id, model])).values()]
     .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }))

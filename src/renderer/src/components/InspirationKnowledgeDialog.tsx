@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { InspirationNote } from '../../../shared/inspirationKnowledge'
 import { ReplyMarkdown } from './ReplyImages'
+import './inspiration-research.css'
 
 export default function InspirationKnowledgeDialog({ projectPath, notes, initialContent, onChange, onClose }: {
   projectPath: string; notes: InspirationNote[]; initialContent?: string

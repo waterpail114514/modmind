@@ -1,15 +1,17 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { ftbIconDescriptor, ftbIconKey } from '../shared/ftbIcon'
 import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestIcon } from './ftbquesticonservice'
+import { httpTransport } from './networkRequest'
 
 const roots: string[] = []
 beforeEach(() => { vi.stubEnv('APPDATA', path.join(os.tmpdir(), 'ftb-test-no-runtime')) })
-afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ftb-icons-')); roots.push(root)
   const project = { path: root, minecraftVersion: '1.20.1', kind: 'modpack' } as ProjectInfo
@@ -24,6 +26,20 @@ async function fixture() {
 async function pixels(url: string) { return sharp(Buffer.from(url.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer() }
 
 describe('FTB resource/model rendering', () => {
+  it('loads remote vanilla icon assets through the proxy-aware transport', async () => {
+    const f = await fixture()
+    const image = await f.png('#00ff00')
+    const request = vi.spyOn(httpTransport, 'request').mockImplementation(async url => {
+      const bytes = url.endsWith('/models/item/iron_ingot.json')
+        ? Buffer.from(JSON.stringify({ parent: 'item/generated', textures: { layer0: 'minecraft:item/iron_ingot' } }))
+        : url.endsWith('/textures/item/iron_ingot.png') ? image : null
+      return { ok: Boolean(bytes), statusCode: bytes ? 200 : 404, headers: { get: () => null }, body: Readable.from(bytes ? [bytes] : []) } as unknown as Awaited<ReturnType<typeof httpTransport.request>>
+    })
+    const result = await inspectFtbQuestIcon(f.project, 'minecraft:iron_ingot', true)
+    expect(result.icon?.quality).toBe('resolved')
+    expect([...(await pixels(result.icon!.url)).subarray(0, 3)]).toEqual([0, 255, 0])
+    expect(request).toHaveBeenCalled()
+  })
   it('retains NBT and canonicalizes description keys without merging appearances', () => {
     expect(ftbIconDescriptor('test:thing{CustomModelData:7}')).toEqual({ id: 'test:thing', tag: { CustomModelData: 7 } })
     expect(ftbIconKey({ id: 'test:a', tag: { a: 1, b: 2 } })).toBe(ftbIconKey({ tag: { b: 2, a: 1 }, id: 'test:a' }))

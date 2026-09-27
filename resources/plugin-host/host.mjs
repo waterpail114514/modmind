@@ -58,7 +58,7 @@ function requestContext(op, args) {
         contextWaiters.delete(id)
         reject(new Error(`上下文调用超时：${op}`))
       }
-    }, 15000)
+    }, op === 'minecraftSyncModpack' || op === 'minecraftSyncKubeJsServerScripts' ? 10 * 60_000 : 15000)
     contextWaiters.set(id, { resolve, reject, timer })
     post({ id, kind: 'ctx', op, args })
   })
@@ -83,6 +83,10 @@ const ctx = {
     setDraft: (text, options = {}) => permittedContext('chat.write', 'chatSetDraft', { ...options, text }),
     setContext: (key, text, target) => permittedContext('chat.context', 'chatSetContext', { key, text, target }),
     removeContext: (key, target) => permittedContext('chat.context', 'chatRemoveContext', { key, target })
+  },
+  minecraft: {
+    syncModpack: () => permittedContext('minecraft.sync', 'minecraftSyncModpack'),
+    syncKubeJsServerScripts: () => permittedContext('minecraft.sync', 'minecraftSyncKubeJsServerScripts')
   },
   projectInfo() {
     requirePermission('project.read')

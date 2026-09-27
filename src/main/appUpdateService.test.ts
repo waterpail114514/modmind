@@ -66,6 +66,89 @@ async function fixture(version: string): Promise<{ root: string; userData: strin
 }
 
 describe('AppUpdateService', () => {
+  async function maintenanceFixture(isPackaged = true) {
+    const files = await fixture('1.4.11')
+    const info = { version: '1.4.11', files: [{ url: 'ModMind-Setup-1.4.11.exe', sha512: files.sha512, size: 10 * 1024 * 1024 + 1 }], path: 'ModMind-Setup-1.4.11.exe', sha512: files.sha512, releaseDate: '2026-09-26T00:00:00.000Z' }
+    const updater = new FakeUpdater({ isUpdateAvailable: true, updateInfo: info, versionInfo: info }, files.installer)
+    const quit = vi.fn(), beforeInstall = vi.fn(), notifyDownloaded = vi.fn()
+    const service = new AppUpdateService({ currentVersion: '1.4.10', updateUrl: 'https://updates.example.com/', userDataPath: files.userData, isPackaged, platform: 'win32', updater: updater as unknown as AppUpdater, beforeInstall, quit, notifyDownloaded })
+    const result = { currentVersion: '1.4.10', latestVersion: '1.4.11', currentChannel: 'stable' as const, targetChannel: 'stable' as const, updateAvailable: true }
+    return { files, updater, service, quit, beforeInstall, notifyDownloaded, result }
+  }
+
+  it('checks without downloading and distinguishes no update from a network failure', async () => {
+    const { service, updater, result } = await maintenanceFixture()
+    await service.checkForUpdates(async () => ({ ...result, latestVersion: result.currentVersion, updateAvailable: false }))
+    expect(service.snapshot().phase).toBe('up-to-date')
+    expect(updater.downloadCalls).toBe(0)
+    await expect(service.checkForUpdates(async () => { throw new Error('offline') })).rejects.toThrow('offline')
+    expect(service.snapshot()).toMatchObject({ phase: 'error', message: 'offline' })
+  })
+
+  it('checks, downloads, and silently installs in one action without a second update dialog', async () => {
+    const { service, updater, result, notifyDownloaded, beforeInstall } = await maintenanceFixture()
+    const states: unknown[] = []
+    service.subscribe(state => states.push(state))
+    await expect(service.updateNow(async () => result)).resolves.toMatchObject({ phase: 'installing' })
+    expect(updater.downloadCalls).toBe(1)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(notifyDownloaded).not.toHaveBeenCalled()
+    expect(states).toContainEqual(expect.objectContaining({ phase: 'downloaded', installAfterDownload: true }))
+  })
+
+  it('does not download or quit when one-click update finds the current version', async () => {
+    const { service, updater, result, quit } = await maintenanceFixture()
+    await expect(service.updateNow(async () => ({ ...result, updateAvailable: false, latestVersion: result.currentVersion }))).resolves.toMatchObject({ phase: 'up-to-date' })
+    expect(updater.downloadCalls).toBe(0)
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
+  })
+
+  it('shows confirmation and checks versions before validating the installation record', async () => {
+    const { service, result } = await maintenanceFixture(false)
+    const confirm = vi.fn(async () => false), prepare = vi.fn()
+    await expect(service.reinstallLatest(confirm, prepare)).resolves.toBeNull()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(prepare).not.toHaveBeenCalled()
+    await expect(service.updateNow(async () => ({ ...result, updateAvailable: false }))).resolves.toMatchObject({ phase: 'up-to-date' })
+  })
+
+  it('cancels reinstall before preparing or downloading anything', async () => {
+    const { service, quit, beforeInstall } = await maintenanceFixture()
+    const prepare = vi.fn()
+    await expect(service.reinstallLatest(async () => false, prepare)).resolves.toBeNull()
+    expect(prepare).not.toHaveBeenCalled()
+    expect(beforeInstall).not.toHaveBeenCalled()
+    expect(quit).not.toHaveBeenCalled()
+    expect(service.snapshot().phase).toBe('idle')
+  })
+
+  it('waits for the helper to be ready before shutdown and blocks concurrent maintenance', async () => {
+    const { service, quit, result } = await maintenanceFixture()
+    let release!: () => void
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const prepare = vi.fn(async () => async () => ready)
+    const pending = service.reinstallLatest(async () => true, prepare)
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce())
+    expect(quit).not.toHaveBeenCalled()
+    await expect(service.updateNow(async () => result)).rejects.toThrow('正在进行')
+    await expect(service.downloadUpdate()).rejects.toThrow('正在进行')
+    await expect(service.installDownloadedUpdate()).rejects.toThrow('正在进行')
+    release()
+    await expect(pending).resolves.toMatchObject({ phase: 'installing', operation: 'reinstall' })
+    expect(quit).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the app running if preparing the reinstall or launching its helper fails', async () => {
+    const { service, quit, beforeInstall } = await maintenanceFixture()
+    await expect(service.reinstallLatest(async () => true, async () => { throw new Error('hash mismatch') })).rejects.toThrow('hash mismatch')
+    await expect(service.reinstallLatest(async () => true, async () => async () => { throw new Error('permission denied') })).rejects.toThrow('permission denied')
+    expect(quit).not.toHaveBeenCalled()
+    expect(beforeInstall).not.toHaveBeenCalled()
+    expect(service.snapshot()).toMatchObject({ phase: 'error', operation: 'reinstall' })
+  })
+
   it('normalizes only trusted HTTPS update bases', () => {
     expect(normalizeAppUpdateUrl('https://updates.example.com/modmind')).toBe('https://updates.example.com/modmind/')
     expect(() => normalizeAppUpdateUrl('http://updates.example.com/')).toThrow(/HTTPS/)

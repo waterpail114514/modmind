@@ -4,6 +4,7 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import { promisify } from 'node:util'
 import { Decompress as ZstdDecompress } from 'fzstd'
 import { fetchWithApprovalModelFallback } from './agentApproval'
+import type { ReasoningEffort } from '../shared/types'
 
 type JsonRecord = Record<string, unknown>
 type UpstreamProtocol = 'unknown' | 'responses' | 'chat-completions'
@@ -15,6 +16,8 @@ interface AdapterRoute {
   signal?: AbortSignal
   approvalFallbackModel?: string
   executionModel?: string
+  /** null means automatic: remove any stale effort emitted by a resumed runtime. */
+  reasoningEffort?: ReasoningEffort | null
 }
 
 interface ChatToolDescriptor {
@@ -515,13 +518,13 @@ export class ChatCompletionsAdapter {
   private readonly routesByIdentity = new Map<string, AdapterRoute>()
   private readonly routesById = new Map<string, AdapterRoute>()
 
-  async baseUrl(upstreamBaseUrl: string, providerIdentity = '', signal?: AbortSignal, approvalFallbackModel?: string, executionModel?: string): Promise<string> {
+  async baseUrl(upstreamBaseUrl: string, providerIdentity = '', signal?: AbortSignal, approvalFallbackModel?: string, executionModel?: string, reasoningEffort?: ReasoningEffort | null): Promise<string> {
     const normalized = normalizedBaseUrl(upstreamBaseUrl)
     const port = await this.ensureListening()
-    const identity = createHash('sha256').update(`${normalized}\n${providerIdentity}\n${approvalFallbackModel ?? ''}\n${executionModel ?? ''}`).digest('hex')
+    const identity = createHash('sha256').update(`${normalized}\n${providerIdentity}\n${approvalFallbackModel ?? ''}\n${executionModel ?? ''}\n${reasoningEffort === null ? 'auto' : reasoningEffort ?? 'runtime'}`).digest('hex')
     let route = this.routesByIdentity.get(identity)
     if (!route) {
-      route = { id: randomUUID().replaceAll('-', ''), upstreamBaseUrl: normalized, protocol: 'unknown', signal, approvalFallbackModel, executionModel }
+      route = { id: randomUUID().replaceAll('-', ''), upstreamBaseUrl: normalized, protocol: 'unknown', signal, approvalFallbackModel, executionModel, reasoningEffort }
       this.routesByIdentity.set(identity, route)
       this.routesById.set(route.id, route)
     }
@@ -595,6 +598,15 @@ export class ChatCompletionsAdapter {
       // internal requests). Bind task requests to this execution's selection.
       // Dedicated approval requests retain their own model and fallback policy.
       if (route.executionModel && outgoingPayload.model !== 'codex-auto-review') outgoingPayload.model = route.executionModel
+      // Bind the validated user choice at the final boundary. Older runtimes can
+      // rewrite ultra to medium, and resumed threads can retain an old effort.
+      if (route.reasoningEffort !== undefined && outgoingPayload.model !== 'codex-auto-review') {
+        const reasoning = isRecord(outgoingPayload.reasoning) ? { ...outgoingPayload.reasoning } : {}
+        if (route.reasoningEffort === null) delete reasoning.effort
+        else reasoning.effort = route.reasoningEffort
+        if (Object.keys(reasoning).length) outgoingPayload.reasoning = reasoning
+        else delete outgoingPayload.reasoning
+      }
       const requestUpstreamResponses = (): Promise<Response> => fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'responses'), {
         method: 'POST',
         headers: requestHeaders(request.headers),

@@ -32,8 +32,8 @@ function mergeStreamText(current: string, incoming: string): string {
   return `${current}${incoming}`
 }
 function summaryOf(document: ConversationDocument): ConversationSummary {
-  const { id, surface, title, createdAt, updatedAt, generation, archived, parent } = document
-  return { id, surface, title, createdAt, updatedAt, generation, ...(archived ? { archived } : {}), ...(parent ? { parent } : {}) }
+  const { id, surface, title, createdAt, updatedAt, generation, archived, parent, agentMode, pinned, titleSource } = document
+  return { id, surface, title, createdAt, updatedAt, generation, ...(agentMode ? { agentMode } : {}), ...(pinned ? { pinned } : {}), ...(titleSource ? { titleSource } : {}), ...(archived ? { archived } : {}), ...(parent ? { parent } : {}) }
 }
 function normalizeSummary(value: unknown): ConversationSummary | null {
   if (!value || typeof value !== 'object') return null
@@ -41,10 +41,13 @@ function normalizeSummary(value: unknown): ConversationSummary | null {
   if (typeof entry.id !== 'string' || !validId(entry.id) || (entry.surface !== 'workspace' && entry.surface !== 'inspiration')) return null
   return {
     id: entry.id, surface: entry.surface,
+    ...(entry.agentMode === 'beginner' ? { agentMode: 'beginner' as const } : {}),
     title: typeof entry.title === 'string' && entry.title.trim() ? entry.title : '新的对话',
     createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : new Date(0).toISOString(),
     updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : new Date(0).toISOString(),
     generation: Number.isSafeInteger(entry.generation) && Number(entry.generation) >= 0 ? Number(entry.generation) : 0,
+    ...(entry.pinned === true ? { pinned: true } : {}),
+    ...(entry.titleSource === 'ai' || entry.titleSource === 'manual' ? { titleSource: entry.titleSource } : {}),
     ...(entry.archived ? { archived: true } : {}),
     ...(entry.parent && typeof entry.parent === 'object' ? { parent: entry.parent } : {})
   }
@@ -133,7 +136,7 @@ export class ConversationStore {
     if (!Array.isArray(parsed)) throw new Error('对话索引格式无效')
     return parsed.map(normalizeSummary).filter((entry): entry is ConversationSummary => Boolean(entry))
       .filter((entry) => (!surface || entry.surface === surface) && (includeArchived || !entry.archived))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt.localeCompare(left.updatedAt))
   }
 
   async read(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
@@ -146,10 +149,17 @@ export class ConversationStore {
     if (!validId(id)) throw new Error('对话标识无效')
     return this.enqueue(projectPath, id, async () => {
       const existing = await this.readUnlocked(projectPath, id)
-      if (existing) return existing
+      if (existing) {
+        if (input.agentMode === 'beginner' && existing.surface === 'workspace' && !existing.agentMode) {
+          existing.agentMode = 'beginner'
+          await this.writeDocumentUnlocked(projectPath, existing)
+        }
+        return existing
+      }
       const now = new Date().toISOString()
       const document: ConversationDocument = {
         schemaVersion: 2, id, surface: input.surface,
+        ...(input.surface === 'workspace' && input.agentMode === 'beginner' ? { agentMode: 'beginner' as const } : {}),
         title: input.title?.trim() || '新的对话', createdAt: now, updatedAt: now,
         generation: 0, lastSequence: 0, checkpointSequence: 0, events: [], view: input.view ?? {}, native: {}, nativeTurns: {}
       }
@@ -165,7 +175,7 @@ export class ConversationStore {
       // The view is a renderer projection, never the source of truth. Keep the
       // complete event journal so a repaired projection can be rebuilt after a
       // crash or an older client has written an incomplete view.
-      return { ...document, view, checkpointSequence, ...(title?.trim() ? { title: title.trim() } : {}), updatedAt: new Date().toISOString() }
+      return { ...document, view, checkpointSequence, ...(!document.titleSource && title?.trim() ? { title: title.trim() } : {}), updatedAt: new Date().toISOString() }
     })
   }
 
@@ -234,6 +244,7 @@ export class ConversationStore {
       : 'visible-history-rebuild'
     const document: ConversationDocument = {
       schemaVersion: 2, id, surface: source.surface,
+      ...(source.agentMode ? { agentMode: source.agentMode } : {}),
       title: input.title?.trim() || `${source.title}（分支）`, createdAt: now, updatedAt: now,
       generation: source.generation + 1, lastSequence: 0, checkpointSequence: 0, events: [],
       view: forkView,
@@ -252,6 +263,20 @@ export class ConversationStore {
 
   archive(projectPath: string, conversationId: string, archived: boolean): Promise<ConversationDocument> {
     return this.update(projectPath, conversationId, (document) => ({ ...document, archived, updatedAt: new Date().toISOString() }))
+  }
+  rename(projectPath: string, conversationId: string, title: string): Promise<ConversationDocument> {
+    const clean = title.replaceAll(/\s+/gu, ' ').trim()
+    if (!clean || clean.length > 120) throw new Error('对话名称须为 1 至 120 个字符')
+    return this.update(projectPath, conversationId, (document) => ({ ...document, title: clean, titleSource: 'manual' }))
+  }
+  pin(projectPath: string, conversationId: string, pinned: boolean): Promise<ConversationDocument> {
+    return this.update(projectPath, conversationId, (document) => ({ ...document, pinned }))
+  }
+  setGeneratedTitle(projectPath: string, conversationId: string, title: string): Promise<ConversationDocument> {
+    const clean = title.replaceAll(/\s+/gu, ' ').trim().slice(0, 60)
+    if (!clean) throw new Error('AI 未返回有效对话名称')
+    return this.update(projectPath, conversationId, (document) => document.titleSource
+      ? document : { ...document, title: clean, titleSource: 'ai' })
   }
   async delete(projectPath: string, conversationId: string): Promise<void> {
     await this.enqueue(projectPath, conversationId, async () => {
@@ -383,7 +408,7 @@ export class ConversationStore {
     let parsed: unknown = []
     if (stored.status === 'ok' && stored.content) { try { parsed = JSON.parse(stored.content) } catch { throw new Error('对话索引格式无效') } }
     const entries = Array.isArray(parsed) ? parsed.map(normalizeSummary).filter((entry): entry is ConversationSummary => Boolean(entry)) : []
-    await this.data.write(projectPath, INDEX_KEY, JSON.stringify(transform(entries).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))))
+    await this.data.write(projectPath, INDEX_KEY, JSON.stringify(transform(entries).sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt.localeCompare(left.updatedAt))))
   }
   private laneKey(projectPath: string, conversationId: string): string { return `${projectPath.toLowerCase()}\n${conversationId}` }
   private wait(projectPath: string, conversationId: string): Promise<unknown> { return this.lanes.get(this.laneKey(projectPath, conversationId)) ?? Promise.resolve() }

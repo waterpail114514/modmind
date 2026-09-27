@@ -5,7 +5,7 @@ import path from 'node:path'
 import extractZip from 'extract-zip'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, removeModpackFile, syncModpackOverrides, updateModpackModuleSide } from './modpackService'
+import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, removeModpackFile, removeModpackModule, syncModpackOverrides, syncReloadableKubeJsScripts, updateModpackModuleSide } from './modpackService'
 import { auditModpackLock, createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { readManagedModpackContent } from './modpackContentInventoryService'
@@ -29,6 +29,41 @@ afterEach(async () => {
 })
 
 describe('modpack manifests', () => {
+  it('removes pack-owned modules and only unlinks external modules', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-remove-module-'))
+    roots.push(root)
+    const info = project(path.join(root, 'pack'))
+    await fs.mkdir(info.path)
+    await createModpackTemplate(info)
+    const owned = path.join(info.path, 'modules', 'broken')
+    const external = path.join(root, 'external')
+    await fs.mkdir(owned)
+    await fs.mkdir(external)
+    await fs.writeFile(path.join(owned, 'source.txt'), 'broken')
+    await fs.writeFile(path.join(external, 'source.txt'), 'keep')
+    await addModpackModule(info, { name: 'Broken', namespace: 'broken', path: 'modules/broken', createdAt: info.createdAt })
+    await addModpackModule(info, { name: 'External', namespace: 'external', path: external, linked: true, createdAt: info.createdAt })
+    const trashed: string[] = []
+    const trash = async (target: string): Promise<void> => { trashed.push(target); await fs.rm(target, { recursive: true }) }
+    await expect(removeModpackModule(info, 'broken', trash)).resolves.toMatchObject({ modules: [expect.objectContaining({ namespace: 'external' })] })
+    await expect(fs.access(owned)).rejects.toThrow()
+    await expect(removeModpackModule(info, 'external', trash)).resolves.toMatchObject({ modules: [] })
+    expect(trashed).toEqual([owned])
+    await expect(fs.readFile(path.join(external, 'source.txt'), 'utf8')).resolves.toBe('keep')
+  })
+
+  it('keeps a module registered when moving its source to trash fails', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-remove-failure-'))
+    roots.push(root)
+    const info = project(path.join(root, 'pack'))
+    await fs.mkdir(info.path)
+    await createModpackTemplate(info)
+    await fs.mkdir(path.join(info.path, 'modules', 'broken'))
+    await addModpackModule(info, { name: 'Broken', namespace: 'broken', path: 'modules/broken', createdAt: info.createdAt })
+    await expect(removeModpackModule(info, 'broken', async () => { throw new Error('trash failed') })).rejects.toThrow('trash failed')
+    await expect(readModpackManifest(info)).resolves.toMatchObject({ modules: [expect.objectContaining({ namespace: 'broken' })] })
+  })
+
   it('preserves verified MRPack provenance and remote records through adoption and export', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-mrpack-provenance-'))
     roots.push(root)
@@ -176,6 +211,67 @@ describe('modpack manifests', () => {
     expect(copied).toContain('kubejs/server_scripts/main.js')
     await expect(fs.stat(path.join(runtime, 'kubejs', 'server_scripts', 'main.js'))).resolves.toBeTruthy()
     await expect(fs.stat(path.join(runtime, 'mods', 'existing.jar'))).rejects.toThrow()
+  })
+
+  it('hot-syncs only changed KubeJS server scripts and removes only previously managed scripts', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-kubejs-sync-'))
+    roots.push(root)
+    const info = project(path.join(root, 'pack'))
+    await fs.mkdir(info.path, { recursive: true })
+    await createModpackTemplate(info)
+    const overrides = path.join(info.path, 'overrides')
+    const runtime = path.join(root, 'runtime')
+    for (const dir of ['kubejs/server_scripts', 'kubejs/client_scripts', 'kubejs/startup_scripts', 'config']) {
+      await fs.mkdir(path.join(overrides, dir), { recursive: true })
+      await fs.mkdir(path.join(runtime, dir), { recursive: true })
+    }
+    await fs.writeFile(path.join(overrides, 'kubejs/server_scripts/recipe.js'), 'new recipe')
+    await fs.writeFile(path.join(overrides, 'kubejs/client_scripts/client.js'), 'new client')
+    await fs.writeFile(path.join(overrides, 'kubejs/startup_scripts/startup.js'), 'new startup')
+    await fs.writeFile(path.join(overrides, 'config/settings.toml'), 'new config')
+    await fs.writeFile(path.join(runtime, 'kubejs/server_scripts/old.js'), 'old recipe')
+    await fs.writeFile(path.join(runtime, 'kubejs/server_scripts/user.js'), 'user recipe')
+    await fs.writeFile(path.join(runtime, 'kubejs/client_scripts/client.js'), 'old client')
+    await fs.writeFile(path.join(runtime, 'config/settings.toml'), 'old config')
+
+    const previous = ['kubejs/server_scripts/old.js', 'kubejs/client_scripts/client.js', 'config/settings.toml']
+    const first = await syncReloadableKubeJsScripts(info, runtime, previous)
+    expect(first.copied).toEqual(['kubejs/server_scripts/recipe.js'])
+    expect(first.removed).toEqual(['kubejs/server_scripts/old.js'])
+    expect(first.overrides).toEqual(['kubejs/client_scripts/client.js', 'config/settings.toml', 'kubejs/server_scripts/recipe.js'])
+    await expect(fs.readFile(path.join(runtime, 'kubejs/server_scripts/recipe.js'), 'utf8')).resolves.toBe('new recipe')
+    await expect(fs.access(path.join(runtime, 'kubejs/server_scripts/old.js'))).rejects.toThrow()
+    await expect(fs.readFile(path.join(runtime, 'kubejs/server_scripts/user.js'), 'utf8')).resolves.toBe('user recipe')
+    await expect(fs.readFile(path.join(runtime, 'kubejs/client_scripts/client.js'), 'utf8')).resolves.toBe('old client')
+    await expect(fs.readFile(path.join(runtime, 'config/settings.toml'), 'utf8')).resolves.toBe('old config')
+    await expect(fs.access(path.join(runtime, 'kubejs/startup_scripts/startup.js'))).rejects.toThrow()
+    const second = await syncReloadableKubeJsScripts(info, runtime, first.overrides)
+    expect(second.copied).toEqual([])
+    expect(second.removed).toEqual([])
+  })
+
+  it('rejects hot sync through a linked instance directory', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-kubejs-link-'))
+    roots.push(root)
+    const info = project(path.join(root, 'pack'))
+    await fs.mkdir(info.path, { recursive: true })
+    await createModpackTemplate(info)
+    await fs.mkdir(path.join(info.path, 'overrides/kubejs/server_scripts'), { recursive: true })
+    await fs.writeFile(path.join(info.path, 'overrides/kubejs/server_scripts/recipe.js'), 'new recipe')
+    const runtime = path.join(root, 'runtime')
+    const elsewhere = path.join(root, 'elsewhere')
+    await fs.mkdir(runtime)
+    await fs.mkdir(elsewhere)
+    await fs.symlink(elsewhere, path.join(runtime, 'kubejs'), process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(syncReloadableKubeJsScripts(info, runtime, [])).rejects.toThrow(/链接/)
+    await expect(fs.access(path.join(elsewhere, 'server_scripts/recipe.js'))).rejects.toThrow()
+    await fs.rm(path.join(runtime, 'kubejs'), { recursive: false, force: true })
+    await fs.mkdir(path.join(runtime, 'kubejs/server_scripts'), { recursive: true })
+    const linkedFile = path.join(elsewhere, 'recipe.js')
+    await fs.writeFile(linkedFile, 'outside')
+    await fs.link(linkedFile, path.join(runtime, 'kubejs/server_scripts/recipe.js'))
+    await expect(syncReloadableKubeJsScripts(info, runtime, [])).rejects.toThrow(/链接/)
+    await expect(fs.readFile(linkedFile, 'utf8')).resolves.toBe('outside')
   })
 
   it('keeps Modrinth archive mods, overrides, and exports in their archive roots', async () => {

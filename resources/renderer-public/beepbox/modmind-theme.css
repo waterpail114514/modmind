@@ -1,0 +1,62 @@
+:root { color-scheme: light dark; }
+html, body, #beepboxEditorContainer { background: var(--editor-background); color: var(--primary-text); }
+#beepboxEditorContainer { display: block !important; width: 100% !important; height: 100% !important; overflow: hidden; }
+.beepboxEditor { width: 100%; height: 100%; font-family: inherit; font-size: 12px; }
+.beepboxEditor .version-area { display: none; }
+.beepboxEditor .settings-area { box-sizing: border-box; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px 12px 14px; border-top: 1px solid var(--modmind-line); background: var(--modmind-panel); overflow: auto; gap: 8px; }
+.beepboxEditor .settings-area > *, .beepboxEditor .instrument-settings-area { flex-shrink: 0; min-width: 0; }
+.beepboxEditor .instrument-settings-area > .editor-controls { position: static !important; width: 100% !important; }
+.beepboxEditor .settings-area .play-pause-area, .beepboxEditor .settings-area .menu-area { position: static; background: transparent; }
+.beepboxEditor .track-area { box-sizing: border-box; min-width: 0; min-height: 0; padding: 12px; background: var(--modmind-panel); overflow: hidden; }
+.beepboxEditor .trackAndMuteContainer { min-width: 0; width: 100%; overflow-x: hidden; overflow-y: auto; }
+.beepboxEditor .loopEditor { position: static; background: transparent; }
+.beepboxEditor input.modmind-bar-scroll { box-sizing: border-box; display: block; width: 100%; height: 22px; flex: none; margin: 4px 0 0; appearance: none; background: transparent; cursor: pointer; }
+.beepboxEditor input.modmind-bar-scroll::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--primary-text) 20%, var(--modmind-panel)); }
+.beepboxEditor input.modmind-bar-scroll::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -5px; border: 0; border-radius: 4px; appearance: none; background: var(--loop-accent); }
+.beepboxEditor .modmind-bar-scroll[hidden] { display: none; }
+.beepboxEditor .pattern-area { min-width: 0; min-height: 0; overflow: hidden; }
+.beepboxEditor .menu-area { gap: 5px; }
+.beepboxEditor .settings-area select,
+.beepboxEditor .settings-area input[type='number'],
+.beepboxEditor .settings-area button {
+  min-height: 29px;
+  border: 1px solid var(--modmind-line);
+  border-radius: 5px;
+  background: var(--ui-widget-background);
+  color: var(--primary-text);
+  box-shadow: none;
+  font: inherit;
+}
+.beepboxEditor .settings-area button:hover,
+.beepboxEditor .settings-area select:hover { background: var(--ui-widget-focus); }
+.beepboxEditor :is(button, select, input):focus-visible { outline: 2px solid var(--loop-accent); outline-offset: 1px; }
+.beepboxEditor input[type='range'] { accent-color: var(--loop-accent); }
+.beepboxEditor .pattern-area > div:first-child { width: 48px !important; flex: 0 0 48px !important; }
+.beepboxEditor .piano-button { box-sizing: border-box; border-right: 1px solid var(--modmind-line); border-bottom: 1px solid var(--modmind-line); }
+.beepboxEditor .piano-button::before { display: none; }
+.beepboxEditor .piano-button.disabled::after { display: none; }
+.beepboxEditor .piano-button[style*='--white-piano-key'] { background: color-mix(in srgb, var(--modmind-panel) 12%, var(--ui-widget-background)) !important; }
+.beepboxEditor .piano-button[style*='--black-piano-key'] { background: var(--ui-widget-background) !important; }
+.beepboxEditor .piano-button[style*='--black-piano-key']::before { display: block; left: auto; right: 0; width: 78%; height: 100%; background: color-mix(in srgb, var(--primary-text) 65%, var(--modmind-panel)); background-image: none; }
+.beepboxEditor .piano-button > * { position: relative; z-index: 1; color: var(--primary-text) !important; text-align: right; }
+.beepboxEditor .piano-button[style*='--black-piano-key'] > * { color: var(--modmind-panel) !important; }
+.beepboxEditor .piano-label { right: 5px; padding-left: 0 !important; }
+.beepboxEditor .pattern-area, .beepboxEditor .track-area { border-color: var(--modmind-line); }
+@media (min-width: 711px) {
+  #beepboxEditorContainer .beepboxEditor { grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: 170px minmax(0, 1fr); grid-template-areas: 'pattern-area track-area' 'pattern-area settings-area'; gap: 0; }
+  :root[data-track-scrollable='true'] #beepboxEditorContainer .beepboxEditor { grid-template-rows: 195px minmax(0, 1fr); }
+  #beepboxEditorContainer .beepboxEditor .track-area { border-left: 1px solid var(--modmind-line); border-bottom: 1px solid var(--modmind-line); }
+  #beepboxEditorContainer .beepboxEditor .settings-area { width: 100%; border-left: 1px solid var(--modmind-line); }
+  #beepboxEditorContainer .beepboxEditor .pattern-area { width: 100%; height: 100%; max-height: none; padding-right: 10px; }
+}
+@media (max-width: 710px) {
+  .beepboxEditor { width: 100%; height: 100%; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .beepboxEditor .pattern-area { width: 100%; height: 100%; max-height: none; }
+  .beepboxEditor .track-area, .beepboxEditor .settings-area { width: 100%; height: 100%; min-height: 0; overflow: auto; }
+  :root[data-view='notes'] .beepboxEditor { grid-template-areas: 'pattern-area'; }
+  :root[data-view='notes'] .beepboxEditor :is(.track-area, .settings-area) { display: none; }
+  :root[data-view='tracks'] .beepboxEditor { grid-template-areas: 'track-area'; }
+  :root[data-view='tracks'] .beepboxEditor :is(.pattern-area, .settings-area) { display: none; }
+  :root[data-view='settings'] .beepboxEditor { grid-template-areas: 'settings-area'; }
+  :root[data-view='settings'] .beepboxEditor :is(.pattern-area, .track-area) { display: none; }
+}

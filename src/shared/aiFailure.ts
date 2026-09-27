@@ -7,13 +7,16 @@ function readMessage(error: unknown): string {
 
 function statusIn(message: string, status: number): boolean {
   // A request id or token count containing 429/500 is not an HTTP failure.
-  return new RegExp(`(?:\\b(?:HTTP(?:/\\d(?:\\.\\d)?)?|status(?:_code)?)[\\s"':=]*${status}\\b|^${status}(?:\\s|$)|[（(]${status}(?:[）)，,]|\\s)|\\b${status}\\s+(?:Too Many Requests|Unauthorized|Forbidden|Not Found|Bad Request|Payment Required|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\\b)`, 'i').test(message)
+  return new RegExp(`(?:\\b(?:HTTP(?:/\\d(?:\\.\\d)?)?|status(?:_code)?)[\\s"':=]*${status}\\b|^${status}(?:\\s|$)|[（(]${status}(?:[）)，,]|\\s)|\\b${status}\\s+(?:Too Many Requests|Unauthorized|Forbidden|Not Found|Bad Request|Payment Required|Payload Too Large|Request Entity Too Large|Content Too Large|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\\b)`, 'i').test(message)
 }
 
 /** Converts provider/Agent failures into a user-facing cause and next step. */
 export function describeAiFailureForUser(error: unknown): string {
   const message = readMessage(error).replace(/\s+/g, ' ').trim()
 
+  if (statusIn(message, 413)) {
+    return 'AI 请求内容过大（413），超过了服务或网关的大小限制。请新建会话并精简历史、附件或日志；如仍失败，请联系线路管理员调整请求大小限制。'
+  }
   if (/no-output-timeout|没有任何操作|没有返回(?:任何内容|可显示的(?:回答|内容))|did not respond|no output|empty response|响应超时|响应.*超时/i.test(message)) {
     const duration = message.match(/(?:连续|等待)\s*([0-9]+\s*(?:分钟|秒))/i)?.[1]
     return `AI${duration ? `在 ${duration} 内` : ''}没有返回任何内容，请重试或切换模型。`

@@ -1,10 +1,11 @@
 import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BookOpen, Box, ClipboardList, FileCheck2, FolderOpen, Gauge, LoaderCircle, Network, PackageSearch, Play, RotateCw, Server, ShieldCheck, Sparkles, Square, TerminalSquare } from 'lucide-react'
+import { Activity, BookOpen, Box, ClipboardList, FileCheck2, FolderOpen, Gauge, LoaderCircle, Network, PackageSearch, Play, RotateCw, Server, ShieldCheck, Sparkles, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import type { ModpackManifest, ModpackProviderInfo, ProjectInfo, ServerPackManifest } from '../../../shared/types'
 import type { LocalServerState, LocalTestState } from '../../../shared/minecraft'
 import FtbQuestEditor from './FtbQuestEditor'
 import ImportModpackModule from './ImportModpackModule'
+import { useConfirmDialog } from './InteractionDialogs'
 import { ServerPluginSettings } from './ServerPluginTools'
 
 type ToolSection = 'content' | 'automation' | 'server' | 'modules'
@@ -69,6 +70,7 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
   const [scenarioEvidence, setScenarioEvidence] = useState('ModMind 本机场景通过')
   const [manifest, setManifest] = useState<ModpackManifest | null>(null)
   const [moduleName, setModuleName] = useState('')
+  const { confirm: requestConfirm, dialog: confirmDialog } = useConfirmDialog()
 
   useEffect(() => {
     if (section !== 'modules') return
@@ -254,16 +256,25 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
     void window.modmind.modpack.createModule(moduleName.trim()).then(setManifest).then(() => setModuleName('')).catch((error) => setNotice(reportClientFailure(error))).finally(() => setBusy(''))
   }
 
+  const removeModule = async (module: NonNullable<typeof manifest>['modules'][number]): Promise<void> => {
+    if (busy) return
+    if (!await requestConfirm({ title: '移除自制模组？', message: module.linked ? '将从整合包中解除关联，外部模组工程会保留。' : '将从整合包中移除，并把整合包内的源码目录移到回收站。', detail: module.name, confirmLabel: '移除模组', cancelLabel: '保留模组', tone: 'danger' })) return
+    setBusy(`module-remove:${module.namespace}`); setNotice('')
+    try { setManifest(await window.modmind.modpack.removeModule(module.namespace)); setNotice(`已从整合包移除 ${module.name}`) }
+    catch (error) { setNotice(reportClientFailure(error)); void window.modmind.modpack.get().then(setManifest).catch(() => undefined) }
+    finally { setBusy('') }
+  }
+
   const renderModules = (): React.JSX.Element => <>
     <h1 className="visually-hidden">自制模组</h1>
     <section className="modpack-tool-section">
       <div className="modpack-tool-heading"><Box size={18} /><div><h2>模块工作区</h2></div></div>
       <ImportModpackModule busy={busy} setBusy={setBusy} onImported={setManifest} onNotice={setNotice} />
       <div className="modpack-module-create"><input value={moduleName} maxLength={80} placeholder="例如：核心玩法" onChange={(event) => setModuleName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') createModule() }} /><button className="primary-button" disabled={Boolean(busy) || !moduleName.trim()} onClick={createModule}>{busy === 'module' ? <LoaderCircle className="spin" size={15} /> : <Box size={15} />}新建自制模组</button></div>
-      <div className="modpack-list">{manifest?.modules.map((module) => <div className="modpack-row" key={module.namespace}><Box size={16} /><span><strong>{module.name}</strong><small title={module.path}>{module.namespace} · {module.linked ? '直接使用' : '整合包内'} · {module.path}</small></span><button className="secondary-button compact" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.openModule(module.namespace).then((value) => onOpenModule?.(value)).catch((error) => setNotice(reportClientFailure(error)))}><FolderOpen size={14} />打开</button></div>)}{!manifest?.modules.length ? <p className="modpack-empty">暂无自制模组</p> : null}</div>
+      <div className="modpack-list">{manifest?.modules.map((module) => <div className="modpack-row modpack-tool-module-row" key={module.namespace}><Box size={16} /><span><strong>{module.name}</strong><small title={module.path}>{module.namespace} · {module.linked ? '直接使用' : '整合包内'} · {module.path}</small></span><button className="secondary-button compact" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.openModule(module.namespace).then((value) => onOpenModule?.(value)).catch((error) => setNotice(reportClientFailure(error)))}><FolderOpen size={14} />打开</button><button className="icon-button danger" type="button" title={`移除 ${module.name}`} aria-label={`移除 ${module.name}`} disabled={Boolean(busy)} onClick={() => void removeModule(module)}>{busy === `module-remove:${module.namespace}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}</button></div>)}{!manifest?.modules.length ? <p className="modpack-empty">暂无自制模组</p> : null}</div>
       {notice ? <div className="modpack-result warning"><strong>状态</strong><span>{notice}</span></div> : null}
     </section>
   </>
 
-  return <div className="modpack-tool-workspace" data-section={section}>{section === 'content' ? renderContent() : section === 'automation' ? renderAutomation() : section === 'server' ? renderServerPanel() : renderModules()}{section !== 'server' && section !== 'modules' && notice ? <div className="toast">{notice}</div> : null}</div>
+  return <div className="modpack-tool-workspace" data-section={section}>{section === 'content' ? renderContent() : section === 'automation' ? renderAutomation() : section === 'server' ? renderServerPanel() : renderModules()}{section !== 'server' && section !== 'modules' && notice ? <div className="toast">{notice}</div> : null}{confirmDialog}</div>
 }

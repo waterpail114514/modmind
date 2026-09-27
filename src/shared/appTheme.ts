@@ -14,6 +14,9 @@ export type BackgroundMedia = { file: string; name: string; kind: 'image' | 'vid
 export type AppBackground = { media: BackgroundMedia | null; opacity: number; blur: number; fit: 'cover' | 'contain'; paused: boolean }
 export type AppAppearance = { darkMode: boolean; themePreset: ThemePreset; customThemeColors?: CustomThemeColors; background?: AppBackground }
 export const defaultBackground: AppBackground = { media: null, opacity: 0.3, blur: 0, fit: 'cover', paused: false }
+export function isBackgroundMediaFile(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[a-f0-9-]{36}|[a-f0-9]{64})\.(png|jpg|jpeg|webp|gif|mp4|webm)$/i.test(value)
+}
 export function normalizeCustomThemeColors(value: unknown): CustomThemeColors {
   const result: CustomThemeColors = {}
   if (!value || typeof value !== 'object') return result
@@ -28,7 +31,7 @@ export function normalizeCustomThemeColors(value: unknown): CustomThemeColors {
 export function normalizeBackground(value: unknown): AppBackground {
   const v = (value && typeof value === 'object' ? value : {}) as Partial<AppBackground>
   const media = v.media
-  const valid = media && typeof media.name === 'string' && /^[a-f0-9-]{36}\.(png|jpg|jpeg|webp|gif|mp4|webm)$/i.test(media.file)
+  const valid = media && typeof media.name === 'string' && isBackgroundMediaFile(media.file)
   const kind = valid && /\.(mp4|webm)$/i.test(media.file) ? 'video' : 'image'
   const clamp = (n: unknown, max: number, fallback: number): number => typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(max, n)) : fallback
   return { media: valid ? { file: media.file, name: media.name.slice(0, 255), kind } : null,

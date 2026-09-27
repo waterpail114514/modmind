@@ -8,6 +8,7 @@ export interface ImageStudioSettings {
   baseUrl: string
   model: string
   hasStoredKey: boolean
+  syncedFromDevice?: boolean
   allowAgentImages: boolean
   autoApproveAgentImages: boolean
   manualHostedConsent: boolean

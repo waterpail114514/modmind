@@ -1,5 +1,6 @@
 import type { CodingResult, InspirationChatMessage } from '../../shared/types'
 import { replayUserText } from '../../shared/aiReplay'
+import { latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 import { aiNoticeDetails, presentLegacyAiNotice } from '../../shared/aiNotice'
 
@@ -63,18 +64,53 @@ function mergeOutputText(current: string, incoming: string): string {
 
 /** Rebuilds a stale view from events that were durably committed before a crash. */
 export function replayInspirationEvents(messages: InspirationChatMessage[], events: ConversationEventRecord[]): InspirationChatMessage[] {
+  const replay = replayInspirationSteps(messages, events)
+  let step = replay.next()
+  while (!step.done) step = replay.next()
+  return step.value
+}
+
+/** Yield between replay batches so opening a long history leaves the UI usable. */
+export async function replayInspirationEventsAsync(
+  messages: InspirationChatMessage[],
+  events: ConversationEventRecord[],
+  isCancelled: () => boolean = () => false
+): Promise<InspirationChatMessage[]> {
+  const yieldToUi = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+  await yieldToUi()
+  const replay = replayInspirationSteps(messages, events)
+  let sliceStarted = performance.now()
+  while (true) {
+    if (isCancelled()) throw new DOMException('History loading cancelled', 'AbortError')
+    const step = replay.next()
+    if (step.done) return step.value
+    if (performance.now() - sliceStarted >= 8) {
+      await yieldToUi()
+      sliceStarted = performance.now()
+    }
+  }
+}
+
+function* replayInspirationSteps(messages: InspirationChatMessage[], events: ConversationEventRecord[]): Generator<void, InspirationChatMessage[], void> {
   let result = [...messages]
-  const lastViewSequence = Math.max(0, ...messages.map((message) => message.sequence ?? 0))
+  const lastViewSequence = messages.reduce((sequence, message) => Math.max(sequence, message.sequence ?? 0), 0)
   for (const record of events.filter((event) => event.kind === 'output' && event.sequence > lastViewSequence).sort((left, right) => left.sequence - right.sequence)) {
+    yield
     if (!record.payload || typeof record.payload !== 'object') continue
     const raw = record.payload as AiOutputEvent
-    const event = raw.kind === 'warning' || raw.kind === 'error' ? { ...raw, content: presentLegacyAiNotice(raw.content, raw.kind === 'warning') } : raw
+    let event = raw.kind === 'warning' || raw.kind === 'error' ? { ...raw, content: presentLegacyAiNotice(raw.content, raw.kind === 'warning') } : raw
+    if (event.usage) event = { ...event, usage: mergeContextUsage(latestContextUsage(result), event.usage) }
     const turnId = event.turnId ?? record.turnId
     if (event.notice && event.terminal !== true && (event.kind === 'retry' || event.kind === 'warning')) {
       result = upsertInspirationNotice(result, { ...event, turnId, eventId: record.eventId, sequence: record.sequence })
       continue
     }
     let index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
+    if (event.kind === 'usage') {
+      if (index >= 0) result[index] = { ...result[index], usage: event.usage }
+      else if (event.usage) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: '', status: 'streaming', isFinal: false, sessionId: event.sessionId, usage: event.usage })
+      continue
+    }
     if (event.kind === 'delta' || event.kind === 'response') {
       if (index < 0) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
       else {
@@ -84,7 +120,7 @@ export function replayInspirationEvents(messages: InspirationChatMessage[], even
       continue
     }
     if (event.kind === 'answer') {
-      const completed: InspirationChatMessage = { role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence }
+      const completed: InspirationChatMessage = { role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence, ...(event.usage || (index >= 0 && result[index].usage) ? { usage: event.usage ?? result[index].usage } : {}) }
       if (index < 0) result.push(completed)
       else result[index] = completed
       continue
@@ -178,6 +214,7 @@ export function settleInspirationReply(
       ...(progress ? [progress] : []),
       {
         id: message.id,
+        ...(message.usage ? { usage: message.usage } : {}),
         turnId: message.turnId,
         role: 'assistant' as const,
         content: valid ? reply.trim() : invalidMessage,
@@ -212,7 +249,7 @@ export function settleInspirationCancellation(
     const progress = message.content.trim() && message.content !== '正在停止任务…' ? progressStep(message, sessionId, createId) : null
     return [
       ...(progress ? [progress] : []),
-      { role: 'assistant' as const, content: '请求已暂停', status: 'cancelled' as const, isFinal: true, sessionId, time: new Date().toISOString() }
+      { ...message, role: 'assistant' as const, content: '请求已暂停', status: 'cancelled' as const, isFinal: true, sessionId, time: new Date().toISOString() }
     ]
   })
 }

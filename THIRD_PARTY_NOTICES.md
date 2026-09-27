@@ -185,6 +185,33 @@ are retained beside the executable in the unpacked `node_modules/ffmpeg-static` 
 - FFmpeg: https://ffmpeg.org/
 - License: GPL-3.0-or-later
 
+## Sound Workspace
+
+ModMind uses Tone.js for local music synthesis and sequencing, @tonejs/midi
+for MIDI import and export, and jfxr for game sound-effect synthesis.
+Tone.js and @tonejs/midi are distributed under the MIT License; jfxr is
+distributed under the BSD-3-Clause License. The installed packages retain
+their upstream license files.
+
+- Tone.js: https://github.com/Tonejs/Tone.js
+- @tonejs/midi: https://github.com/Tonejs/Midi
+- jfxr: https://github.com/ttencate/jfxr
+
+ModMind bundles the unmodified BeepBox 4.2.2 editor and synthesizer from its
+official offline release for local music authoring. The files are licensed
+under MIT; their license and source checksums are retained in
+`resources/renderer-public/beepbox/`.
+
+- BeepBox: https://github.com/johnnesky/beepbox/releases/tag/v4.2.2
+
+The offline Minecraft sound-event catalog in `src/main/data/soundCatalog.json`
+is derived from the 1.20.1 and 1.21.1 `sounds.json` and Chinese language data
+in InventivetalentDev/minecraft-assets. It contains event names, references,
+settings, and subtitles; no Minecraft audio files are bundled. Original game
+content remains the property of Mojang Studios.
+
+- Data source: https://github.com/InventivetalentDev/minecraft-assets
+
 ## mappings.dev
 
 ModMind can query class and member mapping pages from https://mappings.dev at runtime.
@@ -258,6 +285,36 @@ separately licensed enterprise directory.
 - LiteLLM: https://github.com/BerriAI/litellm — Copyright (c) 2023 Berri AI
 
 Both datasets are provided under the following MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Vanilla Item Catalog
+
+The offline item lists in `src/main/data/vanilla-items-*.json` are derived from
+PrismarineJS minecraft-data (MIT) and Chinese item names from Mojang's Minecraft
+language assets mirrored by misode/mcmeta. Minecraft names and artwork remain
+the property of Mojang Studios.
+
+Upstream: https://github.com/PrismarineJS/minecraft-data
+Language source: https://github.com/misode/mcmeta
+
+Copyright (c) PrismarineJS contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

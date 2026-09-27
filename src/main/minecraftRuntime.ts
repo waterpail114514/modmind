@@ -39,7 +39,7 @@ import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../shared/p
 import { findPluginArtifact } from './serverPluginService'
 import { buildMavenPlugin } from './mavenBuild'
 import { isForgeJavaProvisioningFailure, isGradleNetworkFailure } from './gradleFailure'
-import { readModpackManifest, readModpackModuleProject, syncModpackOverrides, assertModpackDependenciesReady } from './modpackService'
+import { readModpackManifest, readModpackModuleProject, syncModpackOverrides, syncReloadableKubeJsScripts, assertModpackDependenciesReady } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { buildJavaRangeForProject, gradleVersionForProject, javaRuntimeTargetForJavaVersion, javaRuntimeTargetForMinecraft, javaVersionForMinecraft } from './loaderCompatibility'
 import { buildBedrockAddon, buildNeteaseArchive } from './bedrockAddon'
@@ -63,6 +63,7 @@ import {
 import { runMinecraftTaskWithRecovery } from './minecraftTaskRecovery'
 import { getNetworkProxyUrl } from './networkRequest'
 import { detectToolchainRequirements, mergeToolchainJavaHomes } from './toolchainDetection'
+import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
 
 const BMCLAPI = BMCLAPI_BASE_URL
 const MINECRAFT_ASSET_HOSTS = [`${BMCLAPI}/assets`, 'https://resources.download.minecraft.net']
@@ -931,6 +932,8 @@ export class MinecraftRuntimeManager {
 
   async launch(options: MinecraftLaunchOptions, signal?: AbortSignal): Promise<MinecraftRuntimeState> {
     const project = this.requireProject()
+    const withoutProjectMod = options.withoutProjectMod === true
+    if (withoutProjectMod && (project.kind === 'modpack' || !isJavaLoader(project.loader))) throw new Error('仅启动游戏只适用于 Java Mod 项目')
     if (!this.vanillaClient && !isJavaLoader(project.loader)) {
       throw new Error(project.loader === 'bedrock'
         ? '国际基岩版需要安装版 Minecraft 客户端；请先构建 .mcaddon 并导入游戏。自动本地部署将在后续设备集成中提供'
@@ -942,12 +945,17 @@ export class MinecraftRuntimeManager {
     if (!Number.isInteger(options.maxMemoryMb) || options.maxMemoryMb < 1024 || options.maxMemoryMb > 16384) {
       throw new Error('最大内存需要在 1024-16384 MB 之间')
     }
+    const width = options.width ?? 1280, height = options.height ?? 720
+    if (!Number.isInteger(width) || width < 640 || width > 3840 || !Number.isInteger(height) || height < 360 || height > 2160) {
+      throw new Error('游戏窗口尺寸需在 640×360 至 3840×2160 之间')
+    }
+    const extraJVMArgs = validateJvmArguments(options.extraJVMArgs)
 
-    if (!this.vanillaClient && project.kind !== 'modpack') {
+    if (!this.vanillaClient && project.kind !== 'modpack' && !withoutProjectMod) {
       const syncedArtifact = path.join(this.modsRoot(project), projectArtifactName(project))
       if (!(await exists(syncedArtifact))) throw new Error('测试实例中没有已同步的项目 Mod，请先点击“构建并同步”')
       await validateModArtifact(syncedArtifact, project.loader)
-    } else if (!this.vanillaClient) {
+    } else if (!this.vanillaClient && project.kind === 'modpack') {
       const manifest = await readModpackManifest(project)
       const synced = await fs.readFile(path.join(this.instanceRoot(project), 'modmind-pack-sync.json'), 'utf8')
         .then((value) => JSON.parse(value) as { files?: unknown })
@@ -963,10 +971,12 @@ export class MinecraftRuntimeManager {
     signal?.throwIfAborted()
 
     const instanceRoot = this.instanceRoot(project)
-    await fs.mkdir(instanceRoot, { recursive: true })
+    const gameDirectory = gameDirectoryForLaunch(instanceRoot, withoutProjectMod)
+    await fs.mkdir(gameDirectory, { recursive: true })
+    await applyNarratorPreference(gameDirectory, options.disableNarrator !== false)
     this.stopRequested = false
     this.updateState({ lastCrash: undefined })
-    this.emit('launching', '正在生成离线启动参数')
+    this.emit('launching', withoutProjectMod ? '正在启动不加载项目 Mod 的游戏' : '正在生成离线启动参数')
     const launchedAt = Date.now()
     let child: ChildProcess
     try {
@@ -977,7 +987,7 @@ export class MinecraftRuntimeManager {
             ? { ...options, env: { ...managedJavaEnvironment(options?.env ?? process.env), MC_MCP_PORT: String(this.minecraftMcpPort) } }
             : options ?? {})
         },
-        gamePath: instanceRoot,
+        gamePath: gameDirectory,
         resourcePath: this.resourceRoot(),
         version: metadata.loaderVersionId,
         javaPath: launchJavaPath,
@@ -988,9 +998,10 @@ export class MinecraftRuntimeManager {
         launcherBrand: 'ModMind',
         minMemory: Math.min(512, options.maxMemoryMb),
         maxMemory: options.maxMemoryMb,
-        resolution: { width: options.width ?? 1280, height: options.height ?? 720 },
+        resolution: { width, height },
+        ...(extraJVMArgs.length ? { extraJVMArgs } : {}),
         ...(options.server ? multiplayerLaunchOptions(project.minecraftVersion, options.server) : {}),
-        extraExecOption: { cwd: instanceRoot, windowsHide: false }
+        extraExecOption: { cwd: gameDirectory, windowsHide: false }
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -1003,13 +1014,13 @@ export class MinecraftRuntimeManager {
       throw error
     }
     this.process = child
-    const launcherLog = createWriteStream(path.join(instanceRoot, 'launcher-console.log'), { flags: 'w' })
+    const launcherLog = createWriteStream(path.join(gameDirectory, 'launcher-console.log'), { flags: 'w' })
     child.stdout?.pipe(launcherLog, { end: false })
     child.stderr?.pipe(launcherLog, { end: false })
     child.stdout?.on('data', (chunk: Buffer) => this.emit('running', chunk.toString('utf8').trim(), 'info', false))
     child.stderr?.on('data', (chunk: Buffer) => this.emit('running', chunk.toString('utf8').trim(), 'warning', false))
     child.once('spawn', () => {
-      this.updateState({ stage: 'running', running: true, pid: child.pid, message: 'Minecraft 测试实例运行中' })
+      this.updateState({ stage: 'running', running: true, pid: child.pid, instancePath: gameDirectory, mods: withoutProjectMod ? [] : this.state.mods, message: withoutProjectMod ? 'Minecraft 游戏运行中（未加载项目 Mod）' : 'Minecraft 测试实例运行中' })
       this.emit('running', `Minecraft 已启动，进程 ID ${child.pid ?? '-'}`)
     })
     child.once('error', (error) => {
@@ -1022,7 +1033,7 @@ export class MinecraftRuntimeManager {
       this.process = null
       const intentionallyStopped = this.stopRequested
       launcherLog.end(() => {
-        void this.handleMinecraftExit(project, launchedAt, code, signal, intentionallyStopped)
+        void this.handleMinecraftExit(project, launchedAt, code, signal, intentionallyStopped, gameDirectory)
       })
     })
     return this.getState()
@@ -1549,6 +1560,30 @@ export class MinecraftRuntimeManager {
     await this.refresh()
     this.updateState({ stage: 'idle', message: `已同步 ${written.length} 个整合包 Mod 和 ${overrides.length} 个配置文件` })
     return this.getState()
+  }
+
+  async syncKubeJsServerScripts(): Promise<{ copied: string[]; removed: string[]; reloadRequired: boolean; state: MinecraftRuntimeState }> {
+    const project = this.requireProject()
+    if (project.kind !== 'modpack' || !isJavaLoader(project.loader)) throw new Error('KubeJS 脚本同步仅适用于 Java 整合包')
+    const statePath = path.join(this.instanceRoot(project), 'modmind-pack-sync.json')
+    const synced = await fs.readFile(statePath, 'utf8').then(text => JSON.parse(text) as { files?: unknown; overrides?: unknown }).catch(() => null)
+    if (!synced || !Array.isArray(synced.files) || !Array.isArray(synced.overrides) || synced.overrides.some(value => typeof value !== 'string')) {
+      throw new Error('测试实例尚未完整同步；请停止游戏并先同步整合包')
+    }
+    const result = await syncReloadableKubeJsScripts(project, this.instanceRoot(project), synced.overrides)
+    const pending = `${statePath}.pending-${process.pid}-${randomUUID()}`
+    try {
+      await fs.writeFile(pending, `${JSON.stringify({ ...synced, overrides: result.overrides }, null, 2)}\n`, 'utf8')
+      await fs.rename(pending, statePath)
+    } finally { await fs.rm(pending, { force: true }).catch(() => undefined) }
+    const changed = result.copied.length + result.removed.length > 0
+    const reloadRequired = this.state.running && changed
+    const message = reloadRequired
+      ? `已同步 ${result.copied.length} 个 KubeJS 服务端脚本，移除 ${result.removed.length} 个；请在游戏内执行 /reload 使改动生效`
+      : changed ? `KubeJS 服务端脚本同步完成：更新 ${result.copied.length} 个，移除 ${result.removed.length} 个` : 'KubeJS 服务端脚本没有变化'
+    this.emit('syncing-mod', message, 'info', false)
+    this.updateState({ message })
+    return { copied: result.copied, removed: result.removed, reloadRequired, state: this.getState() }
   }
 
   buildProject(signal?: AbortSignal): Promise<MinecraftManagedMod> {
@@ -2373,15 +2408,16 @@ export class MinecraftRuntimeManager {
     launchedAt: number,
     code: number | null,
     signal: NodeJS.Signals | null,
-    intentionallyStopped: boolean
+    intentionallyStopped: boolean,
+    gameDirectory: string
   ): Promise<void> {
     const abnormalExitCode = code !== 0 && code !== null
-    const parsedCrash = abnormalExitCode ? await this.readLatestCrash(project, launchedAt) : undefined
-    const normalShutdown = abnormalExitCode && !parsedCrash && await this.readNormalShutdownEvidence(project, launchedAt)
+    const parsedCrash = abnormalExitCode ? await this.readLatestCrash(project, launchedAt, gameDirectory) : undefined
+    const normalShutdown = abnormalExitCode && !parsedCrash && await this.readNormalShutdownEvidence(project, launchedAt, gameDirectory)
     const crashed = abnormalExitCode && !intentionallyStopped && !normalShutdown
     if (!crashed) {
       const message = `Minecraft 已退出${signal ? ` (${signal})` : ''}`
-      await fs.writeFile(path.join(this.instanceRoot(project), 'last-clean-exit'), new Date().toISOString(), 'utf8').catch(() => undefined)
+      await fs.writeFile(path.join(gameDirectory, 'last-clean-exit'), new Date().toISOString(), 'utf8').catch(() => undefined)
       this.updateState({ stage: 'stopped', running: false, pid: undefined, message, lastCrash: undefined })
       this.emit('stopped', message, 'info')
       return
@@ -2400,10 +2436,10 @@ export class MinecraftRuntimeManager {
     this.emit('error', `${message}${reportPath ? `\n崩溃报告：${reportPath}` : ''}`, 'error')
   }
 
-  private async readNormalShutdownEvidence(project: ProjectInfo, launchedAt: number): Promise<boolean> {
+  private async readNormalShutdownEvidence(project: ProjectInfo, launchedAt: number, gameDirectory = this.instanceRoot(project)): Promise<boolean> {
     const candidates = [
-      path.join(this.instanceRoot(project), 'launcher-console.log'),
-      path.join(this.instanceRoot(project), 'logs', 'latest.log')
+      path.join(gameDirectory, 'launcher-console.log'),
+      path.join(gameDirectory, 'logs', 'latest.log')
     ]
     for (const filePath of candidates) {
       const stat = await fs.stat(filePath).catch(() => null)
@@ -2415,10 +2451,9 @@ export class MinecraftRuntimeManager {
     return false
   }
 
-  private async readLatestCrash(project: ProjectInfo, launchedAt: number): Promise<MinecraftCrashInfo | undefined> {
+  private async readLatestCrash(project: ProjectInfo, launchedAt: number, gameDirectory = this.instanceRoot(project)): Promise<MinecraftCrashInfo | undefined> {
     try {
-      const instanceRoot = this.instanceRoot(project)
-      const crashDirectory = path.join(instanceRoot, 'crash-reports')
+      const crashDirectory = path.join(gameDirectory, 'crash-reports')
       const entries = await fs.readdir(crashDirectory, { withFileTypes: true })
       const reports = await Promise.all(
         entries
@@ -2431,7 +2466,7 @@ export class MinecraftRuntimeManager {
       const latest = reports.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0]
       if (!latest || latest.stat.mtimeMs < launchedAt - 2_000) return undefined
       if (launchedAt === 0) {
-        const cleanExitTime = await fs.stat(path.join(instanceRoot, 'last-clean-exit')).then((stat) => stat.mtimeMs).catch(() => 0)
+        const cleanExitTime = await fs.stat(path.join(gameDirectory, 'last-clean-exit')).then((stat) => stat.mtimeMs).catch(() => 0)
         if (latest.stat.mtimeMs <= cleanExitTime) return undefined
       }
       const summary = summarizeMinecraftCrash(await fs.readFile(latest.filePath, 'utf8'))

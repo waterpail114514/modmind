@@ -5,6 +5,7 @@ import {
   inspirationConversationTitle,
   normalizeStoredInspirationMessages,
   persistInspirationHistory,
+  sortInspirationConversations,
   type InspirationConversation,
   type InspirationStoragePayload
 } from './inspirationStorage'
@@ -18,6 +19,43 @@ function payload(conversations: InspirationConversation[], activeId = conversati
 }
 
 describe('inspiration storage', () => {
+  it('keeps pinned histories before newer conversations', () => {
+    const old = { ...conversation('old', []), updatedAt: '2026-01-01', pinned: true }
+    const recent = { ...conversation('recent', []), updatedAt: '2026-02-01' }
+    expect(sortInspirationConversations([recent, old]).map(entry => entry.id)).toEqual(['old', 'recent'])
+  })
+  it('never persists unloaded index entries as empty histories', () => {
+    let stored = ''
+    persistInspirationHistory({ setItem: (_key, value) => { stored = value } }, 'history', payload([
+      { ...conversation('unloaded', []), messagesLoaded: false },
+      conversation('active', [{ role: 'user', content: 'question', status: 'completed' }])
+    ], 'active'))
+    expect((JSON.parse(stored) as InspirationStoragePayload).conversations.map(entry => entry.id)).toEqual(['active'])
+  })
+
+  it('compacts only the retained fallback window of a large history', () => {
+    let contentReads = 0
+    const messages = Array.from({ length: 20_000 }, (_, index) => ({
+      role: 'user' as const, status: 'completed' as const,
+      get content() { contentReads++; return `question ${index}` }
+    }))
+    persistInspirationHistory({ setItem: () => undefined }, 'history', payload([conversation('active', messages)]))
+    expect(contentReads).toBeLessThan(1_000)
+    expect(messages).toHaveLength(20_000)
+  })
+
+  it('infers final answers in legacy turns across intervening tool steps', () => {
+    const normalized = normalizeStoredInspirationMessages([
+      { role: 'user', content: 'q1', status: 'completed' },
+      { role: 'assistant', content: 'analysis', status: 'completed' },
+      { role: 'assistant', kind: 'tool', content: 'step', status: 'completed' },
+      { role: 'assistant', content: 'a1', status: 'completed' },
+      { role: 'user', content: 'q2', status: 'completed' },
+      { role: 'assistant', content: 'a2', status: 'completed' }
+    ])
+    expect(normalized.filter(message => message.isFinal).map(message => message.content)).toEqual(['a1', 'a2'])
+  })
+
   it('names untitled histories from the first question and preserves explicit titles', () => {
     const messages: InspirationConversation['messages'] = [
       { role: 'user', content: '旧展示文字\n\n已附 2 个文件', replay: { prompt: '设计一个\n 森林冒险' }, status: 'completed' },

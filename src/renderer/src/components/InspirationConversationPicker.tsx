@@ -1,16 +1,18 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, ChevronDown, MessagesSquare, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, MessagesSquare, Pencil, Pin, PinOff, Plus, Trash2 } from 'lucide-react'
 import { useWorkbenchPopover } from '../useWorkbenchPopover'
 import { formatConversationTime } from '../workbenchConversations'
 
-export default function InspirationConversationPicker({ conversations, activeId, disabled, visible, onSelect, onNew, onDelete }: {
-  conversations: { id: string; title: string; updatedAt: string }[]
+export default function InspirationConversationPicker({ conversations, activeId, disabled, visible, onSelect, onNew, onDelete, onRename, onTogglePin }: {
+  conversations: { id: string; title: string; updatedAt: string; pinned?: boolean }[]
   activeId: string
   disabled: boolean
   visible: boolean
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onRename: (id: string) => void
+  onTogglePin: (id: string) => void
 }): React.JSX.Element {
   const root = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -34,9 +36,9 @@ export default function InspirationConversationPicker({ conversations, activeId,
       buttons[next]?.focus()
     }}>
       <div className="inspiration-conversation-list">
-        {conversations.map(conversation => <div key={conversation.id} className="inspiration-conversation-option"><button type="button" className={conversation.id === activeId ? 'active' : ''} aria-current={conversation.id === activeId ? 'true' : undefined} title={conversation.title} onClick={() => { onSelect(conversation.id); close() }}>
-          <span>{conversation.title}</span><small>{formatConversationTime(conversation.updatedAt)}</small>{conversation.id === activeId && <Check size={13} />}
-        </button><button type="button" className="inspiration-conversation-delete" aria-label={`删除对话：${conversation.title}`} title="删除历史对话" onClick={() => { close(); onDelete(conversation.id) }}><Trash2 size={14} /></button></div>)}
+        {conversations.map(conversation => <div key={conversation.id} className={`inspiration-conversation-option${conversation.id === activeId ? ' active' : ''}`}><button type="button" className="inspiration-conversation-select" aria-current={conversation.id === activeId ? 'true' : undefined} title={conversation.title} onClick={() => { onSelect(conversation.id); close() }}>
+          <span>{conversation.pinned ? <Pin size={11} /> : null}{conversation.title}</span>{conversation.id === activeId && <Check size={13} />}
+        </button><div className="inspiration-conversation-trailing"><small>{formatConversationTime(conversation.updatedAt)}</small><div className="inspiration-conversation-actions"><button type="button" className="inspiration-conversation-action" aria-label={`重命名对话：${conversation.title}`} title="重命名对话" onClick={() => { close(); onRename(conversation.id) }}><Pencil size={13} /></button><button type="button" className="inspiration-conversation-action" aria-label={conversation.pinned ? `取消置顶：${conversation.title}` : `置顶对话：${conversation.title}`} title={conversation.pinned ? '取消置顶' : '置顶'} onClick={() => onTogglePin(conversation.id)}>{conversation.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button><button type="button" className="inspiration-conversation-delete" aria-label={`删除对话：${conversation.title}`} title="删除历史对话" onClick={() => { close(); onDelete(conversation.id) }}><Trash2 size={14} /></button></div></div></div>)}
         {!conversations.length && <p className="agent-conversation-note">还没有历史对话</p>}
       </div>
       <button type="button" className="inspiration-conversation-new" onClick={() => { onNew(); close() }}><Plus size={14} /><span>新建对话</span></button>

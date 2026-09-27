@@ -18,8 +18,8 @@ test('workbench scroll and long conversation titles remain usable on desktop and
       await scroller.waitFor()
       const gap = () => scroller.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)
       await expect.poll(gap).toBeLessThan(5)
-      const spacerRatio = await page.locator('.agent-conversation-bottom-space').evaluate(element => element.getBoundingClientRect().height / element.closest('[data-virtuoso-scroller]')!.clientHeight)
-      expect(spacerRatio).toBeCloseTo(.5, 2)
+      const spacerHeight = await page.locator('.agent-conversation-bottom-space').evaluate(element => element.getBoundingClientRect().height)
+      expect(spacerHeight).toBe(32)
       const beforeGrowth = await scroller.evaluate(element => element.scrollHeight)
       await page.evaluate(() => (window as any).growOutput())
       await expect.poll(() => scroller.evaluate(element => element.scrollHeight)).toBeGreaterThan(beforeGrowth)
@@ -40,7 +40,7 @@ test('workbench scroll and long conversation titles remain usable on desktop and
       await expect.poll(gap).toBeLessThan(5)
       await page.setViewportSize({ width: viewport.width, height: viewport.height - 150 })
       await expect.poll(gap).toBeLessThan(5)
-      expect(await page.locator('.agent-conversation-bottom-space').evaluate(element => element.getBoundingClientRect().height / element.closest('[data-virtuoso-scroller]')!.clientHeight)).toBeCloseTo(.5, 2)
+      expect(await page.locator('.agent-conversation-bottom-space').evaluate(element => element.getBoundingClientRect().height)).toBe(32)
       await page.screenshot({ path: path.resolve(`test-results/workbench-scroll-${viewport.width}.png`), fullPage: true })
       await page.evaluate(() => (window as any).switchConversation())
       await expect.poll(gap).toBeLessThan(5)
@@ -70,6 +70,62 @@ test('workbench scroll and long conversation titles remain usable on desktop and
       await page.locator('.agent-conversation-picker > button').click()
       await page.locator('.agent-conversation-select').nth(1).click()
       await page.locator('.agent-recovery-banner').waitFor({ state: 'hidden' })
+      // A new prompt also resumes following when the reader was in history.
+      await scroller.hover()
+      await page.mouse.wheel(0, -600)
+      await page.getByRole('button', { name: '回到最新内容' }).waitFor()
+      await page.evaluate(() => (window as any).configureWorkbench({ rows: [
+        { id: 'previous-answer', kind: 'answer', content: '上一轮回答。\n\n'.repeat(100), time: new Date().toISOString() },
+        { id: 'new-user', kind: 'user', content: '帮我添加一个营火。', time: new Date().toISOString() }
+      ] }))
+      await expect.poll(gap).toBeLessThan(5)
+      expect(await page.locator('.agent-conversation-bottom-space').evaluate(el => el.getBoundingClientRect().height)).toBe(32)
+      expect(await page.locator('[data-latest-user="true"]').evaluate(el => {
+        const row = el.getBoundingClientRect()
+        const viewport = el.closest('[data-virtuoso-scroller]')!.getBoundingClientRect()
+        return row.top >= viewport.top && row.bottom <= viewport.bottom
+      })).toBe(true)
+      await page.setViewportSize({ width: viewport.width, height: viewport.height })
+      await expect.poll(gap).toBeLessThan(5)
+      expect(await page.locator('.agent-conversation-bottom-space').evaluate(el => el.getBoundingClientRect().height)).toBe(32)
+      await page.evaluate(() => (window as any).appendOutput())
+      await expect.poll(gap).toBeLessThan(5)
+      await page.evaluate(() => (window as any).configureWorkbench({
+        planning: false, activeConversationId: 'final-answer-actions',
+        onDeleteTimelineItem: (id: string) => { (window as any).deletedTimelineId = id },
+        onRewindTimelineTo: (id: string) => { (window as any).rewoundTimelineId = id },
+        rows: [
+          { id: 'progress-1', kind: 'response', content: '正在检查配置。', time: new Date().toISOString(), status: 'done' },
+          { id: 'progress-2', kind: 'response', content: '正在整理结果。', time: new Date().toISOString(), status: 'done' },
+          { id: 'final-answer', kind: 'answer', content: '最终回答：配置已完成。', time: new Date().toISOString(), status: 'done' }
+        ]
+      }))
+      await page.getByText('最终回答：配置已完成。', { exact: true }).waitFor()
+      const assistantRows = page.locator('.agent-message-row.assistant')
+      expect(await assistantRows.count()).toBe(3)
+      expect(await assistantRows.nth(0).locator('.agent-message-actions').count()).toBe(0)
+      expect(await assistantRows.nth(1).locator('.agent-message-actions').count()).toBe(0)
+      expect(await assistantRows.nth(2).locator('.agent-message-actions button').count()).toBe(2)
+      await assistantRows.nth(2).hover()
+      await assistantRows.nth(2).getByRole('button', { name: '删除这轮对话', exact: true }).click()
+      expect(await page.evaluate(() => (window as any).deletedTimelineId)).toBe('final-answer')
+      await assistantRows.nth(2).getByRole('button', { name: '保留此回答并截断后续对话', exact: true }).click()
+      expect(await page.evaluate(() => (window as any).rewoundTimelineId)).toBe('final-answer')
+      await page.screenshot({ path: path.resolve(`test-results/workbench-final-actions-${viewport.width}.png`), fullPage: true })
+      await page.evaluate(() => (window as any).configureWorkbench({
+        planning: false, activeConversationId: 'long-user-message',
+        onDeleteTimelineItem: (id: string) => { (window as any).deletedTimelineId = id },
+        rows: [{ id: 'long-user', kind: 'user', content: '长消息内容。'.repeat(8_000), time: new Date().toISOString() }]
+      }))
+      const longUser = page.locator('.agent-message-row.user')
+      await longUser.waitFor()
+      expect((await longUser.locator('p').textContent())?.length).toBeLessThan(1_300)
+      expect((await longUser.boundingBox())!.height).toBeLessThan(320)
+      await longUser.getByRole('button', { name: '删除这轮对话' }).click()
+      expect(await page.evaluate(() => (window as any).deletedTimelineId)).toBe('long-user')
+      await longUser.getByRole('button', { name: '展开全文' }).click()
+      expect((await longUser.locator('p').textContent())?.length).toBe(48_000)
+      expect((await longUser.boundingBox())!.height).toBeGreaterThan(320)
       expect(errors).toEqual([])
       await page.close()
     }

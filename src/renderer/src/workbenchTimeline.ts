@@ -1,4 +1,5 @@
 import { normalizeAiTurnReplay, replayUserText } from '../../shared/aiReplay'
+import { contextTokens, latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import { presentLegacyAiNotice } from '../../shared/aiNotice'
 import type { AiNotice, AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationEventRecord, PipelineEvent } from '../../shared/types'
 
@@ -27,12 +28,8 @@ export type WorkbenchTimelineItem = {
 }
 
 /** Latest usage in the timeline; recovers the context badge after a restart. */
-export function latestWorkbenchUsage(items: WorkbenchTimelineItem[]): AiTokenUsage | undefined {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const usage = items[index]?.usage
-    if (usage) return usage
-  }
-  return undefined
+export function latestWorkbenchUsage(items: WorkbenchTimelineItem[], selection?: Pick<AiTokenUsage, 'model' | 'backend'>): AiTokenUsage | undefined {
+  return latestContextUsage(items, selection)
 }
 
 export type WorkbenchContextUsageState =
@@ -42,14 +39,15 @@ export type WorkbenchContextUsageState =
 
 export function workbenchContextUsageState(usage: AiTokenUsage | undefined): WorkbenchContextUsageState {
   if (!usage) return { kind: 'waiting' }
-  const hasReportedTokens = [usage.inputTokens, usage.cachedInputTokens, usage.outputTokens]
+  const hasReportedTokens = [usage.contextTokens, usage.inputTokens, usage.cachedInputTokens, usage.outputTokens]
     .some((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)
   if (!hasReportedTokens) return { kind: 'waiting' }
+  const used = contextTokens(usage)
   if (typeof usage.contextWindow !== 'number' || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0
-    || typeof usage.inputTokens !== 'number' || !Number.isFinite(usage.inputTokens) || usage.inputTokens < 0) {
+    || used === undefined) {
     return { kind: 'tokens' }
   }
-  const ratio = usage.inputTokens / usage.contextWindow
+  const ratio = used / usage.contextWindow
   return { kind: 'capacity', ratio, percent: Math.min(100, Math.max(0, Math.round(ratio * 100))) }
 }
 
@@ -200,6 +198,13 @@ export function reduceWorkbenchOutput(
   event: AiOutputEvent,
   normalize: (value: string) => string = (value) => value
 ): WorkbenchTimelineItem[] {
+  if (event.usage) event = { ...event, usage: mergeContextUsage(latestWorkbenchUsage(items), event.usage) }
+  if (event.kind === 'usage') {
+    if (!event.usage) return items
+    const index = findLastMatchingIndex(items, item => sameOutputTurn(item, event))
+    if (index < 0) return items
+    return items.map((item, i) => i === index ? { ...item, usage: event.usage } : item)
+  }
   if (event.kind === 'warning' || event.kind === 'error') event = { ...event, content: presentLegacyAiNotice(event.content, event.kind === 'warning') }
   if (items.some((item) => sameOutputTurn(item, event) && (
     event.eventId && item.eventId === event.eventId

@@ -13,6 +13,13 @@ import type { AddonImportSelection, AddonPlatformInstallInput, AddonPrepareInput
 const platformInfo = Object.freeze(ipcRenderer.sendSync('app:platformInfo')) as Readonly<import('../shared/platform').RuntimePlatformInfo>
 window.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.platform = platformInfo.os }, { once: true })
 
+let pendingCloseRequest = false
+const closeRequestListeners = new Set<() => void>()
+ipcRenderer.on('window:closeRequested', () => {
+  if (!closeRequestListeners.size) { pendingCloseRequest = true; return }
+  closeRequestListeners.forEach(listener => listener())
+})
+
 const rawInvoke = ipcRenderer.invoke.bind(ipcRenderer)
 
 const rendererError = diagnosticErrorPayload
@@ -52,6 +59,13 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 const api: ModMindApi = {
+  itemEditor: {
+    list: (projectPath: string) => invoke('itemEditor:list', projectPath),
+    catalog: (projectPath: string) => invoke('itemEditor:catalog', projectPath),
+    save: (projectPath: string, input: import('../shared/itemEditor').ItemEditorSaveInput) => invoke('itemEditor:save', projectPath, input),
+    remove: (projectPath: string, id: string, revision: number) => invoke('itemEditor:remove', projectPath, id, revision),
+    importTexture: (projectPath: string) => invoke('itemEditor:importTexture', projectPath)
+  },
   resourcePacks: {
     list: root => invoke('resource-packs:list', root),
     makeEditable: (root, id) => invoke('resource-packs:makeEditable', root, id),
@@ -90,6 +104,8 @@ const api: ModMindApi = {
     getUpdateState: () => invoke('app:getUpdateState'),
     downloadUpdate: () => invoke('app:downloadUpdate'),
     installUpdate: () => invoke('app:installUpdate'),
+    updateNow: () => invoke('app:updateNow'),
+    reinstallLatest: (confirmed) => invoke('app:reinstallLatest', confirmed),
     onUpdateState: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]): void => listener(presentResult(state, 'app:updateState'))
       ipcRenderer.on('app:updateState', handler)
@@ -110,6 +126,15 @@ const api: ModMindApi = {
       ipcRenderer.on('window:detachedClosed', handler)
       return () => ipcRenderer.removeListener('window:detachedClosed', handler)
     },
+    onCloseRequested: (listener: () => void) => {
+      closeRequestListeners.add(listener)
+      if (pendingCloseRequest) {
+        pendingCloseRequest = false
+        listener()
+      }
+      return () => { closeRequestListeners.delete(listener) }
+    },
+    resolveClose: (choice, remember) => invoke('window:resolveClose', choice, remember),
     minimize: () => invoke('window:minimize'),
     maximize: () => invoke('window:maximize'),
     close: () => invoke('window:close'),
@@ -188,6 +213,7 @@ const api: ModMindApi = {
     createModule: (name: string) => invoke('modpack:createModule', name),
     importModule: (mode: 'copy' | 'link') => invoke('modpack:importModule', mode),
     updateModuleSide: (namespace: string, side: ModpackModuleSide) => invoke('modpack:updateModuleSide', namespace, side),
+    removeModule: (namespace: string) => invoke('modpack:removeModule', namespace),
     openModule: (namespace: string) => invoke('modpack:openModule', namespace),
     sync: () => invoke('modpack:sync'),
     listContent: (refresh?: boolean) => invoke('modpack:listContent', refresh),
@@ -386,6 +412,9 @@ const api: ModMindApi = {
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => invoke('conversations:eventsSince', projectPath, conversationId, generation, afterSequence, limit),
     fork: (projectPath: string, input: ConversationForkInput) => invoke('conversations:fork', projectPath, input),
     archive: (projectPath: string, conversationId: string, archived: boolean) => invoke('conversations:archive', projectPath, conversationId, archived),
+    rename: (projectPath: string, conversationId: string, title: string) => invoke('conversations:rename', projectPath, conversationId, title),
+    pin: (projectPath: string, conversationId: string, pinned: boolean) => invoke('conversations:pin', projectPath, conversationId, pinned),
+    generateTitle: (projectPath: string, conversationId: string, userText: string, answer: string, backend: import('../shared/types').CodingBackend, modelSelection?: import('../shared/aiSelection').AiModelSelection) => invoke('conversations:generateTitle', projectPath, conversationId, userText, answer, backend, modelSelection),
     delete: (projectPath: string, conversationId: string) => invoke('conversations:delete', projectPath, conversationId),
     flush: () => invoke('conversations:flush')
   },
@@ -484,6 +513,7 @@ const api: ModMindApi = {
     stop: () => invoke('minecraft:stop'),
     syncProjectMod: () => invoke('minecraft:syncProjectMod'),
     syncModpack: () => invoke('minecraft:syncModpack'),
+    syncKubeJsServerScripts: () => invoke('minecraft:syncKubeJsServerScripts'),
     importMods: () => invoke('minecraft:importMods'),
     removeMod: (name: string) => invoke('minecraft:removeMod', name),
     listMods: () => invoke('minecraft:listMods'),
@@ -499,6 +529,30 @@ const api: ModMindApi = {
     }
   },
   production: {
+    sounds: {
+      list: (projectPath: string, refresh?: boolean) => invoke('sounds:list', projectPath, refresh),
+      preview: (projectPath: string, id: string, download?: boolean) => invoke('sounds:preview', projectPath, id, download),
+      saveEvent: (projectPath: string, input: import('../shared/soundLibrary').SoundEventSave) => invoke('sounds:saveEvent', projectPath, input),
+      import: (projectPath: string, input: import('../shared/soundLibrary').SoundImportOptions) => invoke('sounds:import', projectPath, input),
+      addFolder: (projectPath: string, minecraft?: boolean) => invoke('sounds:addFolder', projectPath, minecraft),
+      removeFolder: (projectPath: string, id: string) => invoke('sounds:removeFolder', projectPath, id),
+      fetchVanilla: (projectPath: string) => invoke('sounds:fetchVanilla', projectPath),
+      cancel: (projectPath: string) => invoke('sounds:cancel', projectPath),
+      process: (projectPath: string, input: import('../shared/soundLibrary').SoundProcessOptions) => invoke('sounds:process', projectPath, input),
+      saveRendered: (projectPath: string, eventId: string, wav: Uint8Array, stream: boolean) => invoke('sounds:saveRendered', projectPath, eventId, wav, stream),
+      renderEffect: (projectPath: string, draft: import('../shared/soundStudio').StudioDraft) => invoke('sounds:renderEffect', projectPath, draft),
+      onRenderRequest: (listener: (request: { id: string; draft: import('../shared/soundStudio').StudioDraft }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, request: { id: string; draft: import('../shared/soundStudio').StudioDraft }): void => listener(request)
+        ipcRenderer.on('sounds:renderRequest', handler)
+        return () => ipcRenderer.removeListener('sounds:renderRequest', handler)
+      },
+      completeRender: (id: string, bytes?: Uint8Array, error?: string) => ipcRenderer.send('sounds:renderComplete', id, bytes, error),
+      readDraft: (projectPath: string) => invoke('sounds:readDraft', projectPath),
+      saveDraft: (projectPath: string, value: string) => invoke('sounds:saveDraft', projectPath, value),
+      exportMidi: (projectPath: string, bytes: Uint8Array) => invoke('sounds:exportMidi', projectPath, bytes),
+      undo: (projectPath: string) => invoke('sounds:undo', projectPath),
+      clearCache: (projectPath: string) => invoke('sounds:clearCache', projectPath)
+    },
     relationships: {
       list: () => invoke('relationships:list'),
       providers: () => invoke('relationships:providers'),
@@ -582,6 +636,7 @@ const api: ModMindApi = {
   }
   ,
   inspiration: {
+    listModels: (backend: import('../shared/types').CodingBackend) => invoke('inspiration:listModels', backend),
     onKnowledgeChanged: listener => {
       const handler = (_event: Electron.IpcRendererEvent, change: Parameters<typeof listener>[0]): void => listener(presentResult(change, 'inspiration:knowledgeChanged'))
       ipcRenderer.on('inspiration:knowledgeChanged', handler)

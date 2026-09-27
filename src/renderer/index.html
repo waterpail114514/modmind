@@ -13,6 +13,7 @@
       #app-loading[popover] { margin: 0; padding: 0; border: 0; width: 100%; height: 100%; max-width: none; max-height: none; }
       #app-loading::backdrop { background: transparent; pointer-events: none; }
       #app-loading[hidden] { display: none; }
+      body[data-loading-covered] > :not(#app-loading), body[data-loading-covered] > :not(#app-loading) * { visibility: hidden !important; }
       #app-loading img { width: 180px; max-width: 45vw; height: auto; user-select: none; }
       #app-loading .loading-logo-dark { display: none; }
       :root[data-theme-mode="dark"] #app-loading .loading-logo-light { display: none; }

@@ -359,6 +359,17 @@ export class WorkbenchDataStore {
     }
   }
 
+  async clearProjectMirror(projectPath: string): Promise<void> {
+    const identity = normalizedProjectIdentity(projectPath)
+    const projectIdentity = sha256(identity).slice(0, 24)
+    await this.flush()
+    await Promise.all([
+      fs.rm(path.join(this.userDataPath, 'workbench-mirror', projectIdentity), { recursive: true, force: true }),
+      fs.rm(path.join(this.userDataPath, 'workbench-journal', projectIdentity), { recursive: true, force: true })
+    ])
+    for (const key of this.revisions.keys()) if (key.startsWith(`${identity}\n`)) this.revisions.delete(key)
+  }
+
   private laneKey(projectPath: string, key: string): string {
     return `${normalizedProjectIdentity(projectPath)}\n${key}`
   }

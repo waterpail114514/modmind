@@ -1,7 +1,37 @@
+import { latestContextUsage } from '../../shared/contextUsage'
+import { normalizeStoredInspirationMessages } from './inspirationStorage'
 import { describe, expect, it } from 'vitest'
 import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
 
 describe('inspiration output settlement', () => {
+  it('keeps the latest measured usage when cancelling and restoring a reply', () => {
+    const usage = { model: 'gpt-6-sol', contextTokens: 21000, contextWindow: 1050000 }
+    const stopped = settleInspirationCancellation([{ role: 'assistant', content: '', status: 'streaming', sessionId: 's', turnId: 't', usage }], 's')
+    const restored = normalizeStoredInspirationMessages(JSON.parse(JSON.stringify(stopped)))
+    expect(restored.at(-1)).toMatchObject({ turnId: 't', usage, status: 'cancelled' })
+  })
+  it('restores the previous measured usage while a new turn is waiting for tokens', () => {
+    const restored = replayInspirationEvents([{ role: 'assistant', content: '完成', turnId: 't1', status: 'completed', usage: { model: 'gpt-6-sol', inputTokens: 105000, contextWindow: 1050000 } }], [
+      { eventId: 'c', conversationId: 'c', generation: 0, turnId: 't2', sequence: 1, kind: 'output', time: 'T', payload: { kind: 'usage', content: '', time: 'T', usage: { model: 'gpt-6-sol', contextWindow: 1050000 } } }
+    ])
+    const saved = normalizeStoredInspirationMessages(JSON.parse(JSON.stringify(restored)))
+    expect(latestContextUsage(saved)).toMatchObject({ contextTokens: 105000, contextWindow: 1050000 })
+    expect(saved.at(-1)).toMatchObject({ turnId: 't2', usage: { contextTokens: 105000 } })
+    const next = replayInspirationEvents(saved, [
+      { eventId: 'm', conversationId: 'c', generation: 0, turnId: 't2', sequence: 2, kind: 'output', time: 'T', payload: { kind: 'usage', content: '', time: 'T', usage: { inputTokens: 21000 } } }
+    ])
+    expect(latestContextUsage(next)).toMatchObject({ contextTokens: 21000 })
+  })
+
+  it('restores runtime context usage without rendering a usage message', () => {
+    const usage = { inputTokens: 100000, contextWindow: 1050000, model: 'gpt-6-sol' }
+    const restored = replayInspirationEvents([{ role: 'assistant', content: '', turnId: 't', status: 'streaming' }], [
+      { eventId: 'u', conversationId: 'c', generation: 0, turnId: 't', sequence: 1, kind: 'output', time: 'T', payload: { kind: 'usage', content: '', time: 'T', usage } },
+      { eventId: 'a', conversationId: 'c', generation: 0, turnId: 't', sequence: 2, kind: 'output', time: 'T', payload: { kind: 'answer', content: '完成', time: 'T' } }
+    ])
+    expect(restored).toHaveLength(1)
+    expect(restored[0]).toMatchObject({ usage, content: '完成' })
+  })
   it('replays retries into one row without losing the provisional answer', () => {
     const restored = replayInspirationEvents([{ role: 'assistant', turnId: 't', sessionId: 'run', content: 'partial', status: 'streaming' }], [1,2,3].map(i => ({
       eventId: `e${i}`, conversationId: 'c', generation: 0, turnId: 't', sequence: i, kind: 'output' as const, time: 'T',

@@ -66,6 +66,7 @@ describe('decompileCache', () => {
   it('treats entries with missing provenance or wrong schema as present but unprovenanced', async () => {
     const key = sha('gamma')
     const staging = await createDecompileCacheStaging(cacheRoot, key)
+    await fs.writeFile(path.join(staging.staging, 'sources', 'Example.java'), 'class Example {}')
     const entry = await staging.finalize(provenanceFor(key))
     await fs.writeFile(path.join(entry.directory, 'provenance.json'), '{"schemaVersion":99}', 'utf8')
     const hit = await readDecompileCacheEntry(cacheRoot, key)
@@ -89,5 +90,30 @@ describe('decompileCache', () => {
     expect(removed).toContain(oldKey)
     expect(await fs.stat(path.join(cacheRoot, 'jars', midKey)).then(() => true).catch(() => false)).toBe(true)
     expect(await fs.stat(path.join(cacheRoot, 'jars', oldKey)).then(() => true).catch(() => false)).toBe(false)
+  })
+
+  it('rejects missing, changed and legacy outputs instead of reusing damaged results', async () => {
+    const key = sha('integrity')
+    const staging = await createDecompileCacheStaging(cacheRoot, key)
+    await fs.writeFile(path.join(staging.staging, 'sources', 'Example.java'), 'class Example {}')
+    const entry = await staging.finalize(provenanceFor(key))
+    expect((await readDecompileCacheEntry(cacheRoot, key))?.provenance).toBeTruthy()
+    const file = path.join(entry.directory, 'sources', 'Example.java')
+    await fs.writeFile(file, 'class Changed {}') // Same byte length.
+    expect((await readDecompileCacheEntry(cacheRoot, key))?.provenance).toBeNull()
+    expect((await readDecompileCacheEntry(cacheRoot, key, 'sources/Example.java'))?.provenance).toBeNull()
+    await fs.unlink(file)
+    expect((await readDecompileCacheEntry(cacheRoot, key))?.provenance).toBeNull()
+    await fs.writeFile(file, 'class Example {}')
+    await fs.unlink(path.join(entry.directory, 'output-manifest.json'))
+    expect((await readDecompileCacheEntry(cacheRoot, key))?.provenance).toBeNull()
+  })
+
+  it('keeps active staging directories when enforcing the completed cache budget', async () => {
+    const staging = await createDecompileCacheStaging(cacheRoot, sha('running'))
+    await fs.writeFile(path.join(staging.staging, 'sources', 'Example.java'), 'class Example {}')
+    expect(await enforceDecompileCacheLimit(cacheRoot, 0)).toEqual([])
+    expect(await fs.readFile(path.join(staging.staging, 'sources', 'Example.java'), 'utf8')).toBe('class Example {}')
+    await staging.abandon()
   })
 })

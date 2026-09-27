@@ -1,4 +1,5 @@
 import type { LoaderKind, McmodCaptchaChallenge, McmodDownloadResult, ProjectInfo } from './types'
+import type { SoundLibraryApi } from './soundLibrary'
 
 export interface DependencyProject {
   projectId: string
@@ -375,6 +376,7 @@ export interface ReleasePublishResult {
 }
 
 export interface ProductionApi {
+  sounds: SoundLibraryApi
   relationships: {
     list: () => Promise<AddonRelationshipManifest>
     providers: () => Promise<Array<{ id: AddonSearchProvider; label: string }>>

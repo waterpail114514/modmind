@@ -10,6 +10,14 @@ export interface InspirationConversation {
   title: string
   updatedAt: string
   messages: InspirationChatMessage[]
+  pinned?: boolean
+  titleSource?: 'ai' | 'manual'
+  /** False only for an index entry whose durable messages have not been read. */
+  messagesLoaded?: boolean
+}
+
+export function sortInspirationConversations(conversations: InspirationConversation[]): InspirationConversation[] {
+  return [...conversations].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt))
 }
 
 export function inspirationConversationTitle(title: string | undefined, messages: InspirationChatMessage[]): string {
@@ -52,7 +60,19 @@ export function boundInspirationMessages(messages: InspirationChatMessage[], max
 }
 
 export function normalizeStoredInspirationMessages(messages: InspirationChatMessage[]): InspirationChatMessage[] {
-  return messages.map((message, index, allMessages) => {
+  // Legacy final-answer inference must stay linear even for very old histories.
+  const lastAssistantInTurn = new Set<number>()
+  let nextUser = -1
+  let nextAssistant = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role === 'user') nextUser = index
+    else if (message.role === 'assistant' && message.kind !== 'tool') {
+      if (nextAssistant < 0 || (nextUser >= 0 && nextAssistant > nextUser)) lastAssistantInTurn.add(index)
+      nextAssistant = index
+    }
+  }
+  return messages.map((message, index) => {
     if (message.role !== 'assistant') {
       const replay = normalizeAiTurnReplay(message.replay)
       return replay ? { ...message, replay } : message.replay ? { ...message, replay: undefined } : message
@@ -63,6 +83,7 @@ export function normalizeStoredInspirationMessages(messages: InspirationChatMess
     if (message.kind === 'tool') return message.status === 'streaming' ? { ...message, status: 'completed' } : message
     if (message.status === 'streaming') {
       return {
+        ...message,
         role: 'assistant',
         content: '上次灵感回答在完成前中断，请重新发送问题。',
         status: 'error',
@@ -74,10 +95,7 @@ export function normalizeStoredInspirationMessages(messages: InspirationChatMess
       return { ...message, kind: 'tool', status: 'completed', isFinal: false }
     }
     if (message.isFinal !== undefined) return message
-    const nextUser = allMessages.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.role === 'user')
-    const nextAssistant = allMessages.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.role === 'assistant' && candidate.kind !== 'tool')
-    const isLastAssistantInTurn = nextAssistant < 0 || (nextUser >= 0 && nextAssistant > nextUser)
-    return { ...message, isFinal: isLastAssistantInTurn && message.status === 'completed' }
+    return { ...message, isFinal: lastAssistantInTurn.has(index) && message.status === 'completed' }
   })
 }
 
@@ -96,17 +114,18 @@ function compactMessage(message: InspirationChatMessage, contentLimit = MAX_MESS
 }
 
 function selectConversations(payload: InspirationStoragePayload): InspirationConversation[] {
-  const selected = payload.conversations.slice(0, MAX_CONVERSATIONS)
-  const active = payload.conversations.find((conversation) => conversation.id === payload.activeId)
+  const loaded = payload.conversations.filter((conversation) => conversation.messagesLoaded !== false)
+  const selected = loaded.slice(0, MAX_CONVERSATIONS)
+  const active = loaded.find((conversation) => conversation.id === payload.activeId)
   if (active && !selected.some((conversation) => conversation.id === active.id)) {
     if (selected.length >= MAX_CONVERSATIONS) selected[selected.length - 1] = active
     else selected.push(active)
   }
   return selected.map((conversation) => ({
     ...conversation,
-    messages: boundInspirationMessages(conversation.messages
+    messages: boundInspirationMessages(conversation.messages)
       .map((message) => compactMessage(message))
-      .filter((message): message is InspirationChatMessage => message !== null))
+      .filter((message): message is InspirationChatMessage => message !== null)
   }))
 }
 
@@ -147,12 +166,12 @@ function serializeWithinBudget(payload: InspirationStoragePayload): { value: str
 }
 
 function minimalPayload(payload: InspirationStoragePayload): string {
-  const active = payload.conversations.find((conversation) => conversation.id === payload.activeId)
+  const active = payload.conversations.find((conversation) => conversation.id === payload.activeId && conversation.messagesLoaded !== false)
   if (!active) return JSON.stringify({ activeId: payload.activeId, conversations: [] } satisfies InspirationStoragePayload)
   const messages = active.messages
+    .slice(-10)
     .map((message) => compactMessage(message, 4 * 1024))
     .filter((message): message is InspirationChatMessage => message !== null)
-    .slice(-10)
   return JSON.stringify({
     activeId: payload.activeId,
     conversations: [{ ...active, messages }]

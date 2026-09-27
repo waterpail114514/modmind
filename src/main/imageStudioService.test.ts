@@ -39,6 +39,39 @@ function generationRequest(overrides: Partial<ImageGenerationRequest> = {}): Ima
 }
 
 describe('ImageStudioService hosted credential freshness', () => {
+  it('uses the synced image API without requesting a hosted lease', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-synced-image-'))
+    roots.push(root)
+    const getHostedLease = vi.fn(async () => { throw new Error('hosted lease must not be requested') })
+    const service = new ImageStudioService({
+      userDataDir: root, projectRoot: () => null, getHostedLease,
+      getSyncedImageApi: async () => ({ customMode: true, imageApi: { baseUrl: 'https://synced.example.test/v1', apiKey: 'synced-secret', model: 'synced-model' } })
+    })
+    await service.saveSettings(settings('old-manual-key'))
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe('https://synced.example.test/v1/images/generations')
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer synced-secret' })
+      expect(JSON.parse(String(init.body)).model).toBe('synced-model')
+      return new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('image').toString('base64') }] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    expect((await service.getSettings()).syncedFromDevice).toBe(true)
+    const result = await service.generate(generationRequest())
+    expect(result.hosted).toBe(false)
+    expect(result.credits).toBe(0)
+    expect(getHostedLease).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fall back to a hosted image lease when custom sync has no image API', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-no-synced-image-'))
+    roots.push(root)
+    const getHostedLease = vi.fn(async () => { throw new Error('hosted lease must not be requested') })
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease, getSyncedImageApi: async () => ({ customMode: true, imageApi: null }) })
+    await expect(service.generate(generationRequest())).rejects.toThrow('请配置图片 API')
+    expect(getHostedLease).not.toHaveBeenCalled()
+  })
+
   it.each([
     { hosted: true, edit: false }, { hosted: true, edit: true },
     { hosted: false, edit: false }, { hosted: false, edit: true }

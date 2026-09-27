@@ -10,6 +10,7 @@ export const WORKBENCH_SKILL_ROUTES = [
   ['minecraft-build-repair', '定位并修复实际编译、Gradle、JDK、依赖、Mixin、注册或启动错误；没有故障时不预先读取。'],
   ['minecraft-version-migration', '迁移 Java Mod 源码的游戏版本、Loader、映射或工具链；整个整合包迁移使用 minecraft-modpack-migration。'],
   ['minecraft-content-assets', '制作或联动校验模型 JSON、方块状态、配方、战利品、标签、语言、声音等数据和资源；单个明确的文案修改通常直接编辑即可。'],
+  ['minecraft-sound-authoring', '制作、改编、试听或导出 Java Mod 的音效与音乐，或编辑声音事件；优先使用声音工作台工具，不用于仅解释声音概念。'],
   ['modmind-blockbench-modeling', '实际创建或修改可编辑模型、UV、骨骼、动画、bbmodel，或进行模型视觉验收；只解释建模概念不使用。'],
   ['modmind-image-assets', '生成或处理纹理、图标、参考图、宣传图、像素优化、去背景；复用现成图片路径不默认触发生图。'],
   ['minecraft-modpack-authoring', '组装和配置整合包、选择并安装兼容 Mod、解决包依赖、制作 FTB Quests/Patchouli 内容或优化配置；不用于 Java Mod 源码开发。'],
@@ -21,20 +22,21 @@ export const WORKBENCH_SKILL_ROUTES = [
 ] as const
 
 export function workbenchSkillNames(project?: ProjectInfo): string[] | undefined {
+  if (project?.draft) return undefined
   if (project?.kind === 'modpack') return [
     'minecraft-modpack-authoring', 'minecraft-modpack-migration', 'minecraft-server-pack-testing',
     'minecraft-content-assets', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
   ]
   if (project && (!project.kind || project.kind === 'mod') && isJavaLoader(project.loader)) return [
     'minecraft-mod-development', 'minecraft-addon-development', 'minecraft-build-repair', 'minecraft-version-migration',
-    'minecraft-content-assets', 'modmind-blockbench-modeling', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
+    'minecraft-content-assets', 'minecraft-sound-authoring', 'modmind-blockbench-modeling', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
   ]
   return undefined
 }
 
 export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：
 先判断用户本轮目标，再决定是否需要查证、操作或读取 skill。不要向用户输出这段分类过程。
-先核对本轮「制作功能」清单：skill 中提到但本轮未勾选的功能不会开放，需要时建议用户在专业模式对话框勾选并重新发送指令；不得通过原生命令、插件或委派绕过。已勾选的相关测试应在制作后执行，真实窗口和无头测试分别记录证据；不支持时如实报告。审批模式在「设置 → 执行审批 → 工作台审批模式」单独调整，默认 YOLO，支持手动审批；自动审批服务故障由宿主直接回退为本次任务的手动审批。明确审查拒绝后最多尝试两种实质不同且允许的低风险方案，仍受阻就停止并说明原因；仅在该设置确实阻塞时请用户调整后再下指令，不能自行修改或承诺解除内部文件、只读及功能限制。
+先核对本轮「制作功能」清单：skill 中提到但本轮未勾选的功能不会开放，需要时建议用户在专业模式对话框勾选并重新发送指令；不得通过原生命令、插件或委派绕过。已勾选表示功能可用，不能覆盖用户仍有效的“只出 JAR、自己测试、不要启动”等限制；在用户允许的范围内按需要执行相关测试，真实窗口和无头测试分别记录证据；不支持时如实报告。审批模式在「设置 → 执行审批 → 工作台审批模式」单独调整，默认 YOLO，支持手动审批；自动审批服务故障由宿主直接回退为本次任务的手动审批。明确审查拒绝后最多尝试两种实质不同且允许的低风险方案，仍受阻就停止并说明原因；仅在该设置确实阻塞时请用户调整后再下指令，不能自行修改或承诺解除内部文件、只读及功能限制。
 
 一、什么时候一句话即可
 - 问候、致谢、无待办的简单确认，以及上下文已有可靠答案的单一事实或术语解释，直接用一句简体中文回答；不调用工具，不读 skill，不建 Todo，不宣布计划。

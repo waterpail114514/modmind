@@ -13,6 +13,7 @@ export type PluginPermission =
   | 'chat.read'         // 读取当前工作台对话
   | 'chat.write'        // 填写工作台输入框
   | 'chat.context'      // 为指定对话提供 AI 补充上下文
+  | 'minecraft.sync'    // 通过宿主同步当前整合包测试实例
 
 export const PLUGIN_PERMISSIONS: readonly PluginPermission[] = [
   'project.read',
@@ -22,7 +23,8 @@ export const PLUGIN_PERMISSIONS: readonly PluginPermission[] = [
   'ui.overlay',
   'chat.read',
   'chat.write',
-  'chat.context'
+  'chat.context',
+  'minecraft.sync'
 ]
 
 export function isPluginPermission(value: unknown): value is PluginPermission {

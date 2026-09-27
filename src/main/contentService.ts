@@ -244,9 +244,11 @@ export class ContentService {
           ? (definition as { sounds: unknown[] }).sounds : []
         if (!entries.length) warnings.push(`声音事件 ${event} 没有声音文件`)
         for (const item of entries) {
-          const name = typeof item === 'string' ? item : item && typeof item === 'object' ? (item as { name?: unknown }).name : ''
-          if (typeof name !== 'string' || name.startsWith('minecraft:')) continue
-          const local = name.includes(':') ? name.split(':', 2)[1] : name
+          const entry = item && typeof item === 'object' ? item as { name?: unknown; type?: unknown } : null
+          const name = typeof item === 'string' ? item : entry?.name
+          if (typeof name !== 'string' || entry?.type === 'event') continue
+          const [namespace, local] = name.includes(':') ? name.split(':', 2) : [project.namespace, name]
+          if (namespace !== project.namespace) continue
           const file = path.join(root, 'assets', project.namespace, 'sounds', `${local}.ogg`)
           if (!(await fs.access(file).then(() => true).catch(() => false))) errors.push(`声音事件 ${event} 缺少 ${local}.ogg`)
         }

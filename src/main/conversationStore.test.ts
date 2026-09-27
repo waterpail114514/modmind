@@ -34,6 +34,36 @@ async function fixture(): Promise<{ project: string; userData: string; data: Wor
 }
 
 describe('ConversationStore', () => {
+  it('keeps pinned conversations first and protects manual names from late AI or view saves', async () => {
+    const { project, store, userData } = await fixture()
+    await store.create(project, { id: 'ws-first', surface: 'workspace', title: '用户首问' })
+    await store.create(project, { id: 'ws-second', surface: 'workspace', title: '较新的对话' })
+    await store.pin(project, 'ws-first', true)
+    expect((await store.list(project, 'workspace')).map(entry => entry.id)).toEqual(['ws-first', 'ws-second'])
+    await store.setGeneratedTitle(project, 'ws-first', 'AI 归纳的短标题')
+    await store.rename(project, 'ws-first', '我的自定义标题')
+    await store.setGeneratedTitle(project, 'ws-first', '迟到的 AI 标题')
+    await store.saveView(project, 'ws-first', 0, { timeline: [] }, '旧的用户首问')
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    expect((await reopened.read(project, 'ws-first'))).toMatchObject({ title: '我的自定义标题', titleSource: 'manual', pinned: true })
+    await reopened.pin(project, 'ws-first', false)
+    expect((await reopened.list(project, 'workspace')).map(entry => entry.id)).toEqual(['ws-first', 'ws-second'])
+  })
+  it('persists beginner identity through reload, professional use and branching', async () => {
+    const { project, store, userData } = await fixture()
+    const source = await store.create(project, { id: 'ws-beginner', surface: 'workspace', agentMode: 'beginner', title: '小白作品' })
+    await store.create(project, { id: source.id, surface: 'workspace' })
+    await store.saveView(project, source.id, source.generation, { timeline: [{ id: 'message', content: '保留上下文' }] })
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    expect((await reopened.list(project, 'workspace'))[0].agentMode).toBe('beginner')
+    const branch = await reopened.fork(project, { sourceConversationId: source.id, view: { timeline: [] } })
+    expect(branch.agentMode).toBe('beginner')
+    expect((await reopened.read(project, source.id))?.view.timeline).toEqual([{ id: 'message', content: '保留上下文' }])
+    const legacy = await reopened.create(project, { id: 'ws-legacy', surface: 'workspace' })
+    expect(legacy.agentMode).toBeUndefined()
+    await reopened.create(project, { id: legacy.id, surface: 'workspace', agentMode: 'beginner' })
+    expect((await reopened.read(project, legacy.id))?.agentMode).toBe('beginner')
+  })
   it('removes inspiration history in place and prevents old journals or saves from restoring it', async () => {
     const { project, store, userData, data } = await fixture()
     await store.create(project, { id: 'idea-delete', surface: 'inspiration', title: 'Ideas' })

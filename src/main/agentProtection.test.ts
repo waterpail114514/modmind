@@ -21,8 +21,11 @@ describe('agent infrastructure protection', () => {
   it('allows source changes and rejects internal paths, traversal, and Windows aliases', async () => {
     const root = await fixture()
     expect(() => assertAgentWriteAllowed(root, 'src/Main.java')).not.toThrow()
-    for (const file of ['.modmind/session.json', '.MODMIND/x', 'nested/.modmind/x', '.modmind./x', '.modmind /x', '../outside', 'src/../../outside', 'C:\\ModMind\\app.exe', 'src/file:stream', '']) {
+    for (const file of ['../outside', 'src/../../outside', 'C:\\ModMind\\app.exe', 'src/file:stream', '']) {
       expect(() => assertAgentWriteAllowed(root, file), file).toThrow()
+    }
+    for (const file of ['.modmind/session.json', '.MODMIND/x', 'nested/.modmind/x']) {
+      expect(() => assertAgentWriteAllowed(root, file), file).not.toThrow()
     }
   })
 
@@ -31,9 +34,10 @@ describe('agent infrastructure protection', () => {
     const install = path.join(root, 'application')
     const userData = path.join(root, 'custom-data')
     configureAgentProtection([install, userData])
-    for (const folder of [install, path.join(install, 'resources'), userData, path.join(root, '.modmind', 'sessions')]) {
+    for (const folder of [install, path.join(install, 'resources'), userData]) {
       expect(() => assertAgentProjectAllowed(folder)).toThrow()
     }
+    expect(() => assertAgentProjectAllowed(path.join(root, '.modmind', 'sessions'))).not.toThrow()
     expect(() => assertAgentProjectAllowed(path.join(root, 'application-project'))).not.toThrow()
     expect(() => assertAgentWriteAllowed(root, 'custom-data/settings.json')).toThrow()
     expect(agentProtectionConfigArgs(root).join(' ')).toContain(JSON.stringify(userData))
@@ -48,7 +52,7 @@ describe('agent infrastructure protection', () => {
     await fs.link(path.join(internal, 'keep.json'), path.join(root, 'alias.json'))
     expect(() => assertAgentWriteAllowed(root, 'alias/new.json')).toThrow('link')
     expect(() => assertAgentWriteAllowed(root, 'alias.json')).toThrow('link')
-    expect(() => assertAgentProjectAllowed(path.join(root, 'alias'))).toThrow()
+    expect(() => assertAgentProjectAllowed(path.join(root, 'alias'))).not.toThrow()
   })
 
   it.skipIf(!process.env.MODMIND_CODEX_SANDBOX_TEST_EXE)('blocks real native writes and deletion while allowing project changes', async () => {

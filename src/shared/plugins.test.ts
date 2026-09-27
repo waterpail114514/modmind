@@ -19,6 +19,11 @@ describe('plugin overlay manifest', () => {
     expect(isPluginPanelMessage({ type: 'context', requestId: '1', op: 'chatSetDraft', args: [] })).toBe(false)
     expect(isPluginPanelMessage({ type: 'context', requestId: '1', op: 123 })).toBe(false)
   })
+  it('accepts the managed Minecraft sync permission and panel request', () => {
+    expect(validatePluginManifest({ ...baseManifest(), panel: { entry: 'index.html' }, permissions: ['minecraft.sync'] }).errors).toEqual([])
+    expect(isPluginPanelMessage({ type: 'context', requestId: 'sync-1', op: 'minecraftSyncModpack' })).toBe(true)
+    expect(isPluginPanelMessage({ type: 'context', requestId: 'sync-2', op: 'minecraftSyncKubeJsServerScripts' })).toBe(true)
+  })
   it('accepts an overlay as the only plugin entry', () => {
     const result = validatePluginManifest({
       ...baseManifest(),

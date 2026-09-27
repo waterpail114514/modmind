@@ -98,6 +98,21 @@ export default function ModpackModListWorkspace({ project, onOpenModule, onDecom
     try { setManifest(await window.modmind.modpack.updateModuleSide(namespace, side)); setNotice('已更新自制模组端标注') }
     catch (error) { setNotice(errorMessage(error)) } finally { setBusy('') }
   }
+  const removeModule = async (module: NonNullable<typeof manifest>['modules'][number]): Promise<void> => {
+    if (busy) return
+    if (!await requestConfirm({
+      title: '移除自制模组？',
+      message: module.linked ? '将从整合包中解除关联，外部模组工程会保留。' : '将从整合包中移除，并把整合包内的源码目录移到回收站。',
+      detail: module.name,
+      confirmLabel: '移除模组',
+      cancelLabel: '保留模组',
+      tone: 'danger'
+    })) return
+    setBusy(`module-remove:${module.namespace}`); setNotice('')
+    try { setManifest(await window.modmind.modpack.removeModule(module.namespace)); setNotice(`已从整合包移除 ${module.name}`) }
+    catch (error) { setNotice(errorMessage(error)); void window.modmind.modpack.get().then(setManifest).catch(() => undefined) }
+    finally { setBusy('') }
+  }
   useEffect(() => {
     let active = true
     setBusy('initial')
@@ -148,7 +163,7 @@ export default function ModpackModListWorkspace({ project, onOpenModule, onDecom
       <section className="modpack-mod-list-section"><div className="modpack-mod-list-heading"><div><Box size={17} /><div><h2>自制模组</h2></div></div><span>{modules.length}</span></div>
         <ImportModpackModule busy={busy} setBusy={setBusy} onImported={setManifest} onNotice={setNotice} />
         <div className="modpack-module-create"><input value={moduleName} maxLength={80} placeholder="例如：核心玩法" onChange={(event) => setModuleName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void createModule() }} /><button className="primary-button" type="button" disabled={Boolean(busy) || !moduleName.trim()} onClick={() => void createModule()}>{busy === 'module' ? <LoaderCircle className="spin" size={15} /> : <Box size={15} />}新建自制模组</button></div>
-        <div className="modpack-list">{modules.map((module) => <div className="modpack-row modpack-local-module-row" key={module.namespace}><Box size={16} /><span><strong>{module.name}</strong><small title={module.path}>{module.namespace} · {module.linked ? '直接使用' : '整合包内'} · {module.path}</small></span><label className="modpack-module-side"><span>端类型</span><select value={module.side ?? 'both'} disabled={Boolean(busy)} onChange={(event) => void updateModuleSide(module.namespace, event.target.value as ModpackModuleSide)}>{moduleSides.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.openModule(module.namespace).then((value) => onOpenModule?.(value)).catch((error) => setNotice(errorMessage(error)))}><FolderOpen size={14} />打开</button></div>)}{!modules.length ? <p className="modpack-empty">暂无自制模组</p> : null}</div>
+        <div className="modpack-list">{modules.map((module) => <div className="modpack-row modpack-local-module-row" key={module.namespace}><Box size={16} /><span><strong>{module.name}</strong><small title={module.path}>{module.namespace} · {module.linked ? '直接使用' : '整合包内'} · {module.path}</small></span><label className="modpack-module-side"><span>端类型</span><select value={module.side ?? 'both'} disabled={Boolean(busy)} onChange={(event) => void updateModuleSide(module.namespace, event.target.value as ModpackModuleSide)}>{moduleSides.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><button className="secondary-button compact" type="button" disabled={Boolean(busy)} onClick={() => void window.modmind.modpack.openModule(module.namespace).then((value) => onOpenModule?.(value)).catch((error) => setNotice(errorMessage(error)))}><FolderOpen size={14} />打开</button><button className="icon-button danger" type="button" title={`移除 ${module.name}`} aria-label={`移除 ${module.name}`} disabled={Boolean(busy)} onClick={() => void removeModule(module)}>{busy === `module-remove:${module.namespace}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}</button></div>)}{!modules.length ? <p className="modpack-empty">暂无自制模组</p> : null}</div>
       </section></div>
     {notice ? <div className="modpack-mod-list-notice" role="status">{notice}</div> : null}
     {confirmDialog}

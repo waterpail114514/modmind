@@ -24,7 +24,8 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
   const [atBottom, setAtBottom] = useState(true)
   const followRef = useRef(true)
   const virtuosoRef = useRef<VirtuosoHandle>(null)
-  const latestUserIndex = rows.reduce((index, row, nextIndex) => isUserRow(row) ? nextIndex : index, -1)
+  let latestUserIndex = rows.length - 1
+  while (latestUserIndex >= 0 && !isUserRow(rows[latestUserIndex])) latestUserIndex -= 1
   const latestUserId = rows[latestUserIndex]?.id
   const latestUserRef = useRef(latestUserId)
   const userIndexRef = useRef(latestUserIndex)
@@ -42,11 +43,14 @@ export default function WorkbenchConversation<T extends { id: string }>({ rows, 
       if (!scroller || !scroller.clientHeight) return
       if (!followRef.current && surface !== 'inspiration') return
       const user = scroller.querySelector<HTMLElement>('[data-latest-user="true"]')
-      const spacer = scroller.querySelector<HTMLElement>('.agent-conversation-bottom-space')
-      // Short turns need enough space to align the prompt. Inspiration consumes
-      // that space as the answer grows, leaving only a small bottom inset.
-      const turnHeight = user && spacer ? spacer.getBoundingClientRect().top - user.getBoundingClientRect().top : scroller.clientHeight
-      const space = Math.max(surface === 'inspiration' ? 24 : scroller.clientHeight / 2, scroller.clientHeight - turnHeight)
+      // Keep the workbench close to its composer, including short turns.
+      // Inspiration still reserves room to anchor its latest prompt at the top.
+      let space = 32
+      if (surface === 'inspiration') {
+        const spacer = scroller.querySelector<HTMLElement>('.agent-conversation-bottom-space')
+        const turnHeight = user && spacer ? spacer.getBoundingClientRect().top - user.getBoundingClientRect().top : scroller.clientHeight
+        space = Math.max(24, scroller.clientHeight - turnHeight)
+      }
       scroller.style.setProperty('--agent-conversation-space', `${space}px`)
       if (!followRef.current) return
       if (surface === 'inspiration' && anchorPromptRef.current) {

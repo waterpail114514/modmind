@@ -20,6 +20,31 @@ const scaffold = async (project: ProjectInfo): Promise<void> => {
 }
 
 describe('conversation-only projects', () => {
+  it('creates from the agent structured selection without keyword routing and does not reinitialize', async () => {
+    const draft = await createDraftProject(await documents(), '按推荐的来')
+    const selection = { kind: 'mod' as const, loader: 'fabric' as const, minecraftVersion: '1.21.1' }
+    const services = { resolve: vi.fn(async () => compatibility), scaffold: vi.fn(scaffold) }
+    const ready = await initializeDraftProject(draft.path, services, selection)
+    expect(ready).toMatchObject({ ...selection, path: draft.path, namespace: draft.namespace })
+    expect(ready.draft).toBeUndefined()
+    expect(await initializeDraftProject(draft.path, services, selection)).toEqual(ready)
+    expect(services.scaffold).toHaveBeenCalledTimes(1)
+    await expect(initializeDraftProject(draft.path, services, { ...selection, loader: 'forge' })).rejects.toThrow('迁移')
+  })
+
+  it('rejects incompatible structured choices before generating files', async () => {
+    const draft = await createDraftProject(await documents(), '做个项目')
+    const services = { resolve: vi.fn(async () => compatibility), scaffold: vi.fn(scaffold) }
+    for (const selection of [
+      { kind: 'mod' as const, loader: 'paper' as const, minecraftVersion: '1.21.1' },
+      { kind: 'server-plugin' as const, loader: 'fabric' as const, minecraftVersion: '1.21.1' },
+      { kind: 'modpack' as const, loader: 'bedrock' as const, minecraftVersion: '1.21.1' },
+      { kind: 'mod' as const, loader: 'fabric' as const, minecraftVersion: '' }
+    ]) await expect(initializeDraftProject(draft.path, services, selection)).rejects.toThrow()
+    expect(services.resolve).not.toHaveBeenCalled()
+    expect(services.scaffold).not.toHaveBeenCalled()
+    expect((await fs.readdir(draft.path)).sort()).toEqual(['.modmind', 'modmind.project.json'])
+  })
   it('creates distinct minimal projects under Documents without selecting a game version', async () => {
     const parent = await documents()
     const first = await createDraftProject(parent, '做一把闪电剑')

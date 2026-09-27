@@ -8,6 +8,14 @@ const sources = [
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
 ]
 const args = process.argv.slice(2)
+const targetUrl = new URL('../src/main/modelContextRegistry.json', import.meta.url)
+const previousFlag = args.indexOf('--previous')
+if (previousFlag >= 0 && !args[previousFlag + 1]) throw new Error('Missing --previous file')
+const previousText = await readFile(previousFlag >= 0 ? args[previousFlag + 1] : targetUrl, 'utf8').catch(error => {
+  if (previousFlag < 0 && error.code === 'ENOENT') return null
+  throw error
+})
+const previous = previousText ? JSON.parse(previousText) : undefined
 async function load(flag, url) {
   const index = args.indexOf(flag)
   if (index >= 0 && !args[index + 1]) throw new Error(`Missing ${flag} file`)
@@ -45,20 +53,36 @@ for (const [id, model] of Object.entries(lite.data)) {
   // Input is a conservative working ceiling when a total context is unspecified.
   if (!target.models.has(id)) target.models.set(id, [input, input, tokens(model.max_output_tokens), 1])
 }
+const freshCount = Object.values(providers).reduce((sum, p) => sum + p.models.size, 0)
+if (freshCount < 1000) throw new Error(`Incomplete source data (${freshCount} entries); registry was not replaced`)
+// Upstream deletion is not evidence that an existing deployment stopped working.
+// Fresh values win; keep removed historical IDs and the snapshots they came from.
+let retained = 0
+for (const [id, record] of Object.entries(previous?.providers ?? {})) {
+  const target = provider(id)
+  target.api ??= record.api
+  target.docs ??= record.docs
+  for (const [model, limit] of Object.entries(record.models)) if (!target.models.has(model)) {
+    target.models.set(model, limit)
+    retained++
+  }
+}
+const retainedSnapshots = retained ? [...(previous.retainedSnapshots ?? []), { updatedAt: previous.updatedAt, sources: previous.sources }]
+  .filter((entry, index, all) => all.findIndex(other => JSON.stringify(other) === JSON.stringify(entry)) === index) : []
 const sorted = Object.fromEntries(Object.entries(providers).filter(([, p]) => p.models.size).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([id, p]) => [id, {
   ...(p.api ? { api: p.api } : {}), ...(p.docs ? { docs: p.docs } : {}),
   models: Object.fromEntries([...p.models].sort(([a], [b]) => a.localeCompare(b, 'en')))
 }]))
 const count = Object.values(sorted).reduce((sum, p) => sum + Object.keys(p.models).length, 0)
-if (count < 1000) throw new Error(`Incomplete source data (${count} entries); registry was not replaced`)
 const registry = {
   schemaVersion: 1,
   updatedAt: new Date().toISOString().slice(0, 10),
   sources: sources.map((url, i) => ({ url, sha256: [modelsDev, lite][i].sha256, license: 'MIT' })),
+  ...(retainedSnapshots.length ? { retainedSnapshots } : {}),
   // Tuple layout keeps thousands of provider/model variants small and diffable.
   columns: ['context', 'input', 'output', 'source'], providers: sorted
 }
 // One model per line keeps release updates reviewable without verbose tuple arrays.
 const text = JSON.stringify(registry, null, 2).replace(/\[\s*(\d+),\s*(\d+|null),\s*(\d+|null),\s*([01])\s*\]/g, '[$1,$2,$3,$4]') + '\n'
-await writeFile(new URL('../src/main/modelContextRegistry.json', import.meta.url), text)
-console.log(`Saved ${count} provider/model entries (${Object.keys(sorted).length} providers), ${Buffer.byteLength(text)} bytes`)
+await writeFile(targetUrl, text)
+console.log(`Saved ${count} provider/model entries (${Object.keys(sorted).length} providers, ${retained} retained historical entries), ${Buffer.byteLength(text)} bytes`)

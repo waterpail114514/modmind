@@ -1,4 +1,5 @@
 !include "nsDialogs.nsh"
+!include "${__FILEDIR__}\installer-upgrade.nsh"
 
 !ifndef BUILD_UNINSTALLER
 
@@ -32,6 +33,9 @@ Var PersonalDesktopPath
 
 !macro customHeader
   BrandingText "ModMind · Minecraft 创作工作台"
+  !ifndef BUILD_UNINSTALLER
+    !insertmacro ModMindUpgradeFunctions
+  !endif
 !macroend
 
 !macro customInit
@@ -97,6 +101,7 @@ FunctionEnd
   ${If} $installMode == "all"
     SetShellVarContext all
   ${EndIf}
+  StrCpy $ModMindUpgradeCommitted 1
 !macroend
 
 !endif

@@ -1,8 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { appendUserTurn, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEvents, workbenchContextUsageState, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
+import { appendUserTurn, latestWorkbenchUsage, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEvents, workbenchContextUsageState, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 
 describe('workbench timeline adapter', () => {
+  it('retains persisted context through the next turn configuration and replay', () => {
+    const records: ConversationEventRecord[] = [
+      { eventId: 'u1', conversationId: 'c', generation: 0, turnId: 't1', sequence: 1, kind: 'user', time: 'T', payload: { prompt: '第一轮' } },
+      { eventId: 'a1', conversationId: 'c', generation: 0, turnId: 't1', sequence: 2, kind: 'output', time: 'T', payload: { kind: 'answer', content: '完成', turnId: 't1', time: 'T', usage: { model: 'gpt-6-sol', inputTokens: 105000, contextWindow: 1050000 } } },
+      { eventId: 'u2', conversationId: 'c', generation: 0, turnId: 't2', sequence: 3, kind: 'user', time: 'T', payload: { prompt: '继续' } },
+      { eventId: 'c2', conversationId: 'c', generation: 0, turnId: 't2', sequence: 4, kind: 'output', time: 'T', payload: { kind: 'usage', content: '', turnId: 't2', time: 'T', usage: { model: 'gpt-6-sol', contextWindow: 1050000 } } }
+    ]
+    const restored = replayWorkbenchEvents([], JSON.parse(JSON.stringify(records)))
+    expect(workbenchContextUsageState(latestWorkbenchUsage(restored))).toEqual({ kind: 'capacity', ratio: .1, percent: 10 })
+    const persisted = JSON.parse(JSON.stringify(restored)).map(normalizeStoredWorkbenchTimeline)
+    expect(workbenchContextUsageState(latestWorkbenchUsage(persisted))).toEqual({ kind: 'capacity', ratio: .1, percent: 10 })
+    const next = reduceWorkbenchOutput(persisted, { kind: 'usage', content: '', turnId: 't2', time: 'T', usage: { inputTokens: 21000 } })
+    expect(workbenchContextUsageState(latestWorkbenchUsage(next))).toEqual({ kind: 'capacity', ratio: .02, percent: 2 })
+  })
+
+  it('updates real runtime context usage without adding a visible timeline row', () => {
+    const items: WorkbenchTimelineItem[] = [{ id: 'user', kind: 'user', content: '开始', time: 'T', turnId: 't' }]
+    const usage = { inputTokens: 100000, contextWindow: 1050000 }
+    const next = reduceWorkbenchOutput(items, { kind: 'usage', content: '', time: 'T', turnId: 't', usage })
+    expect(next).toHaveLength(1)
+    expect(next[0].usage).toMatchObject(usage)
+    expect(workbenchContextUsageState({ inputTokens: 5000000, cumulative: true, contextWindow: 1000000 })).toEqual({ kind: 'tokens' })
+    expect(workbenchContextUsageState({ inputTokens: 5000000, cumulative: true, contextTokens: 100000, contextWindow: 1000000 })).toEqual({ kind: 'capacity', ratio: .1, percent: 10 })
+  })
   it('merges notice updates across retries and progress events without erasing other turns or details', () => {
     const notice = { key: 'retry', detail: '正在自动恢复', occurrences: 1 }
     const first: AiOutputEvent = { kind: 'retry', content: '8 秒后重试', time: 'T1', runId: 'run', turnId: 'turn', sequence: 1, notice }

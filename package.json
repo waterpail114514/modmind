@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.10",
+  "version": "1.4.11",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -8,7 +8,7 @@
   "license": "AGPL-3.0-only",
   "sourceFingerprint": "sha256:235b5b247370dc5069a627962c848fb0d80f557114a51f51ebf5610db303f504",
   "scripts": {
-    "models:sync": "node scripts/sync-model-context-registry.mjs",
+    "models:sync": "node scripts/sync-model-context-registry.mjs && node scripts/sync-model-reasoning-registry.mjs",
     "dev": "electron-vite dev",
     "prebuild": "npm run theme:check && node scripts/clean-build-output.mjs",
     "build": "electron-vite build",
@@ -40,6 +40,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@tonejs/midi": "^2.0.28",
     "@types/marked": "^6.0.0",
     "@xmcl/asm": "1.0.1",
     "@xmcl/core": "^2.15.1",
@@ -53,6 +54,7 @@
     "ffmpeg-static": "^5.3.0",
     "ftbq-nbt": "^1.4.1",
     "fzstd": "^0.1.1",
+    "jfxr": "^0.13.0",
     "json5": "^2.2.3",
     "pdfjs-dist": "4.10.38",
     "proper-lockfile": "^4.1.2",
@@ -61,6 +63,7 @@
     "sharp": "^0.33.5",
     "smol-toml": "^1.8.0",
     "three": "^0.180.0",
+    "tone": "^15.1.22",
     "undici": "7.2.3",
     "yauzl": "^2.10.0"
   },
@@ -124,6 +127,10 @@
       "node_modules/7zip-bin/**"
     ],
     "extraResources": [
+      {
+        "from": "resources/reinstall-app.ps1",
+        "to": "reinstall-app.ps1"
+      },
       {
         "from": "vendor/blockbench",
         "to": "blockbench",

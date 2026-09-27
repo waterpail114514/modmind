@@ -13,6 +13,7 @@ const executable = path.resolve(process.argv[2] || 'missing-codex-path')
 await fs.access(executable)
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-metadata-smoke-'))
 const requests = []
+let Adapter
 const server = http.createServer(async (req, res) => {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -29,16 +30,20 @@ const server = http.createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 
-async function check(model, prepareCatalog) {
+async function check(model, prepareCatalog, reasoningCase) {
   const home = await fs.mkdtemp(path.join(temporary, 'home-'))
-  const catalog = await prepareCatalog(home, model)
+  const effort = reasoningCase ? reasoningCase.level === 'auto' ? undefined : reasoningCase.level : 'high'
+  const adapter = reasoningCase ? new Adapter() : undefined
+  const upstreamBase = `http://127.0.0.1:${server.address().port}/v1`
+  const baseUrl = adapter ? await adapter.baseUrl(upstreamBase, model, undefined, model, model, effort ?? null) : upstreamBase
+  const catalog = await prepareCatalog(home, model, reasoningCase ? { reasoning: reasoningCase.capabilities } : {})
   const entry = JSON.parse(await fs.readFile(catalog.path, 'utf8')).models.find(entry => entry.slug === model)
   await fs.writeFile(path.join(home, 'config.toml'), [
     `model = ${JSON.stringify(model)}`, 'model_provider = "thirdparty"',
-    `model_catalog_json = ${JSON.stringify(catalog.path)}`, 'model_reasoning_effort = "high"',
+    `model_catalog_json = ${JSON.stringify(catalog.path)}`, ...(effort ? [`model_reasoning_effort = ${JSON.stringify(effort)}`] : []),
     '[features]', 'enable_request_compression = false',
     '[model_providers.thirdparty]', 'name = "Local fixture"',
-    `base_url = "http://127.0.0.1:${server.address().port}/v1"`, 'wire_api = "responses"'
+    `base_url = ${JSON.stringify(baseUrl)}`, 'wire_api = "responses"'
   ].join('\n'))
   const child = spawn(executable, ['app-server', '--listen', 'stdio://'], {
     cwd: home, env: { ...process.env, CODEX_HOME: home }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
@@ -79,13 +84,14 @@ async function check(model, prepareCatalog) {
         assert.doesNotMatch(JSON.stringify(events) + stderr, /fallback model metadata|Model metadata for|Invalid configuration/)
         const outgoing = requests.at(-1)
         assert.equal(outgoing.model, model)
-        assert.ok(outgoing.tools.length > 0)
-        assert.equal(outgoing.reasoning?.summary, undefined)
-        assert.equal(outgoing.reasoning?.effort, 'high')
-        assert.equal(outgoing.text?.verbosity, undefined)
+        const declaredTools = outgoing.tools ?? outgoing.input?.filter(item => item.type === 'additional_tools').flatMap(item => item.tools ?? [])
+        assert.ok(declaredTools?.length > 0, `Missing tool declarations for ${model}`)
+        if (!entry.supports_reasoning_summaries) assert.equal(outgoing.reasoning?.summary, undefined)
+        assert.equal(outgoing.reasoning?.effort, effort)
+        if (!entry.support_verbosity) assert.equal(outgoing.text?.verbosity, undefined)
         const windows = events.filter(event => event.method === 'thread/tokenUsage/updated').map(event => event.params.tokenUsage.modelContextWindow)
         assert.ok(windows.some(window => window >= entry.context_window * 0.9 && window <= entry.context_window), `Runtime context differs from registry: ${JSON.stringify(windows)} vs ${entry.context_window}`)
-        console.log(`PASS ${model}: context=${entry.context_window}, compact=${entry.auto_compact_token_limit}, native window=${windows.at(-1)}, turn completed`)
+        console.log(`PASS ${model}: effort=${outgoing.reasoning?.effort ?? 'auto'}, context=${entry.context_window}, native window=${windows.at(-1)}, turn completed`)
       })(),
       new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`Timed out: ${model}\n${stderr}\n${JSON.stringify(events).slice(-3000)}`)), 20_000) })
     ])
@@ -94,6 +100,7 @@ async function check(model, prepareCatalog) {
     const closed = new Promise(resolve => child.once('close', resolve))
     child.kill()
     await closed
+    adapter?.close()
   }
 }
 
@@ -101,7 +108,23 @@ try {
   const bundle = path.join(temporary, 'catalog.cjs')
   await build({ entryPoints: ['src/main/codexModelCatalog.ts'], outfile: bundle, platform: 'node', format: 'cjs', bundle: true })
   const { prepareCodexModelCatalog } = createRequire(import.meta.url)(bundle)
-  for (const model of ['deepseek-v4-flash', 'gpt-4-0314', 'grok-4', 'google/gemini-2.5-pro', 'deepseek-chat', 'qwen/qwen3-coder', 'nvidia/nemotron-3-ultra-550b-a55b:free']) await check(model, prepareCodexModelCatalog)
+  const models = process.argv.slice(3)
+  if (models[0] === '--reasoning' || models[0] === '--ultra') {
+    const adapterBundle = path.join(temporary, 'adapter.cjs')
+    await build({ entryPoints: ['src/main/chatCompletionsAdapter.ts'], outfile: adapterBundle, platform: 'node', format: 'cjs', bundle: true })
+    Adapter = createRequire(import.meta.url)(adapterBundle).ChatCompletionsAdapter
+  }
+  if (models[0] === '--ultra') {
+    await check('gpt-6-sol', prepareCodexModelCatalog, { level: 'ultra', capabilities: { source: 'provider', efforts: ['ultra'], controls: ['effort'] } })
+  } else if (models[0] === '--reasoning') {
+    const reasoningBundle = path.join(temporary, 'reasoning.cjs')
+    await build({ entryPoints: ['src/main/modelReasoningCatalog.ts'], outfile: reasoningBundle, platform: 'node', format: 'cjs', bundle: true })
+    const { modelReasoningCatalog } = createRequire(import.meta.url)(reasoningBundle)
+    for (const model of ['gpt-6-sol', 'gpt-5.6-sol', 'gpt-6-astra', 'unknown-model']) {
+      const capabilities = modelReasoningCatalog.resolve(model)
+      for (const level of ['auto', ...capabilities.efforts]) await check(model, prepareCodexModelCatalog, { level, capabilities })
+    }
+  } else for (const model of models.length ? models : ['gpt-6-sol', 'gpt-6-luna', 'claude-opus-5-5', 'gpt-7-sol', 'gpt-6-astra', 'unknown-model', 'deepseek-v4-flash', 'gpt-4-0314', 'grok-4', 'google/gemini-2.5-pro', 'deepseek-chat', 'qwen/qwen3-coder', 'nvidia/nemotron-3-ultra-550b-a55b:free']) await check(model, prepareCodexModelCatalog)
 } finally {
   await new Promise(resolve => server.close(resolve))
   await fs.rm(temporary, { recursive: true, force: true })

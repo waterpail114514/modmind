@@ -712,6 +712,9 @@ export type DeviceKeyStatus = 'ACTIVE' | 'FROZEN'
 export interface DeviceConnectionState {
   status: DeviceConnectionStatus
   configured: boolean
+  provider?: 'custom'
+  providerId?: string
+  model?: string
   siteUrl?: string
   username?: string
   balanceCents?: string
@@ -758,10 +761,12 @@ export interface AppVersionCheckResult {
   downloadUrl?: string
 }
 
-export type AppUpdatePhase = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error'
+export type AppUpdatePhase = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error'
 
 export interface AppUpdateState {
   phase: AppUpdatePhase
+  operation?: 'update' | 'reinstall'
+  installAfterDownload?: boolean
   currentVersion: string
   latestVersion?: string
   targetChannel?: 'stable' | 'beta'
@@ -783,8 +788,8 @@ export interface DeviceUsage {
   checkedAt: string
 }
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-export type BeginnerReasoningLevel = 'low' | 'medium' | 'high' | 'extreme'
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+export type BeginnerReasoningLevel = 'auto' | ReasoningEffort
 export type AiExecutionProfile = 'standard' | 'beginner-unlimited'
 export type ExternalAgentKind = 'codex' | 'claude'
 export type CodingBackend = 'quota' | ExternalAgentKind
@@ -806,6 +811,8 @@ export interface BeginnerAiPreferences {
   model: string
   reasoningLevel: BeginnerReasoningLevel
   fastMode: boolean
+  /** Manual runtime context limits for exact model IDs on the active route. */
+  modelContextWindows?: Record<string, number>
 }
 
 export interface JavaPreferences {
@@ -863,6 +870,16 @@ export interface ExternalAgentProviderSetup {
 export interface AiModelInfo {
   id: string
   ownedBy?: string
+  reasoning?: ModelReasoningCapabilities
+}
+
+export interface ModelReasoningCapabilities {
+  efforts: ReasoningEffort[]
+  controls: Array<'effort' | 'toggle' | 'budget_tokens'>
+  source: 'provider' | 'registry' | 'unknown'
+  supported?: boolean
+  defaultEffort?: ReasoningEffort
+  budgetTokens?: { min: number; max: number }
 }
 
 export interface McmodSearchResult {
@@ -919,6 +936,12 @@ export interface AiTokenUsage {
   cachedInputTokens?: number
   outputTokens?: number
   contextWindow?: number
+  /** Size of the active input including cached input, not cumulative billing. */
+  contextTokens?: number
+  cumulative?: boolean
+  model?: string
+  backend?: CodingBackend
+  contextWindowSource?: 'configuration' | 'runtime'
 }
 
 export interface AiNotice {
@@ -930,7 +953,7 @@ export interface AiNotice {
 
 export interface AiOutputEvent {
   notice?: AiNotice
-  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error'
+  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage'
   content: string
   time: string
   sessionId?: string
@@ -957,6 +980,7 @@ export interface AiOutputEvent {
 }
 
 export interface InspirationChatMessage {
+  usage?: AiTokenUsage
   notice?: AiNotice
   role: 'user' | 'assistant'
   kind?: 'tool'
@@ -1010,12 +1034,15 @@ export interface ConversationBranchPoint {
 }
 
 export interface ConversationSummary {
+  agentMode?: 'beginner'
   id: string
   surface: AiSurface
   title: string
   createdAt: string
   updatedAt: string
   generation: number
+  pinned?: boolean
+  titleSource?: 'ai' | 'manual'
   archived?: boolean
   parent?: ConversationBranchPoint
 }
@@ -1036,6 +1063,7 @@ export interface ConversationDocument extends ConversationSummary {
 }
 
 export interface ConversationCreateInput {
+  agentMode?: 'beginner'
   id?: string
   surface: AiSurface
   title?: string
@@ -1063,6 +1091,9 @@ export interface ConversationEventsPage {
 }
 
 export interface AiCreateCodeOptions {
+  /** Conversation guidance, not a separate execution lane or permission mode. */
+  agentMode?: 'beginner'
+  modelSelection?: import('./aiSelection').AiModelSelection
   inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   workbenchFeatures?: import('./workbenchFeatures').WorkbenchFeatures
   surface?: AiSurface
@@ -1167,6 +1198,8 @@ export interface DiagnosticPageSnapshot {
 
 export type SidebarViewId =
   | 'workspace'
+  | 'item-editor'
+  | 'sounds'
   | 'relationships'
   | 'modpack-content'
   | 'ftb-quests'
@@ -1230,6 +1263,7 @@ export interface DownloadActivitySnapshot {
 }
 
 export interface ModMindApi {
+  itemEditor: import('./itemEditor').ItemEditorApi
   resourcePacks: import('./resourcePack').ResourcePackApi
   serverPlugin: import('./serverPlugin').ServerPluginApi
   app: {
@@ -1239,10 +1273,14 @@ export interface ModMindApi {
     getUpdateState: () => Promise<AppUpdateState>
     downloadUpdate: () => Promise<AppUpdateState>
     installUpdate: () => Promise<boolean>
+    updateNow: () => Promise<AppUpdateState>
+    reinstallLatest: (confirmed: true) => Promise<AppUpdateState | null>
     onUpdateState: (listener: (state: AppUpdateState) => void) => () => void
     onOpenSettings: (listener: () => void) => () => void
     onOpenView: (listener: (view: SidebarViewId) => void) => () => void
     onDetachedWindowClosed: (listener: (target: DetachedWindowTarget) => void) => () => void
+    onCloseRequested: (listener: () => void) => () => void
+    resolveClose: (choice: 'tray' | 'quit' | 'cancel', remember: boolean) => Promise<void>
     minimize: () => Promise<void>
     maximize: () => Promise<void>
     close: () => Promise<void>
@@ -1316,6 +1354,7 @@ export interface ModMindApi {
     createModule: (name: string) => Promise<ModpackManifest>
     importModule: (mode: 'copy' | 'link') => Promise<ModpackManifest | null>
     updateModuleSide: (namespace: string, side: ModpackModuleSide) => Promise<ModpackManifest>
+    removeModule: (namespace: string) => Promise<ModpackManifest>
     openModule: (namespace: string) => Promise<ProjectInfo>
     sync: () => Promise<MinecraftRuntimeState>
     listContent: (refresh?: boolean) => Promise<ModpackContentInventory>
@@ -1454,6 +1493,9 @@ export interface ModMindApi {
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => Promise<ConversationEventsPage>
     fork: (projectPath: string, input: ConversationForkInput) => Promise<ConversationDocument>
     archive: (projectPath: string, conversationId: string, archived: boolean) => Promise<ConversationDocument>
+    rename: (projectPath: string, conversationId: string, title: string) => Promise<ConversationDocument>
+    pin: (projectPath: string, conversationId: string, pinned: boolean) => Promise<ConversationDocument>
+    generateTitle: (projectPath: string, conversationId: string, userText: string, answer: string, backend: CodingBackend, modelSelection?: import('./aiSelection').AiModelSelection) => Promise<ConversationDocument>
     delete: (projectPath: string, conversationId: string) => Promise<void>
     flush: () => Promise<void>
   }
@@ -1518,6 +1560,7 @@ export interface ModMindApi {
   localTest: LocalTestApi
   production: ProductionApi
   inspiration: {
+    listModels: (backend: CodingBackend) => Promise<AiModelInfo[]>
     readEvidence: (projectPath: string, input: import('./inspirationEvidence').InspirationEvidenceRequest) => Promise<import('./inspirationEvidence').InspirationEvidence>
     readKnowledge: (projectPath: string) => Promise<import('./inspirationKnowledge').InspirationNote[]>
     onKnowledgeChanged: (listener: (event: { projectPath: string; notes: import('./inspirationKnowledge').InspirationNote[] }) => void) => () => void

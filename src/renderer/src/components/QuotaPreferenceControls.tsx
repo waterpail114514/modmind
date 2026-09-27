@@ -1,20 +1,13 @@
-import { ChevronDown } from 'lucide-react'
-import type { BeginnerAiPreferences, BeginnerReasoningLevel } from '../../../shared/types'
+import type { AiModelInfo, BeginnerAiPreferences, BeginnerReasoningLevel } from '../../../shared/types'
+import ComposerAiControl from './ComposerAiControl'
 
-export default function QuotaPreferenceControls({ preferences, models, disabled, onModelChange, onReasoningLevelChange }: {
+export default function QuotaPreferenceControls({ preferences, models, disabled, onModelChange, onReasoningLevelChange, onReset }: {
   preferences: BeginnerAiPreferences
-  models: Array<{ id: string }>
+  models: AiModelInfo[]
   disabled: boolean
   onModelChange?: (model: string) => void
   onReasoningLevelChange?: (level: BeginnerReasoningLevel) => void
+  onReset?: () => void
 }): React.JSX.Element {
-  const options = [...new Set([preferences.model, ...models.map(model => model.id)])]
-  return <div className="minimal-quota-preferences">
-    <label><select aria-label="模型" title={preferences.model} value={preferences.model} disabled={disabled || !onModelChange} onChange={event => onModelChange?.(event.target.value)}>
-      {options.map(model => <option key={model} value={model}>{model}</option>)}
-    </select><ChevronDown size={12} aria-hidden="true" /></label>
-    <label className="minimal-reasoning"><select aria-label="思考强度" title="强度越高，推理更充分，额度消耗也更高" value={preferences.reasoningLevel} disabled={disabled || !onReasoningLevelChange} onChange={event => onReasoningLevelChange?.(event.target.value as BeginnerReasoningLevel)}>
-      {([['low', '低'], ['medium', '中'], ['high', '高'], ['extreme', '极高']] as const).map(([value, label]) => <option key={value} value={value}>思考：{label}</option>)}
-    </select><ChevronDown size={12} aria-hidden="true" /></label>
-  </div>
+  return <ComposerAiControl model={preferences.model} effort={preferences.reasoningLevel} models={models} disabled={disabled} onModelChange={onModelChange} onEffortChange={onReasoningLevelChange} onReset={onReset} />
 }

@@ -13,7 +13,11 @@ import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
 import { LiveConfiguration } from './liveConfiguration'
 import { WORKBENCH_SKILL_POLICY, workbenchSkillPrompt } from './workbenchSkillPolicy'
 import { CLAUDE_REQUIRED_FLAGS } from './claudeCompatibility'
+import { createDraftProject, initializeDraftProject } from './draftProjectService'
 import * as webResearch from './webResearch'
+import { SoundLibraryService } from './soundLibraryService'
+import { createSoundMcpHandlers } from './soundMcpService'
+import { newStudioDraft } from '../shared/soundStudio'
 
 const claudeHelpFixture = `if (process.argv.includes('--help')) { console.log(${JSON.stringify(CLAUDE_REQUIRED_FLAGS.join(' ') + ' dontAsk --bare')}); process.exit(0); }`
 
@@ -22,6 +26,43 @@ const bridges: ModMindBridge[] = []
 const children: ChildProcessWithoutNullStreams[] = []
 
 describe('MC百科 MCP boundary', () => {
+  it('creates a draft and keeps research and engineering on the same live bridge', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-guided-bridge-')); temporaryRoots.push(root)
+    const project = await createDraftProject(root, '按推荐的配置来')
+    const projectSetup = vi.fn(async (input: Record<string, unknown>) => {
+      const ready = await initializeDraftProject(project.path, {
+        resolve: async () => ({ loader: 'fabric', minecraftVersion: '1.21.1', loaderVersion: '0.16.14', javaVersion: 21, channel: 'release', supportTier: 'stable', notes: [] }),
+        scaffold: async target => { await fs.writeFile(path.join(target.path, 'build.gradle'), '// scaffold') }
+      }, input as { kind: 'mod'; loader: 'fabric'; minecraftVersion: string })
+      Object.assign(project, ready); delete project.draft
+      return { project }
+    })
+    const handlers = { ...stubBridgeHandlers(project), projectSetup, get projectInfo() { return { ...project } } }
+    for (const readOnly of [true, false]) {
+      const bridge = new ModMindBridge(project, handlers, 'test', undefined, readOnly, readOnly ? 'discussion' : 'beginner')
+      bridges.push(bridge)
+      const { mcpConfigPath, contextPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+      const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+      const names = (listed.result as { tools: { name: string }[] }).tools.map(tool => tool.name)
+      for (const name of ['modmind_project_setup', 'modmind_research', 'modmind_web_search', 'modmind_project_knowledge_read', 'modmind_build_project', 'modmind_test_session', 'modmind_blockbench_actions']) expect(names).toContain(name)
+      const result = await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'modmind_project_setup', arguments: { kind: 'mod', loader: 'fabric', minecraftVersion: '1.21.1' } } })
+      if (readOnly) {
+        expect(JSON.stringify(result)).toContain('只读')
+        expect(projectSetup).not.toHaveBeenCalled()
+        continue
+      }
+      expect(JSON.stringify(result)).toContain('1.21.1')
+      expect(projectSetup).toHaveBeenCalledTimes(1)
+      const info = await rpc(child, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'modmind_project_info', arguments: {} } })
+      expect(JSON.stringify(info)).toContain('1.21.1')
+      expect(JSON.stringify(info)).not.toContain('draft')
+      expect(await fs.readFile(contextPath, 'utf8')).toContain('Target version: 1.21.1')
+      expect(await fs.readFile(contextPath, 'utf8')).not.toContain('conversation-only draft')
+    }
+  }, 15000)
+
   it('exposes query-only tools and no captcha or download action', () => {
     expect(MCP_SERVER_SOURCE).toContain("'dev.modmind/source-fingerprint'")
     expect(MCP_SERVER_SOURCE).toContain("name:'modmind_mcmod_search'")
@@ -143,6 +184,9 @@ describe('agent stream failure extraction', () => {
       expect(classifyAgentStreamFailure('请求未完成', { [type]: { httpStatusCode: null } }).transient).toBe(true)
       expect(classifyAgentStreamFailure('请求未完成', { [type]: { httpStatusCode: 503 } })).toMatchObject({ transient: true, status: 503 })
       expect(classifyAgentStreamFailure('stream disconnected', { [type]: { httpStatusCode: 401 } })).toMatchObject({ transient: false, kind: 'auth' })
+      expect(classifyAgentStreamFailure('Reconnecting... 1/5', { [type]: { httpStatusCode: 413 } })).toMatchObject({
+        status: 413, transient: false, kind: 'invalid-request', reason: expect.stringContaining('请求内容过大')
+      })
     }
   )
   it.each(['serverOverloaded', 'internalServerError', 'rateLimitExceeded'])(
@@ -199,6 +243,30 @@ describe('agent stream failure extraction', () => {
     const idNoise = classifyAgentStreamFailure('超时 (request id: 20260827014043304885208268d9d6yoZi5cow)')
     expect(idNoise.status).toBeNull()
     expect(idNoise.transient).toBe(false)
+  })
+
+  it.each([
+    'unexpected status 413 Payload Too Large: <html><h1>413 Request Entity Too Large</h1><center>nginx</center></html>',
+    '413 Payload Too Large',
+    'upstream returned 413 Request Entity Too Large',
+    '413 Content Too Large',
+    'stream disconnected before completion: 413 Payload Too Large',
+    '模型服务与当前 Agent 请求不兼容（413）',
+    'AI 请求内容过大（413）'
+  ])('explains oversized requests without retrying: %s', (message) => {
+    const result = classifyAgentStreamFailure(message)
+    expect(result).toMatchObject({ status: 413, transient: false, kind: 'invalid-request' })
+    expect(result.reason).toContain('请求内容过大')
+    expect(result.reason).toContain('新建会话')
+    expect(result.reason).toContain('线路管理员')
+    expect(result.reason).not.toContain('不兼容')
+    expect(classifyAgentStreamFailure(result.reason)).toEqual(result)
+  })
+
+  it('does not mistake 413 in request IDs or usage for an oversized request', () => {
+    for (const message of ['request id: req-413-abc', 'input_tokens=413000']) {
+      expect(classifyAgentStreamFailure(message).status).toBeNull()
+    }
   })
 
   it('retries transient provider failures with rendered progress and gives up after the cap', async () => {
@@ -1617,7 +1685,7 @@ describe('ModMind external agent MCP bridge', () => {
     }), 'stdout')
     expect(partial).toMatchObject({ kind: 'response', content: '正在回答', agentMessage: true })
     expect(parseExternalAgentOutputLine(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: ' \n' } } }), 'stdout')?.content).toBe(' \n')
-    expect(extractClaudeTokenUsage({ type: 'result', model: 'claude-sonnet-4', usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 5 } })).toEqual({ inputTokens: 10, cachedInputTokens: 3, outputTokens: 5 })
+    expect(extractClaudeTokenUsage({ type: 'result', model: 'claude-sonnet-4', usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 5 } })).toEqual({ inputTokens: 10, cachedInputTokens: 3, outputTokens: 5, cumulative: true })
   })
 
   it('reports backend readiness only after the Agent process really spawns', async () => {
@@ -2092,6 +2160,47 @@ describe('ModMind external agent MCP bridge', () => {
     expect(imageProcess).toHaveBeenCalledWith('perfect-pixel', input.referenceImage, { perfectPixel })
   }, 30000)
 
+  it('exports, reads back and previews a sound through the live workbench MCP bridge', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-sound-bridge-')); temporaryRoots.push(root)
+    const project = { name: 'Sounds', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'sounds', createdAt: '' } as ProjectInfo
+    const service = new SoundLibraryService(project, path.join(root, 'minecraft'), path.join(root, 'cache'))
+    const sound = createSoundMcpHandlers({ service, assertCurrent: () => undefined, renderMusic: async () => { throw new Error('not used') } })
+    const review = vi.fn(async () => ({ approved: true, complete: true, dangerousOperations: [], risk: 'low' as const, feedback: '' }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), soundRead: sound.read, soundCreate: sound.create, reviewAction: review }, 'test')
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const call = (id: number, name: string, args: object) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const tools = (listed.result as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
+    expect(tools).toContain('modmind_sound_library')
+    expect(tools).toContain('modmind_sound_create')
+    const initial = await call(2, 'modmind_sound_library', { operation: 'draft' })
+    expect(JSON.parse((initial.result as { content: Array<{ text: string }> }).content[0].text)).toMatchObject({ revision: 'none' })
+    const draft = newStudioDraft(); draft.eventId = 'ui/mcp'; draft.gain = 1
+    const exported = await call(3, 'modmind_sound_create', { operation: 'export', draft })
+    expect(JSON.stringify(exported)).toContain('sounds:ui/mcp')
+    expect(review).toHaveBeenCalledWith('sound_create', expect.objectContaining({ operation: 'export' }))
+    const event = await call(4, 'modmind_sound_library', { operation: 'event', key: 'sounds:ui/mcp' })
+    expect(JSON.stringify(event)).toContain('ui/mcp')
+    const listedTracks = await call(5, 'modmind_sound_library', { operation: 'list', view: 'tracks', source: 'project', query: 'ui/mcp' })
+    const trackResult = JSON.parse((listedTracks.result as { content: Array<{ text: string }> }).content[0].text) as { items: Array<{ id: string }> }
+    expect(trackResult.items).toHaveLength(1)
+    const preview = await call(6, 'modmind_sound_library', { operation: 'preview', id: trackResult.items[0].id })
+    expect((preview.result as { content: Array<{ type: string }> }).content.some(item => item.type === 'audio')).toBe(true)
+    expect((await fs.readFile(path.join(root, 'src', 'main', 'resources', 'assets', 'sounds', 'sounds', 'ui', 'mcp.ogg'))).subarray(0, 4).toString()).toBe('OggS')
+    const stale = await call(7, 'modmind_sound_create', { operation: 'save-draft', expectedRevision: 'none', draft })
+    expect(JSON.stringify(stale)).toContain('制作工程已变化')
+    const readOnly = new ModMindBridge(project, { ...stubBridgeHandlers(project), soundRead: sound.read, soundCreate: sound.create }, 'test', undefined, true, 'sound-readonly')
+    bridges.push(readOnly)
+    const readonlyPaths = await readOnly.start(); await readOnly.writeMcpConfig(readonlyPaths.mcpConfigPath)
+    const readonlyConfig = JSON.parse(await fs.readFile(readonlyPaths.mcpConfigPath, 'utf8')).mcpServers.modmind
+    const readonlyChild = spawn(readonlyConfig.command, readonlyConfig.args, { env: { ...process.env, ...readonlyConfig.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(readonlyChild)
+    const denied = await rpc(readonlyChild, { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'modmind_sound_create', arguments: { operation: 'undo' } } })
+    expect(JSON.stringify(denied)).toContain('只读')
+  }, 30000)
+
   it('isolates concurrent run bridges and only removes its own directory', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-run-bridge-'))
     temporaryRoots.push(root)
@@ -2284,9 +2393,9 @@ describe('ModMind external agent MCP bridge', () => {
   it.each([false, true])('permits only selected host-managed image operations in inspiration (%s)', async enabled => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-images-')); temporaryRoots.push(root)
     const project = { name: 'Images', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'images', createdAt: '' } as ProjectInfo
-    const imageGenerate = vi.fn(async () => ({ files: ['.modmind/image-studio/generated/concept.png'] }))
+    const imageGenerate = vi.fn(async () => ({ files: ['.modmind/image-studio/generated/concept.png'], assets: [{ path: '.modmind/image-studio/generated/concept.png', dataUrl: 'data:image/png;base64,AAAA' }] }))
     const imageProcess = vi.fn(async () => ({ dataUrl: 'data:image/png;base64,AAAA' }))
-    const imageReadProjectAsset = vi.fn(async () => ({ path: 'screenshots/test.png' }))
+    const imageReadProjectAsset = vi.fn(async () => ({ path: 'screenshots/test.png', dataUrl: 'data:image/png;base64,AAAA' }))
     const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), imageGenerate, imageProcess, imageReadProjectAsset }, 'test', undefined, true, undefined, undefined, undefined, normalizeInspirationFeatures({ imageGeneration: enabled }))
     bridges.push(bridge)
     const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
@@ -2297,13 +2406,19 @@ describe('ModMind external agent MCP bridge', () => {
     expect(names.includes('modmind_image_generate')).toBe(enabled)
     let id = 2
     const call = (name: string, args: object) => rpc(child, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: args } })
-    await call('modmind_image_generate', { prompt: '概念效果图' })
+    const generated = await call('modmind_image_generate', { prompt: '概念效果图' })
     await call('modmind_image_perfect_pixel', { dataUrl: 'data:image/png;base64,AAAA' })
     await call('modmind_image_remove_background', { dataUrl: 'data:image/png;base64,AAAA' })
     expect(imageGenerate).toHaveBeenCalledTimes(enabled ? 1 : 0)
+    if (enabled) {
+      const content = (generated.result as { content: Array<{ type: string; text?: string; mimeType?: string }> }).content
+      expect(content).toContainEqual({ type: 'image', mimeType: 'image/png', data: 'AAAA' })
+      expect(content[0].text).not.toContain('dataUrl')
+    }
     expect(imageProcess).toHaveBeenCalledTimes(enabled ? 2 : 0)
-    await call('modmind_image_read_project_asset', { path: 'screenshots/test.png' })
+    const preview = await call('modmind_image_read_project_asset', { path: 'screenshots/test.png' })
     expect(imageReadProjectAsset).toHaveBeenCalledTimes(1)
+    expect((preview.result as { content: unknown[] }).content).toContainEqual({ type: 'image', mimeType: 'image/png', data: 'AAAA' })
     for (const name of ['modmind_apply_edits', 'modmind_build_project', 'modmind_test_minecraft']) {
       expect(JSON.stringify(await call(name, {}))).toContain('只读')
     }

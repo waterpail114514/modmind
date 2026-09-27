@@ -1,0 +1,4 @@
+interface:
+  display_name: "Minecraft Sound Authoring"
+  short_description: "Create and verify Minecraft sound effects and music"
+  default_prompt: "Use $minecraft-sound-authoring to inspect, create, preview, and export Minecraft project audio."

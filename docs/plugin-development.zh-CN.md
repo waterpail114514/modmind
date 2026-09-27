@@ -86,6 +86,7 @@ ModMind 插件是放在约定目录下的一组文件：一个 `plugin.json` 清
 | `chat.read` | 读取主窗口当前工作台对话、输入草稿、运行状态和最近消息 |
 | `chat.write` | 追加或替换主窗口工作台输入草稿；不自动发送 |
 | `chat.context` | 按项目和对话设置、更新、移除插件提供的 AI 补充上下文 |
+| `minecraft.sync` | 经 ModMind 宿主同步当前整合包测试实例；整包同步要求停止游戏，KubeJS 服务端脚本可在运行中单独同步 |
 
 导入他人插件时，ModMind 会同时展示完整信任警告与声明的宿主桥能力。
 
@@ -128,6 +129,7 @@ window.parent.postMessage({ type: 'invokeTool', requestId, toolName: 'summarize_
 window.parent.postMessage({ type: 'getProjectInfo', requestId }, '*')
 window.parent.postMessage({ type: 'netFetch', requestId, url: 'https://example.com/data.json' }, '*')
 window.parent.postMessage({ type: 'copyToClipboard', requestId, text: '...' }, '*')
+window.parent.postMessage({ type: 'context', requestId, op: 'minecraftSyncKubeJsServerScripts' }, '*') // minecraft.sync；仅同步 KubeJS 服务端脚本
 window.parent.postMessage({ type: 'log', level: 'info', message: '...' }, '*')
 ```
 
@@ -226,7 +228,18 @@ modmindPlugin.registerTools({
 })
 ```
 
-约束：单次工具调用 30s 超时；返回值必须可 JSON 序列化。后端是完全可信 Node 代码；只有工作台提供的制作工具受插件目录边界约束。
+约束：普通工具调用 30s 超时；声明 `minecraft.sync` 的工具最多等待 10 分钟同步完成。返回值必须可 JSON 序列化。后端是完全可信 Node 代码；只有工作台提供的制作工具受插件目录边界约束。
+
+制作合成表编辑插件时，先将配方写入项目拥有的 `kubejs/server_scripts/*.js`，然后调用 `ctx.minecraft.syncKubeJsServerScripts()`；面板可发送 `context` 请求，操作名为 `minecraftSyncKubeJsServerScripts`。这个接口只同步服务端 `.js` 脚本，运行中的实例也可调用。返回 `copied`、`removed`、`reloadRequired` 和实例 `state`；当 `reloadRequired` 为 `true` 时，用户还需在游戏内执行 `/reload`，文件同步本身不代表配方已经生效。
+
+数据包及其他整合包内容仍调用 `ctx.minecraft.syncModpack()`（面板操作名 `minecraftSyncModpack`），且必须先停止游戏。两个接口都只适用于当前整合包，经 ModMind 宿主写入受管测试实例，不会把实例文件反向写回项目。插件代码不应直接修改 `.modmind/minecraft`。
+
+```js
+// plugin.json 的 permissions 需包含 minecraft.sync
+const result = await modmindPlugin.ctx.minecraft.syncKubeJsServerScripts()
+modmindPlugin.ctx.log.info(result.state.message)
+// result.reloadRequired 为 true 时，提示用户在游戏内执行 /reload
+```
 
 ## 用工作台（AI 对话）制作
 

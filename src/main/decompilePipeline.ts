@@ -68,7 +68,7 @@ export async function inspectForDecompilation(
     const classification = classifyObfuscation(classNamesFull)
     const hasClasses = classNamesFull.length > 0
     const intermediaryEvidence = await hasIntermediaryClassNames(extracted)
-    const cached = Boolean(await readDecompileCacheEntry(options.cacheRoot, sourceSha256))
+    const cached = Boolean((await readDecompileCacheEntry(options.cacheRoot, sourceSha256))?.provenance)
     const loader = inspected.profile.loader
     return {
       filePath: jarPath,
@@ -267,8 +267,10 @@ function defaultYarnLister(signal?: AbortSignal): (base: string) => Promise<Yarn
 
 /** Reads one decompiled file from the cache; paths are validated against the cache entry root. */
 export async function readCachedSourceFile(cacheRoot: string, sourceSha256: string, relativePath: string): Promise<string> {
-  const entry = await readDecompileCacheEntry(cacheRoot, sourceSha256)
+  if (!relativePath || path.isAbsolute(relativePath) || relativePath.replaceAll('\\', '/').split('/').includes('..')) throw new Error('非法的文件路径')
+  const entry = await readDecompileCacheEntry(cacheRoot, sourceSha256, `sources/${relativePath.replaceAll('\\', '/')}`)
   if (!entry) throw new Error('该 JAR 尚无反编译缓存')
+  if (!entry?.provenance) throw new Error('该 JAR 的反编译缓存缺失或损坏，请重新反编译')
   const resolvedRoot = path.resolve(entry.directory, DECOMPILE_OUTPUT_DIRECTORY)
   const target = path.resolve(resolvedRoot, relativePath)
   if (!target.startsWith(`${resolvedRoot}${path.sep}`)) throw new Error('非法的文件路径')
@@ -278,6 +280,7 @@ export async function readCachedSourceFile(cacheRoot: string, sourceSha256: stri
 export async function listCachedSourceFiles(cacheRoot: string, sourceSha256: string): Promise<DecompileFileEntry[]> {
   const entry = await readDecompileCacheEntry(cacheRoot, sourceSha256)
   if (!entry) throw new Error('该 JAR 尚无反编译缓存')
+  if (!entry?.provenance) throw new Error('该 JAR 的反编译缓存缺失或损坏，请重新反编译')
   return summarizeDecompiledTree(path.join(entry.directory, DECOMPILE_OUTPUT_DIRECTORY), entry.directory)
 }
 

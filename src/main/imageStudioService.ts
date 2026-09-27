@@ -44,6 +44,7 @@ export interface ImageStudioServiceOptions {
   userDataDir: string
   projectRoot: () => string | null
   getHostedLease: (request?: ImageGenerationRequest) => Promise<HostedLease>
+  getSyncedImageApi?: () => Promise<{ customMode: boolean; imageApi: { baseUrl: string; apiKey: string; model: string } | null }>
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -220,6 +221,8 @@ export class ImageStudioService {
 
   async getSettings(): Promise<ImageStudioSettings> {
     const stored = await this.readStored()
+    const synced = await this.options.getSyncedImageApi?.()
+    if (synced?.imageApi) return { baseUrl: synced.imageApi.baseUrl, model: synced.imageApi.model, hasStoredKey: true, syncedFromDevice: true, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true }
     return { baseUrl: stored.baseUrl, model: stored.model, hasStoredKey: Boolean(stored.encryptedKey), allowAgentImages: stored.allowAgentImages, autoApproveAgentImages: stored.autoApproveAgentImages, manualHostedConsent: stored.manualHostedConsent }
   }
 
@@ -248,10 +251,12 @@ export class ImageStudioService {
 
   async capabilities(): Promise<ImageStudioCapabilities> {
     const stored = await this.readStored()
-    const ownKey = await this.decryptKey(stored)
+    const synced = await this.options.getSyncedImageApi?.()
+    const ownKey = synced?.imageApi?.apiKey ?? await this.decryptKey(stored)
+    if (synced?.customMode && !ownKey) throw new Error('自定义 API 模式下请配置图片 API')
     const lease = ownKey ? null : await this.options.getHostedLease()
     const key = lease?.apiKey ?? ownKey
-    const baseUrl = lease?.baseUrl ?? stored.baseUrl
+    const baseUrl = lease?.baseUrl ?? synced?.imageApi?.baseUrl ?? stored.baseUrl
     if (!baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) })
     if (!response.ok) throw new Error(`无法读取图片模型列表（HTTP ${response.status}）：${await imageApiError(response, key)}`)
@@ -295,13 +300,15 @@ export class ImageStudioService {
     if (!prompt || prompt.length > 32_000) throw new Error('请输入 1 到 32000 个字符的图片描述')
     const count = 1
     const stored = await this.readStored()
-    const ownKey = await this.decryptKey(stored)
+    const synced = await this.options.getSyncedImageApi?.()
+    const ownKey = synced?.imageApi?.apiKey ?? await this.decryptKey(stored)
+    if (synced?.customMode && !ownKey) throw new Error('自定义 API 模式下请配置图片 API')
     const hosted = !ownKey
-    const model = request.model || stored.model
+    const model = request.model || synced?.imageApi?.model || stored.model
     if (!model) throw new Error('请先在图像服务设置中选择并保存图片模型，或为本次请求指定 model')
-    if (ownKey && !stored.baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
+    if (ownKey && !(synced?.imageApi?.baseUrl ?? stored.baseUrl)) throw new Error('请先在图像服务设置中填写并保存 Base URL')
     const lease = hosted ? await this.options.getHostedLease({ ...request, count }) : null
-    const baseUrl = lease?.baseUrl ?? stored.baseUrl
+    const baseUrl = lease?.baseUrl ?? synced?.imageApi?.baseUrl ?? stored.baseUrl
     const apiKey = lease?.apiKey ?? ownKey
     const stylePrefix = request.style === 'minecraft'
       ? 'Minecraft pixel art asset, crisp hard-edged pixels, no gradients, no shadows. '

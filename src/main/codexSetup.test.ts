@@ -154,7 +154,7 @@ describe('Codex beginner preparation', () => {
     }
   })
 
-  it('loads metadata before startup and removes the override when switching back to a native model', async () => {
+  it('loads metadata before startup and keeps native model budgets current when switching models', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-codex-metadata-'))
     try {
       const prepare = (model: string) => prepareCodex({ rootDir: root, serverConfig: { ...settings, model }, existingExecutable: 'C:\\codex.exe' })
@@ -168,7 +168,11 @@ describe('Codex beginner preparation', () => {
       expect((await prepare('google/gemini-2.5-pro')).configChanged).toBe(true)
       const native = await prepare('gpt-5.4')
       expect(native.configChanged).toBe(true)
-      expect(parseToml(await fs.readFile(native.configPath, 'utf8')).model_catalog_json).toBeUndefined()
+      const nativeCatalogPath = String(parseToml(await fs.readFile(native.configPath, 'utf8')).model_catalog_json)
+      expect(nativeCatalogPath).not.toBe(catalogPath)
+      expect(JSON.parse(await fs.readFile(nativeCatalogPath, 'utf8')).models.at(-1).slug).toBe('gpt-5.4')
+      const unmodified = await prepare('codex-auto-review')
+      expect(parseToml(await fs.readFile(unmodified.configPath, 'utf8')).model_catalog_json).toBeUndefined()
       // An already-running process may still be reading its previous catalog.
       expect(JSON.parse(await fs.readFile(catalogPath, 'utf8')).models.at(-1).slug).toBe('google/gemini-2.5-pro')
     } finally {
