@@ -1,9 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeInspirationFeatures, readInspirationFeatures, requiredInspirationFeature } from './inspirationFeatures'
+import { inspirationFeaturePrompt, normalizeInspirationFeatures, readInspirationFeatures, requiredInspirationFeature } from './inspirationFeatures'
 import { buildInspirationHandoff, inspirationKnowledgeContext } from './inspirationKnowledge'
 import { parseInspirationEvidenceLink } from './inspirationEvidence'
 
 describe('inspiration selections and handoff', () => {
+  it('makes user prohibitions explicit without removing deliberate knowledge-save exceptions', () => {
+    const prompt = inspirationFeaturePrompt(normalizeInspirationFeatures({ webResearch: true }))
+    expect(prompt).toContain('联网检索：已启用')
+    expect(prompt).toContain('图像工坊效果图：用户主动禁止')
+    expect(prompt).toContain('[USER_DISABLED_TOOL]')
+    expect(prompt).toContain('不限制用户明确要求的知识读取和保存')
+    expect(prompt).toContain('已启用工具的连接故障不得归因于用户禁用')
+  })
   it('defaults expensive capabilities off and fails closed for malformed saved choices', () => {
     expect(Object.values(readInspirationFeatures(null)).every(value => !value)).toBe(true)
     expect(readInspirationFeatures('{bad')).toEqual(normalizeInspirationFeatures())

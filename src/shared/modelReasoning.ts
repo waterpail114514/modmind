@@ -1,8 +1,26 @@
 import type { BeginnerReasoningLevel, ModelReasoningCapabilities, ReasoningEffort } from './types'
 
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+export const DEFAULT_CODEX_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'ultra']
+export const MAX_SELECTABLE_REASONING_EFFORTS = 5
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
+}
+
+export function normalizeReasoningEffortOptions(value: unknown): Record<string, ReasoningEffort[]> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const entries = Object.entries(value).filter(([id, efforts]) => id.length > 0 && id.length <= 512 && !/[\x00-\x1f]/.test(id)
+    && Array.isArray(efforts) && efforts.length > 0 && efforts.length <= MAX_SELECTABLE_REASONING_EFFORTS
+    && efforts.every(isReasoningEffort) && new Set(efforts).size === efforts.length).slice(0, 500)
+  return entries.length ? Object.fromEntries(entries.map(([id, efforts]) => [id, REASONING_EFFORTS.filter(effort => (efforts as ReasoningEffort[]).includes(effort))])) : undefined
+}
+
+export function selectedReasoningEfforts(model: string, configured?: Record<string, ReasoningEffort[]>): ReasoningEffort[] {
+  return normalizeReasoningEffortOptions(configured)?.[model] ?? DEFAULT_CODEX_REASONING_EFFORTS
+}
+
+export function codexReasoningCapabilities(capabilities: ModelReasoningCapabilities | undefined, efforts: ReasoningEffort[]): ModelReasoningCapabilities {
+  return { source: capabilities?.source ?? 'unknown', controls: ['effort'], efforts }
 }
 const record = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 
@@ -34,13 +52,15 @@ export function parseReasoningCapabilities(value: unknown, source: ModelReasonin
   }
 }
 
-export function reasoningOptions(capabilities?: ModelReasoningCapabilities): BeginnerReasoningLevel[] {
-  return ['auto', ...(capabilities?.efforts ?? [])]
+export function reasoningOptions(capabilities?: ModelReasoningCapabilities, allowedEfforts?: ReasoningEffort[]): BeginnerReasoningLevel[] {
+  return ['auto', ...(allowedEfforts ?? capabilities?.efforts ?? [])]
 }
 
-export function reasoningSelectionEffort(level: BeginnerReasoningLevel, capabilities?: ModelReasoningCapabilities): ReasoningEffort | undefined {
+export function reasoningSelectionEffort(level: BeginnerReasoningLevel, capabilities?: ModelReasoningCapabilities, allowedEfforts?: ReasoningEffort[]): ReasoningEffort | undefined {
   if (level === 'auto') return undefined
-  if (!capabilities?.efforts.includes(level)) throw new Error(`当前模型或线路未确认支持 ${level} 思考强度，请刷新模型列表并重新选择，或选择自动`)
+  if (!(allowedEfforts ?? capabilities?.efforts ?? []).includes(level)) throw new Error(allowedEfforts
+    ? `当前模型未开放 ${level} 思考强度，请在设置中调整可选档位，或选择自动`
+    : `当前模型或线路未确认支持 ${level} 思考强度，请刷新模型列表并重新选择，或选择自动`)
   return level
 }
 

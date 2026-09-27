@@ -4,6 +4,7 @@ import { findSettingsSections, settingsCategories, settingsSections } from './se
 
 // Search results and metadata were captured from SettingsSections.tsx at
 // checkpoint 6002438becc683a5126b36fd9ce4fd4d8b0aaaca before extraction.
+// The two model sections now include the independent compaction-setting keywords.
 const baseline = JSON.parse(readFileSync(new URL('./__fixtures__/extensionDefinitions.baseline.json', import.meta.url), 'utf8')) as {
   settings: { categories: unknown; sections: unknown }
   searchCases: Array<{
@@ -16,9 +17,20 @@ const baseline = JSON.parse(readFileSync(new URL('./__fixtures__/extensionDefini
 }
 
 describe('settings definition compatibility', () => {
+  it.each(['压缩 阈值', 'compaction'])('finds both compaction settings from %s', query => {
+    const result = findSettingsSections(new Set(settingsSections.map(section => section.id)), 'general', query)
+    expect(result.visibleSections.map(section => section.id)).toEqual(['settings-ai', 'settings-agents'])
+  })
   it('preserves category and section IDs, order, labels, descriptions and search keywords', () => {
     expect(settingsCategories).toEqual(baseline.settings.categories)
-    expect(settingsSections).toEqual(baseline.settings.sections)
+    expect(settingsSections.filter(section => section.id !== 'settings-authors')).toEqual(baseline.settings.sections)
+  })
+
+  it('finds the author credits by name and contribution', () => {
+    const available = new Set(settingsSections.map(section => section.id))
+    for (const query of ['关于作者', '水桶', 'SQ0', '素材贡献者']) {
+      expect(findSettingsSections(available, 'general', query).visibleSections.map(section => section.id)).toContain('settings-authors')
+    }
   })
 
   it.each(baseline.searchCases)('preserves "$query" in $activeCategory for the available sections', scenario => {

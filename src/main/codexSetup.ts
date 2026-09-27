@@ -7,7 +7,7 @@ import { retryTransientFileLock } from './fileLockRetry'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
-import { buildCodexModelCatalog, prepareCodexModelCatalog } from './codexModelCatalog'
+import { buildCodexModelCatalog, prepareCodexModelCatalog, resolveCodexAutoCompactTokenLimit, validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
 import builtinCatalog from './codexBuiltinModels.json'
 import { syncWorkbenchSkills } from './workbenchSkills'
 import { validModelContext } from '../shared/modelContext'
@@ -33,6 +33,7 @@ export interface CodexServerConfig {
   reasoningEffort?: ReasoningEffort
   reasoningCapabilities?: ModelReasoningCapabilities
   contextWindow?: number
+  autoCompactTokenLimit?: number
   /** Original provider address before routing through the local protocol adapter. */
   upstreamBaseUrl?: string
 }
@@ -144,14 +145,18 @@ function validateConfig(value: unknown): CodexServerConfig {
   if (!apiKey || !baseUrl || !model) throw new Error('服务端配置缺少 API Key、Base URL 或模型名')
   if (record.contextWindow !== undefined && !validModelContext(record.contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
   const upstreamBaseUrl = typeof record.upstreamBaseUrl === 'string' ? normalizeBaseUrl(record.upstreamBaseUrl) : undefined
-  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow: record.contextWindow as number | undefined, upstreamBaseUrl}
+  const contextWindow = record.contextWindow as number | undefined
+  const autoCompactTokenLimit = record.autoCompactTokenLimit as number | undefined
+  validateCodexAutoCompactTokenLimit(model, { baseUrl: upstreamBaseUrl ?? baseUrl, contextWindow }, autoCompactTokenLimit)
+  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow, autoCompactTokenLimit, upstreamBaseUrl}
 }
 
-function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): string {
+function codexConfigText(config: CodexServerConfig, modelCatalogPath: string | undefined, autoCompactTokenLimit: number): string {
   return [
     '# ModMind managed Codex provider',
     `model = ${JSON.stringify(config.model)}`,
     ...(modelCatalogPath ? [`model_catalog_json = ${JSON.stringify(modelCatalogPath)}`] : []),
+    `model_auto_compact_token_limit = ${autoCompactTokenLimit}`,
     ...(config.reasoningEffort ? [`model_reasoning_effort = ${JSON.stringify(config.reasoningEffort)}`] : []),
     'model_provider = "thirdparty"',
     '',
@@ -169,8 +174,10 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath?: string): 
 }
 
 async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities })
-  const desired = codexConfigText(config, catalog.path)
+  const options = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities }
+  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, options)
+  const autoCompactTokenLimit = resolveCodexAutoCompactTokenLimit(config.model, options, config.autoCompactTokenLimit)
+  const desired = codexConfigText(config, catalog.path, autoCompactTokenLimit)
   const current = await fs.readFile(configPath, 'utf8').catch(() => '')
   if (current === desired) return catalog.changed
   await fs.mkdir(path.dirname(configPath), {recursive: true})

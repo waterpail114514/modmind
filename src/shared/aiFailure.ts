@@ -1,6 +1,8 @@
 import { describeClientFailure } from './clientFailure'
 import { rawErrorText } from './rawError'
 
+export const AGENT_TOOL_RECOVERY_GUIDANCE = '建议先重试；仍失败请重启 ModMind；重启后仍无法恢复，可重新安装最新版 ModMind。'
+
 function readMessage(error: unknown): string {
   return rawErrorText(error)
 }
@@ -13,6 +15,12 @@ function statusIn(message: string, status: number): boolean {
 /** Converts provider/Agent failures into a user-facing cause and next step. */
 export function describeAiFailureForUser(error: unknown): string {
   const message = readMessage(error).replace(/\s+/g, ' ').trim()
+
+  // Tool preparation failures have their own recovery path. Preserve it through
+  // repeated IPC/UI formatting instead of suggesting a model or network change.
+  if (/工具尚未准备好，本轮对话未开始|ModMind 工具连接已中断/.test(message)) {
+    return message.includes(AGENT_TOOL_RECOVERY_GUIDANCE) ? message : `${message}${AGENT_TOOL_RECOVERY_GUIDANCE}`
+  }
 
   if (statusIn(message, 413)) {
     return 'AI 请求内容过大（413），超过了服务或网关的大小限制。请新建会话并精简历史、附件或日志；如仍失败，请联系线路管理员调整请求大小限制。'

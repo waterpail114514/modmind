@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { beginnerReasoningLevelFor, migrateLegacyReasoningLevel } from '../shared/aiPreferences'
-import { isReasoningEffort } from '../shared/modelReasoning'
-import { normalizeModelContextWindows } from '../shared/modelContext'
+import { isReasoningEffort, normalizeReasoningEffortOptions, selectedReasoningEfforts } from '../shared/modelReasoning'
+import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows } from '../shared/modelContext'
 import type { AiModelInfo, BeginnerAiPreferences, BeginnerReasoningLevel } from '../shared/types'
 
 export interface StoredQuotaModelPreferences {
@@ -24,11 +24,16 @@ export function normalizeQuotaModelPreferences(value: unknown, fallback: Beginne
     ? record.model.trim().slice(0, 256)
     : fallback.model
   const modelContextWindows = normalizeModelContextWindows(record.modelContextWindows)
+  const modelAutoCompactTokenLimits = normalizeModelAutoCompactTokenLimits(record.modelAutoCompactTokenLimits)
+  const reasoningEffortOptions = normalizeReasoningEffortOptions(record.reasoningEffortOptions)
+  const selectedLevel = reasoningLevel(record.reasoningLevel, model, record.reasoningEffort, fallback.reasoningLevel)
   return {
     model,
-    reasoningLevel: reasoningLevel(record.reasoningLevel, model, record.reasoningEffort, fallback.reasoningLevel),
+    reasoningLevel: selectedLevel === 'auto' || selectedReasoningEfforts(model, reasoningEffortOptions).includes(selectedLevel) ? selectedLevel : 'auto',
     fastMode: typeof record.fastMode === 'boolean' ? record.fastMode : fallback.fastMode,
-    ...(modelContextWindows ? { modelContextWindows } : {})
+    ...(modelContextWindows ? { modelContextWindows } : {}),
+    ...(modelAutoCompactTokenLimits ? { modelAutoCompactTokenLimits } : {}),
+    ...(reasoningEffortOptions ? { reasoningEffortOptions } : {})
   }
 }
 
@@ -38,9 +43,10 @@ export function parseStoredQuotaModelPreferences(value: unknown, defaults: Begin
     const normalized = normalizeQuotaModelPreferences(value, defaults)
     if (record.version === 3) return normalized
     const old = value && typeof value === 'object' ? value as Record<string, unknown> : {}
-    return { ...normalized, reasoningLevel: old.reasoningEffort !== undefined
+    const migrated = old.reasoningEffort !== undefined
       ? beginnerReasoningLevelFor(normalized.model, old.reasoningEffort)
-      : migrateLegacyReasoningLevel(normalized.model, old.reasoningLevel) }
+      : migrateLegacyReasoningLevel(normalized.model, old.reasoningLevel)
+    return { ...normalized, reasoningLevel: migrated === 'auto' || selectedReasoningEfforts(normalized.model, normalized.reasoningEffortOptions).includes(migrated) ? migrated : 'auto' }
   }
   if ((record.version === 2 || record.version === 3) && record.current && typeof record.current === 'object') {
     const current = read(record.current)
@@ -67,7 +73,7 @@ export function activeQuotaModelPreferences(store: StoredQuotaModelPreferences, 
   if (!preferenceKey) return store.current
   if (store.profiles[preferenceKey]) return store.profiles[preferenceKey]
   // A new route can reuse model choices, but not another deployment's limits.
-  const { modelContextWindows: _windows, ...preferences } = store.current
+  const { modelContextWindows: _windows, modelAutoCompactTokenLimits: _compactLimits, reasoningEffortOptions: _reasoningOptions, ...preferences } = store.current
   return preferences
 }
 

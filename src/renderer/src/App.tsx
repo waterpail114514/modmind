@@ -34,8 +34,11 @@ import { useSidebarLayout } from './useSidebarLayout'
 import { resolveSidebarGroups, moveSidebarEntry, moveSidebarCategory } from './sidebarLayout'
 import { buildNavigationDefinitions } from './navigationDefinitions'
 import AppMaintenanceSettings from './components/AppMaintenanceSettings'
+import AboutAuthors from './components/AboutAuthors'
 import ModelContextSetting from './components/ModelContextSetting'
 import ReasoningControl from './components/ReasoningControl'
+import ReasoningEffortSettings from './components/ReasoningEffortSettings'
+import { DEFAULT_CODEX_REASONING_EFFORTS, selectedReasoningEfforts } from '../../shared/modelReasoning'
 import ComposerAiControl from './components/ComposerAiControl'
 import { useSurfaceAiSelection } from './useSurfaceAiSelection'
 import { defaultAiSelection } from '../../shared/aiSelection'
@@ -132,6 +135,7 @@ import type {
   BeginnerTaskState,
   BeginnerAiPreferences,
   BeginnerReasoningLevel,
+  ReasoningEffort,
   DeviceConnectionState,
   RemoteConnectionState,
   McpBridgeState,
@@ -503,14 +507,20 @@ function ProductionSettingsPanel({
   onReasoningLevelChange,
   onFastModeChange
 }: ProductionSettingsPanelProps): React.JSX.Element {
+  const modelSelectRef = useRef<HTMLSelectElement>(null)
   const modelOptions = availableModels.some((model) => model.id === aiSettings.model)
     ? availableModels
     : [{ id: aiSettings.model }, ...availableModels]
 
   return <div className="production-settings-panel">
     <section className="beginner-ai-preferences">
-      <label className="beginner-model-control"><span>模型 {deviceState.provider !== 'custom' ? <InfoTooltip className="model-info"><span>gpt-5.6-sol：能力最强，消耗较高</span><span>gpt-5.6-terra：均衡、较省额度</span><span>gpt-5.6-luna：响应较快、成本较低</span></InfoTooltip> : null}</span><div><select value={aiSettings.model} disabled={savingAiPreferences} onChange={(event) => onModelChange(event.target.value)}>{modelOptions.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}</select><button className="icon-button" type="button" title="刷新模型列表" disabled={scanningModels || savingAiPreferences || deviceState.status !== 'connected'} onClick={onScanModels}>{scanningModels ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div><small>{modelScanMessage}</small></label>
-      <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={aiSettings.reasoningLevel} capabilities={availableModels.find(model => model.id === aiSettings.model)?.reasoning} disabled={savingAiPreferences} onChange={onReasoningLevelChange} /></div>
+      <label className="beginner-model-control"><span onClick={(event) => {
+        event.preventDefault()
+        const select = modelSelectRef.current
+        if (!select || select.disabled) return
+        try { select.showPicker() } catch { select.focus() }
+      }}>模型</span><div><select ref={modelSelectRef} value={aiSettings.model} disabled={savingAiPreferences} onChange={(event) => onModelChange(event.target.value)}>{modelOptions.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}</select><button className="icon-button" type="button" title="刷新模型列表" disabled={scanningModels || savingAiPreferences || deviceState.status !== 'connected'} onClick={onScanModels}>{scanningModels ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div><small>{modelScanMessage}</small></label>
+      <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={aiSettings.reasoningLevel} capabilities={availableModels.find(model => model.id === aiSettings.model)?.reasoning} allowedEfforts={selectedReasoningEfforts(aiSettings.model, aiSettings.reasoningEffortOptions)} disabled={savingAiPreferences} onChange={onReasoningLevelChange} /></div>
       <div className="beginner-fast-control"><span>Fast 模式</span><label className="switch-control"><input aria-label="Fast 模式" type="checkbox" checked={aiSettings.fastMode} disabled={savingAiPreferences} onChange={(event) => onFastModeChange(event.target.checked)} /><span aria-hidden="true" /></label><InfoTooltip><span>同步 ModMind 账号的 Fast 服务设置</span></InfoTooltip></div>
     </section>
   </div>
@@ -1043,6 +1053,8 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const defaultBackend = uiMode === 'beginner' ? 'quota' : codingBackend
   const activeAiOverride = aiOverride?.backend === defaultBackend ? aiOverride : undefined
   const aiSelection = activeAiOverride ?? defaultAiSelection(defaultBackend, aiDefaults ?? { model: '', reasoningLevel: 'auto', fastMode: false }, externalAgents)
+  const aiAllowedEfforts = aiSelection.backend === 'quota' ? selectedReasoningEfforts(aiSelection.model, aiDefaults?.reasoningEffortOptions)
+    : aiSelection.backend === 'codex' ? selectedReasoningEfforts(aiSelection.model, externalAgents?.codex?.reasoningEffortOptions) : undefined
   const [independentModels, setIndependentModels] = useState<{ backend: string; models: AiModelInfo[] }>({ backend: '', models: [] })
   const aiModels = independentModels.backend === aiSelection.backend ? independentModels.models : aiSelection.backend === 'quota' ? defaultModels : []
   const [aiScanMessage, setAiScanMessage] = useState('')
@@ -1667,7 +1679,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
           <div className={`inspiration-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...attachmentInput.handlers}>
             {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
             <textarea value={draft} disabled={busy || historyBusy || !hydrated} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} aria-label="灵感提问" placeholder="一个念头、一个问题，都可以从这里开始…" />
-             <div className="inspiration-composer-actions"><InspirationFeatureControls value={features} disabled={busy || historyBusy || !hydrated || !visible} onChange={changeFeatures} /><button className="inspiration-knowledge-button" type="button" disabled={busy || !knowledgeReady} onClick={() => setKnowledgeDialog({})}>项目知识{notes.length ? ` · ${notes.length}` : ''}</button><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy || historyBusy || !hydrated} controller={attachmentInput} /><div className="inspiration-ai-actions"><ComposerAiControl model={aiSelection.model} effort={aiSelection.reasoningLevel} models={aiModels} disabled={busy || historyBusy} onReset={() => setAiOverride(undefined)} onModelChange={model => setAiOverride({ ...aiSelection, model, reasoningLevel: 'auto' })} onEffortChange={reasoningLevel => setAiOverride({ ...aiSelection, reasoningLevel })} onRefresh={() => void scanInspirationAi()} /><ContextUsage usage={inspirationUsage} />
+             <div className="inspiration-composer-actions"><InspirationFeatureControls value={features} disabled={busy || historyBusy || !hydrated || !visible} onChange={changeFeatures} /><button className="inspiration-knowledge-button" type="button" disabled={busy || !knowledgeReady} onClick={() => setKnowledgeDialog({})}>项目知识{notes.length ? ` · ${notes.length}` : ''}</button><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy || historyBusy || !hydrated} controller={attachmentInput} /><div className="inspiration-ai-actions"><ComposerAiControl model={aiSelection.model} effort={aiSelection.reasoningLevel} models={aiModels} allowedEfforts={aiAllowedEfforts} disabled={busy || historyBusy} onReset={() => setAiOverride(undefined)} onModelChange={model => setAiOverride({ ...aiSelection, model, reasoningLevel: 'auto' })} onEffortChange={reasoningLevel => setAiOverride({ ...aiSelection, reasoningLevel })} onRefresh={() => void scanInspirationAi()} /><ContextUsage usage={inspirationUsage} />
               <button
                 type="button"
                 className={`agent-send-button${busy ? ' stop' : ''}`}
@@ -2566,7 +2578,8 @@ export default function App(): React.JSX.Element {
   const [workbenchAiOverride, setWorkbenchAiOverride] = useSurfaceAiSelection('workspace')
   const workbenchDefaultBackend = uiMode === 'beginner' ? 'quota' : settings.codingBackend
   const workbenchAiSelection = workbenchAiOverride?.backend === workbenchDefaultBackend ? workbenchAiOverride : defaultAiSelection(workbenchDefaultBackend, beginnerAiPreferences, settings.externalAgents)
-  const workbenchAiPreferences = { ...beginnerAiPreferences, model: workbenchAiSelection.model, reasoningLevel: workbenchAiSelection.reasoningLevel }
+  const workbenchAiPreferences = { ...beginnerAiPreferences, model: workbenchAiSelection.model, reasoningLevel: workbenchAiSelection.reasoningLevel,
+    reasoningEffortOptions: workbenchDefaultBackend === 'quota' ? beginnerAiPreferences.reasoningEffortOptions : workbenchDefaultBackend === 'codex' ? settings.externalAgents?.codex?.reasoningEffortOptions : undefined }
   const [workbenchExternalModels, setWorkbenchExternalModels] = useState<{ backend: string; models: AiModelInfo[] }>({ backend: '', models: [] })
   useEffect(() => {
     if (workbenchDefaultBackend === 'quota') return
@@ -4565,6 +4578,11 @@ export default function App(): React.JSX.Element {
       setNotice('上下文窗口必须是 1,024–100,000,000 之间的整数')
       return
     }
+    const compactLimit = agentDraft.modelAutoCompactTokenLimits?.[agentDraft.model?.trim() ?? '']
+    if (compactLimit !== undefined && (!Number.isSafeInteger(compactLimit) || compactLimit < 1024 || compactLimit > 100000000 || contextLimit !== undefined && compactLimit > Math.floor(contextLimit * 0.9))) {
+      setNotice('自动压缩阈值必须是有效整数，且不超过上下文窗口的 90%')
+      return
+    }
     setConfiguringAgents((current) => ({ ...current, [kind]: true }))
     try {
       const result = await window.modmind.externalAgents.configure(kind, agentDraft)
@@ -4650,7 +4668,8 @@ export default function App(): React.JSX.Element {
     const previous = beginnerAiPreferences
     const next = { ...beginnerAiPreferences, ...patch }
     if (patch.model && patch.model !== previous.model) next.reasoningLevel = 'auto'
-    setBeginnerAiPreferences(next)
+    // Keep budget drafts mounted until validation succeeds, including failed saves.
+    if (!Object.prototype.hasOwnProperty.call(patch, 'modelContextWindows') && !Object.prototype.hasOwnProperty.call(patch, 'modelAutoCompactTokenLimits')) setBeginnerAiPreferences(next)
     setSavingAiPreferences(true)
     setSettingsFeedback('正在保存 AI 偏好…')
     try {
@@ -4915,7 +4934,7 @@ export default function App(): React.JSX.Element {
   const modpackProject = project?.kind === 'modpack'
   const pluginProject = project?.kind === 'server-plugin'
   // Beta follows the feature, not the project mode; shared tools keep their normal status.
-  const showFeatureBeta = (id: ViewId): boolean => id === 'modpack-resourcepacks'
+  const showFeatureBeta = (id: ViewId): boolean => id === 'modpack-resourcepacks' || id === 'sounds'
     || (pluginProject && ['relationships', 'modpack-server', 'build', 'snapshots'].includes(id))
   const workspacePromptHeading = modpackProject ? '描述整合包的下一步' : '描述你想要的 Mod'
   const workspacePromptDescription = modpackProject
@@ -5594,6 +5613,7 @@ export default function App(): React.JSX.Element {
                 {isJavaLoader(project.loader) && project.kind !== 'modpack' && project.kind !== 'server-plugin' ? <BuildDeliverySettings key={project.path} project={project} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} /> : null}
                 <section className="pipeline-list">
                   <h2>任务时间线</h2>
+                  {!events.length ? <p className="pipeline-empty">暂无任务记录</p> : null}
                   {events.map((event) => (
                     <div className="pipeline-row" key={event.id}><span className={`status-dot ${event.status}`} /><div><strong>{event.title}</strong><p>{event.detail}</p></div><time>{formatTime(event.time)}</time></div>
                   ))}
@@ -5715,16 +5735,27 @@ export default function App(): React.JSX.Element {
                     onReasoningLevelChange={(reasoningLevel) => void saveBeginnerAiPreference({ reasoningLevel })}
                     onFastModeChange={(fastMode) => void saveBeginnerAiPreference({ fastMode })}
                   />
+                  <ReasoningEffortSettings value={selectedReasoningEfforts(beginnerAiPreferences.model, beginnerAiPreferences.reasoningEffortOptions)} disabled={savingAiPreferences}
+                    onChange={(efforts: ReasoningEffort[]) => {
+                      const reasoningEffortOptions = { ...beginnerAiPreferences.reasoningEffortOptions }
+                      if (efforts.join(',') === DEFAULT_CODEX_REASONING_EFFORTS.join(',')) delete reasoningEffortOptions[beginnerAiPreferences.model]
+                      else reasoningEffortOptions[beginnerAiPreferences.model] = efforts
+                      void saveBeginnerAiPreference({ reasoningEffortOptions })
+                    }} />
                   <ModelContextSetting
-                    key={`${beginnerAiPreferences.model}:${beginnerAiPreferences.modelContextWindows?.[beginnerAiPreferences.model] ?? 'auto'}`}
+                    key={`${beginnerAiPreferences.model}:${beginnerAiPreferences.modelContextWindows?.[beginnerAiPreferences.model] ?? 'auto'}:${beginnerAiPreferences.modelAutoCompactTokenLimits?.[beginnerAiPreferences.model] ?? 'auto'}`}
                     model={beginnerAiPreferences.model}
                     value={beginnerAiPreferences.modelContextWindows?.[beginnerAiPreferences.model]}
+                    compactValue={beginnerAiPreferences.modelAutoCompactTokenLimits?.[beginnerAiPreferences.model]}
                     saving={savingAiPreferences}
-                    onSave={value => {
+                    onSave={(value, compactValue) => {
                       const modelContextWindows = { ...beginnerAiPreferences.modelContextWindows }
                       if (value === undefined) delete modelContextWindows[beginnerAiPreferences.model]
                       else modelContextWindows[beginnerAiPreferences.model] = value
-                      void saveBeginnerAiPreference({ modelContextWindows })
+                      const modelAutoCompactTokenLimits = { ...beginnerAiPreferences.modelAutoCompactTokenLimits }
+                      if (compactValue === undefined) delete modelAutoCompactTokenLimits[beginnerAiPreferences.model]
+                      else modelAutoCompactTokenLimits[beginnerAiPreferences.model] = compactValue
+                      void saveBeginnerAiPreference({ modelContextWindows, modelAutoCompactTokenLimits })
                     }}
                   />
                 </section>
@@ -5753,7 +5784,7 @@ export default function App(): React.JSX.Element {
                         <div className="external-agent-editor-form">
                           {editingAgent === 'claude' ? <label className="field-label">Claude Code 模式<select value={agentDraft.mode ?? 'local'} onChange={(event) => setAgentDraft((current) => ({...current, mode: event.target.value as ExternalAgentConfiguration['mode']}))}><option value="local">本机登录和配置</option><option value="hosted">ModMind 中转服务</option></select></label> : null}
                           {editingAgent === 'claude' ? <label className="field-label">命令路径<input value={agentDraft.executable ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, executable: event.target.value}))} placeholder="留空则从 PATH 查找" /></label> : null}
-                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value, modelContextWindows: undefined}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div>{editingAgent === 'codex' ? <label className="field-label">当前模型上下文上限（Token，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="自动使用模型能力表" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const windows = { ...current.modelContextWindows }; const model = current.model?.trim() ?? ''; if (value === '') delete windows[model]; else windows[model] = Number(value); return { ...current, modelContextWindows: windows } }) }} /><small>填写服务商支持的上限，留空自动匹配</small></label> : null}<div className="external-agent-reasoning-control"><span>思考强度</span><ReasoningControl value={agentDraft.reasoningEffort ?? 'auto'} capabilities={availableModels.find(model => model.id === agentDraft.model)?.reasoning} disabled={scanningModels || configuringAgents[editingAgent]} onChange={value => setAgentDraft(current => ({ ...current, reasoningEffort: value === 'auto' ? undefined : value }))} /></div></> : null}
+                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value, modelContextWindows: undefined, modelAutoCompactTokenLimits: undefined, reasoningEffortOptions: undefined, reasoningEffort: undefined}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div>{editingAgent === 'codex' ? <><label className="field-label">当前模型上下文上限（Token，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="自动使用模型能力表" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const windows = { ...current.modelContextWindows }; const model = current.model?.trim() ?? ''; if (value === '') delete windows[model]; else windows[model] = Number(value); return { ...current, modelContextWindows: windows } }) }} /><small>填写服务商支持的上限，留空自动匹配</small></label><label className="field-label">自动压缩阈值（tokens，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelAutoCompactTokenLimits?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="留空自动计算" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const limits = { ...current.modelAutoCompactTokenLimits }; const model = current.model?.trim() ?? ''; if (value === '') delete limits[model]; else limits[model] = Number(value); return { ...current, modelAutoCompactTokenLimits: limits } }) }} /><small>最多为上下文窗口的 90%</small></label></> : null}<div className="external-agent-reasoning-control"><span>思考强度</span><ReasoningControl value={agentDraft.reasoningEffort ?? 'auto'} capabilities={availableModels.find(model => model.id === agentDraft.model)?.reasoning} allowedEfforts={editingAgent === 'codex' ? selectedReasoningEfforts(agentDraft.model?.trim() ?? '', agentDraft.reasoningEffortOptions) : undefined} disabled={scanningModels || configuringAgents[editingAgent]} onChange={value => setAgentDraft(current => ({ ...current, reasoningEffort: value === 'auto' ? undefined : value }))} /></div>{editingAgent === 'codex' ? <ReasoningEffortSettings value={selectedReasoningEfforts(agentDraft.model?.trim() ?? '', agentDraft.reasoningEffortOptions)} disabled={!agentDraft.model?.trim() || configuringAgents.codex} onChange={(efforts) => setAgentDraft(current => { const options = { ...current.reasoningEffortOptions }; const model = current.model?.trim() ?? ''; if (efforts.join(',') === DEFAULT_CODEX_REASONING_EFFORTS.join(',')) delete options[model]; else options[model] = efforts; return { ...current, reasoningEffortOptions: options, reasoningEffort: current.reasoningEffort && !efforts.includes(current.reasoningEffort) ? undefined : current.reasoningEffort } })} /> : null}</> : null}
                         </div>
                         <div className="settings-actions editor-actions"><span><ShieldCheck size={15} />凭证通过系统加密保存</span><button className="primary-button compact" type="button" disabled={configuringAgents[editingAgent]} onClick={() => void configureExternalAgent(editingAgent)}>{configuringAgents[editingAgent] ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存 {agent.label} 配置</button></div>
                       </div>
@@ -5920,6 +5951,10 @@ export default function App(): React.JSX.Element {
                   <div className="settings-heading"><h2>许可证与版权</h2></div>
                   <div className="settings-actions"><span><Info size={15} />当前版本原创源码按 AGPL-3.0-only 授权。软件按“现状”提供，不提供任何明示或默示保证。</span><div className="settings-button-group"><button className="secondary-button compact" type="button" onClick={() => window.open('https://github.com/waterpail114514/modmind/blob/main/LICENSE', '_blank')}><ExternalLink size={14} />查看许可证</button><button className="secondary-button compact" type="button" onClick={() => window.open('https://github.com/waterpail114514/modmind', '_blank')}><ExternalLink size={14} />获取对应源码</button></div></div>
                   <div className="settings-actions"><span>1.4.3 及更早版本仍按发布时的 MIT 许可证提供；第三方组件和随包工具以其各自许可证为准。</span><button className="secondary-button compact" type="button" onClick={() => window.open('https://github.com/waterpail114514/modmind/blob/main/THIRD_PARTY_NOTICES.md', '_blank')}><ExternalLink size={14} />第三方声明</button></div>
+                </section>
+                <section id="settings-authors" className="settings-section">
+                  <div className="settings-heading"><h2>关于作者</h2></div>
+                  <AboutAuthors />
                 </section>
                 </SettingsSections>
               </div>

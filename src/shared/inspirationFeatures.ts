@@ -39,7 +39,8 @@ export function requiredInspirationFeature(action: string, input: Record<string,
 }
 
 export function inspirationFeaturePrompt(features: InspirationFeatures): string {
-  return `本轮灵感台分析功能由用户勾选决定：\n${INSPIRATION_FEATURES.map(({ id, label }) => `- ${label}：${features[id] ? '已启用，按任务需要使用' : '未启用，不主动执行或扩展到此分析'}`).join('\n')}
+  return `本轮灵感台分析功能由用户勾选决定：\n${INSPIRATION_FEATURES.map(({ id, label }) => `- ${label}：${features[id] ? '已启用，按任务需要使用' : '用户主动禁止自动使用（未启用）[USER_DISABLED_TOOL]，按下述项目知识与基础读取例外执行'}`).join('\n')}
+被标记 USER_DISABLED_TOOL 的能力是用户主动禁止，不是工具掉线、未安装或审批故障；不要重试、自行修复或误称全部工具不可用。已启用工具的连接故障不得归因于用户禁用。
 未启用的工具不可通过命令、插件或其他工具绕过；需要时提示用户在「分析功能」中勾选后重新发送。勾选只开放能力，不要求每轮使用全部功能。
 项目知识保存是只读讨论模式的明确例外：用户要求「记住」「保存到项目知识」「收藏方案」时，直接调用 modmind_project_knowledge_read 读取现有条目，再用 modmind_project_knowledge_save 保存，不要只输出草稿或让用户手动复制。已有条目用 id 更新并保留无关内容；无 id 时按唯一同名标题更新或新建。仅在工具成功后说明已保存。区分已确认决定、建议和待定数值，不把猜测记为事实。「引用项目知识」只控制自动附入上下文，不限制用户明确要求的知识读取和保存；未勾选时不要主动读取无关知识。保存仅写应用管理的当前项目知识，不修改源码。
 ${features.deepAnalysis ? '深入分析：按问题逐步检索相关文件、追踪类和方法，读取充分证据后回答；避免无关全仓扫描。' : '快速回答：普通项目问题最多进行 3 次目录发现、搜索或文本读取；超出时说明需要启用「深入读项目」。'}

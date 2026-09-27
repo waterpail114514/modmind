@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { describeAiFailureForUser } from './aiFailure'
+import { AGENT_TOOL_RECOVERY_GUIDANCE, describeAiFailureForUser } from './aiFailure'
 
 describe('describeAiFailureForUser', () => {
+  it.each([
+    '工具尚未准备好，本轮对话未开始。这是工具连接故障，不是用户禁用。等待工具目录超时。',
+    'ModMind 工具连接已中断，当前会话和已完成操作已保留。'
+  ])('preserves tool recovery guidance across repeated presentation: %s', raw => {
+    const message = describeAiFailureForUser(new Error(raw))
+    expect(message).toBe(raw + AGENT_TOOL_RECOVERY_GUIDANCE)
+    expect(describeAiFailureForUser(message)).toBe(message)
+    expect(message).not.toContain('切换模型')
+  })
   it('does not interpret numbers in request IDs or usage as HTTP statuses', () => {
     for (const message of ['request id: req-429-abc', 'input_tokens=500', 'received 404 tokens', 'request id: req-413-abc', 'input_tokens=413000']) {
       expect(describeAiFailureForUser(message)).not.toMatch(/线路繁忙|HTTP|模型不存在|请求内容过大/)

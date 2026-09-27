@@ -94,11 +94,12 @@ import { createPluginBridgeTarget, getPluginService, getPluginRuntime, importPlu
 import { PluginChatBridge } from './pluginChatBridge'
 import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from '../shared/plugins'
 import { clearPreparedCodexCredentials, ensureManagedCodexRuntime, isManagedCodexVersion, managedCodexExecutablePath, prepareCodex, type CodexServerConfig, type CodexSetupProgress } from './codexSetup'
-import { normalizeModelContextWindows, validModelContext } from '../shared/modelContext'
+import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows, validModelContext } from '../shared/modelContext'
 import { resolveModelContextBudget } from './modelContextRegistry'
+import { validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { normalizeAiModelSelection, settingsForAiSelection, type AiModelSelection } from '../shared/aiSelection'
-import { isReasoningEffort, reasoningSelectionEffort } from '../shared/modelReasoning'
+import { codexReasoningCapabilities, isReasoningEffort, normalizeReasoningEffortOptions, reasoningSelectionEffort, selectedReasoningEfforts } from '../shared/modelReasoning'
 import { ChatCompletionsAdapter } from './chatCompletionsAdapter'
 import { BackendSwitchCoordinator } from './backendSwitchCoordinator'
 import { LiveConfiguration, SerialState, type ConfigurationRevision } from './liveConfiguration'
@@ -1691,7 +1692,7 @@ async function remoteQuotaConfig(): Promise<RemoteQuotaConfig> {
     baseUrl: openAiV1BaseUrl(credentials.baseUrl),
     apiKey: credentials.apiKey,
     model: preferences.model,
-    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, modelReasoningFor(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, preferences.model))
+    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(preferences.model, preferences.reasoningEffortOptions))
   }
 }
 
@@ -1757,19 +1758,29 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   if (!model) throw new Error('请选择制作使用的模型')
   const contextWindow = value.modelContextWindows?.[model]
   if (contextWindow !== undefined && !validModelContext(contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
+  const compactLimit = value.modelAutoCompactTokenLimits?.[model]
+  if (compactLimit !== undefined && !validModelContext(compactLimit)) throw new Error('自动压缩阈值必须是 1,024–100,000,000 之间的整数')
   const reasoningLevel = isReasoningEffort(value.reasoningLevel) ? value.reasoningLevel : 'auto'
-  const preferences = normalizeQuotaModelPreferences({ model, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows }, DEFAULT_BEGINNER_AI_PREFERENCES)
+  const preferences = normalizeQuotaModelPreferences({ model, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows, modelAutoCompactTokenLimits: value.modelAutoCompactTokenLimits, reasoningEffortOptions: value.reasoningEffortOptions }, DEFAULT_BEGINNER_AI_PREFERENCES)
   const previous = await readBeginnerAiPreferences()
   if (initialRevision !== quotaConfiguration.current()) throw new Error('线路正在切换，请稍后重新选择模型')
   const previousWindows = previous.modelContextWindows ?? {}
   const nextWindows = preferences.modelContextWindows ?? {}
   const sameWindows = Object.keys(previousWindows).length === Object.keys(nextWindows).length
     && Object.entries(previousWindows).every(([id, window]) => nextWindows[id] === window)
-  if (previous.model === preferences.model && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows) return preferences
+  const previousCompactLimits = previous.modelAutoCompactTokenLimits ?? {}
+  const nextCompactLimits = preferences.modelAutoCompactTokenLimits ?? {}
+  const sameCompactLimits = Object.keys(previousCompactLimits).length === Object.keys(nextCompactLimits).length
+    && Object.entries(previousCompactLimits).every(([id, limit]) => nextCompactLimits[id] === limit)
+  const previousEfforts = previous.reasoningEffortOptions ?? {}
+  const nextEfforts = preferences.reasoningEffortOptions ?? {}
+  const sameEfforts = Object.keys(previousEfforts).length === Object.keys(nextEfforts).length
+    && Object.entries(previousEfforts).every(([id, efforts]) => efforts.join(',') === nextEfforts[id]?.join(','))
+  if (previous.model === preferences.model && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
   const credentials = await readDeviceCredentials()
+  validateCodexAutoCompactTokenLimit(model, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow }, compactLimit)
   if (preferences.reasoningLevel !== 'auto') {
-    const capabilities = credentials ? modelReasoningFor(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, model) : modelReasoningCatalog.resolve(model)
-    reasoningSelectionEffort(preferences.reasoningLevel, capabilities)
+    reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(model, preferences.reasoningEffortOptions))
   }
   if (previous.fastMode !== preferences.fastMode && credentials?.provider !== 'custom') {
     if (!credentials) throw new Error('请先连接 ModMind 账号，再切换 Fast 模式')
@@ -1825,11 +1836,13 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
     const model = preferences.model
     const baseUrl = openAiV1BaseUrl(credentials.baseUrl)
     const reasoningCapabilities = modelReasoningFor(baseUrl, credentials.apiKey, model)
+    const efforts = selectedReasoningEfforts(model, preferences.reasoningEffortOptions)
     return {
       baseUrl, apiKey: credentials.apiKey, model,
-      reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities),
-      reasoningCapabilities,
-      contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[model]
+      reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities, efforts),
+      reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts),
+      contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[model],
+      autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[model]
     }
   }
   // Upstream groups may change without rotating the key or changing the URL.
@@ -1840,13 +1853,15 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
   if (selection && !models.some(model => model.id === selection.model)) throw new Error(`当前线路没有模型 ${selection.model}，请重新选择`)
   if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig(selection)
   const reasoningCapabilities = models.find(model => model.id === preferences.model)?.reasoning ?? modelReasoningCatalog.resolve(preferences.model, credentials.baseUrl)
+  const efforts = selectedReasoningEfforts(preferences.model, preferences.reasoningEffortOptions)
   return {
     baseUrl: openAiV1BaseUrl(credentials.baseUrl),
     apiKey: credentials.apiKey,
     model: preferences.model,
-    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities),
-    reasoningCapabilities,
-    contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[preferences.model]
+    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities, efforts),
+    reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts),
+    contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[preferences.model],
+    autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[preferences.model]
   }
 }
 
@@ -1884,7 +1899,8 @@ async function configuredCodexServerConfig(configuration: ExternalAgentConfigura
   if (!apiKey || !model) throw new Error('Codex 配置缺少 API Key 或模型名')
   await refreshConfiguredReasoning('codex', configuration)
   const reasoningCapabilities = modelReasoningFor(baseUrl, apiKey, model)
-  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities), reasoningCapabilities, contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model] }
+  const efforts = selectedReasoningEfforts(model, configuration.reasoningEffortOptions)
+  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model] }
 }
 
 async function prepareManagedCodex(
@@ -3517,8 +3533,13 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   for (const kind of kinds) {
     const entry = normalized.externalAgents?.[kind]
     if (!entry) continue
+    if (kind === 'codex') {
+      const model = entry.model?.trim() ?? ''
+      validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
+      reasoningSelectionEffort(entry.reasoningEffort ?? 'auto', undefined, selectedReasoningEfforts(model, entry.reasoningEffortOptions))
+    }
     if (entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
-    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), mode: kind === 'codex' || entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, hasStoredKey: undefined}
+    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: kind === 'codex' || entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, hasStoredKey: undefined}
     if (entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
     else if (existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
   }
@@ -3910,7 +3931,9 @@ async function readSettings(): Promise<AgentSettings> {
         baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.slice(0, 4096) : undefined,
         model: typeof entry.model === 'string' ? entry.model.slice(0, 512) : undefined,
         modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows),
-        reasoningEffort: isReasoningEffort(entry.reasoningEffort) ? entry.reasoningEffort : undefined,
+        modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits),
+        reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined,
+        reasoningEffort: isReasoningEffort(entry.reasoningEffort) && (kind === 'claude' || selectedReasoningEfforts(entry.model ?? '', normalizeReasoningEffortOptions(entry.reasoningEffortOptions)).includes(entry.reasoningEffort)) ? entry.reasoningEffort : undefined,
         apiKey: agentApiKey,
         hasStoredKey: Boolean(encrypted)
       }
@@ -9496,7 +9519,7 @@ function registerIpc(): void {
     if (kind === 'codex' || nextConfiguration.mode === 'hosted') {
       await refreshConfiguredReasoning(kind, nextConfiguration)
       const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
-      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''))
+      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), kind === 'codex' ? selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions) : undefined)
     }
     const saved = await saveAgentSettings(next)
     return configureExternalAgentProvider(kind, saved)

@@ -802,6 +802,9 @@ export interface ExternalAgentConfiguration {
   model?: string
   /** Actual runtime context limits keyed by exact model ID; absent means registry lookup. */
   modelContextWindows?: Record<string, number>
+  /** Independent auto-compaction overrides; absent means automatic calculation. */
+  modelAutoCompactTokenLimits?: Record<string, number>
+  reasoningEffortOptions?: Record<string, ReasoningEffort[]>
   reasoningEffort?: ReasoningEffort
   apiKey?: string
   hasStoredKey?: boolean
@@ -813,6 +816,9 @@ export interface BeginnerAiPreferences {
   fastMode: boolean
   /** Manual runtime context limits for exact model IDs on the active route. */
   modelContextWindows?: Record<string, number>
+  /** Independent auto-compaction overrides for exact model IDs on this route. */
+  modelAutoCompactTokenLimits?: Record<string, number>
+  reasoningEffortOptions?: Record<string, ReasoningEffort[]>
 }
 
 export interface JavaPreferences {

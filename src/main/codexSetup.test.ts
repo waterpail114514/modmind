@@ -15,6 +15,37 @@ const settings = {
 } satisfies CodexServerConfig
 
 describe('Codex beginner preparation', () => {
+  it('passes manual and computed compaction thresholds through the same TOML setting', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-compaction-config-'))
+    const setup = (overrides: Partial<CodexServerConfig> = {}) => prepareCodex({ rootDir: root, existingExecutable: 'C:\\codex.exe', serverConfig: { ...settings, contextWindow: 512000, ...overrides } })
+    try {
+      const first = await setup({ autoCompactTokenLimit: 200000 })
+      const read = async () => parseToml(await fs.readFile(first.configPath, 'utf8'))
+      const config = await read()
+      expect(config.model_auto_compact_token_limit).toBe(200000)
+      expect(first.contextWindow).toBe(512000)
+      const catalogPath = config.model_catalog_json
+      expect((await setup({ autoCompactTokenLimit: 200000 })).configChanged).toBe(false)
+      expect((await setup({ autoCompactTokenLimit: 450000 })).configChanged).toBe(true)
+      expect((await read()).model_auto_compact_token_limit).toBe(450000)
+      expect((await read()).model_catalog_json).toBe(catalogPath)
+      await setup({ autoCompactTokenLimit: 460800 })
+      for (const autoCompactTokenLimit of [460801, 0, -1, 1.5, NaN, Infinity, 100000001]) {
+        await expect(setup({ autoCompactTokenLimit })).rejects.toThrow('自动压缩阈值')
+      }
+      expect((await read()).model_auto_compact_token_limit).toBe(460800)
+      await setup()
+      expect((await read()).model_auto_compact_token_limit).toBe(437760)
+      expect((await read()).model_catalog_json).toBe(catalogPath)
+      await setup({ model: 'codex-auto-review', contextWindow: undefined })
+      expect((await read()).model_auto_compact_token_limit).toBe(244800)
+      expect((await read()).model_catalog_json).toBeUndefined()
+      await setup({ model: 'codex-auto-review', contextWindow: undefined, autoCompactTokenLimit: 200000 })
+      expect((await read()).model_auto_compact_token_limit).toBe(200000)
+      expect((await read()).model_catalog_json).toBeUndefined()
+      await expect(setup({ model: 'codex-auto-review', contextWindow: undefined, autoCompactTokenLimit: 250000 })).rejects.toThrow('244,800')
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
   it('writes actual runtime limits through the local adapter and isolates model-specific overrides', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-budget-'))
     try {
@@ -26,6 +57,7 @@ describe('Codex beginner preparation', () => {
       const catalog = JSON.parse(await fs.readFile(String(config.model_catalog_json), 'utf8'))
       expect(catalog.models.at(-1).context_window).toBe(1000000)
       expect(catalog.models.at(-1).auto_compact_token_limit).toBeGreaterThan(500000)
+      expect(config.model_auto_compact_token_limit).toBe(catalog.models.at(-1).auto_compact_token_limit)
       await setup('private', 524288)
       const overridden = parseToml(await fs.readFile(result.configPath, 'utf8'))
       expect(JSON.parse(await fs.readFile(String(overridden.model_catalog_json), 'utf8')).models.at(-1).context_window).toBe(524288)

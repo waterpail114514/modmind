@@ -4868,7 +4868,21 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .settings-page .appearance-row p { line-height: 1.65; }
 .settings-page .toggle { flex-shrink: 0; }
 .settings-page .production-settings-panel { border: 0; border-radius: 0; background: transparent; margin: 0; }
-.settings-page .model-context-setting { grid-column: 2; min-width: 0; display: grid; gap: 12px; margin-top: 18px; }
+.settings-page .model-context-setting { grid-column: 2; min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; margin-top: 4px; padding-top: 18px; border-top: 1px solid var(--theme-line); }
+.settings-page .reasoning-effort-settings { min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings-page .settings-section > .reasoning-effort-settings { grid-column: 2; }
+.settings-page .external-agent-editor-form > .reasoning-effort-settings { grid-column: 1 / -1; }
+.settings-page .reasoning-effort-trigger { display: flex; align-items: center; width: 100%; min-height: 38px; gap: 12px; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.settings-page .reasoning-effort-trigger strong { color: var(--theme-text); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.settings-page .reasoning-effort-trigger span { min-width: 0; margin-left: auto; color: var(--theme-muted); font-size: 12px; font-weight: 400; text-align: right; overflow-wrap: anywhere; }
+.settings-page .reasoning-effort-trigger svg { flex-shrink: 0; color: var(--theme-muted); transition: transform .15s ease; }
+.settings-page .reasoning-effort-trigger[aria-expanded='true'] svg { transform: rotate(180deg); }
+.settings-page .reasoning-effort-trigger:disabled { cursor: default; }
+.settings-page .reasoning-effort-panel > div { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 0 4px; }
+.settings-page .reasoning-effort-panel > div > button { min-width: 60px; height: 32px; padding: 0 10px; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); color: var(--theme-muted); font-size: 12px; font-weight: 400; cursor: pointer; }
+.settings-page .reasoning-effort-panel > div > button[aria-pressed='true'] { border-color: var(--theme-action); background: var(--theme-raised); color: var(--theme-text); }
+.settings-page .reasoning-effort-panel > div > button:disabled { opacity: .45; cursor: default; }
+.settings-page .reasoning-effort-panel > button { margin-top: 8px; }
 .reasoning-capability-control { display: grid; min-width: 0; gap: 8px; }
 .reasoning-options { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; }
 .reasoning-options button { flex: 0 0 auto; white-space: nowrap; min-height: 32px; padding: 6px 11px; border: 1px solid var(--theme-line); border-radius: 7px; background: var(--theme-surface); color: var(--theme-muted); font-size: 12px; cursor: pointer; }
@@ -4881,10 +4895,13 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .reasoning-capability-control small { font-size: 12px; color: var(--theme-muted); line-height: 1.6; overflow-wrap: anywhere; }
 .beginner-reasoning-control > .reasoning-capability-control { display: grid; padding: 0; border: 0; background: transparent; }
 .agent-settings-row > .reasoning-capability-control { display: grid; }
-.settings-page .model-context-setting .settings-actions { grid-column: 1; }
+.settings-page .model-context-setting .settings-actions { grid-column: 1 / -1; justify-content: flex-end; }
+.settings-page #settings-ai .field-label, .settings-page #settings-ai .beginner-model-control > span, .settings-page #settings-ai .beginner-reasoning-control > span { font-weight: 600; }
+.settings-page #settings-ai .reasoning-options button { font-weight: 500; }
 .settings-page .model-context-setting > [role='alert'] { margin: 0; font-size: 12px; color: var(--theme-danger); }
 .settings-page .beginner-ai-preferences { padding: 0; min-height: 0; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px 24px; align-items: start; }
 .settings-page .beginner-model-control > span, .settings-page .beginner-reasoning-control > span { font-size: 13px; margin-bottom: 8px; }
+.settings-page .beginner-model-control > span { cursor: pointer; }
 .settings-page .beginner-model-control select { width: 100%; height: 36px; font-size: 13px; }
 .settings-page .beginner-model-control > small { font-size: 11px; line-height: 1.6; white-space: normal; overflow-wrap: anywhere; }
 .settings-page .beginner-reasoning-control { min-width: 0; }
@@ -4905,7 +4922,8 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .settings-page .settings-index a:focus-visible, .settings-page button:focus-visible, .settings-page select:focus-visible, .settings-page input:focus-visible { outline: none; outline-offset: 0; }
 @container (max-width: 780px) {
   .settings-page .settings-section { grid-template-columns: minmax(0, 1fr); padding: 22px 24px; gap: 16px; }
-  .settings-page .model-context-setting { grid-column: 1; margin-top: 0; }
+  .settings-page .model-context-setting { grid-column: 1; grid-template-columns: minmax(0, 1fr); margin-top: 0; }
+  .settings-page .settings-section > .reasoning-effort-settings { grid-column: 1; }
   .settings-page .settings-section > *, .settings-page .settings-section > .settings-heading { grid-column: 1; }
   .settings-page .settings-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
   .settings-page .settings-heading p { margin: 0; }

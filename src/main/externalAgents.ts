@@ -34,6 +34,7 @@ import { diagnosticJournal } from './diagnosticLog'
 import { describeAiFailureForUser } from '../shared/aiFailure'
 import { aiNoticeDetails, describeAiNotice } from '../shared/aiNotice'
 import { AgentCompactionGuard, ExternalAgentContextStallError } from './agentCompactionGuard'
+import { AgentToolsDisconnectedError, AgentToolsNotReadyError, prepareClaudeTools, waitForAgentTools } from './agentToolReadiness'
 import { listProjectDirectory, readProjectTextFile } from './projectTextRead'
 import { readProjectDocument } from './documentRead'
 import { readWebPage, searchWeb } from './webResearch'
@@ -242,6 +243,8 @@ export interface ExternalAgentRunOptions {
   persistentRetry?: boolean
   /** Test-only timing override for retry and cooldown waits. */
   retryDelayMs?: number
+  /** Test-only bounds for native tool preparation. */
+  toolReadinessTimeoutMs?: number
   /** @deprecated Silence is not a failure signal; retained for API compatibility. */
   noOutputTimeoutMs?: number
   signal: AbortSignal
@@ -354,6 +357,9 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     ...nativePermissionArgs('codex', options.readOnly, options.approvalMode, options.project.path),
     '-c', `mcp_servers.modmind.command=${JSON.stringify(mcpRuntime().command)}`,
     '-c', `mcp_servers.modmind.args=[${JSON.stringify(mcpServerPath)}]`,
+    '-c', 'mcp_servers.modmind.enabled=true',
+    '-c', 'mcp_servers.modmind.required=true',
+    '-c', 'mcp_servers.modmind.startup_timeout_sec=20',
     ...(mcpRuntime().env ? ['-c', 'mcp_servers.modmind.env={ELECTRON_RUN_AS_NODE="1"}'] : []),
     ...(options.reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(options.reasoningEffort)}`] : []),
     ...(options.model ? ['-c', `model=${JSON.stringify(options.model)}`] : []),
@@ -387,6 +393,9 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
   const reviewTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const completedReplies = new Map<string, { text: string; itemId: string; streamId: string; phase?: 'commentary' | 'final_answer' }>()
   let terminalFailure = ''
+  let toolPreparationFailure: AgentToolsNotReadyError | undefined
+  let turnSubmitted = false
+  let toolsDisconnected = false
   let terminalErrorInfo: unknown
   let approvalUnavailable = false
   let completion: Record<string, unknown> | undefined
@@ -488,6 +497,18 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     }
     const params = message.params ?? {}
     const method = message.method ?? ''
+    if (method === 'mcpServer/startupStatus/updated' && params.name === 'modmind'
+      && (params.threadId == null || params.threadId === threadId)) {
+      if (params.status === 'failed' || params.status === 'cancelled') {
+        if (!turnSubmitted) toolPreparationFailure = new AgentToolsNotReadyError('ModMind 工具服务启动失败。')
+        else {
+          toolsDisconnected = true
+          terminalFailure = 'ModMind 工具连接已中断，正在保存当前会话。'
+          void stop()
+        }
+      }
+      return
+    }
     if (method === 'serverRequest/resolved' && (typeof params.requestId === 'string' || typeof params.requestId === 'number')) {
       pendingApprovals.get(params.requestId)?.abort()
       pendingApprovals.delete(params.requestId)
@@ -777,9 +798,26 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
       if (startedThread && typeof startedThread === 'object' && typeof (startedThread as Record<string, unknown>).id === 'string') { threadId = String((startedThread as Record<string, unknown>).id); options.onSessionId?.(threadId) }
     }
     if (!threadId) throw new Error('Codex app-server 未返回 thread id')
+    options.onProgress('正在准备工具', '确认项目工具已连接后开始对话', 'running')
+    if (toolPreparationFailure) throw toolPreparationFailure
+    await waitForAgentTools({
+      kind: 'codex', signal: options.signal, timeoutMs: options.toolReadinessTimeoutMs,
+      list: async cursor => (await request('mcpServerStatus/list', { threadId, ...(cursor ? { cursor } : {}), limit: 100 })).result
+    })
+    if (toolPreparationFailure) throw toolPreparationFailure
+    // Exercise the same native MCP connection without consuming a model turn or a read budget.
+    try {
+      const probe = await awaitWithAbort(request('mcpServer/tool/call', { threadId, server: 'modmind', tool: 'modmind_project_info', arguments: {} }), options.signal)
+      if (!Array.isArray(probe.result?.content) || probe.result?.isError === true) throw new Error('项目工具探测失败。')
+    } catch (error) {
+      throwIfAborted(options.signal)
+      throw new AgentToolsNotReadyError(error instanceof Error ? error.message : String(error))
+    }
+    if (toolPreparationFailure) throw toolPreparationFailure
     await persistSession(options.project, 'codex', threadId, options.sessionScope, options.sessionFingerprint, options.sessionLane)
     options.onProgress(persistedSessionId ? 'Codex 已恢复会话' : 'Codex 正在分析项目', persistedSessionId ? '正在使用原生 thread 继续任务' : '已连接 Codex app-server', 'running')
     throwIfAborted(options.signal, 'Agent 启动已停止')
+    turnSubmitted = true
     const startedTurn = await request('turn/start', {
       threadId, input: [{ type: 'text', text: options.prompt, text_elements: [] }],
       ...(options.model ? { model: options.model } : {}),
@@ -792,6 +830,10 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     const exited = await processExit
     if (exited.error) throw exited.error
   } catch (error) {
+    if (error instanceof AgentToolsNotReadyError) toolPreparationFailure = error
+    else if (!turnSubmitted && /MCP.*(?:startup|initializ|start|connect)|(?:startup|initializ).*MCP/i.test(String(error))) {
+      toolPreparationFailure = new AgentToolsNotReadyError('ModMind 工具服务启动失败。')
+    }
     if (!options.signal.aborted) terminalFailure = error instanceof Error ? error.message : String(error)
   } finally {
     approvalLifetime.abort()
@@ -808,6 +850,11 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
   if (interruptionFailure) { recordAgentFailure(options, interruptionFailure, { threadId, turnId }); throw interruptionFailure }
   if (terminalFailure) recordAgentFailure(options, new Error(terminalFailure), { threadId, turnId, codexErrorInfo: terminalErrorInfo, transcriptTail: transcript.slice(-48_000), transcriptCharacters: transcript.length })
   if (options.signal.aborted) throw Object.assign(new Error('外部代理任务已停止；已保留当前修改并保存恢复信息'), { name: 'AbortError' })
+  if (toolPreparationFailure) throw toolPreparationFailure
+  if (toolsDisconnected) {
+    if (nativeOperations.size) throw Object.assign(new Error('工具连接中断，仍有操作结果未确认；已保留会话，请检查后继续，避免重复执行。'), { name: 'ExternalAgentUnsafeInterruptionError' })
+    throw new AgentToolsDisconnectedError()
+  }
   if (contextStall) throw contextStall
   if (approvalUnavailable || isAutomaticApprovalFailure(terminalFailure)) throw new AutomaticApprovalUnavailableError()
   if (terminalFailure) {
@@ -1501,7 +1548,8 @@ tools.push(...pluginAuthoringTools);
 // --- User plugin tools -----------------------------------------------------
 // The desktop bridge exposes user-created plugin tools through the
 // 'plugin_tools' / 'plugin_tool_call' actions. Older bridges reject those
-// actions, so every lookup degrades gracefully back to the static list.
+// actions. Runs without plugins skip discovery explicitly; connection failures
+// must not masquerade as a successful empty plugin catalog.
 const PLUGIN_TOOL_NAME_PATTERN = /^modmind_plugin_[a-z0-9][a-z0-9-]{1,62}[a-z0-9]_[a-z0-9][a-z0-9_-]{1,48}$/;
 function pluginDescriptorToMcp(descriptor) {
   const annotations = descriptor.annotations && typeof descriptor.annotations === 'object' ? descriptor.annotations : {};
@@ -1527,17 +1575,21 @@ function pluginDescriptorToMcp(descriptor) {
   };
 }
 async function fetchPluginTools() {
-  try {
-    const value = await Promise.race([
-      callTool('plugin_tools', {}),
-      new Promise((resolve, reject) => setTimeout(() => reject(new Error('plugin_tools timed out')), 5000))
-    ]);
-    const descriptors = Array.isArray(value?.tools) ? value.tools : [];
-    return descriptors
-      .filter((descriptor) => descriptor && typeof descriptor.name === 'string' && PLUGIN_TOOL_NAME_PATTERN.test(descriptor.name))
-      .map(pluginDescriptorToMcp);
-  } catch (e) {
-    return [];
+  if (!config.hasPluginTools) return [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let timer;
+    try {
+      const value = await Promise.race([
+        callTool('plugin_tools', {}),
+        new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('plugin_tools timed out')), 5000); })
+      ]);
+      if (!Array.isArray(value?.tools)) throw new Error('Invalid plugin tool catalog');
+      return value.tools
+        .filter((descriptor) => descriptor && typeof descriptor.name === 'string' && PLUGIN_TOOL_NAME_PATTERN.test(descriptor.name))
+        .map(pluginDescriptorToMcp);
+    } catch (e) {
+      if (attempt === 1) throw new Error('插件工具目录暂时不可用，重试后仍未恢复。这是连接故障，不是用户禁用或工具不存在。');
+    } finally { clearTimeout(timer); }
   }
 }
 async function isPluginToolName(name) {
@@ -1571,9 +1623,11 @@ input.on('line', async (line) => {
     return;
   }
   if (request.method === 'tools/list') {
-    const pluginTools = await fetchPluginTools();
-    const availableTools = tools.filter(tool => !(config.hiddenToolPrefixes || []).some(prefix => tool.name.startsWith(prefix)));
-    process.stdout.write(JSON.stringify(result(request.id,{tools:[...availableTools,...pluginTools]}))+'\n');
+    try {
+      const pluginTools = await fetchPluginTools();
+      const availableTools = tools.filter(tool => !(config.hiddenToolPrefixes || []).some(prefix => tool.name.startsWith(prefix)));
+      process.stdout.write(JSON.stringify(result(request.id,{tools:[...availableTools,...pluginTools]}))+'\n');
+    } catch (e) { process.stdout.write(JSON.stringify(error(request.id,-32603,String(e.message)))+'\n'); }
     return;
   }
   if (request.method === 'tools/call') {
@@ -1675,8 +1729,11 @@ input.on('line', async (line) => {
     };
     const action = actions[name];
     let pluginCall = false;
-    if (!action && await isPluginToolName(name)) {
-      pluginCall = true;
+    try {
+      if (!action && await isPluginToolName(name)) pluginCall = true;
+    } catch (e) {
+      process.stdout.write(JSON.stringify(result(request.id,{isError:true,content:[{type:'text',text:String(e.message)}]}))+'\n');
+      return;
     }
     if (!action && !pluginCall) {
       process.stdout.write(JSON.stringify(error(request.id,-32601,'Unknown ModMind tool'))+'\n');
@@ -2174,7 +2231,7 @@ export class ModMindBridge {
     if (!address || typeof address === 'string') throw new Error('无法启动 ModMind 外部代理桥接服务')
     this.port = address.port
     const bridgePath = path.join(this.directory, 'bridge.json')
-    await fs.writeFile(bridgePath, JSON.stringify({port: this.port, token: this.token, version: this.appVersion, sourceFingerprint: MODMIND_SOURCE_FINGERPRINT, hiddenToolPrefixes: [...hiddenWorkbenchToolPrefixes(this.features),
+    await fs.writeFile(bridgePath, JSON.stringify({port: this.port, token: this.token, version: this.appVersion, sourceFingerprint: MODMIND_SOURCE_FINGERPRINT, hasPluginTools: Boolean(this.pluginTarget), hiddenToolPrefixes: [...hiddenWorkbenchToolPrefixes(this.features),
       ...(this.readOnly && !this.inspirationFeatures?.imageGeneration ? ['modmind_image_generate', 'modmind_image_perfect_pixel', 'modmind_image_remove_background'] : []),
       ...(this.inspirationFeatures && !this.inspirationFeatures.webResearch ? ['modmind_web_'] : []),
       ...(this.inspirationFeatures && !this.inspirationFeatures.minecraftResearch ? ['modmind_mapping_', 'modmind_dependency_search', 'modmind_mcmod_'] : []),
@@ -2246,10 +2303,10 @@ export class ModMindBridge {
         const jarPrerequisite = body.action === 'research' && ['inspect', 'resource'].includes(String(input.operation))
           && (this.inspirationFeatures.comparison || this.inspirationFeatures.compatibility)
         if (required && !this.inspirationFeatures[required] && !jarPrerequisite) {
-          throw new Error(`请先在「分析功能」中勾选「${INSPIRATION_FEATURES.find(item => item.id === required)!.label}」，然后重新发送。不得通过其他工具绕过。`)
+          throw new Error(`[USER_DISABLED_TOOL] 用户主动禁止了「${INSPIRATION_FEATURES.find(item => item.id === required)!.label}」（未勾选）。这不是工具掉线、未安装或审批故障，不要重试或自行修复。请先在「分析功能」中勾选，然后重新发送。不得通过其他工具绕过。`)
         }
         if (!this.inspirationFeatures.deepAnalysis && ['project_files', 'project_search', 'list_project_directory', 'read_project_file'].includes(body.action ?? '')) {
-          if (this.inspirationReads >= 3) throw new Error('快速回答已达到 3 次项目读取；继续分析请勾选「深入读项目」后重新发送。')
+          if (this.inspirationReads >= 3) throw new Error('[USER_DISABLED_TOOL] 用户未开启「深入读项目」，主动限制了进一步读取。快速回答已达到 3 次项目读取；这不是工具掉线，不要重试或绕过。继续分析请勾选「深入读项目」后重新发送。')
           this.inspirationReads += 1
         }
       }
@@ -3008,6 +3065,8 @@ async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Prom
   const activeReasoningEffort = options.reasoningEffort
   let resumableSessionId = options.sessionId?.trim() || undefined
   let trustResumableSession = options.trustSessionId === true
+  let toolPreparationRetries = 0
+  let toolPreparationPrompt: ReturnType<typeof externalAgentAttemptPrompt> | undefined
 
   const waitForRetry = async (error: ExternalAgentTransientFailureError | ExternalAgentCompatibilityFailureError, exhaustedBatch: boolean, immediate = false): Promise<void> => {
     const category: ExternalAgentRecoveryCategory = error instanceof ExternalAgentCompatibilityFailureError ? 'compatibility' : error.category
@@ -3071,7 +3130,7 @@ async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Prom
     const prompt = nextPrompt ?? options.prompt
     const hasExplicitRecoveryPrompt = Boolean(nextPrompt)
     nextPrompt = undefined
-    const attemptPrompt = freshAttempt
+    const attemptPrompt = toolPreparationPrompt ?? (freshAttempt
       ? { prompt: options.fallbackPrompt?.trim() || prompt, fallbackPrompt: undefined, retryOnly: false }
       : hasExplicitRecoveryPrompt
         ? { prompt, fallbackPrompt: undefined, retryOnly: false }
@@ -3079,7 +3138,8 @@ async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Prom
         { prompt, fallbackPrompt: options.fallbackPrompt },
         totalAttempt > 1 ? 1 : 0,
         Boolean(resumableSessionId)
-      )
+      ))
+    toolPreparationPrompt = undefined
     try {
       const result = await runExternalAgentAttempt({
         ...options,
@@ -3114,7 +3174,25 @@ async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Prom
 
       let recoverable: ExternalAgentTransientFailureError | ExternalAgentCompatibilityFailureError | undefined
       let immediateRecovery = false
-      if (caught instanceof AutomaticApprovalUnavailableError) {
+      if (caught instanceof AgentToolsDisconnectedError) {
+        if (toolPreparationRetries++ >= 1 || !resumableSessionId) throw caught
+        nextPrompt = `宿主检测到 ModMind 工具连接中断，现已重新连接并验证工具就绪。这不是用户禁用。继续原任务：${options.prompt}\n保留原会话中已完成的步骤与工具结果；先核对已有结果，不要重复已完成的写入、构建、下载或其他操作。结果不明时先查询状态，不要盲目重试动作。`
+        options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'retry', error: detail })
+        options.onProgress('正在重新连接工具', '保留原会话，工具就绪后继续任务', 'running')
+        options.onOutput('retry', '工具连接已中断，正在自动重连并保留已完成的操作。')
+        continue
+      } else if (caught instanceof AgentToolsNotReadyError) {
+        if (toolPreparationRetries++ >= 1) {
+          options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'failure', error: detail })
+          throw new AgentToolsNotReadyError('自动重连后仍不可用。')
+        }
+        // The user request has not reached the model. Preserve it verbatim, including fork/recovery context.
+        toolPreparationPrompt = { ...attemptPrompt, prompt: caught.pendingPrompt ?? attemptPrompt.prompt }
+        options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'retry', error: detail })
+        options.onProgress('正在重新连接工具', '工具尚未就绪，本轮对话将在连接成功后开始', 'running')
+        options.onOutput('retry', '工具连接尚未就绪，正在自动重连。连接成功后才会开始对话。')
+        continue
+      } else if (caught instanceof AutomaticApprovalUnavailableError) {
         if (options.readOnly || attemptedApprovalMode !== 'auto-review' || !options.onApproval) throw caught
         fallbackToManual(options, '自动审批服务不可用，已回退到手动审批')
         nextPrompt = '自动审批服务发生故障，宿主已切换为手动审批。继续原任务中被阻塞的操作，权限请求将交由用户确认。先检查已有结果，不要重复已完成的工作。'
@@ -3231,6 +3309,9 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   if (options.kind === 'codex' && useCodexAppServer(executable, options.forceCodexAppServer === true)) {
     try {
       return await runCodexAppServerAttempt({ ...options, prompt }, executable, persistedSessionId, mcpConfigPath)
+    } catch (error) {
+      if (error instanceof AgentToolsNotReadyError) error.pendingPrompt = effectivePrompt
+      throw error
     } finally {
       approvalLifetime.abort()
       await awaitWithAbort(bridge.stop(), AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
@@ -3242,7 +3323,7 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   const args = plan.acceptsPromptOnStdin ? plan.args : plan.args.map((value) => value === '' ? prompt : value)
   const historyLabel = externalAgentLabel(options.kind)
   options.onOutput('start', '托管任务已启动')
-  options.onProgress(persistedSessionId && plan.supportsSessions ? `${historyLabel} 已恢复会话` : `${historyLabel} 正在分析项目`, persistedSessionId && plan.supportsSessions ? '正在使用已保存的 CLI session 继续任务' : '外部代理已连接 ModMind 工具桥', 'running')
+  options.onProgress('正在准备工具', '确认项目工具已连接后开始对话', 'running')
   let child: ChildProcessWithoutNullStreams
   try {
     child = spawnManagedCli(executable, args, options.project.path, processEnvironment)
@@ -3270,11 +3351,11 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   }
   child.once('spawn', () => {
     if (options.signal.aborted || terminationRequested) return
+    if (options.kind === 'claude') return
     try { options.onStarted?.() } catch { /* Lifecycle notifications must not stop the Agent. */ }
   })
   if (plan.acceptsPromptOnStdin) {
-    if (options.kind === 'claude') child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } })}\n`)
-    else child.stdin.end(prompt)
+    if (options.kind !== 'claude') child.stdin.end(prompt)
   }
   let transcript = ''
   let lastMessage = ''
@@ -3299,11 +3380,13 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   const nativeDownloadCommands = new Set<string>()
   const claudeApprovals = new Map<string, AbortController>()
   const buffers = {stdout: '', stderr: ''}
+  let toolPreparationFailure: AgentToolsNotReadyError | undefined
   const processLine = (line: string, stream: 'stdout' | 'stderr'): void => {
     // Codex emits `thread.started` with a thread_id but no text payload. Read
     // the session identifier before the content parser can discard that line.
     let parsedLine: Record<string, unknown> | null = null
     try { parsedLine = JSON.parse(line) as Record<string, unknown> } catch { /* Plain CLI output is handled below. */ }
+    if (options.kind === 'claude' && parsedLine?.type === 'control_response') return
     if (options.kind === 'claude' && parsedLine?.type === 'control_cancel_request' && typeof parsedLine.request_id === 'string') {
       claudeApprovals.get(parsedLine.request_id)?.abort()
       claudeApprovals.delete(parsedLine.request_id)
@@ -3487,14 +3570,28 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   if (options.signal.aborted) requestCancellation()
   options.signal.addEventListener('abort', requestCancellation, {once: true})
   let exitCode: number | null
+  let preparation: Promise<void> | undefined
   try {
-    exitCode = await new Promise<number | null>((resolve, reject) => {
+    const exited = new Promise<number | null>((resolve, reject) => {
       child.once('error', reject)
       child.once('close', (code) => {
         processClosed = true
         resolve(code)
       })
     })
+    if (options.kind === 'claude') {
+      options.onProgress('正在准备工具', '确认项目工具已连接后开始对话', 'running')
+      preparation = prepareClaudeTools(child, AbortSignal.any([options.signal, approvalLifetime.signal]), options.toolReadinessTimeoutMs).then(() => {
+        throwIfAborted(options.signal)
+        if (processClosed || terminationRequested) throw new AgentToolsNotReadyError('Agent 已退出。')
+        child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } })}\n`)
+        try { options.onStarted?.() } catch { /* Lifecycle notifications must not restart a submitted turn. */ }
+      }).catch(error => {
+        toolPreparationFailure = error instanceof AgentToolsNotReadyError ? error : new AgentToolsNotReadyError('Agent 工具准备中断。')
+        terminate()
+      })
+    }
+    exitCode = await exited
   } finally {
     options.signal.removeEventListener('abort', requestCancellation)
     processLine(buffers.stdout + decoders.stdout.end(), 'stdout')
@@ -3502,10 +3599,15 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
     if (terminalShutdownTimer) clearTimeout(terminalShutdownTimer)
     if (terminationFallbackTimer) clearTimeout(terminationFallbackTimer)
     if (nativeInterruptFallback) clearTimeout(nativeInterruptFallback)
+    await preparation
     await awaitWithAbort(sessionPersistence, AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
     await awaitWithAbort(bridge.stop(), AbortSignal.timeout(EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS)).catch(() => undefined)
   }
   if (options.signal.aborted) throw Object.assign(new Error('外部代理任务已停止；已保留当前修改并保存恢复信息'), { name: 'AbortError' })
+  if (toolPreparationFailure) {
+    toolPreparationFailure.pendingPrompt = effectivePrompt
+    throw toolPreparationFailure
+  }
   if (blockedNativeDownloadCommand) {
     throw new Error(`Native download blocked by policy because ModMind has a matching managed path: ${blockedNativeDownloadCommand}`)
   }

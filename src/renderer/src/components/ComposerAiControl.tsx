@@ -1,13 +1,14 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, RotateCcw } from 'lucide-react'
-import type { AiModelInfo, BeginnerReasoningLevel, CodingBackend } from '../../../shared/types'
+import type { AiModelInfo, BeginnerReasoningLevel, CodingBackend, ReasoningEffort } from '../../../shared/types'
 import './composer-ai-control.css'
 
 const titles: Record<BeginnerReasoningLevel, string> = { auto: '默认', none: '关闭', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最高', ultra: 'Ultra' }
 
-export default function ComposerAiControl({ model, effort, models, disabled, onModelChange, onEffortChange, onRefresh, onReset, backend, followWorkbench, onBackendChange, onFollowWorkbench }: {
+export default function ComposerAiControl({ model, effort, models, allowedEfforts, disabled, onModelChange, onEffortChange, onRefresh, onReset, backend, followWorkbench, onBackendChange, onFollowWorkbench }: {
   model: string; effort: BeginnerReasoningLevel; models: AiModelInfo[]; disabled?: boolean
+  allowedEfforts?: ReasoningEffort[]
   onModelChange?: (model: string) => void; onEffortChange?: (effort: BeginnerReasoningLevel) => void; onRefresh?: () => void
   onReset?: () => void
   backend?: CodingBackend; followWorkbench?: boolean; onBackendChange?: (backend: CodingBackend) => void; onFollowWorkbench?: () => void
@@ -18,7 +19,7 @@ export default function ComposerAiControl({ model, effort, models, disabled, onM
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null), range = useRef<HTMLInputElement>(null)
   const id = useId()
   const capabilities = models.find(entry => entry.id === model)?.reasoning
-  const options = capabilities?.efforts ?? []
+  const options = allowedEfforts ?? capabilities?.efforts ?? []
   const index = Math.max(0, options.indexOf(draft === 'auto' ? capabilities?.defaultEffort ?? 'medium' : draft))
   const compactName = model || '选择模型'
   const close = (): void => { setOpen(false); trigger.current?.focus() }

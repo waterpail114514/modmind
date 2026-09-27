@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BeginnerAiPreferences } from '../shared/types'
+import { DEFAULT_CODEX_REASONING_EFFORTS, selectedReasoningEfforts } from '../shared/modelReasoning'
 import {
   activeQuotaModelPreferences,
   normalizeQuotaModelPreferences,
@@ -23,22 +24,43 @@ describe('quota model preferences', () => {
   it('persists context overrides per model and route and supports restoring automatic limits', () => {
     const first = quotaProfileKey('https://site.example', 'alice', 'https://first.example/v1')
     const second = quotaProfileKey('https://site.example', 'alice', 'https://second.example/v1')
-    const preferences = normalizeQuotaModelPreferences({ ...defaults, modelContextWindows: { terra: 1048576, sol: 524288, invalid: -1 } }, defaults)
+    const preferences = normalizeQuotaModelPreferences({ ...defaults, modelContextWindows: { terra: 1048576, sol: 524288, invalid: -1 }, modelAutoCompactTokenLimits: { terra: 800000, sol: 200000, invalid: -1 } }, defaults)
     const saved = updateQuotaModelPreferences(parseStoredQuotaModelPreferences(defaults, defaults), preferences, first)
     const reloaded = parseStoredQuotaModelPreferences(JSON.parse(JSON.stringify(saved)), defaults)
     expect(activeQuotaModelPreferences(reloaded, first).modelContextWindows).toEqual({ terra: 1048576, sol: 524288 })
+    expect(activeQuotaModelPreferences(reloaded, first).modelAutoCompactTokenLimits).toEqual({ terra: 800000, sol: 200000 })
     const changed = resolveQuotaModelPreferences(reloaded, first, [{ id: 'sol' }]).preferences
     expect(changed.modelContextWindows?.[changed.model]).toBe(524288)
+    expect(changed.modelAutoCompactTokenLimits?.[changed.model]).toBe(200000)
     expect(resolveQuotaModelPreferences(reloaded, second, [{ id: 'terra' }]).preferences.modelContextWindows).toBeUndefined()
+    expect(resolveQuotaModelPreferences(reloaded, second, [{ id: 'terra' }]).preferences.modelAutoCompactTokenLimits).toBeUndefined()
     const automatic = normalizeQuotaModelPreferences({ ...preferences, modelContextWindows: {} }, preferences)
     expect(automatic.modelContextWindows).toBeUndefined()
+    const automaticCompaction = normalizeQuotaModelPreferences({ ...preferences, modelAutoCompactTokenLimits: {} }, preferences)
+    expect(automaticCompaction.modelAutoCompactTokenLimits).toBeUndefined()
+    expect(automaticCompaction.modelContextWindows).toEqual(preferences.modelContextWindows)
+  })
+
+  it('keeps five selectable efforts per model and isolates them by route', () => {
+    const first = quotaProfileKey('https://site.example', 'alice', 'https://first.example/v1')
+    const second = quotaProfileKey('https://site.example', 'alice', 'https://second.example/v1')
+    const options = { terra: ['low', 'medium', 'high', 'max', 'ultra'], sol: ['none', 'low', 'medium', 'high', 'ultra'] }
+    const preference = normalizeQuotaModelPreferences({ ...defaults, reasoningEffortOptions: options }, defaults)
+    const stored = updateQuotaModelPreferences(parseStoredQuotaModelPreferences(defaults, defaults), preference, first)
+    const reloaded = parseStoredQuotaModelPreferences(JSON.parse(JSON.stringify(stored)), defaults)
+    expect(selectedReasoningEfforts('terra', activeQuotaModelPreferences(reloaded, first).reasoningEffortOptions)).toEqual(options.terra)
+    expect(selectedReasoningEfforts('sol', activeQuotaModelPreferences(reloaded, first).reasoningEffortOptions)).toEqual(options.sol)
+    expect(activeQuotaModelPreferences(reloaded, second).reasoningEffortOptions).toBeUndefined()
+    expect(selectedReasoningEfforts('terra', activeQuotaModelPreferences(reloaded, second).reasoningEffortOptions)).toEqual(DEFAULT_CODEX_REASONING_EFFORTS)
+    expect(normalizeQuotaModelPreferences({ ...preference, reasoningLevel: 'xhigh' }, defaults).reasoningLevel).toBe('auto')
+    expect(normalizeQuotaModelPreferences({ ...preference, reasoningLevel: 'max' }, defaults).reasoningLevel).toBe('max')
   })
 
   it('migrates the legacy global preference format', () => {
     const store = parseStoredQuotaModelPreferences({ model: 'legacy', reasoningLevel: 'high', fastMode: true }, defaults)
     expect(store).toEqual({
       version: 3,
-      current: { model: 'legacy', reasoningLevel: 'max', fastMode: true },
+      current: { model: 'legacy', reasoningLevel: 'auto', fastMode: true },
       profiles: {}
     })
   })

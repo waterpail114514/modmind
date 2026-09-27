@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { disabledWorkbenchFeature, normalizeWorkbenchFeatures, readWorkbenchFeatureSelection } from './workbenchFeatures'
+import { disabledWorkbenchFeature, normalizeWorkbenchFeatures, readWorkbenchFeatureSelection, workbenchFeaturePrompt, workbenchFeatureUnavailable } from './workbenchFeatures'
 
 describe('workbench feature selection', () => {
+  it('tells the model that unchecked capabilities are user prohibitions rather than connection errors', () => {
+    const prompt = workbenchFeaturePrompt(normalizeWorkbenchFeatures({ modeling: true }))
+    expect(prompt).toContain('Blockbench 建模：已勾选')
+    expect(prompt).toContain('AI 生图：用户主动禁止')
+    expect(workbenchFeatureUnavailable('imageGeneration')).toContain('[USER_DISABLED_TOOL]')
+    expect(workbenchFeatureUnavailable('imageGeneration')).toContain('不要重试')
+  })
   it('requires explicit booleans when normalizing an existing selection', () => {
     expect(normalizeWorkbenchFeatures({ renderedTesting: 'true', headlessTesting: true, modeling: 1 })).toEqual({ renderedTesting: false, headlessTesting: true, imageGeneration: false, modeling: false })
     expect(Object.values(normalizeWorkbenchFeatures(null))).toEqual([false, false, false, false])

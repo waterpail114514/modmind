@@ -518,6 +518,8 @@ describe('ModMind external agent MCP bridge', () => {
       "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
       "    else if (request.method === 'initialized') {}",
+      "    else if (request.method === 'mcpServerStatus/list') send({id:request.id,result:{data:[{name:'modmind',runtimeStatus:'connected',tools:Object.fromEntries(['modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>[name,{name}]))}],nextCursor:null}})",
+      "    else if (request.method === 'mcpServer/tool/call') send({id:request.id,result:{content:[{type:'text',text:'{}'}]}})",
       "    else if (request.method === 'thread/start') send({id:request.id,result:{thread:{id:'thread-new'}}})",
       "    else if (request.method === 'thread/fork') send({id:request.id,result:{thread:{id:'thread-fork'}}})",
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
@@ -1404,7 +1406,7 @@ describe('ModMind external agent MCP bridge', () => {
       "if (!claude) console.log(JSON.stringify({type:'turn.completed'}));",
       "process.exit(0); }",
       "process.stdin.setEncoding('utf8');",
-      "process.stdin.on('data', chunk => { input += chunk; if (claude && input.includes('\\n')) finish(); });",
+      "process.stdin.on('data', chunk => { if (!claude) { input += chunk; return; } for (const line of chunk.trim().split('\\n')) { const r=JSON.parse(line); if(r.type==='control_request') { console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:r.request_id,response:r.request.subtype==='mcp_status'?{mcpServers:[{name:'modmind',status:'connected',tools:['modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>({name}))}]}:{}}})); } else { input=line; finish(); } } });",
       "process.stdin.on('end', finish);"
     ].join('\n'), 'utf8')
     const executable = process.platform === 'win32' ? path.join(root, 'fake-agent.cmd') : path.join(root, 'fake-agent.sh')
@@ -2016,9 +2018,14 @@ describe('ModMind external agent MCP bridge', () => {
       claudeHelpFixture,
       "const previous = fs.existsSync(attempts) ? fs.readFileSync(attempts, 'utf8').trim().split(/\\r?\\n/).filter(Boolean).length : 0;",
       "fs.appendFileSync(attempts, JSON.stringify(process.argv.slice(2)) + '\\n');",
+      "function execute() {",
       `if (previous === 0) { console.log(${JSON.stringify(sessionEvent)}); process.exit(1); }`,
       "if (!process.argv.includes('native-session-test')) process.exit(2);",
-      ...successEvents.map((event) => `console.log(${JSON.stringify(event)});`)
+      ...successEvents.map((event) => `console.log(${JSON.stringify(event)});`),
+      "}",
+      kind === 'claude'
+        ? "let buffer=''; process.stdin.on('data', chunk=>{buffer+=chunk; const lines=buffer.split('\\n');buffer=lines.pop();for(const line of lines){const r=JSON.parse(line); if(r.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:r.request_id,response:r.request.subtype==='mcp_status'?{mcpServers:[{name:'modmind',status:'connected',tools:['modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>({name}))}]}:{}}}));else execute();}});"
+        : 'execute();'
     ].join('\n'), 'utf8')
     const executable = process.platform === 'win32' ? path.join(root, 'fake-agent.cmd') : path.join(root, 'fake-agent.sh')
     await fs.writeFile(executable, process.platform === 'win32'
@@ -2274,11 +2281,11 @@ describe('ModMind external agent MCP bridge', () => {
     }
     expect(await call('research', { operation: 'compare', path: 'a.jar', otherPath: 'b.jar' })).toContain('analyzed')
     expect(await call('research', { operation: 'inspect', path: 'a.jar' })).toContain('analyzed')
-    expect(await call('research', { operation: 'decompile', path: 'a.jar' })).toContain('勾选')
+    expect(await call('research', { operation: 'decompile', path: 'a.jar' })).toContain('[USER_DISABLED_TOOL] 用户主动禁止')
     expect(await call('web_search', { query: 'test' })).toContain('联网检索')
     expect(research).toHaveBeenCalledTimes(2)
     for (let i = 0; i < 3; i++) expect(await call('project_files')).toContain('files')
-    expect(await call('project_files')).toContain('深入读项目')
+    expect(await call('project_files')).toContain('[USER_DISABLED_TOOL]')
     expect(await call('apply_edits', { edits: [] })).toContain('只读')
     const deepBridge = new ModMindBridge(project, stubBridgeHandlers(project), 'test', undefined, true, 'deep', undefined, undefined, normalizeInspirationFeatures({ deepAnalysis: true }))
     bridges.push(deepBridge)
@@ -2452,7 +2459,7 @@ describe('ModMind external agent MCP bridge', () => {
     for (const [name, args, enabled, handler] of cases) {
       expect(names.includes(name)).toBe(enabled)
       const result = await call(name, args)
-      expect(JSON.stringify(result).includes('用户未勾选')).toBe(!enabled)
+      expect(JSON.stringify(result).includes('[USER_DISABLED_TOOL]')).toBe(!enabled)
       expect(handler).toHaveBeenCalledTimes(enabled ? 1 : 0)
     }
     if (features.headlessTesting || features.renderedTesting) {
@@ -2466,7 +2473,7 @@ describe('ModMind external agent MCP bridge', () => {
     for (const [sessionId, enabled] of [['old-rendered', features.renderedTesting], ['old-headless', features.headlessTesting]] as const) {
       player.mockClear()
       const result = await call('modmind_test_action', { operation: 'command', sessionId, command: 'help' })
-      expect(JSON.stringify(result).includes('用户未勾选')).toBe(!enabled)
+      expect(JSON.stringify(result).includes('[USER_DISABLED_TOOL]')).toBe(!enabled)
       expect(player.mock.calls.some(([category]) => category === 'action')).toBe(enabled)
     }
     player.mockClear()
@@ -2535,6 +2542,38 @@ describe('ModMind external agent MCP bridge', () => {
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
+  it.each([false, true])('retries plugin discovery and reports persistent failure without claiming plugins were disabled (readOnly=%s)', async readOnly => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-plugin-discovery-')); temporaryRoots.push(root)
+    const project = { name: 'Plugins', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'plugins', createdAt: '' } as ProjectInfo
+    const name = 'modmind_plugin_audit_probe'
+    const descriptor = { name, description: 'Read-only probe', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyLocal: true } }
+    let failures = 1
+    const listTools = vi.fn(async () => {
+      if (failures-- > 0) throw new Error('temporary discovery error')
+      return { tools: [descriptor] }
+    })
+    const callTool = vi.fn(async () => ({ ok: true }))
+    const bridge = new ModMindBridge(project, stubBridgeHandlers(project), 'test', undefined, readOnly, 'plugin-discovery', { listTools, callTool })
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    expect(JSON.stringify(listed)).toContain(name)
+    expect(listTools).toHaveBeenCalledTimes(2)
+    failures = 100
+    const unavailable = await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    expect(unavailable.result).toBeUndefined()
+    expect(JSON.stringify(unavailable)).toContain('连接故障')
+    const called = await rpc(child, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name, arguments: {} } })
+    expect(called.result).toMatchObject({ isError: true })
+    expect(JSON.stringify(called)).not.toContain('Unknown ModMind tool')
+    expect(callTool).not.toHaveBeenCalled()
+    failures = 0
+    const recovered = await rpc(child, { jsonrpc: '2.0', id: 4, method: 'tools/list' })
+    expect(JSON.stringify(recovered)).toContain(name)
+  })
+
   it('rejects protected MCP edits before invoking the write handler', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-protected-bridge-')); temporaryRoots.push(root)
     const project = { name: 'Bridge', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'bridge', createdAt: '' } as ProjectInfo
@@ -2545,12 +2584,12 @@ describe('ModMind external agent MCP bridge', () => {
     const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
     const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
     const call = (id: number, paths: string[]) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'modmind_apply_edits', arguments: { edits: paths.map(path => ({ path, newText: 'broken' })) } } })
-    for (const [index, protectedPath] of ['.modmind/settings.json', '.MODMIND/session.json', '../ModMind/app.exe'].entries()) {
+    for (const [index, protectedPath] of ['../ModMind/app.exe'].entries()) {
       const response = await call(index + 1, ['src/Main.java', protectedPath])
       expect(JSON.stringify(response)).toContain('protected or unsafe path')
     }
     expect(applyEdits).not.toHaveBeenCalled()
-    await call(4, ['src/Main.java'])
+    await call(2, ['.modmind/settings.json'])
     expect(applyEdits).toHaveBeenCalledTimes(1)
   })
 

@@ -4,10 +4,17 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import builtinCatalog from './codexBuiltinModels.json'
 import { CODEX_RUNTIME_VERSION } from './runtimeTarget'
-import { buildCodexModelCatalog, CODEX_MODEL_CATALOG_VERSION, prepareCodexModelCatalog, THIRD_PARTY_CONTEXT_BUDGET } from './codexModelCatalog'
+import { buildCodexModelCatalog, CODEX_MODEL_CATALOG_VERSION, prepareCodexModelCatalog, resolveCodexAutoCompactTokenLimit, THIRD_PARTY_CONTEXT_BUDGET } from './codexModelCatalog'
 import { resolveModelContextBudget } from './modelContextRegistry'
 
 describe('managed Codex model metadata', () => {
+  it('resolves the threshold actually used by native, registered, and overridden models', () => {
+    expect(resolveCodexAutoCompactTokenLimit('codex-auto-review', {})).toBe(244800)
+    expect(resolveCodexAutoCompactTokenLimit('gpt-6-sol', {})).toBe(788310)
+    expect(resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 })).toBe(437760)
+    expect(resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 }, 200000)).toBe(200000)
+    expect(() => resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 }, 470000)).toThrow('90%')
+  })
   it('pins the built-in catalog to the managed runtime', () => {
     expect(CODEX_MODEL_CATALOG_VERSION).toBe(CODEX_RUNTIME_VERSION)
     expect(builtinCatalog.models.some(model => model.slug === 'codex-auto-review')).toBe(true)

@@ -4,6 +4,7 @@ import path from 'node:path'
 import builtinCatalog from './codexBuiltinModels.json'
 import { resolveModelContextBudget, UNKNOWN_MODEL_CONTEXT, type ModelBudgetOptions } from './modelContextRegistry'
 import type { ModelReasoningCapabilities } from '../shared/types'
+import { validModelContext } from '../shared/modelContext'
 interface CatalogOptions extends ModelBudgetOptions { reasoning?: ModelReasoningCapabilities }
 
 // Snapshot of the managed 0.154.0 runtime, including its original instructions.
@@ -12,6 +13,31 @@ export const CODEX_MODEL_CATALOG_VERSION = '0.154.0'
 
 /** Default working budget for unknown models, not a provider capacity claim. */
 export const THIRD_PARTY_CONTEXT_BUDGET = UNKNOWN_MODEL_CONTEXT
+
+function effectiveModelEntry(model: string, options: ModelBudgetOptions) {
+  return buildCodexModelCatalog(model, options)?.models.find(entry => entry.slug === model)
+    ?? builtinCatalog.models.find(entry => entry.slug === model)
+}
+
+/** Share the runtime's actual catalog/window check with settings validation. */
+export function validateCodexAutoCompactTokenLimit(model: string, options: ModelBudgetOptions, limit?: number): void {
+  if (limit === undefined) return
+  if (!validModelContext(limit)) throw new Error('自动压缩阈值必须是 1,024–100,000,000 之间的整数')
+  const window = effectiveModelEntry(model, options)?.context_window
+  if (window && limit > Math.floor(window * 0.9)) {
+    throw new Error(`自动压缩阈值不能超过当前模型上下文窗口的 90%（${Math.floor(window * 0.9).toLocaleString('zh-CN')} tokens）`)
+  }
+}
+
+export function resolveCodexAutoCompactTokenLimit(model: string, options: ModelBudgetOptions, manualLimit?: number): number {
+  validateCodexAutoCompactTokenLimit(model, options, manualLimit)
+  if (manualLimit !== undefined) return manualLimit
+  const entry = effectiveModelEntry(model, options)
+  if (!entry?.context_window) throw new Error(`无法确定模型 ${model} 的自动压缩阈值`)
+  // Native entries with a null limit use Codex's 90% default; custom entries
+  // already carry ModMind's input/output-aware budget.
+  return entry.auto_compact_token_limit ?? Math.floor(entry.context_window * 0.9)
+}
 
 export function buildCodexModelCatalog(model: string, options: CatalogOptions = {}) {
   const budget = resolveModelContextBudget(model, options)

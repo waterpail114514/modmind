@@ -10,3 +10,8 @@ export function normalizeModelContextWindows(value: unknown): Record<string, num
   const entries = Object.entries(value).filter(([id, window]) => id.length > 0 && id.length <= 512 && !/[\x00-\x1f]/.test(id) && validModelContext(window)).slice(0, 500)
   return entries.length ? Object.fromEntries(entries) : undefined
 }
+
+/** Manual auto-compaction thresholds follow the same exact-model routing as context windows. */
+export function normalizeModelAutoCompactTokenLimits(value: unknown): Record<string, number> | undefined {
+  return normalizeModelContextWindows(value)
+}
