@@ -12,13 +12,15 @@ export function soundResourceId(value: string): string {
   return value
 }
 export async function safeSoundPath(root: string, relative: string): Promise<string> {
-  const target = path.resolve(root, relative)
-  const from = path.relative(path.resolve(root), target)
+  const rootPath = path.resolve(root)
+  const target = path.resolve(rootPath, relative)
+  const from = path.relative(rootPath, target)
   if (from.startsWith('..') || path.isAbsolute(from)) throw new Error('声音路径超出目录')
   let cursor = target
   while (true) {
     const stat = await fs.lstat(cursor).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
     if (stat?.isSymbolicLink()) throw new Error('声音路径不能包含符号链接')
+    if (cursor === rootPath) break
     const parent = path.dirname(cursor)
     if (parent === cursor) break
     cursor = parent
