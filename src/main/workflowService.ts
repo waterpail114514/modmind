@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
-import { gradleVersionFor } from './minecraftRuntime'
+import { gradleVersionFor } from './buildRuntime'
 import { javaVersionForMinecraft } from './loaderCatalog'
 
 export function githubWorkflow(project: ProjectInfo): string {
@@ -56,7 +56,8 @@ on:
       - 'src/main/projectTemplates.ts'
       - 'src/main/loaderCompatibility.ts'
       - 'src/main/loaderCatalog.ts'
-      - 'src/main/minecraftRuntime.ts'
+      - 'src/main/buildRuntime.ts'
+      - 'feature-plugins/testing/**'
       - 'scripts/generate-loader-fixture.ts'
       - '.github/workflows/loader-matrix.yml'
   pull_request:
@@ -64,7 +65,8 @@ on:
       - 'src/main/projectTemplates.ts'
       - 'src/main/loaderCompatibility.ts'
       - 'src/main/loaderCatalog.ts'
-      - 'src/main/minecraftRuntime.ts'
+      - 'src/main/buildRuntime.ts'
+      - 'feature-plugins/testing/**'
       - 'scripts/generate-loader-fixture.ts'
       - '.github/workflows/loader-matrix.yml'
 

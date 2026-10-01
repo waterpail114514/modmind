@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Gamepad2, LoaderCircle, RotateCcw, Square, X } from 'lucide-react'
-import type { ProjectInfo } from '../../../shared/types'
-import type { LocalTestState, MinecraftRuntimeState } from '../../../shared/minecraft'
-import { launchQuickGameTest, quickTestOptions, quickTestUnavailable } from '../lib/quickGameTest'
-import { reportClientFailure } from '../lib/clientFailure'
+import type { ProjectInfo } from "../../../src/shared/types"
+import type { LocalTestState, MinecraftRuntimeState } from "../../../src/shared/minecraft"
+import { launchQuickGameTest, quickTestOptions, quickTestUnavailable } from "../lib/quickGameTest"
+import { reportClientFailure } from "../../../src/renderer/src/lib/clientFailure"
 
 export default function QuickGameTestDialog({ project, onClose, onExport }: {
   project: ProjectInfo

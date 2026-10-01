@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ProjectInfo } from '../shared/types'
-import type { LocalServerManager } from './localServerService'
-import type { HeadlessMcService } from './headlessMcService'
-import { MinecraftRuntimeManager } from './minecraftRuntime'
-import { CreationFeedbackService } from './creationFeedbackService'
-import { TestClientSession } from './testClientSession'
-import { SerialState } from './liveConfiguration'
-import { specificsFor, installTestSpecifics } from './testSpecifics'
-import { sameProjectPath } from './projectPath'
-import type { NativeMinecraftTestService } from './nativeMinecraftTestService'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import type { LocalServerManager } from "./localServerService"
+import type { HeadlessMcService } from "./headlessMcService"
+import { MinecraftRuntimeManager } from "./minecraftRuntime"
+import { CreationFeedbackService } from "../../../../src/main/creationFeedbackService"
+import { TestClientSession } from "./testClientSession"
+import { SerialState } from "../../../../src/main/liveConfiguration"
+import { specificsFor, installTestSpecifics } from "./testSpecifics"
+import { sameProjectPath } from "../../../../src/main/projectPath"
+import type { NativeMinecraftTestService } from "./nativeMinecraftTestService"
 
 export class PlayerTestService {
+  isBusy(): boolean { return Boolean(this.session || this.controller || this.stopping || this.dependencies.native?.isBusy()) }
   private session?: { id: string; project: ProjectInfo; username: string; directory: string; mode: 'headless' | 'rendered'; joined: boolean; serverOwned: boolean; operatorBefore?: boolean; serverRoot?: string; operatorChanged?: boolean; serverId?: string; buildId?: string }
   private client = new TestClientSession()
   private lane = new SerialState()
@@ -23,7 +24,7 @@ export class PlayerTestService {
     await this.dependencies.native?.projectChanged(projectPath)
     if (this.session && (!projectPath || !sameProjectPath(projectPath, this.session.project.path))) await this.stop()
   }
-  constructor(private dependencies: { server: () => LocalServerManager; headless: () => HeadlessMcService; currentProject: () => ProjectInfo | null; javaPreferences: () => Promise<import('../shared/types').AgentSettings['javaPreferences']>; onEvent?: (event: import('../shared/minecraft').MinecraftRuntimeEvent) => void; native?: NativeMinecraftTestService }) {}
+  constructor(private dependencies: { server: () => LocalServerManager; headless: () => HeadlessMcService; currentProject: () => ProjectInfo | null; javaPreferences: () => Promise<import("../../../../src/shared/types").AgentSettings['javaPreferences']>; onEvent?: (event: import("../../../../src/shared/minecraft").MinecraftRuntimeEvent) => void; native?: NativeMinecraftTestService }) {}
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping
     this.controller?.abort()
@@ -34,6 +35,7 @@ export class PlayerTestService {
   }
   private async cleanup(): Promise<void> {
     await this.client.stop()
+    this.controller = undefined
     const session = this.session
     if (!session) return
     const logs = this.client.logs()

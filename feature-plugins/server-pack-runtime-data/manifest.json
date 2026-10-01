@@ -1,0 +1,16 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "server-pack-runtime-data",
+  "name": "服务端打包资源",
+  "version": "1.0.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "capabilities": [{"id": "server-pack-data", "name": "ServerPackCreator 资源", "description": "服务端打包组件的配套资源，随依赖自动安装。"}],
+  "assets": {"server-pack-creator": "resources/server-pack-creator"},
+  "assetFiles": {"server-pack-creator": ["LICENSE", "UPSTREAM.md", "checksum.txt"]},
+  "assetChunks": {"server-pack-creator": {"source": "resources/server-pack-creator/ServerPackCreator-8.1.2.jar", "offset": 41943040, "length": 36219139}},
+  "files": {}
+}

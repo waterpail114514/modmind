@@ -9,7 +9,7 @@ import {
   SERVER_PACK_CREATOR_VERSION,
   serverPackCreatorBundledJarCandidates,
   serverPackCreatorCommand
-} from './serverPackCreatorService'
+} from "../../feature-plugins/testing/src/main/serverPackCreatorService"
 
 describe('ServerPackCreator adapter', () => {
   it('pins the upstream CLI release and invokes its documented headless conversion mode', () => {

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import type { LocalServerState, MinecraftRuntimeState } from '../shared/minecraft'
-import { LocalServerManager } from './localServerService'
-import { LocalTestService } from './localTestService'
-import { multiplayerLaunchOptions } from './minecraftRuntime'
+import { LocalServerManager } from "../../feature-plugins/testing/src/main/localServerService"
+import { LocalTestService } from "../../feature-plugins/testing/src/main/localTestService"
+import { multiplayerLaunchOptions } from "../../feature-plugins/testing/src/main/minecraftRuntime"
 
 const options = { username: 'ModMindDev', maxMemoryMb: 4096, port: 25565 }
 const project: ProjectInfo = { path: 'C:/test', name: 'Test', namespace: 'test', createdAt: '', kind: 'modpack', loader: 'fabric', minecraftVersion: '1.20.1' }

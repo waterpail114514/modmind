@@ -1,9 +1,9 @@
-import { reportClientFailure } from '../lib/clientFailure'
+import { reportClientFailure } from "../../../src/renderer/src/lib/clientFailure"
 import { useEffect, useRef, useState } from 'react'
 import { ClipboardList, FileCheck2, FolderOpen, LoaderCircle, Play, RotateCw, Server, ShieldCheck, Square, TerminalSquare } from 'lucide-react'
-import type { ProjectInfo, ServerPackManifest } from '../../../shared/types'
-import type { LocalServerState, LocalTestState } from '../../../shared/minecraft'
-import { ServerPluginSettings } from './ServerPluginSettings'
+import type { ProjectInfo, ServerPackManifest } from "../../../src/shared/types"
+import type { LocalServerState, LocalTestState } from "../../../src/shared/minecraft"
+import { ServerPluginSettings } from "./ServerPluginSettings"
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === 'object' ? value as Record<string, unknown> : {} }
 function initialServerState(project: ProjectInfo): LocalServerState { return { stage: 'idle', minecraftVersion: project.minecraftVersion, loader: project.loader, loaderVersion: project.loaderVersion, running: false, recentLogs: [], message: '本机服务端尚未启动' } }
 function serverStageLabel(stage: LocalServerState['stage']): string { return ({ idle: '未启动', preparing: '准备中', building: '构建中', installing: '安装运行时', starting: '启动中', running: '运行中', stopping: '停止中', stopped: '已停止', error: '需要处理' })[stage] }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runRenderedMinecraftTest } from './renderedMinecraftTest'
+import { runRenderedMinecraftTest } from "../../feature-plugins/testing/src/main/renderedMinecraftTest"
 import type { MinecraftLaunchTestResult } from '../shared/minecraft'
 
 function fixture() {

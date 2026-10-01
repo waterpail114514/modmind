@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { launch } from '@xmcl/core'
-import { MinecraftRuntimeManager } from './minecraftRuntime'
+import { MinecraftRuntimeManager } from "../../feature-plugins/testing/src/main/minecraftRuntime"
 import type { ProjectInfo } from '../shared/types'
 
 vi.mock('electron', () => ({ app: { getPath: () => process.env.TEMP || '/tmp' } }))

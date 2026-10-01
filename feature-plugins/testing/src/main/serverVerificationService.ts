@@ -1,19 +1,19 @@
-import { spawnManaged, terminateProcessTree } from './processTree'
+import { spawnManaged, terminateProcessTree } from "../../../../src/main/processTree"
 import { StringDecoder } from 'node:string_decoder'
-import { managedJavaEnvironment } from './javaEnvironment'
-import { throwIfAborted, waitForCondition } from './asyncControl'
+import { managedJavaEnvironment } from "../../../../src/main/javaEnvironment"
+import { throwIfAborted, waitForCondition } from "../../../../src/main/asyncControl"
 import { createWriteStream, promises as fs } from 'node:fs'
 import type { WriteStream } from 'node:fs'
 import net from 'node:net'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
-import type { ProjectInfo } from '../shared/types'
-import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from '../shared/minecraft'
-import { HeadlessMcService } from './headlessMcService'
-import { buildServerPack, installServerRuntime, type ServerPackResult, type ServerRuntimeResult } from './serverPackService'
-import { readModpackManifest } from './modpackService'
-import { modpackModsRoot } from './modpackPaths'
-import { configureLocalServer, deployServerInstance } from './serverInstance'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from "../../../../src/shared/minecraft"
+import { HeadlessMcService } from "./headlessMcService"
+import { buildServerPack, installServerRuntime, type ServerPackResult, type ServerRuntimeResult } from "./serverPackService"
+import { readModpackManifest } from "../../../../src/main/modpackService"
+import { modpackModsRoot } from "../../../../src/main/modpackPaths"
+import { configureLocalServer, deployServerInstance } from "./serverInstance"
 
 export interface ServerProcessOptions {
   pack: ServerPackResult

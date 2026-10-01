@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 const sources = ['ScreenshotHelper', 'WindowHelper'].map(name => path.resolve(`resources/minecraft-mcp/${name}.java`))
-const target = path.resolve('src/main/nativeMinecraftMcpHelper.json')
+const target = path.resolve('feature-plugins/testing/src/main/nativeMinecraftMcpHelper.json')
 const directory = await mkdtemp(path.join(os.tmpdir(), 'modmind-mcp-helper-'))
 try {
   if (!process.argv[3]) throw new Error('Usage: node scripts/compile-minecraft-mcp-helper.mjs <javac> <verified v0.3.0 upstream JAR>')

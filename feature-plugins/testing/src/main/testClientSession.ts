@@ -3,9 +3,9 @@ import { createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawnManaged, stopProcessTree } from './processTree'
-import { SerialState } from './liveConfiguration'
-import { managedJavaEnvironment } from './javaEnvironment'
+import { spawnManaged, stopProcessTree } from "../../../../src/main/processTree"
+import { SerialState } from "../../../../src/main/liveConfiguration"
+import { managedJavaEnvironment } from "../../../../src/main/javaEnvironment"
 
 export interface TestClientStart {
   javaPath: string; launcherPath: string; profile: string; minecraftRoot: string; gameDirectory: string

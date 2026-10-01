@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import catalog from './testClientCatalog.json'
-import { verifiedDownload } from './downloadService'
+import catalog from "./testClientCatalog.json"
+import { verifiedDownload } from "../../../../src/main/downloadService"
 
 export function specificsFor(version: string, loader: string) {
   return catalog.entries.find(entry => entry.minecraft === version && entry.loader === loader)

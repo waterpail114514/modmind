@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import path from 'node:path'
-import { managedJavaExecutable, normalizeRuntimeMetadata } from './runtimeMetadata'
+import { managedJavaExecutable, normalizeRuntimeMetadata } from "../../feature-plugins/testing/src/main/runtimeMetadata"
 import type { ProjectInfo } from '../shared/types'
 
 describe('runtime metadata relocation', () => {

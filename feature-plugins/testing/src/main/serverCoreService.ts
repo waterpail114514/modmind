@@ -1,18 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ProjectInfo } from '../shared/types'
-import type { ServerCore, ServerCoreBuild, ServerProfile } from '../shared/serverPlugin'
-import { isServerPluginPlatform } from '../shared/projectPlatform'
-import { fetchJsonWithRetry } from './networkRequest'
-import { verifiedDownload, type DownloadSource } from './downloadService'
-import { archiveEntries } from "./archiveInspection"
-import { archiveRead } from "./archiveInspection"
-import { findPluginArtifact, inspectPluginJar, listPluginDependencies } from './serverPluginService'
-import { configureLocalServer, deployServerInstance } from './serverInstance'
-import type { ServerPackResult, ServerRuntimeResult } from './serverPackService'
-import { throwIfAborted } from './asyncControl'
-import { pluginJavaVersion } from '../shared/serverPluginCompatibility'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import type { ServerCore, ServerCoreBuild, ServerProfile } from "../../../../src/shared/serverPlugin"
+import { isServerPluginPlatform } from "../../../../src/shared/projectPlatform"
+import { fetchJsonWithRetry } from "../../../../src/main/networkRequest"
+import { verifiedDownload, type DownloadSource } from "../../../../src/main/downloadService"
+import { archiveEntries } from "../../../../src/main/archiveInspection"
+import { archiveRead } from "../../../../src/main/archiveInspection"
+import { findPluginArtifact, inspectPluginJar, listPluginDependencies } from "../../../../src/main/serverPluginService"
+import { configureLocalServer, deployServerInstance } from "./serverInstance"
+import type { ServerPackResult, ServerRuntimeResult } from "./serverPackService"
+import { throwIfAborted } from "../../../../src/main/asyncControl"
+import { pluginJavaVersion } from "../../../../src/shared/serverPluginCompatibility"
 
 export const SERVER_CORE_HEADERS = { 'User-Agent': 'ModMind/1.4.6-preview0912-2 (https://github.com/waterpail114514/modmind)' }
 const cores: ServerCore[] = ['paper', 'purpur', 'spigot', 'folia', 'velocity', 'custom']

@@ -1,6 +1,6 @@
 import path from 'node:path'
-import type { LoaderKind, ProjectInfo } from '../shared/types'
-import { javaRuntimeTargetForMinecraft } from './loaderCompatibility'
+import type { LoaderKind, ProjectInfo } from "../../../../src/shared/types"
+import { javaRuntimeTargetForMinecraft } from "../../../../src/main/loaderCompatibility"
 
 export interface RuntimeMetadata {
   minecraftVersion: string

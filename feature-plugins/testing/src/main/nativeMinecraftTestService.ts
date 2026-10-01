@@ -3,13 +3,13 @@ import { promises as fs } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { ProjectInfo } from '../shared/types'
-import type { MinecraftManagedMod, MinecraftRuntimeState } from '../shared/minecraft'
-import type { MinecraftRuntimeManager } from './minecraftRuntime'
-import { SerialState } from './liveConfiguration'
-import { sameProjectPath } from './projectPath'
-import { CreationFeedbackService } from './creationFeedbackService'
-import { installNativeMcp, nativeMcpFor, nativeMcpRelease, NativeMinecraftMcpClient } from './nativeMinecraftMcp'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import type { MinecraftManagedMod, MinecraftRuntimeState } from "../../../../src/shared/minecraft"
+import type { MinecraftRuntimeManager } from "./minecraftRuntime"
+import { SerialState } from "../../../../src/main/liveConfiguration"
+import { sameProjectPath } from "../../../../src/main/projectPath"
+import { CreationFeedbackService } from "../../../../src/main/creationFeedbackService"
+import { installNativeMcp, nativeMcpFor, nativeMcpRelease, NativeMinecraftMcpClient } from "./nativeMinecraftMcp"
 
 type Runtime = Pick<MinecraftRuntimeManager, 'getState' | 'launch' | 'stop'>
 interface Dependencies {
@@ -26,6 +26,7 @@ interface Session {
 }
 
 export class NativeMinecraftTestService {
+  isBusy(): boolean { return Boolean(this.session || this.starting || this.stopping) }
   private session?: Session
   private lane = new SerialState()
   private stopping?: Promise<void>

@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
+import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from "../../feature-plugins/testing/src/main/minecraftLaunchPreferences"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })

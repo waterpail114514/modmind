@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Check, CircleAlert, LoaderCircle, Play, X } from 'lucide-react'
-import type { TestMatrixResult, TestTarget } from '../../../shared/production'
-import { reportClientFailure as errorMessage } from '../lib/clientFailure'
+import type { TestMatrixResult, TestTarget } from "../../../src/shared/production"
+import { reportClientFailure as errorMessage } from "../../../src/renderer/src/lib/clientFailure"
 
 const testTargets: Array<{ id: TestTarget; label: string; detail: string }> = [
   { id: 'build', label: 'Gradle 构建', detail: '编译、资源处理与产物检查' },

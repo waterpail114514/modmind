@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { NativeMinecraftTestService, copyNativeTestInstance, nativeAction } from './nativeMinecraftTestService'
+import { NativeMinecraftTestService, copyNativeTestInstance, nativeAction } from "../../feature-plugins/testing/src/main/nativeMinecraftTestService"
 import type { ProjectInfo } from '../shared/types'
 import type { MinecraftRuntimeState } from '../shared/minecraft'
 

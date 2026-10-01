@@ -28,7 +28,7 @@ ModMind 使用 langyo/minecraft-mod-mcp 的正式发布版 v0.3.0 作为 Java �
 
 上游 v0.3.0 默认监听所有网卡。安装时在已校验 JAR 的 `McpHttpServer.class` 常量池中，将唯一的 `0.0.0.0` 改为 `127.0.0.1`；结构不符则拒绝安装。保留其余条目，并附带修改声明和 MIT 许可。下载缓存保持上游原件。每次操作核对专用端口与受管客户端 PID，不扫描和接管其他游戏。
 
-1.20.1 实测发现上游通过反射猜测尺寸会截断画面、错算点击坐标。因此替换截图助手为读取 OpenGL 实际窗口尺寸和完整显示帧的实现，并修正窗口尺寸查询。源文件位于 `resources/minecraft-mcp/`，生成字节码及源文件哈希保存在 `src/main/nativeMinecraftMcpHelper.json`；维护者使用 `node scripts/compile-minecraft-mcp-helper.mjs <javac> <已校验的1.20.1-Fabric-v0.3.0-JAR>` 重建，运行时无需编译。此适配不依赖具体方块、实体映射；状态读取和输入仍受上游版本实现限制。
+1.20.1 实测发现上游通过反射猜测尺寸会截断画面、错算点击坐标。因此替换截图助手为读取 OpenGL 实际窗口尺寸和完整显示帧的实现，并修正窗口尺寸查询。源文件位于 `resources/minecraft-mcp/`，生成字节码及源文件哈希保存在 `feature-plugins/testing/src/main/nativeMinecraftMcpHelper.json`；维护者使用 `node scripts/compile-minecraft-mcp-helper.mjs <javac> <已校验的1.20.1-Fabric-v0.3.0-JAR>` 重建，运行时无需编译。此适配不依赖具体方块、实体映射；状态读取和输入仍受上游版本实现限制。
 
 插件和整合包项目仍走已有 HeadlessMC 玩家会话；Quilt 或无对应发布包的版本继续使用已有检查。新路径的能力和限制不会被泛化到这些后端。
 

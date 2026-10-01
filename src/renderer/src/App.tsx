@@ -23,7 +23,6 @@ import PagedSteps from './components/PagedSteps'
 import ChatWelcome from './components/ChatWelcome'
 import InspirationConversationPicker from './components/InspirationConversationPicker'
 import MinimalProjectStart from './components/MinimalProjectStart'
-import QuickGameTestDialog from './components/QuickGameTestDialog'
 import { discussionPrompt, engineeringHandoffPrompt, isWorkbenchDiscussion, workbenchFlowBackend, workbenchFlowOptions } from '../../shared/workbenchFlow'
 import { missingDraftDetails } from '../../shared/draftProject'
 import { splitDiscussionChoices } from '../../shared/discussionChoices'
@@ -155,17 +154,13 @@ import { appendMinecraftRuntimeEvent, type MinecraftRuntimeEvent } from '../../s
 import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../../shared/projectPlatform'
 import { serverPluginContext } from '../../shared/serverPluginContext'
 import AiAttachmentPicker, { formatAiAttachmentContext } from './components/AiAttachmentPicker'
-import MinecraftTestWorkspace from './components/MinecraftTestWorkspace'
 import { useConfirmDialog, usePromptDialog } from './components/InteractionDialogs'
 import { CloseWindowDialog } from './components/CloseWindowDialog'
-import AutomatedTestsPane from './components/AutomatedTestsPane'
-import WorkspaceTabs from './components/WorkspaceTabs'
 import BuildDeliverySettings from './components/BuildDeliverySettings'
 import { RELEASE_SETTINGS_CHANGED } from './components/releaseSettings'
 import GlobalDownloadIndicator from './components/GlobalDownloadIndicator'
-import { useFeaturePlugins, FeaturePluginRoutes, FeaturePluginBackgrounds, FeatureSettingsSection, featurePages, featureSettings } from './featurePlugins'
+import { useFeaturePlugins, refreshFeaturePlugins, FeaturePluginRoutes, FeaturePluginBackgrounds, FeatureSettingsSection, featurePages, featureSettings } from './featurePlugins'
 import type { FeaturePageContext } from './featurePluginTypes'
-import ServerTestWorkspace from './components/ServerTestWorkspace'
 import FeaturesPage from './components/FeaturesPage'
 import { useFeatureStore } from './useFeatureStore'
 import AgentWorkbench from './components/AgentWorkbench'
@@ -1829,8 +1824,29 @@ export default function App(): React.JSX.Element {
   }
   const [filesLoadedProject, setFilesLoadedProject] = useState('')
   const [historyLoadedProject, setHistoryLoadedProject] = useState('')
-  const [quickTestProject, setQuickTestProject] = useState<ProjectInfo | null>(null)
-  useEffect(() => { setQuickTestProject(null) }, [project?.path])
+  const [testInstallBusy, setTestInstallBusy] = useState(false)
+  const testProjectPath = useRef(project?.path)
+  testProjectPath.current = project?.path
+  const openProjectTest = async (): Promise<void> => {
+    if (!project || testInstallBusy) return
+    const targetProject = project
+    if (project.kind !== 'server-plugin' && !isJavaLoader(project.loader)) { setView('build'); setNotice('此平台请先构建并导出，再使用对应的官方游戏工具测试'); return }
+    try {
+      if (!featurePlugins.catalog.some(feature => feature.id === 'testing' && feature.available)) {
+        if (uiMode !== 'beginner') { setView('features'); setNotice('请先下载“游戏与服务端测试”功能'); return }
+        setTestInstallBusy(true)
+        setNotice('正在下载游戏与服务端测试及依赖，可在功能页查看进度或取消')
+        await window.modmind.featurePlugins.installOfficial('testing')
+        await refreshFeaturePlugins()
+      }
+      if (testProjectPath.current !== targetProject.path) return
+      const target = targetProject.kind === 'server-plugin' ? 'modpack-server' : 'minecraft'
+      setFeatureRouteData(current => ({ ...current, [target]: { projectPath: targetProject.path, quickTest: uiMode === 'beginner' ? Date.now() : undefined } }))
+      setView(target)
+      setNotice('')
+    } catch (error) { setNotice(errorMessage(error)) }
+    finally { setTestInstallBusy(false) }
+  }
   const [recentProjects, setRecentProjects] = useState<ProjectInfo[]>([])
   const [projectLauncherOpen, setProjectLauncherOpen] = useState(() => !isDetachedWindow)
   useAppLoading(bootstrapping || openingProject || projectTransitionPending || Boolean(project && !projectLauncherOpen
@@ -2070,7 +2086,7 @@ export default function App(): React.JSX.Element {
   const installedPages = useMemo(() => featurePages(featurePlugins.modules), [featurePlugins.modules])
   const installedSettings = useMemo(() => featureSettings(featurePlugins.modules), [featurePlugins.modules])
   useEffect(() => {
-    const coreViews = new Set(['workspace', 'inspiration', 'minecraft', 'modpack-server', 'build', 'code', 'settings', 'plugins', 'features'])
+    const coreViews = new Set(['workspace', 'inspiration', 'build', 'code', 'settings', 'plugins', 'features'])
     if (!featurePlugins.ready || coreViews.has(view) || view.startsWith('plugin:')) return
     if (!installedPages.some(page => page.id === view && (!page.supports || page.supports(project, uiMode)))) {
       setView('features')
@@ -4944,7 +4960,7 @@ export default function App(): React.JSX.Element {
   const advancedErrorsHidden = uiMode === 'advanced'
   const buildLogs = buildResult?.logs.filter((line) => !advancedErrorsHidden || !/(error|failed|failure|exception|fatal|fail|失败|错误|异常)/i.test(line)) ?? []
   const featureContext: Omit<FeaturePageContext, 'visible'> = {
-    project, darkMode: settings.darkMode, uiMode, deviceState,
+    project, darkMode: settings.darkMode, uiMode, deviceState, exportArtifact: () => { void exportArtifact() },
     routeData: featureRouteData[view],
     hasPage: id => installedPages.some(page => page.id === id && (!page.supports || page.supports(project, uiMode))),
     navigate: (id, data) => { if (data !== undefined) setFeatureRouteData(current => ({ ...current, [id]: data })); navigateToView(id as ViewId); setProjectLauncherOpen(false) },
@@ -5000,7 +5016,7 @@ export default function App(): React.JSX.Element {
       {!isDetachedWindow ? <header className="titlebar">
         <div className="titlebar-name"><img src={settings.darkMode ? appLogoDark : appLogo} alt="ModMind" draggable={false} />{uiMode === 'beginner' ? <div className="minimal-project-menu" ref={minimalProjectMenuRef}><button type="button" className="minimal-project-trigger" aria-expanded={minimalProjectMenuOpen} onClick={() => { setMinimalProjectMenuOpen(value => !value); void refreshRecentProjects() }}><span>{projectLauncherOpen ? '我的作品' : project?.name ?? '选择项目'}</span><ChevronDown size={13} /></button>{minimalProjectMenuOpen ? <div className="minimal-project-dropdown"><button type="button" onClick={() => { setMinimalProjectMenuOpen(false); setProjectLauncherOpen(true); setView('workspace') }}><Plus size={15} />新建作品</button><button type="button" onClick={() => { setMinimalProjectMenuOpen(false); void openProject() }}><FolderOpen size={15} />打开项目</button>{recentProjects.map(recent => <button type="button" key={recent.path} onClick={() => { setMinimalProjectMenuOpen(false); void openRecentProject(recent) }}><FolderOpen size={14} /><span>{recent.name}</span></button>)}</div> : null}</div> : null}</div>
         <div className="titlebar-actions">
-          {uiMode === 'beginner' && project && !project.draft && !projectLauncherOpen ? <button className="hosted-titlebar-button" type="button" aria-label="测试" disabled={planning || building} onClick={() => setQuickTestProject(project)}><Gamepad2 size={14} /><span>测试</span></button> : null}
+          {uiMode === 'beginner' && project && !project.draft && !projectLauncherOpen ? <button className="hosted-titlebar-button" type="button" aria-label="测试" disabled={planning || building || testInstallBusy} onClick={() => void openProjectTest()}><Gamepad2 size={14} /><span>测试</span></button> : null}
           <button className="hosted-titlebar-button" type="button" title={deviceState.provider === 'custom' ? '自定义 API' : 'ModMind 账号与额度'} onClick={() => setDeviceAccountOpen(true)}><UserRound size={14} /><span>{deviceState.status === 'connected' ? deviceState.provider === 'custom' ? '自定义 API' : formatBalanceCents(deviceState.balanceCents) : '连接账号'}</span></button>
           <label className="expert-mode-toggle" title="开启后显示完整开发工具与设置"><span>专业模式</span><input type="checkbox" checked={uiMode === 'advanced'} onChange={(event) => selectUiMode(event.target.checked ? 'advanced' : 'beginner')} /><span className="expert-mode-track" aria-hidden="true" /></label>
           <button className="titlebar-icon titlebar-sidebar-toggle" title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'} aria-expanded={!sidebarCollapsed} aria-controls="main-sidebar" onClick={() => setSidebarCollapsed((current) => !current)}><PanelLeft size={15} /></button>
@@ -5137,7 +5153,7 @@ export default function App(): React.JSX.Element {
         ) : (
           <main ref={mainContentRef} className="main-content" data-view={view}>
             <FeaturePluginRoutes pages={installedPages} view={view} context={featureContext} routeData={featureRouteData} />
-            {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ServerTestWorkspace project={project} /></KeepAliveRoute> : null}
+
 
             {view === 'workspace' && project && normalizeProjectPath(activeWorkbenchProjectRef.current) === normalizeProjectPath(project.path) ? <AgentWorkbench
               key={project.path}
@@ -5182,7 +5198,7 @@ export default function App(): React.JSX.Element {
               onExport={() => void exportArtifact()}
               onExportServerPack={() => void exportServerPack()}
               onExportLogs={() => void exportDiagnosticLogs()}
-              onTest={() => uiMode === 'beginner' ? setQuickTestProject(project) : setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')}
+              onTest={() => void openProjectTest()}
               onAttachmentError={(error) => setNotice(`无法添加附件：${errorMessage(error)}`)}
               canExportArtifact={exportArtifactAvailable}
               building={building}
@@ -5228,12 +5244,6 @@ export default function App(): React.JSX.Element {
                 }}
               />
             ))}
-
-
-            {project && project.kind !== 'server-plugin' ? <KeepAliveRoute key={`minecraft:${project.path}`} active={view === 'minecraft'}>{project.kind !== 'modpack' && isJavaLoader(project.loader) ? <WorkspaceTabs label="游戏测试" sections={[
-                { id: 'play', label: '游戏测试', render: () => <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} onManageRelationships={() => setView('relationships')} /> },
-                { id: 'checks', label: '自动检查', render: () => <AutomatedTestsPane /> }
-              ]} /> : <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => setView('relationships')} />}</KeepAliveRoute> : null}
 
 
             {view === 'code' && project ? (
@@ -5619,7 +5629,7 @@ export default function App(): React.JSX.Element {
 
       <GlobalDownloadIndicator />
       <FeaturePluginBackgrounds modules={featurePlugins.modules} context={{ ...featureContext, visible: false }} />
-      {quickTestProject && project?.path === quickTestProject.path ? <QuickGameTestDialog key={quickTestProject.path} project={quickTestProject} onClose={() => setQuickTestProject(null)} onExport={() => void exportArtifact()} /> : null}
+
       {showCreate ? <CreateProjectDialog onClose={() => setShowCreate(false)} onCreated={(created) => { if (uiMode === 'beginner' && beginnerStartupDraft.trim()) pendingBeginnerStartRef.current = { projectPath: created.path, prompt: beginnerStartupDraft }; setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
       {existingImportPicker ? <ExistingImportPicker onClose={() => setExistingImportPicker(false)} onSelect={(sourceType) => { setExistingImportPicker(false); void inspectExistingProject(sourceType) }} /> : null}

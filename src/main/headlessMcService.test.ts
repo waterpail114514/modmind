@@ -7,7 +7,7 @@ import {
   headlessMcLaunchCommand,
   jvmProxyArguments,
   supportsHeadlessMc
-} from './headlessMcService'
+} from "../../feature-plugins/testing/src/main/headlessMcService"
 
 describe('HeadlessMC smoke-test integration', () => {
   it('pins the official launcher release to a SHA-256 digest', () => {

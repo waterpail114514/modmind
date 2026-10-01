@@ -5,7 +5,7 @@ import { afterEach, expect, it } from 'vitest'
 import { parsePluginDescriptor, inspectPluginJar } from './serverPluginService'
 import { pluginTemplateFiles } from './serverPluginTemplates'
 import { createStoredZip } from './bedrockAddon'
-import { validateServerProfile, defaultServerProfile } from './serverCoreService'
+import { validateServerProfile, defaultServerProfile } from "../../feature-plugins/testing/src/main/serverCoreService"
 import type { ProjectInfo } from '../shared/types'
 
 const project: ProjectInfo = { name: '测试插件', path: '', namespace: 'test', kind: 'server-plugin', loader: 'paper', minecraftVersion: '1.21.1', createdAt: '' }

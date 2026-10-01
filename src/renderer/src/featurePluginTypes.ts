@@ -18,6 +18,7 @@ export interface FeaturePageContext {
   openProject: (project: ProjectInfo) => void
   sendToWorkbench: (prompt: string) => void
   setNotice: (notice: string) => void
+  exportArtifact: () => void
   projectBusy: boolean
   saveBeforeRestore: () => Promise<void>
   projectRestored: (project: ProjectInfo) => void

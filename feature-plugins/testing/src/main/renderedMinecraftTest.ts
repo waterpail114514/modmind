@@ -1,4 +1,4 @@
-import type { MinecraftLaunchOptions, MinecraftLaunchTestResult } from '../shared/minecraft'
+import type { MinecraftLaunchOptions, MinecraftLaunchTestResult } from "../../../../src/shared/minecraft"
 
 export async function runRenderedMinecraftTest(dependencies: {
   isRunning: () => boolean

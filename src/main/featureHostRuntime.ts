@@ -1,3 +1,5 @@
+import * as buildRuntime from './buildRuntime'
+import * as creationFeedbackService from './creationFeedbackService'
 import * as diagnosticLog from './diagnosticLog'
 import * as downloadActivityService from './downloadActivityService'
 import * as downloadService from './downloadService'
@@ -13,6 +15,6 @@ import * as projectTextRead from './projectTextRead'
 import * as inspirationResearch from './inspirationResearch'
 
 export const featureHostRuntime = Object.freeze({
-  diagnosticLog, downloadActivityService, downloadService, modpackService, modpackContentMetadata, curseForgePackMetadata,
+  buildRuntime, creationFeedbackService, diagnosticLog, downloadActivityService, downloadService, modpackService, modpackContentMetadata, curseForgePackMetadata,
   agentProtection, nativeFeatureServices, networkRequest, processTree, documentRead, projectTextRead, inspirationResearch
 })

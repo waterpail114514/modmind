@@ -1,3 +1,5 @@
+export const FEATURE_PLUGIN_ARCHIVE_LIMIT = 64 * 1024 * 1024
+export const FEATURE_PLUGIN_UNPACKED_LIMIT = 128 * 1024 * 1024
 export const FEATURE_PLUGIN_API = 2
 export const FEATURE_PLUGIN_HOST = '1.5.0-plugintest'
 export type FeaturePluginSurface = 'workbench' | 'inspiration'

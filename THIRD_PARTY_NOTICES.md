@@ -87,9 +87,11 @@ the combined distributed application should be reviewed before a public release.
 
 ## XMCL Launcher Core
 
-ModMind uses `@xmcl/core` and `@xmcl/installer` for Minecraft metadata parsing,
-dependency installation, managed Java runtimes, Fabric installation, and process launch.
-It uses `@xmcl/asm` to read legacy Forge annotations from Java class files. The XMCL
+ModMind's optional `testing` feature bundles `@xmcl/core` and `@xmcl/installer`
+for Minecraft metadata parsing, dependency installation, Fabric installation,
+and process launch. These packages are build dependencies, not core application
+runtime dependencies. The core retains managed Java/build support and uses
+`@xmcl/asm` to read legacy Forge annotations from Java class files. The XMCL
 packages are provided by the Voxelum project; the ASM port retains the upstream
 BSD-3-Clause license and notices.
 
@@ -106,10 +108,13 @@ the MIT License by the HeadlessHQ contributors.
 
 ## ServerPackCreator
 
-The deterministic server-pack synchronization action bundles and invokes the unmodified,
-pinned ServerPackCreator CLI release. The application verifies the bundled JAR's SHA-256
-before every invocation. Its upstream license and release checksum manifest are retained
-under `resources/server-pack-creator`.
+The optional testing feature invokes the unmodified, pinned ServerPackCreator CLI
+release supplied by `server-pack-runtime` and `server-pack-runtime-data`. These
+optional dependency packages contain two slices of the original JAR; the runtime
+reassembles and verifies its size and SHA-256 before use. The application verifies
+the JAR's SHA-256 before every invocation. It is no longer included in core installer
+resources. Upstream notices and checksums are retained in both feature packages
+and in the build input directory `resources/server-pack-creator`.
 
 - Version: 8.1.2
 - Project: https://github.com/Griefed/ServerPackCreator
@@ -355,7 +360,8 @@ ModMind modifies the McpHttpServer class constant to bind only to 127.0.0.1 inst
 ModMind also replaces ScreenshotHelper with its own native framebuffer capture
 implementation (AGPL-3.0-only), and adapts upstream WindowHelper (MIT) to query
 actual framebuffer dimensions. Sources are retained under `resources/minecraft-mcp`;
-the generated classes and source hashes are in `src/main/nativeMinecraftMcpHelper.json`.
+the generated classes and source hashes are in
+`feature-plugins/testing/src/main/nativeMinecraftMcpHelper.json`.
 
 The upstream MIT license is selected from its MIT / Apache-2.0 / CC0 licensing options:
 

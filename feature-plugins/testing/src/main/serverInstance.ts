@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { throwIfAborted } from './asyncControl'
+import { throwIfAborted } from "../../../../src/main/asyncControl"
 
 interface DeploymentManifest { version: 1; source: string; files: Record<string, string>; createdAt: string }
 const manifestName = '.modmind-deployment.json'

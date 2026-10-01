@@ -8,12 +8,12 @@ import Ajv, { type ValidateFunction } from 'ajv'
 import { BUILTIN_FEATURE_CATALOG } from '../shared/featurePluginCatalog'
 import { sameProjectPath } from './projectPath'
 import { retryTransientFileLock } from './fileLockRetry'
-import { FEATURE_PLUGIN_API, FEATURE_PLUGIN_HOST, type FeaturePluginManifest, type FeaturePluginRecord, type FeaturePluginDefinition, type FeaturePluginCatalogEntry, type FeaturePluginDiscoveredTool, type FeaturePluginInvocationContext, type FeaturePluginSchema, type FeaturePluginRuntime, type FeaturePluginSurface } from '../shared/featurePlugins'
+import { FEATURE_PLUGIN_API, FEATURE_PLUGIN_HOST, FEATURE_PLUGIN_ARCHIVE_LIMIT, FEATURE_PLUGIN_UNPACKED_LIMIT, type FeaturePluginManifest, type FeaturePluginRecord, type FeaturePluginDefinition, type FeaturePluginCatalogEntry, type FeaturePluginDiscoveredTool, type FeaturePluginInvocationContext, type FeaturePluginSchema, type FeaturePluginRuntime, type FeaturePluginSurface } from '../shared/featurePlugins'
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/
 const allowedFiles = new Set(['manifest.json', 'main.cjs', 'renderer.js', 'renderer.css'])
-const limit = 128 * 1024 * 1024
-const archiveLimit = 64 * 1024 * 1024
+const limit = FEATURE_PLUGIN_UNPACKED_LIMIT
+const archiveLimit = FEATURE_PLUGIN_ARCHIVE_LIMIT
 function allowedFile(name: string): boolean {
   if (allowedFiles.has(name)) return true
   if (!name.startsWith('assets/') || name.length > 512) return false
@@ -138,6 +138,7 @@ export class FeaturePluginService {
   private projectPath: string | null = null
   constructor(private readonly root: string, private readonly host: FeaturePluginHost) {}
   list(): FeaturePluginRecord[] { return [...this.records.values()].map(record => structuredClone(record)) }
+  activeService<T extends object>(id: string): T | undefined { return this.enabled(id) ? this.services.get(id) as T | undefined : undefined }
   fingerprint(id: string): string | undefined { const manifest = this.manifests.get(id); return manifest ? hash(Buffer.from(JSON.stringify(manifest))) : undefined }
   manifest(id: string): FeaturePluginDefinition | undefined { const manifest = this.manifests.get(id); return manifest ? definition(manifest) : undefined }
   enabled(id: string, ancestors = new Set<string>()): boolean {

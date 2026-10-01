@@ -1,6 +1,6 @@
-import type { ModMindApi, ProjectInfo } from '../../../shared/types'
-import type { LocalTestState, MinecraftLaunchOptions, MinecraftRuntimeState } from '../../../shared/minecraft'
-import { isJavaLoader } from '../../../shared/projectPlatform'
+import type { ModMindApi, ProjectInfo } from "../../../src/shared/types"
+import type { LocalTestState, MinecraftLaunchOptions, MinecraftRuntimeState } from "../../../src/shared/minecraft"
+import { isJavaLoader } from "../../../src/shared/projectPlatform"
 
 export function quickTestUnavailable(project: ProjectInfo): string | undefined {
   if (project.draft) return '请先确认项目信息并完成制作。'

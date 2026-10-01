@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Task, TaskContext } from '@xmcl/task'
-import { runMinecraftTaskWithRecovery } from './minecraftTaskRecovery'
+import { runMinecraftTaskWithRecovery } from "../../feature-plugins/testing/src/main/minecraftTaskRecovery"
 
 function mockTask(run: (context?: TaskContext) => Promise<string>): Task<string> {
   let running = false

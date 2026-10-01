@@ -46,8 +46,6 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@types/marked": "^6.0.0",
     "@xmcl/asm": "1.0.1",
-    "@xmcl/core": "^2.15.1",
-    "@xmcl/installer": "^6.1.2",
     "7zip-bin": "^5.2.0",
     "ajv": "^8.20.0",
     "cheerio": "^1.1.2",
@@ -93,7 +91,9 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^3.2.4",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "@xmcl/core": "^2.15.1",
+    "@xmcl/installer": "^6.1.2"
   },
   "build": {
     "appId": "dev.modmind.desktop",
@@ -152,16 +152,6 @@
         "to": "codex-skills",
         "filter": [
           "**/*"
-        ]
-      },
-      {
-        "from": "resources/server-pack-creator",
-        "to": "server-pack-creator",
-        "filter": [
-          "ServerPackCreator-8.1.2.jar",
-          "LICENSE",
-          "UPSTREAM.md",
-          "checksum.txt"
         ]
       },
       {

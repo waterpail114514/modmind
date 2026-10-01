@@ -1,0 +1,32 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "server-pack-runtime",
+  "name": "服务端打包组件",
+  "version": "1.0.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": [
+    "testingV1"
+  ],
+  "dependencies": ["server-pack-runtime-data"],
+  "capabilities": [
+    {
+      "id": "server-pack-creator",
+      "name": "ServerPackCreator",
+      "description": "为游戏与服务端测试提供受校验的 ServerPackCreator 8.1.2，按需安装的服务端打包依赖。"
+    }
+  ],
+  "assets": {
+    "server-pack-creator": "resources/server-pack-creator"
+  },
+  "assetFiles": {
+    "server-pack-creator": ["LICENSE", "UPSTREAM.md", "checksum.txt"]
+  },
+  "assetChunks": {
+    "server-pack-creator": {"source": "resources/server-pack-creator/ServerPackCreator-8.1.2.jar", "offset": 0, "length": 41943040}
+  },
+  "files": {}
+}

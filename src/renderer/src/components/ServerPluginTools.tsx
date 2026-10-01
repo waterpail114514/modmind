@@ -5,7 +5,6 @@ import type { ProjectInfo } from '../../../shared/types'
 import type { ServerPluginDependency, PluginDownloadVersion } from '../../../shared/serverPlugin'
 import { useConfirmDialog } from './InteractionDialogs'
 import { platformLabel } from '../../../shared/projectPlatform'
-export { ServerPluginSettings } from './ServerPluginSettings'
 
 
 export function ServerPluginDependencies({ project, onOpenCode }: { project: ProjectInfo; onOpenCode: () => void }): React.JSX.Element {

@@ -24,6 +24,7 @@
     "src/shared/**/*.ts",
     "feature-plugins/*/**/*.tsx",
     "feature-plugins/*/components/**/*.ts",
+    "feature-plugins/*/lib/**/*.ts",
     "feature-plugins/*/renderer.ts",
     "feature-plugins/sdk/renderer.ts",
     "feature-plugins/sdk/hostModals.ts",

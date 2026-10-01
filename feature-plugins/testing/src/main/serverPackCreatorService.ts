@@ -1,13 +1,14 @@
-import { spawnManaged, stopProcessTree } from './processTree'
+import { nativeFeatureFunction } from '../../../../src/main/nativeFeatureServices'
+import { spawnManaged, stopProcessTree } from "../../../../src/main/processTree"
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ProjectInfo } from '../shared/types'
-import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides, assertModpackDependenciesReady } from './modpackService'
-import { commitDirectory } from './serverInstance'
-import { readModpackLock } from './modpackLockService'
-import { modpackModsRoot } from './modpackPaths'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides, assertModpackDependenciesReady } from "../../../../src/main/modpackService"
+import { commitDirectory } from "./serverInstance"
+import { readModpackLock } from "../../../../src/main/modpackLockService"
+import { modpackModsRoot } from "../../../../src/main/modpackPaths"
 
 /** Pinned upstream release used by the deterministic server-pack action. */
 export const SERVER_PACK_CREATOR_VERSION = '8.1.2'
@@ -89,7 +90,7 @@ export function serverPackCreatorBundledJarCandidates(
 }
 
 async function ensureBundledServerPackCreator(): Promise<string> {
-  const candidates = serverPackCreatorBundledJarCandidates()
+  const candidates = [await nativeFeatureFunction<(name: string) => Promise<string>>('server-pack-runtime', 'resource')(SERVER_PACK_CREATOR_FILE_NAME)]
   for (const candidate of candidates) {
     const existing = await fs.stat(candidate).catch(() => null)
     if (existing?.isFile() && existing.size > 1_000_000 && (await sha256(candidate)) === SERVER_PACK_CREATOR_SHA256) return candidate

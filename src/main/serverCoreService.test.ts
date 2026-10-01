@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { serverCoreBuilds, validateServerProfile, defaultServerProfile, readServerProfile, saveServerProfile, preparePluginServer } from './serverCoreService'
+import { serverCoreBuilds, validateServerProfile, defaultServerProfile, readServerProfile, saveServerProfile, preparePluginServer } from "../../feature-plugins/testing/src/main/serverCoreService"
 import { fetchJsonWithRetry } from './networkRequest'
 import { createStoredZip } from './bedrockAddon'
 import type { ProjectInfo } from '../shared/types'

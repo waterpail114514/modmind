@@ -1,8 +1,8 @@
-import { reportClientFailure } from '../lib/clientFailure'
+import { reportClientFailure } from "../../../src/renderer/src/lib/clientFailure"
 import { useEffect, useState } from 'react'
 import { FileCode2, LoaderCircle, RefreshCw, Save, Trash2, Upload } from 'lucide-react'
-import type { ProjectInfo } from '../../../shared/types'
-import type { ServerCore, ServerCoreBuild, ServerProfile } from '../../../shared/serverPlugin'
+import type { ProjectInfo } from "../../../src/shared/types"
+import type { ServerCore, ServerCoreBuild, ServerProfile } from "../../../src/shared/serverPlugin"
 
 export function ServerPluginSettings({ project, disabled }: { project: ProjectInfo; disabled: boolean }): React.JSX.Element {
   const [profile, setProfile] = useState<ServerProfile | null>(null)

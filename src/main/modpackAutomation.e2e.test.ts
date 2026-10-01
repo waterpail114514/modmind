@@ -9,7 +9,7 @@ import { addModpackFiles, createModpackTemplate } from './modpackService'
 import { applyModpackPlan, planModpack } from "../../feature-plugins/modpack-mods/src/main/modpackPlanner"
 import type { ModFile, ModProviderRegistry } from './modProviderService'
 import { auditModpackLock } from './modpackLockService'
-import { buildServerPack } from './serverPackService'
+import { buildServerPack } from "../../feature-plugins/testing/src/main/serverPackService"
 
 const roots: string[] = []
 const servers: http.Server[] = []

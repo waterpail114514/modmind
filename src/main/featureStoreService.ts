@@ -5,11 +5,11 @@ import { FeaturePluginService, prepareFeaturePlugin } from './featurePluginServi
 import { DownloadManager } from './downloadService'
 import featureDescriptions from '../shared/featureDescriptions.json'
 import { compareSemanticAppVersions, parseAppVersion } from './appUpdatePolicy'
-import { FEATURE_PLUGIN_API, FEATURE_PLUGIN_HOST, type FeaturePluginCatalogEntry, type FeaturePluginRecord } from '../shared/featurePlugins'
+import { FEATURE_PLUGIN_API, FEATURE_PLUGIN_HOST, FEATURE_PLUGIN_ARCHIVE_LIMIT, type FeaturePluginCatalogEntry, type FeaturePluginRecord } from '../shared/featurePlugins'
 import { OFFICIAL_FEATURE_BASE, OFFICIAL_FEATURE_INDEX, featureGroups, type OfficialFeatureIndex, type OfficialFeatureRelease, type FeatureStoreSnapshot, type FeatureStoreJob, type FeatureRecommendationResult } from '../shared/featureStore'
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/
-const catalogueLimit = 1024 * 1024, packageLimit = 64 * 1024 * 1024, refreshInterval = 6 * 60 * 60 * 1000
+const catalogueLimit = 1024 * 1024, packageLimit = FEATURE_PLUGIN_ARCHIVE_LIMIT, refreshInterval = 6 * 60 * 60 * 1000
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= max
 const strings = (value: unknown, max: number, length: number): value is string[] => Array.isArray(value) && value.length <= max && value.every(item => text(item, length))

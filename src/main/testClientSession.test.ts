@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { TestClientSession } from './testClientSession'
+import { TestClientSession } from "../../feature-plugins/testing/src/main/testClientSession"
 
 const mock = vi.hoisted(() => ({ spawn: vi.fn(), stop: vi.fn() }))
 vi.mock('./processTree', () => ({ spawnManaged: mock.spawn, stopProcessTree: mock.stop }))

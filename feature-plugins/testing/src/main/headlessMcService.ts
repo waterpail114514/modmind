@@ -1,13 +1,13 @@
-import { spawnManaged, stopProcessTree } from './processTree'
+import { spawnManaged, stopProcessTree } from "../../../../src/main/processTree"
 import { createHash } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { JavaLoaderKind, ProjectInfo } from '../shared/types'
-import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from '../shared/minecraft'
-import { verifiedDownload } from './downloadService'
-import { downloadActivities } from './downloadActivityService'
-import { openInteractiveTerminal } from './nativeTerminal'
+import type { JavaLoaderKind, ProjectInfo } from "../../../../src/shared/types"
+import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from "../../../../src/shared/minecraft"
+import { verifiedDownload } from "../../../../src/main/downloadService"
+import { downloadActivities } from "../../../../src/main/downloadActivityService"
+import { openInteractiveTerminal } from "../../../../src/main/nativeTerminal"
 
 export const HEADLESS_MC_VERSION = '2.10.0'
 export const HEADLESS_MC_LAUNCHER_URL = `https://github.com/headlesshq/headlessmc/releases/download/${HEADLESS_MC_VERSION}/headlessmc-launcher-${HEADLESS_MC_VERSION}.jar`
@@ -52,6 +52,7 @@ export function headlessMcLaunchCommand(loader: JavaLoaderKind, minecraftVersion
 }
 
 export class HeadlessMcService {
+  isBusy(): boolean { return Boolean(this.child || this.downloadPromise) }
   private readonly root: string
   private child: ChildProcessWithoutNullStreams | null = null
   private downloadPromise: Promise<string> | null = null

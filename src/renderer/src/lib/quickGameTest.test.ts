@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ModMindApi, ProjectInfo } from '../../../shared/types'
-import { launchQuickGameTest, quickTestOptions, quickTestUnavailable } from './quickGameTest'
+import { launchQuickGameTest, quickTestOptions, quickTestUnavailable } from "../../../../feature-plugins/testing/lib/quickGameTest"
 
 const project: ProjectInfo = { name: 'test', namespace: 'test', path: '/project', kind: 'mod', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' }
 const options = { username: 'ModMindDev', maxMemoryMb: 4096 }

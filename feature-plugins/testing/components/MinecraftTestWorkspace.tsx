@@ -1,5 +1,5 @@
-import { reportClientFailure } from '../lib/clientFailure'
-import { isExpectedCancellation } from '../../../shared/diagnostics'
+import { reportClientFailure } from "../../../src/renderer/src/lib/clientFailure"
+import { isExpectedCancellation } from "../../../src/shared/diagnostics"
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box,
@@ -22,8 +22,8 @@ import {
   type MinecraftRuntimeEvent,
   type MinecraftRuntimeState,
   type MinecraftManagedMod
-} from '../../../shared/minecraft'
-import '../minecraft-test.css'
+} from "../../../src/shared/minecraft"
+import "../minecraft-test.css"
 
 const initialState: MinecraftRuntimeState = {
   stage: 'idle',

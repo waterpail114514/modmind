@@ -4,8 +4,6 @@ import type { BrowserWindow } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
-import type { ServerCore, ServerProfile } from '../shared/serverPlugin'
-import { readServerProfile, saveServerProfile, serverCoreVersions, serverCoreBuilds, importLocalServerCore } from './serverCoreService'
 import { importPluginDependencies, inspectPluginProject, listPluginDependencies, searchPluginDependencies, pluginDependencyVersions, downloadPluginDependency } from './serverPluginService'
 
 export function registerServerPluginIpc(options: { project: () => ProjectInfo; window: () => BrowserWindow; busy: () => boolean }): void {
@@ -15,13 +13,12 @@ export function registerServerPluginIpc(options: { project: () => ProjectInfo; w
     if (mutation && options.busy()) throw new Error('请先停止服务端和正在执行的任务')
     return current
   }
-  diagnosticHandle('server-plugin:profile', (_, root) => readServerProfile(project(root)))
+
   diagnosticHandle('server-plugin:search', (_, root, query) => searchPluginDependencies(project(root), String(query ?? '')))
   diagnosticHandle('server-plugin:dependencyVersions', (_, root, id) => pluginDependencyVersions(project(root), id))
   diagnosticHandle('server-plugin:downloadDependency', (_, root, id) => downloadPluginDependency(project(root, true), id))
-  diagnosticHandle('server-plugin:saveProfile', (_, root, profile: ServerProfile) => saveServerProfile(project(root, true), profile))
-  diagnosticHandle('server-plugin:versions', (_, core: ServerCore) => serverCoreVersions(core))
-  diagnosticHandle('server-plugin:builds', (_, core: ServerCore, version: string) => serverCoreBuilds(core, version))
+
+
   diagnosticHandle('server-plugin:inspect', (_, root) => inspectPluginProject(project(root)))
   diagnosticHandle('server-plugin:dependencies', (_, root) => listPluginDependencies(project(root)))
   diagnosticHandle('server-plugin:removeDependency', async (_, root, file: string) => {
@@ -35,10 +32,5 @@ export function registerServerPluginIpc(options: { project: () => ProjectInfo; w
     if (result.canceled) return null
     return importPluginDependencies(project(root, true), result.filePaths)
   })
-  diagnosticHandle('server-plugin:importCore', async (_, root) => {
-    project(root, true)
-    const result = await dialog.showOpenDialog(options.window(), { title: '导入本地服务端核心', properties: ['openFile'], filters: [{ name: 'Server JAR', extensions: ['jar'] }] })
-    if (result.canceled || !result.filePaths[0]) return null
-    return importLocalServerCore(project(root, true), result.filePaths[0])
-  })
+
 }

@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { createHash } from 'node:crypto'
-import helper from './nativeMinecraftMcpHelper.json'
+import helper from "../../feature-plugins/testing/src/main/nativeMinecraftMcpHelper.json"
 import { afterEach, expect, it, vi } from 'vitest'
-import { NativeMinecraftMcpClient, nativeMcpFor, prepareLocalMcpJar, restrictMcpServerAddress } from './nativeMinecraftMcp'
+import { NativeMinecraftMcpClient, nativeMcpFor, prepareLocalMcpJar, restrictMcpServerAddress } from "../../feature-plugins/testing/src/main/nativeMinecraftMcp"
 import { createStoredZip } from './bedrockAddon'
 import { archiveRead } from "./archiveInspection"
 

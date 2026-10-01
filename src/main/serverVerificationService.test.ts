@@ -3,7 +3,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ServerProcess, serverModRetryAdvice } from './serverVerificationService'
+import { ServerProcess, serverModRetryAdvice } from "../../feature-plugins/testing/src/main/serverVerificationService"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))) })

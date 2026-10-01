@@ -3,10 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { LocalServerManager } from './localServerService'
+import { LocalServerManager } from "../../feature-plugins/testing/src/main/localServerService"
 import { createModpackTemplate } from './modpackService'
-import * as serverPackService from './serverPackService'
-import { ServerProcess } from './serverVerificationService'
+import * as serverPackService from "../../feature-plugins/testing/src/main/serverPackService"
+import { ServerProcess } from "../../feature-plugins/testing/src/main/serverVerificationService"
 
 const roots: string[] = []
 afterEach(async () => {

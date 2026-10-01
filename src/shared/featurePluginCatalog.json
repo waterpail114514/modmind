@@ -9338,6 +9338,58 @@
     "format": "modmind-feature",
     "apiVersion": 2,
     "hostVersion": "1.5.0-plugintest",
+    "id": "server-pack-runtime",
+    "name": "服务端打包组件",
+    "version": "1.0.0",
+    "main": "main.cjs",
+    "renderer": "renderer.js",
+    "style": "renderer.css",
+    "hostCapabilities": [
+      "testingV1",
+      "runtime"
+    ],
+    "dependencies": [
+      "server-pack-runtime-data"
+    ],
+    "capabilities": [
+      {
+        "id": "server-pack-creator",
+        "name": "ServerPackCreator",
+        "description": "为游戏与服务端测试提供受校验的 ServerPackCreator 8.1.2，按需安装的服务端打包依赖。"
+      }
+    ],
+    "assets": {
+      "server-pack-creator": "resources/server-pack-creator"
+    }
+  },
+  {
+    "format": "modmind-feature",
+    "apiVersion": 2,
+    "hostVersion": "1.5.0-plugintest",
+    "id": "server-pack-runtime-data",
+    "name": "服务端打包资源",
+    "version": "1.0.0",
+    "main": "main.cjs",
+    "renderer": "renderer.js",
+    "style": "renderer.css",
+    "capabilities": [
+      {
+        "id": "server-pack-data",
+        "name": "ServerPackCreator 资源",
+        "description": "服务端打包组件的配套资源，随依赖自动安装。"
+      }
+    ],
+    "assets": {
+      "server-pack-creator": "resources/server-pack-creator"
+    },
+    "hostCapabilities": [
+      "runtime"
+    ]
+  },
+  {
+    "format": "modmind-feature",
+    "apiVersion": 2,
+    "hostVersion": "1.5.0-plugintest",
     "id": "sound-studio",
     "dependencies": [
       "media-runtime"
@@ -9816,6 +9868,2140 @@
         "name": "modmind_sound_create",
         "action": "create",
         "description": "Edit a project sound event, save an editable sound studio draft, render and export a studio draft as OGG, process an existing audio item, or undo the latest sound change. Uses the same project service as the UI. Read the current draft/event revision first; exports write project audio and sounds.json."
+      }
+    ]
+  },
+  {
+    "format": "modmind-feature",
+    "apiVersion": 2,
+    "hostVersion": "1.5.0-plugintest",
+    "id": "testing",
+    "name": "游戏与服务端测试",
+    "version": "1.0.0",
+    "main": "main.cjs",
+    "renderer": "renderer.js",
+    "style": "renderer.css",
+    "hostCapabilities": [
+      "runtime",
+      "testingV1"
+    ],
+    "dependencies": [
+      "server-pack-runtime"
+    ],
+    "capabilities": [
+      {
+        "id": "client-testing",
+        "name": "客户端与玩家测试",
+        "description": "准备隔离的 Minecraft 测试实例，进行有界面或无头启动测试、玩家操作、截图与场景验证。"
+      },
+      {
+        "id": "server-testing",
+        "name": "服务端测试",
+        "description": "启动、停止和验证本机服务器，管理服务端核心、联机测试、日志与命令场景，生成和导出服务端包。"
+      },
+      {
+        "id": "automated-testing",
+        "name": "自动检查",
+        "description": "运行客户端、专用服务器、GameTest 和构建矩阵；生成持续集成工作流。"
+      }
+    ],
+    "views": [
+      {
+        "id": "minecraft",
+        "label": "游戏测试",
+        "component": "minecraft",
+        "icon": "Gamepad2",
+        "group": "测试与构建",
+        "order": 10
+      },
+      {
+        "id": "modpack-server",
+        "label": "服务端测试",
+        "component": "modpack-server",
+        "icon": "Server",
+        "group": "测试与构建",
+        "order": 20
+      }
+    ],
+    "actions": [
+      {
+        "id": "local_server",
+        "handler": "local_server",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": [
+                "state",
+                "start",
+                "stop",
+                "command",
+                "scenario"
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "expect": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "timeoutMs": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "command",
+                  "expect"
+                ]
+              }
+            }
+          },
+          "required": [
+            "operation"
+          ]
+        }
+      },
+      {
+        "id": "test_rendered",
+        "handler": "test_rendered",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      },
+      {
+        "id": "test_session",
+        "handler": "test_session",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "headless",
+                "rendered"
+              ]
+            },
+            "offline": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "after": {
+              "type": "integer"
+            },
+            "tooltip": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "button": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "yaw": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "pitch": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "clicks": {
+              "type": "integer",
+              "minimum": -20,
+              "maximum": 20
+            },
+            "pressEnter": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": [
+                      "click",
+                      "text",
+                      "inventory",
+                      "close",
+                      "command",
+                      "key",
+                      "look",
+                      "scroll",
+                      "interact"
+                    ]
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "button": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "x": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "yaw": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "pitch": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "clicks": {
+                    "type": "integer",
+                    "minimum": -20,
+                    "maximum": 20
+                  },
+                  "pressEnter": {
+                    "type": "boolean"
+                  },
+                  "expect": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "expect"
+                ]
+              }
+            }
+          },
+          "required": [
+            "operation"
+          ]
+        }
+      },
+      {
+        "id": "test_observe",
+        "handler": "test_observe",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "headless",
+                "rendered"
+              ]
+            },
+            "offline": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "after": {
+              "type": "integer"
+            },
+            "tooltip": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "button": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "yaw": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "pitch": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "clicks": {
+              "type": "integer",
+              "minimum": -20,
+              "maximum": 20
+            },
+            "pressEnter": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": [
+                      "click",
+                      "text",
+                      "inventory",
+                      "close",
+                      "command",
+                      "key",
+                      "look",
+                      "scroll",
+                      "interact"
+                    ]
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "button": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "x": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "yaw": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "pitch": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "clicks": {
+                    "type": "integer",
+                    "minimum": -20,
+                    "maximum": 20
+                  },
+                  "pressEnter": {
+                    "type": "boolean"
+                  },
+                  "expect": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "expect"
+                ]
+              }
+            }
+          },
+          "required": [
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "id": "test_action",
+        "handler": "test_action",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "headless",
+                "rendered"
+              ]
+            },
+            "offline": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "after": {
+              "type": "integer"
+            },
+            "tooltip": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "button": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "yaw": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "pitch": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "clicks": {
+              "type": "integer",
+              "minimum": -20,
+              "maximum": 20
+            },
+            "pressEnter": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": [
+                      "click",
+                      "text",
+                      "inventory",
+                      "close",
+                      "command",
+                      "key",
+                      "look",
+                      "scroll",
+                      "interact"
+                    ]
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "button": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "x": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "yaw": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "pitch": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "clicks": {
+                    "type": "integer",
+                    "minimum": -20,
+                    "maximum": 20
+                  },
+                  "pressEnter": {
+                    "type": "boolean"
+                  },
+                  "expect": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "expect"
+                ]
+              }
+            }
+          },
+          "required": [
+            "operation",
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "id": "test_capture",
+        "handler": "test_capture",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "headless",
+                "rendered"
+              ]
+            },
+            "offline": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "after": {
+              "type": "integer"
+            },
+            "tooltip": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "button": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "yaw": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "pitch": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "clicks": {
+              "type": "integer",
+              "minimum": -20,
+              "maximum": 20
+            },
+            "pressEnter": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": [
+                      "click",
+                      "text",
+                      "inventory",
+                      "close",
+                      "command",
+                      "key",
+                      "look",
+                      "scroll",
+                      "interact"
+                    ]
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "button": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "x": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "yaw": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "pitch": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "clicks": {
+                    "type": "integer",
+                    "minimum": -20,
+                    "maximum": 20
+                  },
+                  "pressEnter": {
+                    "type": "boolean"
+                  },
+                  "expect": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "expect"
+                ]
+              }
+            }
+          },
+          "required": [
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "id": "test_scenario",
+        "handler": "test_scenario",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "headless",
+                "rendered"
+              ]
+            },
+            "offline": {
+              "type": "boolean"
+            },
+            "username": {
+              "type": "string"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "hidden": {
+              "type": "boolean"
+            },
+            "after": {
+              "type": "integer"
+            },
+            "tooltip": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "button": {
+              "type": "integer"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "command": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "yaw": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "pitch": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "clicks": {
+              "type": "integer",
+              "minimum": -20,
+              "maximum": 20
+            },
+            "pressEnter": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "enum": [
+                      "click",
+                      "text",
+                      "inventory",
+                      "close",
+                      "command",
+                      "key",
+                      "look",
+                      "scroll",
+                      "interact"
+                    ]
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "button": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "x": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "y": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "yaw": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "pitch": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "clicks": {
+                    "type": "integer",
+                    "minimum": -20,
+                    "maximum": 20
+                  },
+                  "pressEnter": {
+                    "type": "boolean"
+                  },
+                  "expect": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "expect"
+                ]
+              }
+            }
+          },
+          "required": [
+            "sessionId",
+            "steps"
+          ]
+        }
+      },
+      {
+        "id": "test_matrix",
+        "handler": "test_matrix",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "build",
+                  "client",
+                  "server",
+                  "gametest"
+                ]
+              }
+            }
+          },
+          "required": [
+            "targets"
+          ]
+        }
+      },
+      {
+        "id": "test_minecraft",
+        "handler": "test_minecraft",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "id": "modpack_build_server",
+        "handler": "modpack_build_server",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "outputDirectory": {
+              "type": "string"
+            },
+            "port": {
+              "type": "number"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            }
+          },
+          "required": []
+        }
+      },
+      {
+        "id": "modpack_verify_server_join",
+        "handler": "modpack_verify_server_join",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "outputDirectory": {
+              "type": "string"
+            },
+            "port": {
+              "type": "number"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "onlineMode": {
+              "type": "boolean"
+            }
+          },
+          "required": []
+        }
+      },
+      {
+        "id": "modpack_run_server_scenario",
+        "handler": "modpack_run_server_scenario",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "type": "array"
+            },
+            "outputDirectory": {
+              "type": "string"
+            },
+            "port": {
+              "type": "number"
+            },
+            "acceptEula": {
+              "type": "boolean"
+            },
+            "onlineMode": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "steps"
+          ]
+        }
+      },
+      {
+        "id": "runtime_state",
+        "handler": "runtime_state",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "id": "minecraft:getState",
+        "handler": "minecraft:getState",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:prepare",
+        "handler": "minecraft:prepare",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:cancelPreparation",
+        "handler": "minecraft:cancelPreparation",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:restartPreparation",
+        "handler": "minecraft:restartPreparation",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:launch",
+        "handler": "minecraft:launch",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:testLaunch",
+        "handler": "minecraft:testLaunch",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:headlessSmokeTest",
+        "handler": "minecraft:headlessSmokeTest",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:openHeadlessMcLogin",
+        "handler": "minecraft:openHeadlessMcLogin",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:stop",
+        "handler": "minecraft:stop",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:syncProjectMod",
+        "handler": "minecraft:syncProjectMod",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:syncModpack",
+        "handler": "minecraft:syncModpack",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:syncKubeJsServerScripts",
+        "handler": "minecraft:syncKubeJsServerScripts",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:listMods",
+        "handler": "minecraft:listMods",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:removeMod",
+        "handler": "minecraft:removeMod",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "minecraft:importMods",
+        "handler": "minecraft:importMods",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:buildServerPack",
+        "handler": "modpack:buildServerPack",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:installServerRuntime",
+        "handler": "modpack:installServerRuntime",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:getServerPackManifest",
+        "handler": "modpack:getServerPackManifest",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:addServerPackMods",
+        "handler": "modpack:addServerPackMods",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:removeServerPackMod",
+        "handler": "modpack:removeServerPackMod",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:exportServerPack",
+        "handler": "modpack:exportServerPack",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:verifyServerJoin",
+        "handler": "modpack:verifyServerJoin",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:runServerScenario",
+        "handler": "modpack:runServerScenario",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "local-test:getState",
+        "handler": "local-test:getState",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "local-test:start",
+        "handler": "local-test:start",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "local-test:stop",
+        "handler": "local-test:stop",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:getServerState",
+        "handler": "modpack:getServerState",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:startServer",
+        "handler": "modpack:startServer",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:stopServer",
+        "handler": "modpack:stopServer",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:restartServer",
+        "handler": "modpack:restartServer",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "modpack:sendServerCommand",
+        "handler": "modpack:sendServerCommand",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "tests:runMatrix",
+        "handler": "tests:runMatrix",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "tests:generateWorkflow",
+        "handler": "tests:generateWorkflow",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 0
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "server-plugin:profile",
+        "handler": "server-plugin:profile",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "server-plugin:saveProfile",
+        "handler": "server-plugin:saveProfile",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "server-plugin:versions",
+        "handler": "server-plugin:versions",
+        "permission": "read",
+        "projectRequired": false,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "server-plugin:builds",
+        "handler": "server-plugin:builds",
+        "permission": "read",
+        "projectRequired": false,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "server-plugin:importCore",
+        "handler": "server-plugin:importCore",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tools": [
+      {
+        "name": "modmind_local_server",
+        "action": "local_server",
+        "description": "Manage the current project local server: state, start, stop, command or scenario. Uses managed core downloads and isolated persistent instances. Start does not prove plugin behavior; scenario requires fresh expected evidence."
+      },
+      {
+        "name": "modmind_test_rendered",
+        "action": "test_rendered",
+        "description": "Build/sync and test a visible owned Minecraft client. Supported Java mods use the pinned Minecraft Mod MCP integration and return an actual screenshot plus GUI/player/world observations, then stop. Other versions/modpacks use startup checks only. Inspect returned images before claiming visual verification. For continued interaction use modmind_test_session with mode rendered. Requires real-interface testing."
+      },
+      {
+        "name": "modmind_test_session",
+        "action": "test_session",
+        "description": "Manage an owned player test: capabilities, start, state, stop. Java mod projects use Minecraft Mod MCP in rendered mode, with isolated game files and native screenshots; navigate the title screen to create or enter a test world. Plugin/modpack tests use their supported HeadlessMC path. Probe capabilities first. Keep sessionId and stop when done. Headless cannot prove visuals."
+      },
+      {
+        "name": "modmind_test_observe",
+        "action": "test_observe",
+        "description": "Read fresh GUI or client logs. Java mod MCP observations also include player/world state. GUI revision must accompany click/text/scroll. HeadlessMC logs support a cursor; tooltip only if advertised."
+      },
+      {
+        "name": "modmind_test_action",
+        "action": "test_action",
+        "description": "Operate the test player: inventory, close, click, text, command, key. Native mod MCP also supports look(yaw,pitch), scroll(clicks), interact, coordinate click(x,y,button), and text with pressEnter. Click/text/scroll need latest revision; slot means GUI button index, not inventory slot for native MCP. Commands require in-game permissions and can build with setblock/fill. Operator is only for plugin/modpack owned test servers. Action acknowledgement is not gameplay success; do not blindly retry."
+      },
+      {
+        "name": "modmind_test_capture",
+        "action": "test_capture",
+        "description": "Capture a new actual rendered-client screenshot if supported. Never accepts headless or blank frames as visual evidence."
+      },
+      {
+        "name": "modmind_test_scenario",
+        "action": "test_scenario",
+        "description": "Run up to 20 player actions with expected output text per step. Records versioned evidence; stops on failed assertions. Does not prove visual correctness."
+      },
+      {
+        "name": "modmind_test_matrix",
+        "action": "test_matrix",
+        "description": "Run selected managed build, client, server, or GameTest targets."
+      },
+      {
+        "name": "modmind_test_minecraft",
+        "action": "test_minecraft",
+        "description": "Build and launch the isolated ModMind Minecraft test instance, then return startup/crash evidence."
+      },
+      {
+        "name": "modmind_modpack_build_server",
+        "action": "modpack_build_server",
+        "description": "Deterministically build the initial server pack by invoking the pinned open-source ServerPackCreator CLI. This tool does not use AI, does not modify the AI workspace, and excludes unknown-side mods by default; return the generated manifest, skipped mods, engine version and log path."
+      },
+      {
+        "name": "modmind_modpack_verify_server_join",
+        "action": "modpack_verify_server_join",
+        "description": "Build a loopback-only local server in offline test mode, wait for its ready port, and verify a HeadlessMC client joins with transcript evidence. Set onlineMode true only for an explicit authenticated-server test."
+      },
+      {
+        "name": "modmind_modpack_run_server_scenario",
+        "action": "modpack_run_server_scenario",
+        "description": "Start a loopback-only local server in offline test mode and execute bounded console commands with log evidence assertions."
+      },
+      {
+        "name": "modmind_runtime_state",
+        "action": "runtime_state",
+        "description": "Read the current isolated Minecraft test runtime state and recent events."
       }
     ]
   },

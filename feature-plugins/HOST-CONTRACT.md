@@ -83,7 +83,12 @@ The build replaces imports of shared main-process facilities with
 in `scripts/build-feature-plugins.mjs` and `src/main/featureHostRuntime.ts`.
 Diagnostics, downloads, metadata caches, project mutation protection, networking,
 process trees, and native feature routing therefore reuse host instances instead
-of creating separate plugin instances. The renderer similarly shares React,
+of creating separate plugin instances. `buildRuntime` and `creationFeedbackService`
+also share core build behavior and evidence; optional testing subclasses the core
+builder instead of duplicating it. The `testingV1` capability is required by the
+testing feature and its ServerPackCreator runtime, so earlier hosts reject these
+packages even if their version string matches. `activeService(id)` inspects an
+already active service without loading optional code. The renderer similarly shares React,
 ReactDOM, JSX runtime, dialogs, theme, MiniPaint, and the host code editor.
 
 ## Events And Assets
@@ -155,6 +160,13 @@ executable paths. The builder copies each executable and upstream notices into
 `assets/native/`, adds a hash index and a runtime `target: { platform, arch }`,
 and removes build-only package declarations. The loader rejects mismatched
 targets. R7 uses this for the optional media runtime shared by sound/publishing.
+Build-only `assetFiles` limits an asset group to explicit files, excluding partial
+downloads and temporary folders. `assetChunks` maps a logical name to a source,
+byte offset, and length; each bounded slice is written to `assets/chunks/<name>.part`
+and hashed like other assets. Source paths and ranges are validated. Both fields
+are removed from the runtime manifest. ServerPackCreator uses two dependency
+packages to retain the 64 MiB archive limit; its runtime assembles and verifies
+the original upstream JAR before use.
 The builder merges backend action/tool contributions and rejects duplicate
 identifiers. It bundles each feature independently, shares the runtimes above,
 emits empty CSS when needed, includes upstream notices, and hashes every runtime

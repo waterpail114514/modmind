@@ -18,7 +18,7 @@ const exportsOf = (name, value) => `const value = window.__modmindFeatureHost.${
 const definitions = []
 const only = process.argv.find(argument => argument.startsWith('--only='))?.slice(7)
 const exists = file => access(file).then(() => true, () => false)
-const sharedModules = ['diagnosticLog', 'downloadActivityService', 'downloadService', 'modpackService', 'modpackContentMetadata', 'curseForgePackMetadata', 'agentProtection', 'nativeFeatureServices', 'networkRequest', 'processTree', 'documentRead', 'projectTextRead', 'inspirationResearch']
+const sharedModules = ['buildRuntime', 'creationFeedbackService', 'diagnosticLog', 'downloadActivityService', 'downloadService', 'modpackService', 'modpackContentMetadata', 'curseForgePackMetadata', 'agentProtection', 'nativeFeatureServices', 'networkRequest', 'processTree', 'documentRead', 'projectTextRead', 'inspirationResearch']
 const sharedShims = []
 for (const name of sharedModules) {
   const source = ts.createSourceFile(name, await readFile(path.join(root, 'src/main', name + '.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
@@ -35,7 +35,11 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
   const source = path.join(root, 'feature-plugins', entry.name)
   const manifest = JSON.parse(await readFile(path.join(source, 'manifest.json'), 'utf8'))
   const nativeBinaries = manifest.nativeBinaries ?? {}
+  const assetFiles = manifest.assetFiles ?? {}
+  const assetChunks = manifest.assetChunks ?? {}
   delete manifest.nativeBinaries
+  delete manifest.assetFiles
+  delete manifest.assetChunks
   if (Object.keys(nativeBinaries).length) manifest.target = { platform: process.platform, arch: process.arch }
   manifest.hostCapabilities = [...new Set([...(manifest.hostCapabilities ?? []), 'runtime'])]
   if (await exists(path.join(source, 'main-contributions.json'))) {
@@ -71,7 +75,24 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
     const sourcePath = path.resolve(root, input)
     const relative = path.relative(root, sourcePath)
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`Asset source outside repository: ${input}`)
-    await cp(sourcePath, path.join(output, 'assets', name), { recursive: true, dereference: false })
+    if (assetFiles[name]) {
+      for (const file of assetFiles[name]) {
+        if (typeof file !== 'string' || !/^[A-Za-z0-9_.-]+$/.test(file) || file === '.' || file === '..') throw new Error(`Invalid asset file: ${name}/${file}`)
+        const destination = path.join(output, 'assets', name, file)
+        await mkdir(path.dirname(destination), { recursive: true })
+        await cp(path.join(sourcePath, file), destination, { dereference: false })
+      }
+    } else await cp(sourcePath, path.join(output, 'assets', name), { recursive: true, dereference: false })
+  }
+  for (const [name, chunk] of Object.entries(assetChunks)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name) || !Number.isSafeInteger(chunk.offset) || chunk.offset < 0 || !Number.isSafeInteger(chunk.length) || chunk.length <= 0) throw new Error(`Invalid asset chunk: ${name}`)
+    const sourcePath = path.resolve(root, chunk.source), relative = path.relative(root, sourcePath)
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`Asset chunk outside repository: ${name}`)
+    const bytes = await readFile(sourcePath)
+    if (chunk.offset + chunk.length > bytes.length) throw new Error(`Asset chunk exceeds source: ${name}`)
+    const destination = path.join(output, 'assets', 'chunks', name + '.part')
+    await mkdir(path.dirname(destination), { recursive: true })
+    await writeFile(destination, bytes.subarray(chunk.offset, chunk.offset + chunk.length))
   }
   if (Object.keys(nativeBinaries).length) {
     const directory = path.join(output, 'assets', 'native')

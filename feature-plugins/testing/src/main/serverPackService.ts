@@ -1,19 +1,19 @@
-import { spawnManaged, stopProcessTree } from './processTree'
+import { spawnManaged, stopProcessTree } from "../../../../src/main/processTree"
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { JavaLoaderKind, LoaderKind, ProjectInfo, ServerPackManifest } from '../shared/types'
-import { managedJavaEnvironment } from './javaEnvironment'
-import { fetchJsonWithRetry } from './networkRequest'
-import { commitDirectory, preserveLegacyServerInstance } from './serverInstance'
-import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides, assertModpackDependenciesReady } from './modpackService'
-import { modpackModsRoot } from './modpackPaths'
-import { auditModpackLock, readModpackLock } from './modpackLockService'
-import { verifiedDownload, type DownloadSource } from './downloadService'
-import { buildWithServerPackCreator } from './serverPackCreatorService'
-import { windowsCmdInvocation } from './windowsCommand'
-import { createStoredZip } from './bedrockAddon'
-import { isSafeModJarFileName, safeModJarFileName } from './modpackFilename'
+import type { JavaLoaderKind, LoaderKind, ProjectInfo, ServerPackManifest } from "../../../../src/shared/types"
+import { managedJavaEnvironment } from "../../../../src/main/javaEnvironment"
+import { fetchJsonWithRetry } from "../../../../src/main/networkRequest"
+import { commitDirectory, preserveLegacyServerInstance } from "./serverInstance"
+import { collectBuiltModpackModuleArtifacts, readModpackManifest, syncModpackOverrides, assertModpackDependenciesReady } from "../../../../src/main/modpackService"
+import { modpackModsRoot } from "../../../../src/main/modpackPaths"
+import { auditModpackLock, readModpackLock } from "../../../../src/main/modpackLockService"
+import { verifiedDownload, type DownloadSource } from "../../../../src/main/downloadService"
+import { buildWithServerPackCreator } from "./serverPackCreatorService"
+import { windowsCmdInvocation } from "../../../../src/main/windowsCommand"
+import { createStoredZip } from "../../../../src/main/bedrockAddon"
+import { isSafeModJarFileName, safeModJarFileName } from "../../../../src/main/modpackFilename"
 
 export interface ServerPackOptions {
   outputDirectory: string

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, updateModpackModuleSide, writeModpackManifest } from './modpackService'
 import { createEmptyModpackLock, writeModpackLock } from './modpackLockService'
-import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from './serverPackService'
+import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from "../../feature-plugins/testing/src/main/serverPackService"
 import { verifiedDownload } from './downloadService'
 
 const roots: string[] = []

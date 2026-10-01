@@ -1,7 +1,7 @@
-import type { ProjectInfo } from '../shared/types'
-import type { LocalServerState, LocalTestOptions, LocalTestState, MinecraftRuntimeEvent, MinecraftRuntimeState } from '../shared/minecraft'
-import type { LocalServerManager } from './localServerService'
-import type { MinecraftRuntimeManager } from './minecraftRuntime'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import type { LocalServerState, LocalTestOptions, LocalTestState, MinecraftRuntimeEvent, MinecraftRuntimeState } from "../../../../src/shared/minecraft"
+import type { LocalServerManager } from "./localServerService"
+import type { MinecraftRuntimeManager } from "./minecraftRuntime"
 
 type Client = Pick<MinecraftRuntimeManager, 'prepare' | 'syncModpack' | 'launch' | 'stop'>
 interface Dependencies {

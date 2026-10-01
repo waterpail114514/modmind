@@ -2,11 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import catalog from './nativeMinecraftMcpCatalog.json'
-import screenshotHelper from './nativeMinecraftMcpHelper.json'
-import { verifiedDownload } from './downloadService'
-import { archiveFileInfo, archiveRead } from "./archiveInspection"
-import { createStoredZip } from './bedrockAddon'
+import catalog from "./nativeMinecraftMcpCatalog.json"
+import screenshotHelper from "./nativeMinecraftMcpHelper.json"
+import { verifiedDownload } from "../../../../src/main/downloadService"
+import { archiveFileInfo, archiveRead } from "../../../../src/main/archiveInspection"
+import { createStoredZip } from "../../../../src/main/bedrockAddon"
 
 export function nativeMcpFor(minecraft: string, loader: string) {
   return catalog.entries.find(entry => entry.minecraft === minecraft && entry.loader === loader)

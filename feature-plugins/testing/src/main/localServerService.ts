@@ -1,13 +1,13 @@
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ProjectInfo } from '../shared/types'
-import type { LocalServerEvent, LocalServerOperationProgress, LocalServerState } from '../shared/minecraft'
-import { buildServerPack, installServerRuntime, readExistingServerPack } from './serverPackService'
-import { ServerProcess, type ServerProcessOptions } from './serverVerificationService'
-import type { ServerScenarioStep, ServerScenarioResult } from './serverVerificationService'
-import { configureLocalServer, deployServerInstance, preserveLegacyServerInstance } from './serverInstance'
-import { preparePluginServer } from './serverCoreService'
-import { throwIfAborted } from './asyncControl'
+import type { ProjectInfo } from "../../../../src/shared/types"
+import type { LocalServerEvent, LocalServerOperationProgress, LocalServerState } from "../../../../src/shared/minecraft"
+import { buildServerPack, installServerRuntime, readExistingServerPack } from "./serverPackService"
+import { ServerProcess, type ServerProcessOptions } from "./serverVerificationService"
+import type { ServerScenarioStep, ServerScenarioResult } from "./serverVerificationService"
+import { configureLocalServer, deployServerInstance, preserveLegacyServerInstance } from "./serverInstance"
+import { preparePluginServer } from "./serverCoreService"
+import { throwIfAborted } from "../../../../src/main/asyncControl"
 
 export interface LocalServerStartOptions {
   port?: number

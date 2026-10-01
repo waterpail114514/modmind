@@ -2,12 +2,12 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { PlayerTestService, setTestOperator } from './playerTestService'
-import type { LocalServerManager } from './localServerService'
+import { PlayerTestService, setTestOperator } from "../../feature-plugins/testing/src/main/playerTestService"
+import type { LocalServerManager } from "../../feature-plugins/testing/src/main/localServerService"
 import type { ProjectInfo } from '../shared/types'
 
-vi.mock('./minecraftRuntime', () => ({ MinecraftRuntimeManager: class {} }))
-vi.mock('./testSpecifics', () => ({ specificsFor: () => ({ inventory: false, key: false }), installTestSpecifics: vi.fn() }))
+vi.mock("../../feature-plugins/testing/src/main/minecraftRuntime", () => ({ MinecraftRuntimeManager: class {} }))
+vi.mock("../../feature-plugins/testing/src/main/testSpecifics", () => ({ specificsFor: () => ({ inventory: false, key: false }), installTestSpecifics: vi.fn() }))
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 it('confirms op and restores ordinary permissions using the actual ops file', async () => {
