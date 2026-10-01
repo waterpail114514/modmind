@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 import sharp from 'sharp'
-import ffmpeg from 'ffmpeg-static'
+import { nativeFeatureFunction } from './nativeFeatureServices'
 import { path7za } from '7zip-bin'
 import { managedCodexExecutablePath } from './codexSetup'
 
@@ -22,6 +22,8 @@ async function signatureSummary(executable: string): Promise<string> {
   } catch { return 'unsigned-or-invalid' }
 }
 export async function nativeToolDiagnostics(userData: string, packaged: boolean, executable: string) {
+  let ffmpeg: string | undefined
+  try { ffmpeg = nativeFeatureFunction<() => string>('media-runtime', 'executable')() } catch { /* Optional media runtime may be absent. */ }
   const unpack = (file: string): string => file.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
   const [ffmpegVersion, sevenZip, codex, signature] = await Promise.all([
     ffmpeg ? version(unpack(ffmpeg), ['-version']) : 'unavailable',

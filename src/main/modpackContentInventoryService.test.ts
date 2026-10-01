@@ -5,7 +5,7 @@ import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { adoptExternalModpack, createModpackTemplate } from './modpackService'
-import { downloadModpackContent, importModpackContent, listModpackContent, removeModpackContent } from './modpackContentInventoryService'
+import { downloadModpackContent, importModpackContent, listModpackContent, removeModpackContent } from "../../feature-plugins/modpack-content/src/main/modpackContentInventoryService"
 import { httpTransport } from './networkRequest'
 
 function bytesResponse(bytes: Buffer): unknown {

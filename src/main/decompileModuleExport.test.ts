@@ -11,7 +11,7 @@ import {
   plannedModulePaths,
   renderDecompileTerms,
   seedProjectFromDecompiledSources
-} from './decompileModuleExport'
+} from "../../feature-plugins/decompile/src/main/decompileModuleExport"
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))

@@ -27,6 +27,10 @@ Var ModMindUpgradeResult
 Var ModMindUpgradeAttempt
 Var ModMindUpgradeFinished
 Var ModMindPreviousVersion
+Var ModMindUninstallTemp
+Var ModMindSavedTemp
+Var ModMindSavedTmp
+Var ModMindTempRedirected
 
 !macro ModMindReadUpgradeRegistry OUTPUT KEY VALUE
   ${If} $ModMindUpgradeRoot == "HKEY_CURRENT_USER"
@@ -97,6 +101,35 @@ Function ModMindUninstallOldVersion
     StrCpy $ModMindUpgradeResult "旧版安装记录缺少安装路径"
     Goto unsafe_upgrade
   ${EndIf}
+  !ifdef MODMIND_FEATURE_TEST_INPLACE_UPGRADE
+    ; The test app has a stable file layout and a separate identity. Updating
+    ; it in place avoids launching a temporary copy of the old uninstaller.
+    GetFullPathName $0 "$ModMindUpgradeDirectory"
+    GetFullPathName $1 "$INSTDIR"
+    ${If} $0 != $1
+      StrCpy $ModMindUpgradeResult "测试版升级请使用原安装目录"
+      Goto unsafe_upgrade
+    ${EndIf}
+    ${If} $ModMindUpgradeRoot == "HKEY_CURRENT_USER"
+    ${AndIf} $installMode == "all"
+      StrCpy $ModMindUpgradeResult "测试版升级请保留原安装范围"
+      Goto unsafe_upgrade
+    ${EndIf}
+    IfFileExists "$0\${APP_EXECUTABLE_FILENAME}" 0 feature_test_invalid_install
+    IfFileExists "$0\resources\app.asar" 0 feature_test_invalid_install
+    System::Call 'kernel32::GetFileAttributesW(w r0) i.r1'
+    IntOp $1 $1 & 0x400
+    ${If} $1 != 0
+      feature_test_invalid_install:
+      StrCpy $ModMindUpgradeResult "测试版安装文件缺失或目录是链接，请修复原安装"
+      Goto unsafe_upgrade
+    ${EndIf}
+    StrCpy $ModMindUpgradeMessage "same-directory test upgrade; existing files retained; old uninstaller not launched; directory=$ModMindUpgradeDirectory"
+    Call ModMindLogUpgrade
+    StrCpy $R0 0
+    ClearErrors
+    Return
+  !endif
   StrCpy $ModMindUpgradeArguments "/allusers"
   ${If} $installMode == "CurrentUser"
   ${OrIf} $ModMindUpgradeRoot == "HKEY_CURRENT_USER"
@@ -118,6 +151,10 @@ Function ModMindUninstallOldVersion
     ${EndIf}
   ${EndIf}
   StrCpy $ModMindUpgradeAttempt 0
+  Call ModMindPrepareUninstallTemp
+  ${If} $ModMindUpgradeResult != 0
+    Goto unsafe_upgrade
+  ${EndIf}
 
   retry_uninstall:
   IntOp $ModMindUpgradeAttempt $ModMindUpgradeAttempt + 1
@@ -135,6 +172,7 @@ Function ModMindUninstallOldVersion
       StrCpy $ModMindUpgradeResult "launch-failed"
     ${EndIf}
   ${EndIf}
+  Call ModMindRestoreUninstallTemp
   StrCpy $ModMindUpgradeMessage "uninstall attempt=$ModMindUpgradeAttempt result=$ModMindUpgradeResult root=$ModMindUpgradeRoot directory=$ModMindUpgradeDirectory executable=$ModMindUpgradeUninstaller"
   Call ModMindLogUpgrade
   ${If} $ModMindUpgradeResult == 0
@@ -144,6 +182,7 @@ Function ModMindUninstallOldVersion
   ${EndIf}
   ${If} $ModMindUpgradeAttempt < 2
     Sleep 1000
+    Call ModMindActivateUninstallTemp
     Goto retry_uninstall
   ${EndIf}
 
@@ -163,6 +202,61 @@ Function ModMindUninstallOldVersion
   ${EndIf}
   StrCpy $R0 0
   ClearErrors
+FunctionEnd
+
+Function ModMindPrepareUninstallTemp
+  StrCpy $ModMindUpgradeResult "无法准备旧版本同盘临时目录"
+  GetFullPathName $0 "$ModMindUpgradeDirectory"
+  System::Call 'kernel32::GetFileAttributesW(w r0) i.r1'
+  ${If} $1 == -1
+    Return
+  ${EndIf}
+  IntOp $1 $1 & 0x400
+  ${If} $1 != 0
+    StrCpy $ModMindUpgradeResult "旧目录是链接，无法准备同盘临时目录"
+    Return
+  ${EndIf}
+  Push $0
+  Call GetFileParent
+  Pop $1
+  ClearErrors
+  GetTempFileName $2 "$1"
+  ${If} ${Errors}
+    Return
+  ${EndIf}
+  Delete "$2"
+  StrCpy $ModMindUninstallTemp "$2-ModMind-upgrade-temp"
+  CreateDirectory "$ModMindUninstallTemp"
+  ${If} ${Errors}
+    Return
+  ${EndIf}
+  ReadEnvStr $ModMindSavedTemp "TEMP"
+  ReadEnvStr $ModMindSavedTmp "TMP"
+  Call ModMindActivateUninstallTemp
+  StrCpy $ModMindUpgradeResult 0
+  StrCpy $ModMindUpgradeMessage "uninstall temporary directory=$ModMindUninstallTemp (same volume as old installation)"
+  Call ModMindLogUpgrade
+FunctionEnd
+
+Function ModMindActivateUninstallTemp
+  ; --updated moves the old files into the child NSIS temporary directory.
+  ; Keep it on the old installation's volume so Rename does not copy the app
+  ; into a potentially full system drive. Never alter the user's environment.
+  CreateDirectory "$ModMindUninstallTemp"
+  System::Call 'kernel32::SetEnvironmentVariableW(w "TEMP", w "$ModMindUninstallTemp") i.r0'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "TMP", w "$ModMindUninstallTemp") i.r1'
+  StrCpy $ModMindTempRedirected 1
+FunctionEnd
+
+Function ModMindRestoreUninstallTemp
+  ${If} $ModMindTempRedirected != 1
+    Return
+  ${EndIf}
+  System::Call 'kernel32::SetEnvironmentVariableW(w "TEMP", w "$ModMindSavedTemp")'
+  System::Call 'kernel32::SetEnvironmentVariableW(w "TMP", w "$ModMindSavedTmp")'
+  StrCpy $ModMindTempRedirected 0
+  ; Do not recursively remove a failed uninstaller's retained files.
+  RMDir "$ModMindUninstallTemp"
 FunctionEnd
 
 Function ModMindStageUpgradeBackup

@@ -15,7 +15,7 @@ import {
   yarnV2MappingsUrl,
   validateYarnMappings,
   type YarnVersionEntry
-} from './jarRemapService'
+} from "../../feature-plugins/decompile/src/main/jarRemapService"
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))
@@ -138,8 +138,8 @@ describe('jar remap service', () => {
   it('resolves bundled candidates across dev and packaged layouts', () => {
     const candidates = tinyRemapperBundledJarCandidates('/app', '/resources')
     expect(candidates).toEqual([
-      path.join('/resources', 'decompile-tools', 'tiny-remapper-0.14.0.jar'),
-      path.join('/app', 'resources', 'decompile-tools', 'tiny-remapper-0.14.0.jar')
+      path.join('/resources', 'feature-plugins', 'decompile', 'assets', 'decompile-tools', 'tiny-remapper-0.14.0.jar'),
+      path.join('/app', 'feature-plugins', 'decompile', 'assets', 'decompile-tools', 'tiny-remapper-0.14.0.jar')
     ])
   })
 

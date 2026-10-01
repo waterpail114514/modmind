@@ -5,7 +5,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { ManagedItem, ManagedItemKind } from '../shared/itemEditor'
 import type { ProjectInfo } from '../shared/types'
-import { generatedItemJava, itemEditorSupportReason } from './itemEditorGenerator'
+import { generatedItemJava, itemEditorSupportReason } from "../../feature-plugins/item-editor/src/main/itemEditorGenerator"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })

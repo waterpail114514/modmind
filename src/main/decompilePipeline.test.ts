@@ -11,7 +11,7 @@ import {
   readCachedSourceFile,
   runDecompilation,
   scanReferencesForJar
-} from './decompilePipeline'
+} from "../../feature-plugins/decompile/src/main/decompilePipeline"
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))

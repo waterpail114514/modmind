@@ -18,6 +18,8 @@ describe('inspiration selections and handoff', () => {
     expect(normalizeInspirationFeatures({ jarAnalysis: 'true', deepAnalysis: true })).toMatchObject({ jarAnalysis: false, deepAnalysis: true })
     expect(requiredInspirationFeature('research', { operation: 'compare' })).toBe('comparison')
     expect(requiredInspirationFeature('research', { operation: 'decompile' })).toBe('jarAnalysis')
+    expect(requiredInspirationFeature('decompile_query', { operation: 'read' })).toBe('jarAnalysis')
+    expect(requiredInspirationFeature('decompile_query', { operation: 'references' })).toBe('compatibility')
     expect(readInspirationFeatures(null).imageGeneration).toBe(false)
     expect(readInspirationFeatures('{"imageGeneration":true}').imageGeneration).toBe(true)
     expect(requiredInspirationFeature('image_generate')).toBe('imageGeneration')

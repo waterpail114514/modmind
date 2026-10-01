@@ -5,7 +5,10 @@
     "moduleResolution": "Bundler",
     "target": "ES2022",
     "strict": true,
-    "types": ["node", "electron"],
+    "types": [
+      "node",
+      "electron"
+    ],
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true
   },
@@ -13,6 +16,11 @@
     "electron.vite.config.ts",
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
-    "src/shared/**/*.ts"
+    "src/shared/**/*.ts",
+    "feature-plugins/*/src/main/**/*.ts",
+    "feature-plugins/*/main.ts",
+    "feature-plugins/sdk/native.ts",
+    "feature-plugins/sdk/mediaRuntime.ts",
+    "feature-plugins/sdk/nativeResources.ts"
   ]
 }

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { applyKeybindPreset, buildFtbQuestSnbt, buildPatchouliBook, detectKeybindConflicts, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
+import { applyKeybindPreset, buildFtbQuestSnbt, buildPatchouliBook, detectKeybindConflicts, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from "../../feature-plugins/modpack-content/src/main/modpackContentService"
 import { addModpackFiles, createModpackTemplate } from './modpackService'
 
 const roots: string[] = []

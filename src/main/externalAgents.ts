@@ -2,6 +2,8 @@ import { PROJECT_REPLY_MODELS_PROMPT } from '../shared/projectModels'
 import { PROJECT_REPLY_IMAGES_PROMPT } from '../shared/projectImages'
 import type { ImageProcessingOptions } from '../shared/imageStudio'
 import { imageGenerationInputSchema, perfectPixelInputSchema } from '../shared/imageStudioRequest'
+import type { FeaturePluginCatalogEntry, FeaturePluginDiscoveredTool, FeaturePluginInvocationContext, FeaturePluginSurface } from '../shared/featurePlugins'
+import { featurePluginCapabilityPrompt, featurePluginTurnPrompt } from './featurePluginAgentContext'
 import { INSPIRATION_FEATURES, inspirationFeaturePrompt, requiredInspirationFeature, type InspirationFeatures } from '../shared/inspirationFeatures'
 import { spawnManaged, stopProcessTree } from './processTree'
 import { desktopProcessEnvironment } from './desktopEnvironment'
@@ -42,6 +44,11 @@ import { agentProtectionConfigArgs, AGENT_PROTECTION_INSTRUCTIONS, assertAgentPr
 export type { ExternalAgentKind } from '../shared/types'
 
 const EXTERNAL_AGENT_CLEANUP_TIMEOUT_MS = 5_000
+
+async function imageCapabilityAvailable(handlers: ExternalAgentBridgeHandlers): Promise<boolean> {
+  if (handlers.featureCatalog) return (await handlers.featureCatalog()).some(feature => feature.available && feature.manifest?.tools?.some(tool => tool.name === 'modmind_image_generate'))
+  return (await handlers.imageStudioAvailable?.()) !== false
+}
 
 function agentIdentityPrompt(options: Pick<ExternalAgentRunOptions, 'kind' | 'readOnly' | 'model' | 'env'>): string {
   const surface = options.readOnly ? 'ModMind 灵感台' : 'ModMind 工作台'
@@ -94,6 +101,11 @@ export interface ExternalAgentPluginBridgeTarget {
 }
 
 export interface ExternalAgentBridgeHandlers {
+  featureInstallMode?: 'automatic' | 'manual'
+  featureRecommend?: (input: Record<string, unknown>) => Promise<unknown>
+  featureCatalog?: () => Promise<FeaturePluginCatalogEntry[]>
+  featureTools?: (surface: FeaturePluginSurface) => Promise<FeaturePluginDiscoveredTool[]>
+  featureInvoke?: (id: string, action: string, input: Record<string, unknown>, context: FeaturePluginInvocationContext) => Promise<unknown>
   projectSetup?: (input: Record<string, unknown>) => Promise<unknown>
   projectKnowledgeRead?: () => Promise<unknown>
   projectKnowledgeSave?: (input: Record<string, unknown>) => Promise<unknown>
@@ -116,22 +128,22 @@ export interface ExternalAgentBridgeHandlers {
   setIntent: (intent: 'engineering' | 'informational', reason: string) => Promise<unknown>
   applyEdits: (edits: unknown[]) => Promise<unknown>
   updateTodo: (tasks: unknown[]) => Promise<unknown>
-  mappingsSearch: (query: string, limit?: number) => Promise<unknown>
-  mappingsClass: (className: string, memberQuery?: string) => Promise<unknown>
-  dependencySearch: (query: string, offset?: number) => Promise<unknown>
-  dependencyInstall: (projectId: string, versionId?: string) => Promise<unknown>
+  mappingsSearch?: (query: string, limit?: number) => Promise<unknown>
+  mappingsClass?: (className: string, memberQuery?: string) => Promise<unknown>
+  dependencySearch?: (query: string, offset?: number) => Promise<unknown>
+  dependencyInstall?: (projectId: string, versionId?: string) => Promise<unknown>
   mavenDependencyInstall?: (input: Record<string, unknown>) => Promise<unknown>
   addonRelationships?: () => Promise<unknown>
   addonPrepare?: (input: Record<string, unknown>) => Promise<unknown>
   addonImport?: (paths: string[], role?: string) => Promise<unknown>
   addonLinkProject?: (projectPath: string) => Promise<unknown>
-  contentValidate: () => Promise<unknown>
+  contentValidate?: () => Promise<unknown>
   testMatrix: (targets: string[]) => Promise<unknown>
-  releasePreflight: () => Promise<unknown>
+  releasePreflight?: () => Promise<unknown>
   build: () => Promise<unknown>
   testMinecraft: () => Promise<unknown>
   testRendered?: () => Promise<unknown>
-  blockbenchActions: (actions: unknown[], expectedRevision?: string) => Promise<unknown>
+  blockbenchActions?: (actions: unknown[], expectedRevision?: string) => Promise<unknown>
   blockbenchProjectState?: () => Promise<unknown>
   blockbenchValidate?: () => Promise<unknown>
   blockbenchCaptureViews?: (input: Record<string, unknown>) => Promise<unknown>
@@ -174,6 +186,7 @@ export interface ExternalAgentBridgeHandlers {
   modpackApplyOptimizationProfile?: (input: Record<string, unknown>) => Promise<unknown>
   modpackRunServerScenario?: (input: Record<string, unknown>) => Promise<unknown>
   imageGenerate?: (input: Record<string, unknown>) => Promise<unknown>
+  imageStudioAvailable?: () => boolean | Promise<boolean>
   imageStudioInfo?: (includeModels: boolean) => Promise<unknown>
   imageProcess?: (operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options?: ImageProcessingOptions) => Promise<unknown>
   imageProjectAssets?: () => Promise<unknown>
@@ -181,6 +194,8 @@ export interface ExternalAgentBridgeHandlers {
 }
 
 export interface ExternalAgentRunOptions {
+  /** Host-generated capability snapshot for this attempt, including resumed turns. */
+  toolchainPrompt?: string
   inspirationFeatures?: InspirationFeatures
   workbenchFeatures?: WorkbenchFeatures
   kind: ExternalAgentKind
@@ -786,12 +801,13 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
   try {
     await request('initialize', { clientInfo: { name: 'modmind', title: 'ModMind', version: options.appVersion ?? 'development' }, capabilities: { experimentalApi: true } })
     notify('initialized', {})
+    const imageStudioAvailable = await imageCapabilityAvailable(options.bridge)
     const common = {
       cwd: options.project.path, runtimeWorkspaceRoots: [options.project.path], ...codexApprovalPolicy(options.readOnly, options.approvalMode),
       ...(options.model ? { model: options.model } : {}),
       ...(options.modelProvider ? { modelProvider: options.modelProvider } : {}),
       ...(options.providerConfig ? { config: options.providerConfig } : {}),
-      developerInstructions: `${AGENT_PROTECTION_INSTRUCTIONS}\n\n${MCP_PROBE_INSTRUCTIONS}\n\n${agentIdentityPrompt(options)}\n\n${PROJECT_REPLY_IMAGES_PROMPT}\n\n${PROJECT_REPLY_MODELS_PROMPT}\n\n${workbenchFeaturePrompt(options.workbenchFeatures)}\n\n${options.inspirationFeatures ? inspirationFeaturePrompt(options.inspirationFeatures) : ''}\n\n${options.readOnly ? '' : agentApprovalPrompt(options.approvalMode)}`
+      developerInstructions: `${AGENT_PROTECTION_INSTRUCTIONS}\n\n${MCP_PROBE_INSTRUCTIONS}\n\n${agentIdentityPrompt(options)}\n\n${options.toolchainPrompt ?? ''}\n\n${PROJECT_REPLY_IMAGES_PROMPT}\n\n${PROJECT_REPLY_MODELS_PROMPT}\n\n${workbenchFeaturePrompt(options.workbenchFeatures, imageStudioAvailable)}\n\n${options.inspirationFeatures ? inspirationFeaturePrompt(options.inspirationFeatures, imageStudioAvailable) : ''}\n\n${options.readOnly ? '' : agentApprovalPrompt(options.approvalMode)}`
     }
     const restoreThread = async (method: 'thread/resume' | 'thread/fork', params: Record<string, unknown>): Promise<AppServerRpc> => {
       try {
@@ -1547,6 +1563,9 @@ const imageTools = [
   {name:'modmind_image_read_project_asset', description:'Preview one project image resource. Returns an image content block when the file is a supported image under 8 MiB, plus its project-relative path.', inputSchema:{type:'object',properties:{path:{type:'string'}},required:['path']}, annotations:readOnlyLocal}
 ];
 tools.push(...imageTools);
+tools.push({name:'modmind_feature_catalog',description:'Read ModMind application feature plugins and installable capabilities, including not installed, disabled and available states. This is a product capability catalog, not a list of executable tools.',inputSchema:{type:'object',additionalProperties:false,properties:{}},annotations:readOnlyLocal});
+tools.push({name:'modmind_recommend_features',description:'Recommend 1–6 official ModMind features relevant to the current task, with a specific reason for each. In beginner mode the host automatically downloads, verifies and enables missing official features and dependencies. Other modes return manual installation guidance. Never assume success; show a recommendation/reason/result table. Does not upload anything.',inputSchema:{type:'object',additionalProperties:false,required:['recommendations'],properties:{recommendations:{type:'array',minItems:1,maxItems:6,items:{type:'object',additionalProperties:false,required:['id','reason'],properties:{id:{type:'string',pattern:'^[a-z][a-z0-9-]{0,63}$'},reason:{type:'string',minLength:1,maxLength:400}}}}}},annotations:managedAction});
+tools.push({name:'modmind_feature_call',description:'Invoke a currently enabled feature tool, including one installed during this turn. Use the exact tool name and input schema returned by modmind_recommend_features or modmind_feature_catalog. The host enforces availability, permissions and user tool selections.',inputSchema:{type:'object',additionalProperties:false,required:['tool','input'],properties:{tool:{type:'string',pattern:'^modmind_[a-z0-9_]+$'},input:{type:'object'}}},annotations:managedAction});
 const pluginAuthoringTools = [
   {name:'modmind_plugins_scaffold', description:'Create a ModMind plugin scaffold in the global plugin directory.', inputSchema:{type:'object',additionalProperties:false,required:['kind','id','name'],properties:{kind:{type:'string',enum:['panel-only','tools-only','panel-and-tools']},id:{type:'string'},name:{type:'string'},description:{type:'string'},author:{type:'string'},tools:{type:'array',items:{type:'object'}}}}, annotations:managedAction},
   {name:'modmind_plugins_read_source', description:'Read the source files of one installed ModMind plugin.', inputSchema:{type:'object',additionalProperties:false,required:['pluginId'],properties:{pluginId:{type:'string'}}}, annotations:readOnlyLocal},
@@ -1635,8 +1654,12 @@ input.on('line', async (line) => {
   if (request.method === 'tools/list') {
     try {
       const pluginTools = await fetchPluginTools();
-      const availableTools = tools.filter(tool => !(config.hiddenToolPrefixes || []).some(prefix => tool.name.startsWith(prefix)));
-      process.stdout.write(JSON.stringify(result(request.id,{tools:[...availableTools,...pluginTools]}))+'\n');
+      const availability = config.featurePluginAvailability ? await callTool('feature_plugin_availability', {}) : { imageStudio: true };
+      const imageTools = ['modmind_image_studio_info', 'modmind_image_generate', 'modmind_image_perfect_pixel', 'modmind_image_remove_background'];
+      const owned = new Set(availability.ownedTools || []);
+      const availableTools = tools.filter(tool => !owned.has(tool.name) && !(config.hiddenToolPrefixes || []).some(prefix => tool.name.startsWith(prefix)) && (availability.imageStudio || !imageTools.includes(tool.name)));
+      const features = (availability.tools || []).map(tool => ({name:tool.name,description:tool.description,inputSchema:tool.inputSchema,annotations:tool.permission === 'read' ? readOnlyLocal : managedAction}));
+      process.stdout.write(JSON.stringify(result(request.id,{tools:[...availableTools,...features,...pluginTools]}))+'\n');
     } catch (e) { process.stdout.write(JSON.stringify(error(request.id,-32603,String(e.message)))+'\n'); }
     return;
   }
@@ -1650,6 +1673,9 @@ input.on('line', async (line) => {
       modmind_web_search: 'web_search',
       modmind_web_read: 'web_read',
       modmind_project_info: 'project_info',
+      modmind_feature_catalog: 'feature_catalog',
+      modmind_recommend_features: 'feature_recommend',
+      modmind_feature_call: 'feature_tool_call',
       modmind_mcp_probe: 'mcp_probe',
       modmind_project_setup: 'project_setup',
       modmind_modpack_modules: 'modpack_modules',
@@ -1738,20 +1764,30 @@ input.on('line', async (line) => {
       modmind_plugins_write_files: 'plugin_write_files',
       modmind_plugins_reload: 'plugin_reload'
     };
-    const action = actions[name];
+    let action = actions[name];
+    let featureCall = false;
+    try {
+      if (config.featurePluginTools) {
+        const availability = await callTool('feature_plugin_availability', {});
+        featureCall = (availability.tools || []).some(tool => tool.name === name);
+        if ((availability.ownedTools || []).includes(name) && !featureCall) throw new Error('[FEATURE_PLUGIN_UNAVAILABLE] 此应用功能插件未启用，或本轮未开放此工具。请查询 modmind_feature_catalog。');
+      }
+    } catch (e) {
+      process.stdout.write(JSON.stringify(result(request.id,{isError:true,content:[{type:'text',text:String(e.message)}]}))+'\n'); return;
+    }
     let pluginCall = false;
     try {
-      if (!action && await isPluginToolName(name)) pluginCall = true;
+      if (!action && !featureCall && await isPluginToolName(name)) pluginCall = true;
     } catch (e) {
       process.stdout.write(JSON.stringify(result(request.id,{isError:true,content:[{type:'text',text:String(e.message)}]}))+'\n');
       return;
     }
-    if (!action && !pluginCall) {
+    if (!action && !pluginCall && !featureCall) {
       process.stdout.write(JSON.stringify(error(request.id,-32601,'Unknown ModMind tool'))+'\n');
       return;
     }
     try {
-      const value = await callTool(pluginCall ? 'plugin_tool_call' : action, pluginCall ? {tool:name, input:args} : args);
+      const value = await callTool(featureCall ? 'feature_tool_call' : pluginCall ? 'plugin_tool_call' : action, featureCall || pluginCall ? {tool:name, input:args} : args);
       process.stdout.write(JSON.stringify(result(request.id,{content:toolContent(value)}))+'\n');
     } catch (e) {
       process.stdout.write(JSON.stringify(result(request.id,{isError:true,content:[{type:'text',text:String(e?.message || e)}]}))+'\n');
@@ -2023,7 +2059,7 @@ function externalAgentDataDirectory(_project: ProjectInfo): '.modmind' {
   return '.modmind'
 }
 
-export function externalAgentContextText(project: ProjectInfo): string {
+export function externalAgentContextText(project: ProjectInfo, imageStudioAvailable = true): string {
   if (project.draft) return [
     '# ModMind Conversation Project',
     `Active project: ${project.name}`,
@@ -2080,7 +2116,7 @@ export function externalAgentContextText(project: ProjectInfo): string {
     '',
     PROJECT_REPLY_IMAGES_PROMPT,
     PROJECT_REPLY_MODELS_PROMPT,
-    'Use modmind_image_studio_info and modmind_image_generate for Image Studio. The UI and workbench share saved credentials and generation settings. Select model per request, presetId/presetPrompt, style, size, quality, moderation, count, background/backgroundColor, removeBackground and referenceImage. PerfectPixel exposes sampleMethod, gridSize, minSize, peakWidth, refineIntensity and fixSquare through perfectPixel. Do not inspect credential files or call image-lease yourself.',
+    ...(imageStudioAvailable ? ['Use modmind_image_studio_info and modmind_image_generate for Image Studio. The UI and workbench share saved credentials and generation settings. Select model per request, presetId/presetPrompt, style, size, quality, moderation, count, background/backgroundColor, removeBackground and referenceImage. PerfectPixel exposes sampleMethod, gridSize, minSize, peakWidth, refineIntensity and fixSquare through perfectPixel. Do not inspect credential files or call image-lease yourself.'] : ['图像工坊应用功能插件未启用：本轮不提供生成、像素化或去背能力。已有项目图片读取是独立能力，不能据此判断图像工坊可用。']),
     '',
     'Available ModMind integrations:',
     '- modmind_project_info / modmind_project_files / modmind_project_search / modmind_list_project_directory / modmind_read_project_file / modmind_read_document / modmind_set_intent',
@@ -2090,26 +2126,27 @@ export function externalAgentContextText(project: ProjectInfo): string {
     '- modmind_scan_java_homes / modmind_probe_java_home / modmind_get_app_settings / modmind_set_app_setting',
     '- modmind_asset_compile_intent / modmind_asset_preview_intent / modmind_asset_apply_intent',
     '- modmind_asset_compile_refinement / modmind_asset_preview_refinement / modmind_asset_apply_refinement',
-    '- modmind_image_studio_info / modmind_image_generate / modmind_image_project_assets / modmind_image_read_project_asset / modmind_image_perfect_pixel / modmind_image_remove_background',
+    '- modmind_image_project_assets / modmind_image_read_project_asset（读取现有项目图片）',
+    ...(imageStudioAvailable ? ['- modmind_image_studio_info / modmind_image_generate / modmind_image_perfect_pixel / modmind_image_remove_background'] : []),
     '- modmind_plugins_scaffold / modmind_plugins_read_source / modmind_plugins_write_files / modmind_plugins_reload',
     ''
   ].join('\n')
 }
 
 /** Refreshes the context used by manually launched agents after a project move. */
-export async function refreshExternalAgentContext(project: ProjectInfo): Promise<string> {
+export async function refreshExternalAgentContext(project: ProjectInfo, imageStudioAvailable = true): Promise<string> {
   const directory = path.join(project.path, externalAgentDataDirectory(project), 'external-agents')
   await fs.mkdir(directory, {recursive: true})
   const target = path.join(directory, 'agent-context.md')
-  await fs.writeFile(target, externalAgentContextText(project), 'utf8')
+  await fs.writeFile(target, externalAgentContextText(project, imageStudioAvailable), 'utf8')
   return target
 }
 
-export async function launchExternalAgent(kind: ExternalAgentKind, project: ProjectInfo | string, executable?: string, env?: NodeJS.ProcessEnv, approvalMode?: AgentApprovalMode): Promise<void> {
+export async function launchExternalAgent(kind: ExternalAgentKind, project: ProjectInfo | string, executable?: string, env?: NodeJS.ProcessEnv, approvalMode?: AgentApprovalMode, imageStudioAvailable = true): Promise<void> {
   const projectPath = typeof project === 'string' ? project : project.path
   assertAgentProjectAllowed(projectPath)
   const dataDirectory = typeof project === 'string' ? '.modmind' : externalAgentDataDirectory(project)
-  if (typeof project !== 'string') await refreshExternalAgentContext(project)
+  if (typeof project !== 'string') await refreshExternalAgentContext(project, imageStudioAvailable)
   const command = executable || (await detectExternalAgents()).find((item) => item.kind === kind)?.executable
   if (!command) throw new Error(`${externalAgentLabel(kind)} CLI 未安装或不在 PATH 中`)
   const prompt = `${AGENT_PROTECTION_INSTRUCTIONS}\nRead ${dataDirectory}/external-agents/agent-context.md when project metadata or integrations are useful. Choose any available tools for the task.`
@@ -2186,7 +2223,7 @@ export class ModMindBridge {
     assertAgentProjectAllowed(this.project.path)
     await fs.mkdir(this.directory, {recursive: true})
     if (this.workflowSourceDirectory && await fs.stat(this.workflowSourceDirectory).then((value) => value.isDirectory()).catch(() => false)) {
-      await syncWorkbenchSkills(this.workflowSourceDirectory, path.join(this.directory, 'skills'), workbenchSkillNames(this.project))
+      await syncWorkbenchSkills(this.workflowSourceDirectory, path.join(this.directory, 'skills'), workbenchSkillNames(this.project, await imageCapabilityAvailable(this.handlers)))
     }
     this.server = http.createServer((request, response) => void this.handle(request, response))
     await new Promise<void>((resolve, reject) => {
@@ -2199,7 +2236,8 @@ export class ModMindBridge {
     diagnosticJournal.record({ subsystem: 'ai', operation: 'mcp-bridge', phase: 'started', message: 'ModMind MCP bridge listener started',
       data: { runId: this.runId, bridgeId: this.diagnosticId } })
     const bridgePath = path.join(this.directory, 'bridge.json')
-    await fs.writeFile(bridgePath, JSON.stringify({port: this.port, token: this.token, version: this.appVersion, sourceFingerprint: MODMIND_SOURCE_FINGERPRINT, hasPluginTools: Boolean(this.pluginTarget), hiddenToolPrefixes: [...hiddenWorkbenchToolPrefixes(this.features),
+    await fs.writeFile(bridgePath, JSON.stringify({port: this.port, token: this.token, version: this.appVersion, sourceFingerprint: MODMIND_SOURCE_FINGERPRINT, hasPluginTools: Boolean(this.pluginTarget), featurePluginTools: Boolean(this.handlers.featureTools), featurePluginAvailability: Boolean(this.handlers.imageStudioAvailable || this.handlers.featureCatalog), hiddenToolPrefixes: [...hiddenWorkbenchToolPrefixes(this.features),
+      ...(this.readOnly || !this.handlers.featureRecommend ? ['modmind_recommend_features'] : []),
       ...(this.readOnly && !this.inspirationFeatures?.imageGeneration ? ['modmind_image_generate', 'modmind_image_perfect_pixel', 'modmind_image_remove_background'] : []),
       ...(this.inspirationFeatures && !this.inspirationFeatures.webResearch ? ['modmind_web_'] : []),
       ...(this.inspirationFeatures && !this.inspirationFeatures.minecraftResearch ? ['modmind_mapping_', 'modmind_dependency_search', 'modmind_mcmod_'] : []),
@@ -2207,7 +2245,7 @@ export class ModMindBridge {
     const mcpPath = path.join(this.directory, 'modmind-mcp-server.mjs')
     await fs.writeFile(mcpPath, MCP_SERVER_SOURCE, 'utf8')
     const contextPath = path.join(this.directory, 'agent-context.md')
-    await fs.writeFile(contextPath, this.contextText(), 'utf8')
+    await fs.writeFile(contextPath, await this.contextText(), 'utf8')
     return {mcpConfigPath: path.join(this.directory, 'mcp-config.json'), contextPath}
   }
 
@@ -2253,11 +2291,32 @@ export class ModMindBridge {
     }
   }
 
-  private contextText(): string {
-    return `${externalAgentContextText(this.project)}\n\n${workbenchFeaturePrompt(this.features)}`
+  private async contextText(): Promise<string> {
+    const available = await imageCapabilityAvailable(this.handlers)
+    const catalog = await this.handlers.featureCatalog?.() ?? []
+    return `${externalAgentContextText(this.project, available)}\n\n${featurePluginCapabilityPrompt(catalog)}\n\n${workbenchFeaturePrompt(this.features, available)}`
+  }
+
+  async availableFeatureTools(): Promise<FeaturePluginDiscoveredTool[]> {
+    const descriptors = await this.handlers.featureTools?.(this.readOnly ? 'inspiration' : 'workbench') ?? []
+    return descriptors.filter(tool => {
+      const action = tool.name.slice('modmind_'.length)
+      if (disabledWorkbenchFeature(this.features, action) || hiddenWorkbenchToolPrefixes(this.features).some(prefix => tool.name.startsWith(prefix))) return false
+      if (!this.readOnly) return true
+      if (action === 'decompile_query' && this.inspirationFeatures) return tool.permission === 'read' && Boolean(this.inspirationFeatures.jarAnalysis || this.inspirationFeatures.compatibility || this.inspirationFeatures.comparison)
+      const required = requiredInspirationFeature(action)
+      if (required && this.inspirationFeatures && !this.inspirationFeatures[required]) return false
+      return tool.permission === 'read' || Boolean(tool.inspirationOutput && this.inspirationFeatures?.imageGeneration && ['image_generate', 'image_perfect_pixel', 'image_remove_background'].includes(action))
+    })
   }
 
   private readonly webAbort = new AbortController()
+
+  private featureHandler<K extends keyof ExternalAgentBridgeHandlers>(name: K): NonNullable<ExternalAgentBridgeHandlers[K]> {
+    const handler = this.handlers[name]
+    if (typeof handler !== 'function') throw new Error('[FEATURE_PLUGIN_UNAVAILABLE] 此应用功能插件未提供当前操作，请安装并启用对应插件')
+    return handler.bind(this.handlers) as NonNullable<ExternalAgentBridgeHandlers[K]>
+  }
 
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     if (request.method !== 'POST' || request.url !== '/tool' || request.headers['x-modmind-token'] !== this.token) {
@@ -2267,10 +2326,50 @@ export class ModMindBridge {
     for await (const chunk of request) chunks.push(Buffer.from(chunk))
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {action?: string; input?: Record<string, unknown>}
-      const input = body.input ?? {}
+      let input = body.input ?? {}
+      if (body.action === 'feature_plugin_availability') {
+        const features = this.handlers.featureCatalog ? { ownedTools: (await this.handlers.featureCatalog()).flatMap(entry => entry.manifest?.tools?.map(tool => tool.name) ?? []), tools: await this.availableFeatureTools() } : {}
+        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ imageStudio: await imageCapabilityAvailable(this.handlers), ...features })); return
+      }
+      if (body.action === 'feature_catalog') {
+        const tools = await this.availableFeatureTools()
+        const features = (await this.handlers.featureCatalog?.() ?? []).map(feature => ({
+          id: feature.id, name: feature.name, version: feature.version, state: feature.state, description: feature.description,
+          installed: feature.installed, enabled: feature.enabled, available: feature.available, error: feature.error,
+          capabilities: feature.manifest?.capabilities ?? [], installHint: feature.installHint, download: feature.download,
+          tools: tools.filter(tool => tool.pluginId === feature.id).map(tool => tool.name),
+          callableTools: tools.filter(tool => tool.pluginId === feature.id)
+        }))
+        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ features })); return
+      }
+      if (body.action === 'feature_recommend') {
+        if (this.readOnly || !this.handlers.featureRecommend) throw new Error('功能推荐安装仅在工作台中可用')
+        const value = await this.handlers.featureRecommend(input)
+        this.handlers.toolCalled?.('feature_recommend')
+        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return
+      }
+      let featureTool: FeaturePluginDiscoveredTool | undefined
+      if (body.action === 'feature_tool_call') {
+        featureTool = (await this.availableFeatureTools()).find(tool => tool.name === input.tool)
+        if (!featureTool || !this.handlers.featureInvoke) throw new Error('[FEATURE_PLUGIN_UNAVAILABLE] 此应用功能插件未启用，或本轮未开放此工具')
+        if (!input.input || typeof input.input !== 'object' || Array.isArray(input.input)) throw new Error('插件工具参数必须为对象')
+        input = input.input as Record<string, unknown>
+      }
+      else if (this.handlers.featureCatalog && body.action) {
+        const ownsAction = (tool: { name: string; action: string }): boolean => tool.action === body.action || tool.name === `modmind_${body.action}`
+        const owners = (await this.handlers.featureCatalog()).filter(feature => feature.manifest?.tools?.some(ownsAction))
+        if (owners.length > 1) throw new Error('[FEATURE_TOOL_ID_REQUIRED] 此动作属于多个插件，请使用工具目录中的完整工具名称')
+        const owner = owners[0]
+        if (owner) {
+          featureTool = (await this.availableFeatureTools()).find(tool => tool.pluginId === owner.id && ownsAction(tool))
+          if (!featureTool || !this.handlers.featureInvoke) throw new Error('[FEATURE_PLUGIN_UNAVAILABLE] 此应用功能插件未启用，或本轮未开放此工具')
+        }
+      }
+      if (featureTool) body.action = featureTool.name.slice('modmind_'.length)
+      if (!featureTool && ['image_studio_info', 'image_generate', 'image_perfect_pixel', 'image_remove_background'].includes(body.action ?? '') && !await imageCapabilityAvailable(this.handlers)) throw new Error('[FEATURE_PLUGIN_UNAVAILABLE] 图像工坊应用功能插件未启用，请在设置的集成页面安装或启用后重试')
       if (this.readOnly && this.inspirationFeatures) {
         const required = requiredInspirationFeature(body.action ?? '', input)
-        const jarPrerequisite = body.action === 'research' && ['inspect', 'resource'].includes(String(input.operation))
+        const jarPrerequisite = (body.action === 'research' && ['inspect', 'resource'].includes(String(input.operation)) || body.action === 'decompile_query' && input.operation === 'inspect')
           && (this.inspirationFeatures.comparison || this.inspirationFeatures.compatibility)
         if (required && !this.inspirationFeatures[required] && !jarPrerequisite) {
           throw new Error(`[USER_DISABLED_TOOL] 用户主动禁止了「${INSPIRATION_FEATURES.find(item => item.id === required)!.label}」（未勾选）。这不是工具掉线、未安装或审批故障，不要重试或自行修复。请先在「分析功能」中勾选，然后重新发送。不得通过其他工具绕过。`)
@@ -2296,7 +2395,7 @@ export class ModMindBridge {
       if (this.readOnly && body.action && (isReadOnlyActionDenied(body.action, this.inspirationFeatures) || body.action.startsWith('test_') || body.action === 'creation_context' && !['state', 'read'].includes(String(input.operation)))) {
         throw new Error(`只读灵感台禁止调用 ${body.action}，请改用读取类工具完成分析`)
       }
-      if (body.action && REVIEWED_ACTIONS.has(body.action) && this.handlers.reviewAction) {
+      if (body.action && (REVIEWED_ACTIONS.has(body.action) || featureTool && featureTool.permission !== 'read') && this.handlers.reviewAction) {
         const decision = await this.handlers.reviewAction(body.action, input)
         if (!decision.approved) {
           const denials = (this.reviewDenials.get(body.action) ?? 0) + 1
@@ -2304,6 +2403,11 @@ export class ModMindBridge {
           throw new Error(`AI Review denied ${body.action}: ${decision.feedback || 'operation requires revision'}. ${denials >= 3 ? 'Stop this blocked operation and report the remaining work to the user.' : 'Use a materially different, permitted safer alternative only; stop if none exists. Do not disguise or repeat the denied operation.'} This is an explicit safety denial, not an approval service failure. YOLO does not remove ModMind safety protections.`)
         }
         this.reviewDenials.delete(body.action)
+      }
+      if (featureTool) {
+        const value = await this.handlers.featureInvoke!(featureTool.pluginId, featureTool.action, input, { projectPath: this.project.path, readOnly: this.readOnly, surface: this.readOnly ? 'inspiration' : 'workbench', allowInspirationOutput: Boolean(featureTool.inspirationOutput && this.readOnly && this.inspirationFeatures?.imageGeneration) })
+        this.handlers.toolCalled?.(featureTool.action)
+        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return
       }
       let value: unknown
       switch (body.action) {
@@ -2379,7 +2483,7 @@ export class ModMindBridge {
         case 'project_setup': {
           if (!this.handlers.projectSetup) throw new Error('当前会话不提供项目创建工具')
           value = await this.handlers.projectSetup(input)
-          await fs.writeFile(path.join(this.directory, 'agent-context.md'), externalAgentContextText(this.project), 'utf8')
+          await fs.writeFile(path.join(this.directory, 'agent-context.md'), await this.contextText(), 'utf8')
           break
         }
         case 'read_project_file': {
@@ -2416,10 +2520,10 @@ export class ModMindBridge {
           value = await this.handlers.applyEdits(edits); break
         }
         case 'update_todo': value = await this.handlers.updateTodo(Array.isArray(input.tasks) ? input.tasks : []); break
-        case 'mappings_search': value = await this.handlers.mappingsSearch(String(input.query ?? ''), Number(input.limit ?? 20)); break
-        case 'mappings_class': value = await this.handlers.mappingsClass(String(input.className ?? ''), typeof input.memberQuery === 'string' ? input.memberQuery : undefined); break
-        case 'dependency_search': value = await this.handlers.dependencySearch(String(input.query ?? ''), Number(input.offset ?? 0)); break
-        case 'dependency_install': value = await this.handlers.dependencyInstall(String(input.projectId ?? ''), typeof input.versionId === 'string' ? input.versionId : undefined); break
+        case 'mappings_search': value = await this.featureHandler('mappingsSearch')(String(input.query ?? ''), Number(input.limit ?? 20)); break
+        case 'mappings_class': value = await this.featureHandler('mappingsClass')(String(input.className ?? ''), typeof input.memberQuery === 'string' ? input.memberQuery : undefined); break
+        case 'dependency_search': value = await this.featureHandler('dependencySearch')(String(input.query ?? ''), Number(input.offset ?? 0)); break
+        case 'dependency_install': value = await this.featureHandler('dependencyInstall')(String(input.projectId ?? ''), typeof input.versionId === 'string' ? input.versionId : undefined); break
         case 'maven_dependency_install': {
           if (!this.handlers.mavenDependencyInstall) throw new Error('managed Maven dependency installation is unavailable')
           value = await this.handlers.mavenDependencyInstall(input)
@@ -2445,9 +2549,9 @@ export class ModMindBridge {
           value = await this.handlers.addonLinkProject(String(input.projectPath ?? ''))
           break
         }
-        case 'content_validate': value = await this.handlers.contentValidate(); break
+        case 'content_validate': value = await this.featureHandler('contentValidate')(); break
         case 'test_matrix': value = await this.handlers.testMatrix(Array.isArray(input.targets) ? input.targets.map(String) : []); break
-        case 'release_preflight': value = await this.handlers.releasePreflight(); break
+        case 'release_preflight': value = await this.featureHandler('releasePreflight')(); break
         case 'build_project': value = await this.handlers.build(); break
         case 'test_minecraft': value = await this.handlers.testMinecraft(); break
         case 'test_rendered': {
@@ -2539,7 +2643,7 @@ export class ModMindBridge {
           value = await this.handlers.modpackRunServerScenario(input)
           break
         }
-        case 'blockbench_actions': value = await this.handlers.blockbenchActions(
+        case 'blockbench_actions': value = await this.featureHandler('blockbenchActions')(
           Array.isArray(input.actions) ? input.actions : [],
           typeof input.expectedRevision === 'string' ? input.expectedRevision : undefined
         ); break
@@ -2944,13 +3048,13 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
   const bridge = new Proxy(options.bridge, {
     get(target, property, receiver) {
       const handler = Reflect.get(target, property, receiver)
-      if (typeof handler !== 'function' || property === 'toolCalled') return handler
+      if (typeof handler !== 'function' || property === 'toolCalled' || property === 'imageStudioAvailable') return handler
       return (...args: unknown[]) => {
         throwIfAborted(attemptSignal, '线路正在切换，暂不接受新的工具调用')
         const result = Promise.resolve().then(() => handler.apply(target, args))
         pendingTools.add(result)
         void result.then(value => {
-          if (property !== 'reviewAction') {
+          if (!['reviewAction', 'featureCatalog', 'featureTools'].includes(String(property))) {
             try {
               const receipt = JSON.stringify({ action: property, input: args, result: value }, (_key, entry) =>
                 typeof entry === 'string' && entry.length > 4_000 ? `${entry.slice(0, 4_000)} [large value omitted; operation already completed]` : entry)
@@ -3267,13 +3371,22 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
     : ''
   // Keep routing available on ordinary follow-ups, including existing native
   // sessions. Read-only boundaries also apply to resumed and retry-only turns.
+  const imageStudioAvailable = await imageCapabilityAvailable(options.bridge)
+  const catalog = await options.bridge.featureCatalog?.() ?? []
+  const toolchainPrompt = options.bridge.featureCatalog ? await featurePluginTurnPrompt({
+    directory: path.join(options.project.path, options.project.toolDataDirectory ?? '.modmind', 'external-agents'),
+    scope: options.sessionScope ?? 'workspace', surface: options.readOnly ? 'inspiration' : 'workbench', catalog,
+    tools: await bridge.availableFeatureTools(), selections: options.readOnly ? options.inspirationFeatures : options.workbenchFeatures,
+    installationMode: options.bridge.featureInstallMode ?? 'manual'
+  }) : ''
+  options = { ...options, toolchainPrompt }
   const skillInstructions = options.readOnly || options.retryOnly
     ? ''
-    : `${workbenchSkillPrompt(path.join(path.dirname(contextPath), 'skills'), options.project)}\n\n`
+    : `${workbenchSkillPrompt(path.join(path.dirname(contextPath), 'skills'), options.project, imageStudioAvailable)}\n\n`
   const taskPrompt = options.retryOnly
     ? `${externalAgentRetryPrompt()}${readOnlyInstruction}`
     : `${systemInstructions}${skillInstructions}${effectivePrompt}${continuationInstruction}\n\nThis is a trusted local-agent session. Project context and workflows are available at ${contextPath.replaceAll('\\', '/')}. Write user-facing responses in Simplified Chinese unless the user requests another language.${readOnlyInstruction}`
-  const identityPrompt = [options.kind === 'codex' ? MCP_PROBE_INSTRUCTIONS : '', agentIdentityPrompt(options), PROJECT_REPLY_IMAGES_PROMPT, PROJECT_REPLY_MODELS_PROMPT, options.inspirationFeatures ? inspirationFeaturePrompt(options.inspirationFeatures) : '', workbenchFeaturePrompt(options.workbenchFeatures), options.readOnly ? '' : agentApprovalPrompt(options.approvalMode)].filter(Boolean).join('\n\n')
+  const identityPrompt = [toolchainPrompt, imageStudioAvailable ? '' : 'ModMind 提供可安装的图像工坊插件，用于 AI 生图、图片处理和参考图制作；当前插件未启用，安装或启用后即可使用。旧对话、旧工具记录和之前勾选的 AI 生图不代表当前能力。仅能读取已有项目图片；需要生图时建议安装或启用图像工坊，不自行搜索本地生图软件。', options.kind === 'codex' ? MCP_PROBE_INSTRUCTIONS : '', agentIdentityPrompt(options), PROJECT_REPLY_IMAGES_PROMPT, PROJECT_REPLY_MODELS_PROMPT, options.inspirationFeatures ? inspirationFeaturePrompt(options.inspirationFeatures, imageStudioAvailable) : '', workbenchFeaturePrompt(options.workbenchFeatures, imageStudioAvailable), options.readOnly ? '' : agentApprovalPrompt(options.approvalMode)].filter(Boolean).join('\n\n')
   const prompt = `${AGENT_PROTECTION_INSTRUCTIONS}\n\n${identityPrompt}\n\n${taskPrompt}`
   if (options.kind === 'codex' && useCodexAppServer(executable, options.forceCodexAppServer === true)) {
     try {

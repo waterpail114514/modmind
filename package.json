@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.14",
+  "version": "1.5.0-plugintest",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -35,39 +35,43 @@
     "theme:check": "node scripts/generate-theme-tokens.mjs --check && node scripts/check-theme-colors.mjs && npm run plugins:check",
     "plugins:generate": "node scripts/generate-plugin-templates.mjs",
     "plugins:check": "node scripts/generate-plugin-templates.mjs --check && node scripts/check-plugin-ui.mjs",
-    "plugins:smoke": "node scripts/plugin-ui-smoke.mjs"
+    "plugins:smoke": "node scripts/plugin-ui-smoke.mjs",
+    "features:build": "node scripts/build-feature-plugins.mjs",
+    "features:preview": "node scripts/feature-plugins-live-qa.mjs --preview",
+    "features:smoke": "node scripts/feature-plugins-smoke.mjs",
+    "dist:plugintest": "node scripts/dist-plugintest.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@tonejs/midi": "^2.0.28",
     "@types/marked": "^6.0.0",
     "@xmcl/asm": "1.0.1",
     "@xmcl/core": "^2.15.1",
     "@xmcl/installer": "^6.1.2",
-    "@xyflow/react": "^12.11.2",
     "7zip-bin": "^5.2.0",
+    "ajv": "^8.20.0",
     "cheerio": "^1.1.2",
     "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1",
     "fast-xml-parser": "^5.2.5",
-    "ffmpeg-static": "^5.3.0",
-    "ftbq-nbt": "^1.4.1",
     "fzstd": "^0.1.1",
-    "jfxr": "^0.13.0",
-    "json5": "^2.2.3",
     "pdfjs-dist": "4.10.38",
     "proper-lockfile": "^4.1.2",
-    "react-virtuoso": "^4.18.13",
-    "react-zoom-pan-pinch": "4.2.0",
     "sharp": "^0.33.5",
     "smol-toml": "^1.8.0",
-    "three": "^0.180.0",
-    "tone": "^15.1.22",
     "undici": "7.2.3",
     "yauzl": "^2.10.0"
   },
   "devDependencies": {
+    "@tonejs/midi": "^2.0.28",
+    "ffmpeg-static": "^5.3.0",
+    "ftbq-nbt": "^1.4.1",
+    "jfxr": "^0.13.0",
+    "json5": "^2.2.3",
+    "react-virtuoso": "^4.18.13",
+    "react-zoom-pan-pinch": "4.2.0",
+    "three": "^0.180.0",
+    "tone": "^15.1.22",
     "@monaco-editor/react": "^4.7.0",
     "@types/node": "^22.10.2",
     "@types/proper-lockfile": "^4.1.4",
@@ -76,6 +80,7 @@
     "@types/three": "^0.180.0",
     "@types/yauzl": "^2.10.3",
     "@vitejs/plugin-react": "^4.3.4",
+    "@xyflow/react": "^12.11.2",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
@@ -120,7 +125,6 @@
       "!android-twa/**"
     ],
     "asarUnpack": [
-      "node_modules/ffmpeg-static/**",
       "node_modules/sharp/**",
       "node_modules/@img/**",
       "node_modules/@napi-rs/**",
@@ -130,13 +134,6 @@
       {
         "from": "resources/reinstall-app.ps1",
         "to": "reinstall-app.ps1"
-      },
-      {
-        "from": "vendor/blockbench",
-        "to": "blockbench",
-        "filter": [
-          "**/*"
-        ]
       },
       {
         "from": "resources/icon.png",
@@ -165,17 +162,6 @@
           "LICENSE",
           "UPSTREAM.md",
           "checksum.txt"
-        ]
-      },
-      {
-        "from": "resources/decompile-tools",
-        "to": "decompile-tools",
-        "filter": [
-          "*.jar",
-          "LICENSE",
-          "LICENSE-bsd-asm.txt",
-          "UPSTREAM.md",
-          "checksums.txt"
         ]
       },
       {

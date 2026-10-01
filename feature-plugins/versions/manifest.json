@@ -1,0 +1,28 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "versions",
+  "name": "版本记录",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "snapshots",
+      "label": "版本记录",
+      "component": "snapshots",
+      "icon": "History",
+      "group": "项目",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "versions",
+      "name": "版本记录",
+      "description": "创建、查看、恢复和删除项目快照，管理 Git 版本以及 Java 与服务端插件迁移。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

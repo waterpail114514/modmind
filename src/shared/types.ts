@@ -1269,11 +1269,12 @@ export type SidebarViewId =
   | 'snapshots'
   | 'production'
   | 'settings'
+  | 'features'
   | 'plugins'
   | `plugin:${string}`
   | 'decompile'
 
-export type DetachedWindowTarget = SidebarViewId | `group:${string}`
+export type DetachedWindowTarget = string
 
 export interface DetachedWindowState {
   alwaysOnTop: boolean
@@ -1624,6 +1625,7 @@ export interface ModMindApi {
     createModuleFromJar: (input: { sourceSha256: string; moduleName: string; termsAcknowledgement: { termsVersion: string; acknowledged: true; origin?: 'user-workspace' | 'ai-action' } }) => Promise<import('./decompileModuleExport').CreatedModuleFromDecompiled>
     createProjectFromJar: (input: import('./decompileModuleExport').CreateProjectFromDecompiledInput) => Promise<ProjectInfo | null>
   }
+  featurePlugins: import('./featurePlugins').FeaturePluginApi
   imageStudio: {
     getSettings: () => Promise<ImageStudioSettings>
     saveSettings: (settings: ImageStudioSettingsInput) => Promise<ImageStudioSettings>

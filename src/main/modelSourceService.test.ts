@@ -3,7 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import sharp from 'sharp'
 import { afterEach, expect, it } from 'vitest'
-import { readYsmSource } from './modelSourceService'
+import { readYsmSource } from "../../feature-plugins/model-studio/src/main/modelSourceService"
 import { createStoredZip } from './bedrockAddon'
 
 const roots: string[] = []

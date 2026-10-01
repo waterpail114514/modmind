@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { compileAssetIntent } from './assetIntentCompiler'
-import { validateAction } from './blockbenchBridge'
+import { compileAssetIntent } from "../../feature-plugins/model-studio/src/main/assetIntentCompiler"
+import { validateAction } from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
 
 const ravenIntent = {
   version: 1,

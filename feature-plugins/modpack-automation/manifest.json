@@ -1,0 +1,28 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "modpack-automation",
+  "name": "依赖与优化",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "modpack-automation",
+      "label": "依赖与优化",
+      "component": "modpack-automation",
+      "icon": "Gauge",
+      "group": "运行",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "modpack-automation",
+      "name": "依赖与优化",
+      "description": "生成并安装 Mod 方案，审计锁定清单以及选择和应用优化档。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

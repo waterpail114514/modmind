@@ -1,0 +1,4766 @@
+{
+  "actions": [
+    {
+      "id": "blockbench:show",
+      "handler": "blockbench:show",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:hide",
+      "handler": "blockbench:hide",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:getState",
+      "handler": "blockbench:getState",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:openProject",
+      "handler": "blockbench:openProject",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:openYsm",
+      "handler": "blockbench:openYsm",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:saveProject",
+      "handler": "blockbench:saveProject",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:setTheme",
+      "handler": "blockbench:setTheme",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:runAction",
+      "handler": "blockbench:runAction",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:execute",
+      "handler": "blockbench:execute",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:executeActions",
+      "handler": "blockbench:executeActions",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:projectState",
+      "handler": "blockbench:projectState",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:validate",
+      "handler": "blockbench:validate",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:captureViews",
+      "handler": "blockbench:captureViews",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:setAssetMetadata",
+      "handler": "blockbench:setAssetMetadata",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:saveAssetBundle",
+      "handler": "blockbench:saveAssetBundle",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:history",
+      "handler": "blockbench:history",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:createCheckpoint",
+      "handler": "blockbench:createCheckpoint",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench:restoreHistory",
+      "handler": "blockbench:restoreHistory",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-intent:compile",
+      "handler": "asset-intent:compile",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-intent:preview",
+      "handler": "asset-intent:preview",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-intent:apply",
+      "handler": "asset-intent:apply",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-refinement:compile",
+      "handler": "asset-refinement:compile",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-refinement:preview",
+      "handler": "asset-refinement:preview",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-refinement:apply",
+      "handler": "asset-refinement:apply",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "advanced-asset:compile",
+      "handler": "advanced-asset:compile",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "advanced-asset:preview",
+      "handler": "advanced-asset:preview",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 4
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "advanced-asset:apply",
+      "handler": "advanced-asset:apply",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reference-asset:compile",
+      "handler": "reference-asset:compile",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reference-asset:preview",
+      "handler": "reference-asset:preview",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "reference-asset:apply",
+      "handler": "reference-asset:apply",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "asset-visual-review:current",
+      "handler": "asset-visual-review:current",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "blockbench_project_state",
+      "handler": "blockbench_project_state",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "id": "blockbench_validate",
+      "handler": "blockbench_validate",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "id": "blockbench_capture_views",
+      "handler": "blockbench_capture_views",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "initial",
+                "top",
+                "bottom",
+                "south",
+                "north",
+                "east",
+                "west",
+                "isometric_right",
+                "isometric_left",
+                "true_isometric_right",
+                "true_isometric_left"
+              ]
+            }
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 1024
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 1024
+          }
+        }
+      }
+    },
+    {
+      "id": "blockbench_actions",
+      "handler": "blockbench_actions",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actions"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "Revision returned by modmind_blockbench_project_state. Include it when editing an existing project so concurrent manual changes are not overwritten."
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/$defs/action"
+            }
+          }
+        },
+        "$defs": {
+          "vector3": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number"
+            }
+          },
+          "vector2": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "type": "number"
+            }
+          },
+          "face": {
+            "type": "string",
+            "enum": [
+              "north",
+              "east",
+              "south",
+              "west",
+              "up",
+              "down"
+            ]
+          },
+          "meshFace": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "vertices"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "vertices": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 64,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "uv": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              },
+              "textureUuid": {
+                "type": "string"
+              },
+              "textureName": {
+                "type": "string"
+              }
+            }
+          },
+          "action": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "format",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "new-model"
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "skin",
+                      "free"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name",
+                  "from",
+                  "to"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-cube"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "to": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "inflate": {
+                    "type": "number"
+                  },
+                  "textureUuid": {
+                    "type": "string"
+                  },
+                  "textureName": {
+                    "type": "string"
+                  },
+                  "parentGroupUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupName": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-group"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "parentGroupUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupName": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "update-cube"
+                  },
+                  "cubeUuid": {
+                    "type": "string"
+                  },
+                  "cubeName": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "to": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "inflate": {
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "update-group"
+                  },
+                  "groupUuid": {
+                    "type": "string"
+                  },
+                  "groupName": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name",
+                  "vertices",
+                  "faces"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-mesh"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "vertices": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/$defs/vector3"
+                    }
+                  },
+                  "faces": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8192,
+                    "items": {
+                      "$ref": "#/$defs/meshFace"
+                    }
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "shading": {
+                    "type": "string",
+                    "enum": [
+                      "flat",
+                      "smooth"
+                    ]
+                  },
+                  "parentGroupUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupName": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "update-mesh"
+                  },
+                  "meshUuid": {
+                    "type": "string"
+                  },
+                  "meshName": {
+                    "type": "string"
+                  },
+                  "vertices": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/$defs/vector3"
+                    }
+                  },
+                  "faces": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8192,
+                    "items": {
+                      "$ref": "#/$defs/meshFace"
+                    }
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "shading": {
+                    "type": "string",
+                    "enum": [
+                      "flat",
+                      "smooth"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "elementUuids"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "delete-elements"
+                  },
+                  "elementUuids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "elementUuid",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "duplicate-element"
+                  },
+                  "elementUuid": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "offset": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "parentGroupUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupName": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "elementUuid",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "rename-element"
+                  },
+                  "elementUuid": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "elementUuid"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "reparent-element"
+                  },
+                  "elementUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupName": {
+                    "type": "string"
+                  },
+                  "root": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "faces"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "update-cube-faces"
+                  },
+                  "cubeUuid": {
+                    "type": "string"
+                  },
+                  "cubeName": {
+                    "type": "string"
+                  },
+                  "faces": {
+                    "type": "object"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "paint-texture"
+                  },
+                  "textureUuid": {
+                    "type": "string"
+                  },
+                  "textureName": {
+                    "type": "string"
+                  },
+                  "rectangles": {
+                    "type": "array",
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "strokes": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "paletteMap": {
+                    "type": "object"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "auto-unwrap-mesh"
+                  },
+                  "meshUuid": {
+                    "type": "string"
+                  },
+                  "meshName": {
+                    "type": "string"
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "padding": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 64
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-armature"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-bone"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "armatureUuid": {
+                    "type": "string"
+                  },
+                  "armatureName": {
+                    "type": "string"
+                  },
+                  "parentBoneUuid": {
+                    "type": "string"
+                  },
+                  "parentBoneName": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "rotation": {
+                    "$ref": "#/$defs/vector3"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "weights"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "set-vertex-weights"
+                  },
+                  "meshUuid": {
+                    "type": "string"
+                  },
+                  "meshName": {
+                    "type": "string"
+                  },
+                  "weights": {
+                    "type": "object"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name",
+                  "position"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-locator"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "position": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "parentGroupUuid": {
+                    "type": "string"
+                  },
+                  "parentGroupName": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name",
+                  "position"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-ik-target"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "position": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "targetGroupUuid": {
+                    "type": "string"
+                  },
+                  "targetGroupName": {
+                    "type": "string"
+                  },
+                  "sourceGroupUuid": {
+                    "type": "string"
+                  },
+                  "sourceGroupName": {
+                    "type": "string"
+                  },
+                  "lockRotation": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name",
+                  "length"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-animation"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "length": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "loop": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "loop",
+                      "hold"
+                    ]
+                  },
+                  "snapping": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 120
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "channel",
+                  "time",
+                  "value"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "add-keyframe"
+                  },
+                  "animationUuid": {
+                    "type": "string"
+                  },
+                  "animationName": {
+                    "type": "string"
+                  },
+                  "groupUuid": {
+                    "type": "string"
+                  },
+                  "groupName": {
+                    "type": "string"
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "rotation",
+                      "position",
+                      "scale"
+                    ]
+                  },
+                  "time": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "value": {
+                    "$ref": "#/$defs/vector3"
+                  },
+                  "interpolation": {
+                    "type": "string",
+                    "enum": [
+                      "linear",
+                      "catmullrom",
+                      "step",
+                      "bezier"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name",
+                  "width",
+                  "height"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "create-texture"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "dataUrl": {
+                    "type": "string"
+                  },
+                  "fill": {
+                    "type": "string"
+                  },
+                  "rectangles": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "x",
+                        "y",
+                        "width",
+                        "height",
+                        "color"
+                      ],
+                      "properties": {
+                        "x": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "y": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "width": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "height": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "color": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "set-cube-texture"
+                  },
+                  "cubeUuid": {
+                    "type": "string"
+                  },
+                  "cubeName": {
+                    "type": "string"
+                  },
+                  "textureUuid": {
+                    "type": "string"
+                  },
+                  "textureName": {
+                    "type": "string"
+                  },
+                  "faces": {
+                    "type": "array",
+                    "maxItems": 6,
+                    "items": {
+                      "$ref": "#/$defs/face"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "relativePath"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "save-project"
+                  },
+                  "relativePath": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "relativePath"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "export-model"
+                  },
+                  "relativePath": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "relativePath"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "save-texture"
+                  },
+                  "relativePath": {
+                    "type": "string"
+                  },
+                  "textureUuid": {
+                    "type": "string"
+                  },
+                  "textureName": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "command"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "run-command"
+                  },
+                  "command": {
+                    "type": "string",
+                    "enum": [
+                      "undo",
+                      "redo",
+                      "frame-all",
+                      "toggle-grid",
+                      "toggle-animate",
+                      "mode-edit",
+                      "mode-paint",
+                      "mode-animate",
+                      "open-project",
+                      "save-project-dialog"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "blockbench_history",
+      "handler": "blockbench_history",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "id": "blockbench_checkpoint",
+      "handler": "blockbench_checkpoint",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      }
+    },
+    {
+      "id": "blockbench_restore_history",
+      "handler": "blockbench_restore_history",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_compile_intent",
+      "handler": "asset_compile_intent",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "metadata",
+          "model"
+        ],
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "quality": {
+                "type": "string",
+                "enum": [
+                  "essential",
+                  "hero"
+                ]
+              },
+              "domain": {
+                "type": "string",
+                "enum": [
+                  "organism",
+                  "item",
+                  "block",
+                  "mechanism"
+                ]
+              }
+            }
+          },
+          "model": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "format",
+              "parts"
+            ],
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "java_block",
+                  "modded_entity",
+                  "bedrock_block",
+                  "bedrock",
+                  "free"
+                ]
+              },
+              "textureWidth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1024
+              },
+              "textureHeight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1024
+              },
+              "symmetry": {
+                "type": "string",
+                "enum": [
+                  "bilateral",
+                  "asymmetric"
+                ]
+              },
+              "parts": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "kind",
+                    "size"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "body",
+                        "head",
+                        "limb",
+                        "tail",
+                        "wing",
+                        "fin",
+                        "detail"
+                      ]
+                    },
+                    "parent": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "center",
+                        "left",
+                        "right"
+                      ]
+                    },
+                    "size": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "offset": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "rotation": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "inflate": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "appearance": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "palette": {
+                "type": "string",
+                "enum": [
+                  "natural",
+                  "ember",
+                  "ocean",
+                  "noir",
+                  "metal",
+                  "gold"
+                ]
+              },
+              "texture": {
+                "type": "string",
+                "enum": [
+                  "quiet",
+                  "mottle",
+                  "grain",
+                  "brushed",
+                  "weathered"
+                ]
+              },
+              "seed": {
+                "type": "string",
+                "maxLength": 128
+              }
+            }
+          },
+          "animation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "length",
+              "tracks"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "length": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 3600
+              },
+              "loop": {
+                "type": "string",
+                "enum": [
+                  "once",
+                  "loop",
+                  "hold"
+                ]
+              },
+              "tracks": {
+                "type": "array",
+                "maxItems": 120,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "part",
+                    "channel",
+                    "keyframes"
+                  ],
+                  "properties": {
+                    "part": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "rotation",
+                        "position",
+                        "scale"
+                      ]
+                    },
+                    "keyframes": {
+                      "type": "array",
+                      "maxItems": 120,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "time",
+                          "value"
+                        ],
+                        "properties": {
+                          "time": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 3600
+                          },
+                          "value": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                              "type": "number"
+                            }
+                          },
+                          "interpolation": {
+                            "type": "string",
+                            "enum": [
+                              "linear",
+                              "catmullrom",
+                              "step",
+                              "bezier"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_preview_intent",
+      "handler": "asset_preview_intent",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "capture": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "views": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 6,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "initial",
+                    "top",
+                    "bottom",
+                    "south",
+                    "north",
+                    "east",
+                    "west",
+                    "isometric_right",
+                    "isometric_left",
+                    "true_isometric_right",
+                    "true_isometric_left"
+                  ]
+                }
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 128,
+                "maximum": 1024
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 128,
+                "maximum": 1024
+              }
+            }
+          },
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "model"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "essential",
+                      "hero"
+                    ]
+                  },
+                  "domain": {
+                    "type": "string",
+                    "enum": [
+                      "organism",
+                      "item",
+                      "block",
+                      "mechanism"
+                    ]
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "format",
+                  "parts"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "symmetry": {
+                    "type": "string",
+                    "enum": [
+                      "bilateral",
+                      "asymmetric"
+                    ]
+                  },
+                  "parts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "kind",
+                        "size"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "body",
+                            "head",
+                            "limb",
+                            "tail",
+                            "wing",
+                            "fin",
+                            "detail"
+                          ]
+                        },
+                        "parent": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "side": {
+                          "type": "string",
+                          "enum": [
+                            "center",
+                            "left",
+                            "right"
+                          ]
+                        },
+                        "size": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "offset": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "rotation": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "inflate": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "appearance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "palette": {
+                    "type": "string",
+                    "enum": [
+                      "natural",
+                      "ember",
+                      "ocean",
+                      "noir",
+                      "metal",
+                      "gold"
+                    ]
+                  },
+                  "texture": {
+                    "type": "string",
+                    "enum": [
+                      "quiet",
+                      "mottle",
+                      "grain",
+                      "brushed",
+                      "weathered"
+                    ]
+                  },
+                  "seed": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                }
+              },
+              "animation": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "length",
+                  "tracks"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "length": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 3600
+                  },
+                  "loop": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "loop",
+                      "hold"
+                    ]
+                  },
+                  "tracks": {
+                    "type": "array",
+                    "maxItems": 120,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "part",
+                        "channel",
+                        "keyframes"
+                      ],
+                      "properties": {
+                        "part": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": [
+                            "rotation",
+                            "position",
+                            "scale"
+                          ]
+                        },
+                        "keyframes": {
+                          "type": "array",
+                          "maxItems": 120,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "time",
+                              "value"
+                            ],
+                            "properties": {
+                              "time": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 3600
+                              },
+                              "value": {
+                                "type": "array",
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "items": {
+                                  "type": "number"
+                                }
+                              },
+                              "interpolation": {
+                                "type": "string",
+                                "enum": [
+                                  "linear",
+                                  "catmullrom",
+                                  "step",
+                                  "bezier"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_apply_intent",
+      "handler": "asset_apply_intent",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "model"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "essential",
+                      "hero"
+                    ]
+                  },
+                  "domain": {
+                    "type": "string",
+                    "enum": [
+                      "organism",
+                      "item",
+                      "block",
+                      "mechanism"
+                    ]
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "format",
+                  "parts"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "symmetry": {
+                    "type": "string",
+                    "enum": [
+                      "bilateral",
+                      "asymmetric"
+                    ]
+                  },
+                  "parts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "kind",
+                        "size"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "body",
+                            "head",
+                            "limb",
+                            "tail",
+                            "wing",
+                            "fin",
+                            "detail"
+                          ]
+                        },
+                        "parent": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "side": {
+                          "type": "string",
+                          "enum": [
+                            "center",
+                            "left",
+                            "right"
+                          ]
+                        },
+                        "size": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "offset": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "rotation": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "inflate": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "appearance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "palette": {
+                    "type": "string",
+                    "enum": [
+                      "natural",
+                      "ember",
+                      "ocean",
+                      "noir",
+                      "metal",
+                      "gold"
+                    ]
+                  },
+                  "texture": {
+                    "type": "string",
+                    "enum": [
+                      "quiet",
+                      "mottle",
+                      "grain",
+                      "brushed",
+                      "weathered"
+                    ]
+                  },
+                  "seed": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                }
+              },
+              "animation": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "length",
+                  "tracks"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "length": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 3600
+                  },
+                  "loop": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "loop",
+                      "hold"
+                    ]
+                  },
+                  "tracks": {
+                    "type": "array",
+                    "maxItems": 120,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "part",
+                        "channel",
+                        "keyframes"
+                      ],
+                      "properties": {
+                        "part": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": [
+                            "rotation",
+                            "position",
+                            "scale"
+                          ]
+                        },
+                        "keyframes": {
+                          "type": "array",
+                          "maxItems": 120,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "time",
+                              "value"
+                            ],
+                            "properties": {
+                              "time": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 3600
+                              },
+                              "value": {
+                                "type": "array",
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "items": {
+                                  "type": "number"
+                                }
+                              },
+                              "interpolation": {
+                                "type": "string",
+                                "enum": [
+                                  "linear",
+                                  "catmullrom",
+                                  "step",
+                                  "bezier"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_compile_refinement",
+      "handler": "asset_compile_refinement",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "metadata",
+          "parts"
+        ],
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "sourceIntentHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          },
+          "parts": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "size": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "offset": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "rotation": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "inflate": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "animation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "length",
+              "tracks"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "length": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 3600
+              },
+              "loop": {
+                "type": "string",
+                "enum": [
+                  "once",
+                  "loop",
+                  "hold"
+                ]
+              },
+              "tracks": {
+                "type": "array",
+                "maxItems": 120,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "part",
+                    "channel",
+                    "keyframes"
+                  ],
+                  "properties": {
+                    "part": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "rotation",
+                        "position",
+                        "scale"
+                      ]
+                    },
+                    "keyframes": {
+                      "type": "array",
+                      "maxItems": 120,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "time",
+                          "value"
+                        ],
+                        "properties": {
+                          "time": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 3600
+                          },
+                          "value": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                              "type": "number"
+                            }
+                          },
+                          "interpolation": {
+                            "type": "string",
+                            "enum": [
+                              "linear",
+                              "catmullrom",
+                              "step",
+                              "bezier"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_preview_refinement",
+      "handler": "asset_preview_refinement",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "refinement"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "capture": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "views": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 6,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "initial",
+                    "top",
+                    "bottom",
+                    "south",
+                    "north",
+                    "east",
+                    "west",
+                    "isometric_right",
+                    "isometric_left",
+                    "true_isometric_right",
+                    "true_isometric_left"
+                  ]
+                }
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 128,
+                "maximum": 1024
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 128,
+                "maximum": 1024
+              }
+            }
+          },
+          "refinement": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "parts"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "sourceIntentHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                }
+              },
+              "parts": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "size": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "offset": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "rotation": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "inflate": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "animation": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "length",
+                  "tracks"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "length": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 3600
+                  },
+                  "loop": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "loop",
+                      "hold"
+                    ]
+                  },
+                  "tracks": {
+                    "type": "array",
+                    "maxItems": 120,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "part",
+                        "channel",
+                        "keyframes"
+                      ],
+                      "properties": {
+                        "part": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": [
+                            "rotation",
+                            "position",
+                            "scale"
+                          ]
+                        },
+                        "keyframes": {
+                          "type": "array",
+                          "maxItems": 120,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "time",
+                              "value"
+                            ],
+                            "properties": {
+                              "time": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 3600
+                              },
+                              "value": {
+                                "type": "array",
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "items": {
+                                  "type": "number"
+                                }
+                              },
+                              "interpolation": {
+                                "type": "string",
+                                "enum": [
+                                  "linear",
+                                  "catmullrom",
+                                  "step",
+                                  "bezier"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_apply_refinement",
+      "handler": "asset_apply_refinement",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "refinement"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "refinement": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "parts"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "sourceIntentHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                }
+              },
+              "parts": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "size": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "offset": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "rotation": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "type": "number"
+                      }
+                    },
+                    "inflate": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "animation": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "length",
+                  "tracks"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "length": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 3600
+                  },
+                  "loop": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "loop",
+                      "hold"
+                    ]
+                  },
+                  "tracks": {
+                    "type": "array",
+                    "maxItems": 120,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "part",
+                        "channel",
+                        "keyframes"
+                      ],
+                      "properties": {
+                        "part": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": [
+                            "rotation",
+                            "position",
+                            "scale"
+                          ]
+                        },
+                        "keyframes": {
+                          "type": "array",
+                          "maxItems": 120,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "time",
+                              "value"
+                            ],
+                            "properties": {
+                              "time": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 3600
+                              },
+                              "value": {
+                                "type": "array",
+                                "minItems": 3,
+                                "maxItems": 3,
+                                "items": {
+                                  "type": "number"
+                                }
+                              },
+                              "interpolation": {
+                                "type": "string",
+                                "enum": [
+                                  "linear",
+                                  "catmullrom",
+                                  "step",
+                                  "bezier"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_compile_advanced",
+      "handler": "asset_compile_advanced",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "program"
+        ],
+        "properties": {
+          "variantId": {
+            "type": "string"
+          },
+          "program": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "model"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "production",
+                      "hero"
+                    ]
+                  },
+                  "symmetry": {
+                    "type": "string",
+                    "enum": [
+                      "bilateral",
+                      "asymmetric"
+                    ]
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "primitives"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "skin",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "primitives": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "type"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "cube",
+                            "wedge",
+                            "cylinder",
+                            "sphere",
+                            "extrude",
+                            "tube"
+                          ]
+                        },
+                        "center": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "rotation": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "parent": {
+                          "type": "string"
+                        },
+                        "shading": {
+                          "type": "string",
+                          "enum": [
+                            "flat",
+                            "smooth"
+                          ]
+                        },
+                        "size": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "inflate": {
+                          "type": "number"
+                        },
+                        "radius": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "height": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "segments": {
+                          "type": "integer",
+                          "minimum": 3,
+                          "maximum": 64
+                        },
+                        "rings": {
+                          "type": "integer",
+                          "minimum": 2,
+                          "maximum": 32
+                        },
+                        "profile": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 128,
+                          "items": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "depth": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "path": {
+                          "type": "array",
+                          "minItems": 2,
+                          "maxItems": 64,
+                          "items": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "radialSegments": {
+                          "type": "integer",
+                          "minimum": 3,
+                          "maximum": 32
+                        },
+                        "curveSegments": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 16
+                        },
+                        "closed": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "texture": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "fill": {
+                    "type": "string"
+                  },
+                  "rectangles": {
+                    "type": "array",
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "strokes": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "rig": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "bones"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "bones": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "weights": {
+                    "type": "object"
+                  },
+                  "weightRules": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "locators": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "ik": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "animations": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "object"
+                }
+              },
+              "variants": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "scale": {
+                      "type": "number"
+                    },
+                    "accent": {
+                      "type": "string"
+                    },
+                    "primitiveOverrides": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_preview_advanced",
+      "handler": "asset_preview_advanced",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "program"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "capture": {
+            "type": "object"
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxIterations": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "targetScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          },
+          "program": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "model"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "production",
+                      "hero"
+                    ]
+                  },
+                  "symmetry": {
+                    "type": "string",
+                    "enum": [
+                      "bilateral",
+                      "asymmetric"
+                    ]
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "primitives"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "skin",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "primitives": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "type"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "cube",
+                            "wedge",
+                            "cylinder",
+                            "sphere",
+                            "extrude",
+                            "tube"
+                          ]
+                        },
+                        "center": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "rotation": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "parent": {
+                          "type": "string"
+                        },
+                        "shading": {
+                          "type": "string",
+                          "enum": [
+                            "flat",
+                            "smooth"
+                          ]
+                        },
+                        "size": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "inflate": {
+                          "type": "number"
+                        },
+                        "radius": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "height": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "segments": {
+                          "type": "integer",
+                          "minimum": 3,
+                          "maximum": 64
+                        },
+                        "rings": {
+                          "type": "integer",
+                          "minimum": 2,
+                          "maximum": 32
+                        },
+                        "profile": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 128,
+                          "items": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "depth": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "path": {
+                          "type": "array",
+                          "minItems": 2,
+                          "maxItems": 64,
+                          "items": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "radialSegments": {
+                          "type": "integer",
+                          "minimum": 3,
+                          "maximum": 32
+                        },
+                        "curveSegments": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 16
+                        },
+                        "closed": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "texture": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "fill": {
+                    "type": "string"
+                  },
+                  "rectangles": {
+                    "type": "array",
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "strokes": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "rig": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "bones"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "bones": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "weights": {
+                    "type": "object"
+                  },
+                  "weightRules": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "locators": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "ik": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "animations": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "object"
+                }
+              },
+              "variants": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "scale": {
+                      "type": "number"
+                    },
+                    "accent": {
+                      "type": "string"
+                    },
+                    "primitiveOverrides": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_apply_advanced",
+      "handler": "asset_apply_advanced",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "program"
+        ],
+        "properties": {
+          "variantId": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "program": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "model"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "production",
+                      "hero"
+                    ]
+                  },
+                  "symmetry": {
+                    "type": "string",
+                    "enum": [
+                      "bilateral",
+                      "asymmetric"
+                    ]
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "primitives"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "skin",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "primitives": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "type"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "cube",
+                            "wedge",
+                            "cylinder",
+                            "sphere",
+                            "extrude",
+                            "tube"
+                          ]
+                        },
+                        "center": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "rotation": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "parent": {
+                          "type": "string"
+                        },
+                        "shading": {
+                          "type": "string",
+                          "enum": [
+                            "flat",
+                            "smooth"
+                          ]
+                        },
+                        "size": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 3,
+                          "items": {
+                            "type": "number"
+                          }
+                        },
+                        "inflate": {
+                          "type": "number"
+                        },
+                        "radius": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "height": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "segments": {
+                          "type": "integer",
+                          "minimum": 3,
+                          "maximum": 64
+                        },
+                        "rings": {
+                          "type": "integer",
+                          "minimum": 2,
+                          "maximum": 32
+                        },
+                        "profile": {
+                          "type": "array",
+                          "minItems": 3,
+                          "maxItems": 128,
+                          "items": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "depth": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "path": {
+                          "type": "array",
+                          "minItems": 2,
+                          "maxItems": 64,
+                          "items": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "radialSegments": {
+                          "type": "integer",
+                          "minimum": 3,
+                          "maximum": 32
+                        },
+                        "curveSegments": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 16
+                        },
+                        "closed": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "texture": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "width": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "fill": {
+                    "type": "string"
+                  },
+                  "rectangles": {
+                    "type": "array",
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "strokes": {
+                    "type": "array",
+                    "maxItems": 256,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "rig": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "bones"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "bones": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "weights": {
+                    "type": "object"
+                  },
+                  "weightRules": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "locators": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "ik": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "animations": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "object"
+                }
+              },
+              "variants": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "scale": {
+                      "type": "number"
+                    },
+                    "accent": {
+                      "type": "string"
+                    },
+                    "primitiveOverrides": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_compile_reference",
+      "handler": "asset_compile_reference",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "metadata",
+          "image"
+        ],
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "quality": {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "production",
+                  "hero"
+                ]
+              }
+            }
+          },
+          "image": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "dataUrl"
+            ],
+            "properties": {
+              "dataUrl": {
+                "type": "string",
+                "maxLength": 11184832
+              },
+              "depth": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 256
+              },
+              "alphaThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "simplify": {
+                "type": "number"
+              },
+              "maxProfilePoints": {
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 128
+              }
+            }
+          },
+          "model": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "java_block",
+                  "modded_entity",
+                  "bedrock_block",
+                  "bedrock",
+                  "skin",
+                  "free"
+                ]
+              },
+              "textureWidth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1024
+              },
+              "textureHeight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1024
+              }
+            }
+          },
+          "rig": {
+            "type": "object"
+          },
+          "animations": {
+            "type": "array"
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_preview_reference",
+      "handler": "asset_preview_reference",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "program"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "capture": {
+            "type": "object"
+          },
+          "program": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "image"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "production",
+                      "hero"
+                    ]
+                  }
+                }
+              },
+              "image": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "dataUrl"
+                ],
+                "properties": {
+                  "dataUrl": {
+                    "type": "string",
+                    "maxLength": 11184832
+                  },
+                  "depth": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 256
+                  },
+                  "alphaThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "simplify": {
+                    "type": "number"
+                  },
+                  "maxProfilePoints": {
+                    "type": "integer",
+                    "minimum": 8,
+                    "maximum": 128
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "skin",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  }
+                }
+              },
+              "rig": {
+                "type": "object"
+              },
+              "animations": {
+                "type": "array"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_apply_reference",
+      "handler": "asset_apply_reference",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "program"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "program": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "metadata",
+              "image"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "production",
+                      "hero"
+                    ]
+                  }
+                }
+              },
+              "image": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "dataUrl"
+                ],
+                "properties": {
+                  "dataUrl": {
+                    "type": "string",
+                    "maxLength": 11184832
+                  },
+                  "depth": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 256
+                  },
+                  "alphaThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "simplify": {
+                    "type": "number"
+                  },
+                  "maxProfilePoints": {
+                    "type": "integer",
+                    "minimum": 8,
+                    "maximum": 128
+                  }
+                }
+              },
+              "model": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "java_block",
+                      "modded_entity",
+                      "bedrock_block",
+                      "bedrock",
+                      "skin",
+                      "free"
+                    ]
+                  },
+                  "textureWidth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  },
+                  "textureHeight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  }
+                }
+              },
+              "rig": {
+                "type": "object"
+              },
+              "animations": {
+                "type": "array"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "asset_visual_review",
+      "handler": "asset_visual_review",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "string"
+            }
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 1024
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 128,
+            "maximum": 1024
+          },
+          "referenceHeightToWidth": {
+            "type": "number",
+            "minimum": 0.2,
+            "maximum": 8
+          }
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_blockbench_project_state",
+      "action": "blockbench_project_state",
+      "description": "Read the complete live Blockbench project structure, including a content revision, cubes, groups, meshes, textures, animations, UV state, and selection. Read this before editing an existing model."
+    },
+    {
+      "name": "modmind_blockbench_validate",
+      "action": "blockbench_validate",
+      "description": "Validate the live Blockbench project for missing parents, group cycles, invalid cube bounds, texture problems, duplicate names, and missing animation targets."
+    },
+    {
+      "name": "modmind_blockbench_capture_views",
+      "action": "blockbench_capture_views",
+      "description": "Render 1-6 model-only PNG views through Blockbench offscreen camera presets. Returns MCP image content for visual review without moving the visible camera."
+    },
+    {
+      "name": "modmind_blockbench_actions",
+      "action": "blockbench_actions",
+      "description": "Execute a validated, serialized Blockbench action batch. Inspect first and pass expectedRevision when editing an existing project. The result returns revisions before and after the batch."
+    },
+    {
+      "name": "modmind_blockbench_history",
+      "action": "blockbench_history",
+      "description": "List the last 20 restorable Blockbench checkpoints created before accepted edit batches."
+    },
+    {
+      "name": "modmind_blockbench_checkpoint",
+      "action": "blockbench_checkpoint",
+      "description": "Create a named checkpoint of the complete editable Blockbench project."
+    },
+    {
+      "name": "modmind_blockbench_restore_history",
+      "action": "blockbench_restore_history",
+      "description": "Restore one Blockbench checkpoint transactionally and retain the current state as a new checkpoint."
+    },
+    {
+      "name": "modmind_asset_compile_intent",
+      "action": "asset_compile_intent",
+      "description": "Compile an Ashfox-style Asset Intent Program into a deterministic Blockbench candidate without changing the open project. Use this for whole-asset generation; inspect the candidate summary and diagnostics before applying it."
+    },
+    {
+      "name": "modmind_asset_preview_intent",
+      "action": "asset_preview_intent",
+      "description": "Build an Asset Intent candidate in a temporary Blockbench tab, validate it, return visual review images, then discard the temporary tab and restore the original project. This never accepts or keeps the candidate."
+    },
+    {
+      "name": "modmind_asset_apply_intent",
+      "action": "asset_apply_intent",
+      "description": "Compile and apply an Ashfox-style Asset Intent Program as one validated Blockbench batch. Pass expectedRevision when replacing or editing an existing project. The compiler rejects invalid intent before any action runs."
+    },
+    {
+      "name": "modmind_asset_compile_refinement",
+      "action": "asset_compile_refinement",
+      "description": "Compile a structured refinement against the current Blockbench project without changing it. Returns exact update actions, diagnostics, source metadata, and the base revision."
+    },
+    {
+      "name": "modmind_asset_preview_refinement",
+      "action": "asset_preview_refinement",
+      "description": "Clone the current Blockbench project, apply a structured refinement to the clone, validate and capture it for visual review, then discard the clone."
+    },
+    {
+      "name": "modmind_asset_apply_refinement",
+      "action": "asset_apply_refinement",
+      "description": "Compile and transactionally apply a structured refinement to the current Blockbench project. Pass expectedRevision to reject concurrent manual changes; failures restore the previous project snapshot."
+    },
+    {
+      "name": "modmind_asset_compile_advanced",
+      "action": "asset_compile_advanced",
+      "description": "Compile editable cubes, wedges, cylinders, spheres, profile extrusions, Catmull-Rom tubes, UVs, armatures, weights, IK, locators, animations, and up to three variants."
+    },
+    {
+      "name": "modmind_asset_preview_advanced",
+      "action": "asset_preview_advanced",
+      "description": "Render and visually score A/B/C advanced asset candidates, run up to three bounded score-driven correction rounds, and return the best candidate without keeping temporary projects."
+    },
+    {
+      "name": "modmind_asset_apply_advanced",
+      "action": "asset_apply_advanced",
+      "description": "Apply one selected advanced editable asset candidate as a validated Blockbench transaction."
+    },
+    {
+      "name": "modmind_asset_compile_reference",
+      "action": "asset_compile_reference",
+      "description": "Analyze a PNG, JPEG, or WebP reference, extract its silhouette and palette, and compile an editable extruded Mesh candidate."
+    },
+    {
+      "name": "modmind_asset_preview_reference",
+      "action": "asset_preview_reference",
+      "description": "Build, render, validate, and visually score a reference-image Mesh candidate without keeping the temporary project."
+    },
+    {
+      "name": "modmind_asset_apply_reference",
+      "action": "asset_apply_reference",
+      "description": "Apply a reference-image silhouette as a native editable Blockbench Mesh."
+    },
+    {
+      "name": "modmind_asset_visual_review",
+      "action": "asset_visual_review",
+      "description": "Capture the current model and score framing, occupancy, contrast, edge density, symmetry, clipping, cross-view consistency, and optional reference silhouette proportions."
+    }
+  ]
+}

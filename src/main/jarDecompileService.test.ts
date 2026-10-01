@@ -13,7 +13,7 @@ import {
   summarizeDecompiledTree,
   vineflowerBundledJarCandidates,
   vineflowerCommand
-} from './jarDecompileService'
+} from "../../feature-plugins/decompile/src/main/jarDecompileService"
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))
@@ -63,8 +63,8 @@ describe('vineflower decompiler service', () => {
   it('resolves bundled candidates across dev and packaged layouts', () => {
     const candidates = vineflowerBundledJarCandidates('/app', '/resources')
     expect(candidates).toEqual([
-      path.join('/resources', 'decompile-tools', 'vineflower-1.11.1.jar'),
-      path.join('/app', 'resources', 'decompile-tools', 'vineflower-1.11.1.jar')
+      path.join('/resources', 'feature-plugins', 'decompile', 'assets', 'decompile-tools', 'vineflower-1.11.1.jar'),
+      path.join('/app', 'feature-plugins', 'decompile', 'assets', 'decompile-tools', 'vineflower-1.11.1.jar')
     ])
   })
 

@@ -3,12 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createStoredZip } from './bedrockAddon'
-import { inspectForDecompilation } from './decompilePipeline'
+import { inspectForDecompilation } from "../../feature-plugins/decompile/src/main/decompilePipeline"
 import { pluginTemplateFiles } from './serverPluginTemplates'
-import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from './decompiledPluginProject'
+import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from "../../feature-plugins/decompile/src/main/decompiledPluginProject"
 import type { DecompileProvenance } from '../shared/decompile'
 import type { ProjectInfo } from '../shared/types'
-import { createModuleFromDecompiledSources } from './decompileModuleExport'
+import { createModuleFromDecompiledSources } from "../../feature-plugins/decompile/src/main/decompileModuleExport"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })

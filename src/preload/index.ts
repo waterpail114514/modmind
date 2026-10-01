@@ -21,6 +21,15 @@ ipcRenderer.on('window:closeRequested', () => {
 })
 
 const rawInvoke = ipcRenderer.invoke.bind(ipcRenderer)
+let nativeFeatureRoutes: Promise<Map<string, string>> | undefined
+ipcRenderer.on('feature-plugins:changed', () => { nativeFeatureRoutes = undefined })
+function featureRoutes(): Promise<Map<string, string>> {
+  return nativeFeatureRoutes ??= rawInvoke('feature-plugins:catalog').then((catalog: import('../shared/featurePlugins').FeaturePluginCatalogEntry[]) => {
+    const routes = new Map<string, string>()
+    for (const plugin of catalog) for (const action of plugin.manifest?.actions ?? []) if (action.id.includes(':')) routes.set(action.id, plugin.id)
+    return routes
+  }).catch(() => new Map<string, string>())
+}
 
 const rendererError = diagnosticErrorPayload
 
@@ -41,7 +50,10 @@ function presentResult<T>(value: T, channel: string): T {
 
 // Main-process handlers own operation IDs and completion records, even if this renderer exits.
 const invoke: typeof ipcRenderer.invoke = async (channel, ...args) => {
-  try { return presentResult(await rawInvoke(channel, ...args), channel) }
+  try {
+    const pluginId = channel.startsWith('feature-plugins:') ? undefined : (await featureRoutes()).get(channel)
+    return presentResult(await (pluginId ? rawInvoke('feature-plugins:invoke', pluginId, channel, { args }) : rawInvoke(channel, ...args)), channel)
+  }
   catch (error) {
     // Main records the original exception before Electron strips its custom fields.
     // Also retain transport failures that never reached a main-process handler.
@@ -638,6 +650,35 @@ const api: ModMindApi = {
     }
   }
   ,
+  featurePlugins: {
+    store: () => invoke('feature-plugins:store'),
+    refreshStore: () => invoke('feature-plugins:refreshStore'),
+    installOfficial: (id: string) => invoke('feature-plugins:installOfficial', id),
+    cancelDownload: () => invoke('feature-plugins:cancelDownload'),
+    onStoreChanged: (callback: (snapshot: import('../shared/featureStore').FeatureStoreSnapshot) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: import('../shared/featureStore').FeatureStoreSnapshot): void => callback(snapshot)
+      ipcRenderer.on('feature-plugins:storeChanged', listener)
+      return () => ipcRenderer.removeListener('feature-plugins:storeChanged', listener)
+    },
+    list: () => invoke('feature-plugins:list'),
+    catalog: () => invoke('feature-plugins:catalog'),
+    invoke: (id: string, action: string, input: Record<string, unknown>) => invoke('feature-plugins:invoke', id, action, input),
+    onEvent: (id: string, name: string, callback: (value: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, pluginId: string, event: string, value: unknown): void => { if (pluginId === id && event === name) callback(presentResult(value, `feature-plugins:${id}:${name}`)) }
+      ipcRenderer.on('feature-plugins:event', listener)
+      return () => { ipcRenderer.removeListener('feature-plugins:event', listener) }
+    },
+    install: () => invoke('feature-plugins:install'),
+    onInstallPreview: (callback: (requestId: string, preview: import('../shared/featurePlugins').FeaturePluginInstallPreview) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, requestId: string, preview: import('../shared/featurePlugins').FeaturePluginInstallPreview): void => callback(requestId, preview)
+      ipcRenderer.on('feature-plugins:installPreview', listener)
+      return () => ipcRenderer.removeListener('feature-plugins:installPreview', listener)
+    },
+    confirmInstall: (requestId: string, accepted: boolean) => ipcRenderer.send('feature-plugins:confirmInstall', requestId, accepted),
+    setEnabled: (id: string, enabled: boolean) => invoke('feature-plugins:setEnabled', id, enabled),
+    uninstall: (id: string) => invoke('feature-plugins:uninstall', id),
+    onChanged: (callback: () => void) => { const listener = (): void => callback(); ipcRenderer.on('feature-plugins:changed', listener); return () => ipcRenderer.removeListener('feature-plugins:changed', listener) }
+  },
   imageStudio: {
     getSettings: () => invoke('image-studio:getSettings'),
     saveSettings: (settings: ImageStudioSettingsInput) => invoke('image-studio:saveSettings', settings),

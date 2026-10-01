@@ -29,3 +29,21 @@ it('isolates pack and module skill catalogs and removes stale bundled skills wit
     expect(workbenchSkillPrompt(target, module)).not.toContain('- minecraft-modpack-authoring：')
   } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
+
+it('removes the image skill and its routing for unavailable plugins, including drafts', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'feature-skill-'))
+  try {
+    const source = path.join(root, 'source'), target = path.join(root, 'target')
+    await fs.mkdir(path.join(source, 'modmind-image-assets'), { recursive: true })
+    await fs.writeFile(path.join(source, 'modmind-image-assets/SKILL.md'), 'image tools')
+    await syncWorkbenchSkills(source, target)
+    const project = { loader: 'fabric', kind: 'mod' } as ProjectInfo
+    expect(workbenchSkillNames(project, false)).not.toContain('modmind-image-assets')
+    expect(workbenchSkillPrompt(target, project, false)).not.toContain('modmind-image-assets')
+    expect(workbenchSkillNames({ ...project, draft: {} } as ProjectInfo, false)).not.toContain('modmind-image-assets')
+    await syncWorkbenchSkills(source, target, workbenchSkillNames(project, false))
+    expect(await fs.readdir(target)).toEqual([])
+    await syncWorkbenchSkills(source, target, workbenchSkillNames(project, true))
+    expect(await fs.readdir(target)).toEqual(['modmind-image-assets'])
+  } finally { await fs.rm(root, { recursive: true, force: true }) }
+})

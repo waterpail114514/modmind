@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { updateManagedGradleDependencies } from './dependencyService'
-import { DependencyService } from './dependencyService'
+import { updateManagedGradleDependencies } from "../../feature-plugins/relationships/src/main/dependencyService"
+import { DependencyService } from "../../feature-plugins/relationships/src/main/dependencyService"
 import type { ManagedDependency } from '../shared/production'
 import type { ProjectInfo } from '../shared/types'
 

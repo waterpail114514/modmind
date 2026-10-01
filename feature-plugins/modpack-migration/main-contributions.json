@@ -1,0 +1,268 @@
+{
+  "actions": [
+    {
+      "id": "modpack:previewMigration",
+      "handler": "modpack:previewMigration",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:selectMigrationJar",
+      "handler": "modpack:selectMigrationJar",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:createMigration",
+      "handler": "modpack:createMigration",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:migrationHistory",
+      "handler": "modpack:migrationHistory",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:undoMigration",
+      "handler": "modpack:undoMigration",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack_migration_targets",
+      "handler": "modpack_migration_targets",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "id": "modpack_migration_preview",
+      "handler": "modpack_migration_preview",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "loader": {
+            "type": "string",
+            "enum": [
+              "fabric",
+              "quilt",
+              "forge",
+              "neoforge"
+            ]
+          },
+          "minecraftVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "loader",
+          "minecraftVersion"
+        ]
+      }
+    },
+    {
+      "id": "modpack_migration_apply",
+      "handler": "modpack_migration_apply",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "loader": {
+            "type": "string",
+            "enum": [
+              "fabric",
+              "quilt",
+              "forge",
+              "neoforge"
+            ]
+          },
+          "minecraftVersion": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "backup",
+              "direct"
+            ]
+          },
+          "mods": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "modules": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "loader",
+          "minecraftVersion",
+          "mods",
+          "modules",
+          "content"
+        ]
+      }
+    },
+    {
+      "id": "modpack_migration_history",
+      "handler": "modpack_migration_history",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "id": "modpack_migration_undo",
+      "handler": "modpack_migration_undo",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "migrationId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "migrationId"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_modpack_migration_targets",
+      "action": "modpack_migration_targets",
+      "description": "List supported Minecraft and Loader targets for migrating the active modpack."
+    },
+    {
+      "name": "modmind_modpack_migration_preview",
+      "action": "modpack_migration_preview",
+      "description": "Scan the active modpack against a target and return official files, replacements, source ports, missing or unknown mods, MC百科 evidence, custom content, and source JAR dossiers without changing the project."
+    },
+    {
+      "name": "modmind_modpack_migration_apply",
+      "action": "modpack_migration_apply",
+      "description": "Apply migration decisions in the original project directory. Defaults to backup mode and permits deferred unresolved mods. Mod actions: use-compatible, use-replacement, manual-file, create-compat-module, remove, or defer."
+    },
+    {
+      "name": "modmind_modpack_migration_history",
+      "action": "modpack_migration_history",
+      "description": "Read migration records, incomplete results, reports, backup availability, and undo state."
+    },
+    {
+      "name": "modmind_modpack_migration_undo",
+      "action": "modpack_migration_undo",
+      "description": "Undo a backup-mode migration. ModMind always snapshots the current post-migration state before restoring the source snapshot."
+    }
+  ]
+}

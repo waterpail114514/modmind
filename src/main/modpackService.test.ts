@@ -8,7 +8,7 @@ import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, removeModpackFile, removeModpackModule, syncModpackOverrides, syncReloadableKubeJsScripts, updateModpackModuleSide } from './modpackService'
 import { auditModpackLock, createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
-import { readManagedModpackContent } from './modpackContentInventoryService'
+import { readManagedModpackContent } from "../../feature-plugins/modpack-content/src/main/modpackContentInventoryService"
 
 const roots: string[] = []
 

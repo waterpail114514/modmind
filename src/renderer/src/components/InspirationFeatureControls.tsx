@@ -1,3 +1,4 @@
+import { useFeaturePlugins } from '../featurePlugins'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Check, SlidersHorizontal, ChevronDown } from 'lucide-react'
 import { INSPIRATION_FEATURES, type InspirationFeatures } from '../../../shared/inspirationFeatures'
@@ -11,12 +12,14 @@ export default function InspirationFeatureControls({ value, disabled, onChange }
   disabled: boolean
   onChange: (value: InspirationFeatures) => void
 }): React.JSX.Element {
+  const { modules } = useFeaturePlugins()
+  const availableFeatures = INSPIRATION_FEATURES.filter(item => item.id !== 'imageGeneration' || Boolean(modules['image-studio']))
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const panelId = useId()
-  const selected = INSPIRATION_FEATURES.filter(({ id }) => value[id]).length
+  const selected = availableFeatures.filter(({ id }) => value[id]).length
   useWorkbenchPopover(root, open, setOpen, '.workbench-feature-menu', '.workbench-feature-trigger')
   useEffect(() => { if (disabled) setOpen(false) }, [disabled])
   useLayoutEffect(() => {
@@ -41,11 +44,11 @@ export default function InspirationFeatureControls({ value, disabled, onChange }
     }
   }, [open])
   return <div ref={root} className="workbench-feature-controls inspiration-feature-controls">
-    <button ref={trigger} type="button" className={`agent-icon-button workbench-feature-trigger inspiration-feature-trigger${open ? ' active' : ''}`} title={`分析功能（已选 ${selected}/${INSPIRATION_FEATURES.length}）`} aria-label="分析功能" aria-expanded={open} aria-controls={open ? panelId : undefined} disabled={disabled} onClick={() => setOpen(current => !current)}><SlidersHorizontal size={15} /><span>分析功能{selected ? ` · ${selected}` : ''}</span><ChevronDown size={12} /></button>
+    <button ref={trigger} type="button" className={`agent-icon-button workbench-feature-trigger inspiration-feature-trigger${open ? ' active' : ''}`} title={`分析功能（已选 ${selected}/${availableFeatures.length}）`} aria-label="分析功能" aria-expanded={open} aria-controls={open ? panelId : undefined} disabled={disabled} onClick={() => setOpen(current => !current)}><SlidersHorizontal size={15} /><span>分析功能{selected ? ` · ${selected}` : ''}</span><ChevronDown size={12} /></button>
     {open ? <div ref={panel} id={panelId} className="agent-picker-menu workbench-feature-menu inspiration-feature-menu" role="group" aria-label="分析功能">
-      <div className="workbench-feature-heading"><span>分析功能</span><span>{selected}/{INSPIRATION_FEATURES.length}</span></div>
+      <div className="workbench-feature-heading"><span>分析功能</span><span>{selected}/{availableFeatures.length}</span></div>
 
-      {INSPIRATION_FEATURES.map(({ id, label, description }) => {
+      {availableFeatures.map(({ id, label, description }) => {
         return <button type="button" role="checkbox" title={description} aria-checked={value[id]} className={value[id] ? 'selected' : ''} key={id} disabled={disabled} onClick={() => onChange({ ...value, [id]: !value[id] })}><span>{label}</span><span className="workbench-feature-check" aria-hidden="true">{value[id] ? <Check size={15} strokeWidth={2.4} /> : null}</span></button>
       })}
     </div> : null}

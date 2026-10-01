@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import type {BlockbenchProjectState} from '../shared/blockbench'
-import {describeBlockbenchActions, diffBlockbenchProjects} from './blockbenchDiff'
+import {describeBlockbenchActions, diffBlockbenchProjects} from "../../feature-plugins/model-studio/src/main/blockbenchDiff"
 
 function state(): BlockbenchProjectState {
   return {

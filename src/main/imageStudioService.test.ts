@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { ImageStudioService } from './imageStudioService'
+import { ImageStudioService } from '../../feature-plugins/image-studio/src/main/imageStudioService'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 
 const roots: string[] = []

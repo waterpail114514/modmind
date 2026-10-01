@@ -1,3 +1,5 @@
+import { requestWindowConfirmation } from './pluginImportConfirmation'
+import { featureHostRuntime } from './featureHostRuntime'
 import { readProjectImage } from './projectImages'
 import { readProjectModel } from './projectModels'
 import { readProjectTextFile } from './projectTextRead'
@@ -46,21 +48,38 @@ import { createHash, randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import extractZip from 'extract-zip'
-import { BlockbenchBridge } from './blockbenchBridge'
-import { readYsmSource } from './modelSourceService'
+import { type BlockbenchBridge } from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
+
+
+
+const readYsmSource: typeof import("../../feature-plugins/model-studio/src/main/modelSourceService").readYsmSource = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').readYsmSource(...args)
+
 import { MinecraftRuntimeManager, detectInstalledJavaHomes, probeJavaHomeInfo } from './minecraftRuntime'
 import { HeadlessMcService, supportsHeadlessMc } from './headlessMcService'
-import { MappingService } from './mappingService'
+import { type MappingService } from "../../feature-plugins/mappings/src/main/mappingService"
+
+
 import { LoaderCatalog } from './loaderCatalog'
 import { descriptorPath, projectTemplateFiles } from './projectTemplates'
-import { ContentService } from './contentService'
-import { registerSoundLibraryIpc, soundServiceForProject } from './soundLibraryIpc'
-import { createSoundMcpHandlers } from './soundMcpService'
-import { renderMusicInWindow } from './soundRenderBridge'
-import { DependencyService } from './dependencyService'
-import { AddonRelationshipService, readAddonRelationships } from './addonRelationshipService'
-import { GitService } from './gitService'
-import { ReleaseService, type ReleaseSecrets } from './releaseService'
+import { type ContentService } from "../../feature-plugins/publishing/src/main/contentService"
+const soundServiceForProject: typeof import("../../feature-plugins/sound-studio/src/main/soundLibraryIpc").soundServiceForProject = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/sound-studio/main').activate>>('sound-studio').soundServiceForProject(...args)
+
+const createSoundMcpHandlers: typeof import("../../feature-plugins/sound-studio/src/main/soundMcpService").createSoundMcpHandlers = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/sound-studio/main').activate>>('sound-studio').createSoundMcpHandlers(...args)
+
+const renderMusicInWindow: typeof import("../../feature-plugins/sound-studio/src/main/soundRenderBridge").renderMusicInWindow = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/sound-studio/main').activate>>('sound-studio').renderMusicInWindow(...args)
+
+import { type DependencyService } from "../../feature-plugins/relationships/src/main/dependencyService"
+
+
+import { type AddonRelationshipService } from "../../feature-plugins/relationships/src/main/addonRelationshipService"
+const readAddonRelationships: typeof import("../../feature-plugins/relationships/src/main/addonRelationshipService").readAddonRelationships = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').readAddonRelationships(...args)
+
+import { type GitService } from "../../feature-plugins/versions/src/main/gitService"
+
+
+import { type ReleaseService, type ReleaseSecrets } from "../../feature-plugins/publishing/src/main/releaseService"
+
+
 import { generateGithubWorkflow } from './workflowService'
 import { buildScriptFingerprint } from './buildTrust'
 import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
@@ -83,12 +102,25 @@ import { requireManagedRuntimePreparation } from './managedRuntimePreparation'
 import { isAddonPlatform, isJavaLoader, isServerPluginPlatform, platformLabel, PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { findPluginArtifact, parsePluginDescriptor } from './serverPluginService'
 import { registerServerPluginIpc } from './serverPluginIpc'
-import { registerResourcePackIpc } from './resourcePackIpc'
-import { importItemTexture, listManagedItems, removeManagedItem, saveManagedItem } from './itemEditorService'
-import { listVanillaItems } from './itemCatalogService'
+
+
+
+const importItemTexture: typeof import("../../feature-plugins/item-editor/src/main/itemEditorService").importItemTexture = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/item-editor/main').activate>>('item-editor').importItemTexture(...args)
+const listManagedItems: typeof import("../../feature-plugins/item-editor/src/main/itemEditorService").listManagedItems = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/item-editor/main').activate>>('item-editor').listManagedItems(...args)
+const removeManagedItem: typeof import("../../feature-plugins/item-editor/src/main/itemEditorService").removeManagedItem = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/item-editor/main').activate>>('item-editor').removeManagedItem(...args)
+const saveManagedItem: typeof import("../../feature-plugins/item-editor/src/main/itemEditorService").saveManagedItem = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/item-editor/main').activate>>('item-editor').saveManagedItem(...args)
+
+
+const listVanillaItems: typeof import("../../feature-plugins/item-editor/src/main/itemCatalogService").listVanillaItems = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/item-editor/main').activate>>('item-editor').listVanillaItems(...args)
+
 import type { ItemEditorSaveInput } from '../shared/itemEditor'
 import { serverPluginContext } from '../shared/serverPluginContext'
-import { createResourcePack, deployResourcePack, listResourcePacks, resourcePackArchive, validateResourcePack } from './resourcePackService'
+const createResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").createResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').createResourcePack(...args)
+const deployResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").deployResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').deployResourcePack(...args)
+const listResourcePacks: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").listResourcePacks = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').listResourcePacks(...args)
+const resourcePackArchive: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").resourcePackArchive = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').resourcePackArchive(...args)
+const validateResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").validateResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').validateResourcePack(...args)
+
 import { normalizeProjectName, validateProjectNameInput } from '../shared/projectName'
 import { buildBedrockAddon, buildNeteaseArchive, createStoredZip } from './bedrockAddon'
 import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, launchExternalAgent, listLocalCodexModels, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
@@ -160,12 +192,26 @@ import {
   validateSnapshotId
 } from './agentCore'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest, BlockbenchCommand } from '../shared/blockbench'
-import { compileAssetIntent } from './assetIntentCompiler'
-import { compileAssetRefinement } from './assetRefinementCompiler'
-import {compileAdvancedAsset, compileAdvancedAssetVariants, optimizeAdvancedProgram} from './advancedAssetCompiler'
-import {compileReferenceImageAsset} from './referenceImageAssetCompiler'
-import {reviewAssetCaptures} from './assetVisualReview'
-import {describeBlockbenchActions} from './blockbenchDiff'
+
+const compileAssetIntent: typeof import("../../feature-plugins/model-studio/src/main/assetIntentCompiler").compileAssetIntent = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').compileAssetIntent(...args)
+
+
+const compileAssetRefinement: typeof import("../../feature-plugins/model-studio/src/main/assetRefinementCompiler").compileAssetRefinement = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').compileAssetRefinement(...args)
+
+
+const compileAdvancedAsset: typeof import("../../feature-plugins/model-studio/src/main/advancedAssetCompiler").compileAdvancedAsset = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').compileAdvancedAsset(...args)
+const compileAdvancedAssetVariants: typeof import("../../feature-plugins/model-studio/src/main/advancedAssetCompiler").compileAdvancedAssetVariants = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').compileAdvancedAssetVariants(...args)
+const optimizeAdvancedProgram: typeof import("../../feature-plugins/model-studio/src/main/advancedAssetCompiler").optimizeAdvancedProgram = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').optimizeAdvancedProgram(...args)
+
+
+const compileReferenceImageAsset: typeof import("../../feature-plugins/model-studio/src/main/referenceImageAssetCompiler").compileReferenceImageAsset = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').compileReferenceImageAsset(...args)
+
+
+const reviewAssetCaptures: typeof import("../../feature-plugins/model-studio/src/main/assetVisualReview").reviewAssetCaptures = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').reviewAssetCaptures(...args)
+
+
+const describeBlockbenchActions: typeof import("../../feature-plugins/model-studio/src/main/blockbenchDiff").describeBlockbenchActions = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').describeBlockbenchActions(...args)
+
 import type {AdvancedAssetCandidate, AdvancedAssetCandidatePreview, AdvancedAssetComparison, AdvancedAssetPreviewOptions, AdvancedAssetProgram, ReferenceImageAssetProgram} from '../shared/advancedAsset'
 import type { HeadlessSmokeTestResult, MinecraftLaunchOptions, MinecraftManagedMod, MinecraftRuntimeEvent } from '../shared/minecraft'
 import type { AddonImportSelection, AddonPlatformInstallInput, AddonPrepareInput, AddonRelationshipRole, AudioImportInput, ContentCreateInput, GiteeBuildSettings, GitCommitInput, MavenDependencyInput, ReleasePublishInput, ReleaseSettings, ReleaseSummaryDraft, TestMatrixResult, TestTarget } from '../shared/production'
@@ -225,26 +271,57 @@ import type {
   DetachedWindowTarget
 } from '../shared/types'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
-import { ImageStudioService } from './imageStudioService'
+import type { ImageStudioBackend } from '../shared/imageStudio'
+import { FeaturePluginService, prepareFeaturePlugin } from './featurePluginService'
+import { FeatureStoreService } from './featureStoreService'
+import { configureNativeFeatureServices } from './nativeFeatureServices'
 import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from './modpackService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { importModpackModule } from './modpackModuleImport'
 import { readModpackModuleProject } from './modpackService'
-import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState } from './curseForgePackService'
+const curseForgePackResolver: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").curseForgePackResolver = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').curseForgePackResolver(...args)
+const installCurseForgePack: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").installCurseForgePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').installCurseForgePack(...args)
+const readCurseForgePackState: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").readCurseForgePackState = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').readCurseForgePackState(...args)
+
 import { ModProviderRegistry } from './modProviderService'
-import { applyModpackPlan, planModpack } from './modpackPlanner'
+const applyModpackPlan: typeof import("../../feature-plugins/modpack-mods/src/main/modpackPlanner").applyModpackPlan = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').applyModpackPlan(...args)
+const planModpack: typeof import("../../feature-plugins/modpack-mods/src/main/modpackPlanner").planModpack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').planModpack(...args)
+
 import { auditModpackLock, lockedModFromFile, readModpackLock, writeModpackLock } from './modpackLockService'
-import { applyKeybindPreset, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
-import { listFtbQuestBackups, readFtbQuestBook, restoreFtbQuestBackup, saveFtbQuestBook } from './ftbQuestBookService'
-import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestDependencyTexture, resolveFtbQuestIcon, resolveFtbQuestItemNames, resolveFtbQuestShapes } from './ftbquesticonservice'
-import { downloadModpackContent, importModpackContent, listModpackContent, modpackContentProjectPath, removeModpackContent } from './modpackContentInventoryService'
+const applyKeybindPreset: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentService").applyKeybindPreset = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').applyKeybindPreset(...args)
+const readKeybindState: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentService").readKeybindState = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').readKeybindState(...args)
+const writeFtbQuestChapter: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentService").writeFtbQuestChapter = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').writeFtbQuestChapter(...args)
+const writePatchouliBook: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentService").writePatchouliBook = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').writePatchouliBook(...args)
+
+const listFtbQuestBackups: typeof import("../../feature-plugins/ftb-quests/src/main/ftbQuestBookService").listFtbQuestBackups = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').listFtbQuestBackups(...args)
+const readFtbQuestBook: typeof import("../../feature-plugins/ftb-quests/src/main/ftbQuestBookService").readFtbQuestBook = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').readFtbQuestBook(...args)
+const restoreFtbQuestBackup: typeof import("../../feature-plugins/ftb-quests/src/main/ftbQuestBookService").restoreFtbQuestBackup = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').restoreFtbQuestBackup(...args)
+const saveFtbQuestBook: typeof import("../../feature-plugins/ftb-quests/src/main/ftbQuestBookService").saveFtbQuestBook = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').saveFtbQuestBook(...args)
+
+const inspectFtbQuestIcon: typeof import("../../feature-plugins/ftb-quests/src/main/ftbquesticonservice").inspectFtbQuestIcon = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').inspectFtbQuestIcon(...args)
+const refreshFtbQuestResources: typeof import("../../feature-plugins/ftb-quests/src/main/ftbquesticonservice").refreshFtbQuestResources = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').refreshFtbQuestResources(...args)
+const resolveFtbQuestDependencyTexture: typeof import("../../feature-plugins/ftb-quests/src/main/ftbquesticonservice").resolveFtbQuestDependencyTexture = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').resolveFtbQuestDependencyTexture(...args)
+const resolveFtbQuestIcon: typeof import("../../feature-plugins/ftb-quests/src/main/ftbquesticonservice").resolveFtbQuestIcon = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').resolveFtbQuestIcon(...args)
+const resolveFtbQuestItemNames: typeof import("../../feature-plugins/ftb-quests/src/main/ftbquesticonservice").resolveFtbQuestItemNames = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').resolveFtbQuestItemNames(...args)
+const resolveFtbQuestShapes: typeof import("../../feature-plugins/ftb-quests/src/main/ftbquesticonservice").resolveFtbQuestShapes = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/ftb-quests/main').activate>>('ftb-quests').resolveFtbQuestShapes(...args)
+
+const downloadModpackContent: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentInventoryService").downloadModpackContent = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').downloadModpackContent(...args)
+const importModpackContent: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentInventoryService").importModpackContent = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').importModpackContent(...args)
+const listModpackContent: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentInventoryService").listModpackContent = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').listModpackContent(...args)
+const modpackContentProjectPath: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentInventoryService").modpackContentProjectPath = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').modpackContentProjectPath(...args)
+const removeModpackContent: typeof import("../../feature-plugins/modpack-content/src/main/modpackContentInventoryService").removeModpackContent = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-content/main').activate>>('modpack-content').removeModpackContent(...args)
+
 import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from './serverPackService'
 import { SERVER_PACK_CREATOR_MIN_JAVA } from './serverPackCreatorService'
 import type { buildAndJoinServer, runServerScenario, ServerJoinVerificationResult } from './serverVerificationService'
 import { LocalServerManager } from './localServerService'
-import { applyOptimizationProfile, BUILTIN_OPTIMIZATION_PROFILES } from './optimizationService'
+const applyOptimizationProfile: typeof import("../../feature-plugins/modpack-automation/src/main/optimizationService").applyOptimizationProfile = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-automation/main').activate>>('modpack-automation').applyOptimizationProfile(...args)
+
 import { McmodService, readManualModRequirements, saveManualModRequirements } from './mcmodService'
-import { assessModpackMigration, createModpackMigration, inspectModpackMigrationJar } from './modpackMigrationService'
+const assessModpackMigration: typeof import("../../feature-plugins/modpack-migration/src/main/modpackMigrationService").assessModpackMigration = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').assessModpackMigration(...args)
+const createModpackMigration: typeof import("../../feature-plugins/modpack-migration/src/main/modpackMigrationService").createModpackMigration = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').createModpackMigration(...args)
+const inspectModpackMigrationJar: typeof import("../../feature-plugins/modpack-migration/src/main/modpackMigrationService").inspectModpackMigrationJar = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').inspectModpackMigrationJar(...args)
+
 import { modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
 import { assertSeparateMigrationTrees } from './migrationPathSafety'
 import { reviewAiAction, type AiReviewerConfig } from './aiReviewer'
@@ -258,11 +335,29 @@ import { downloadActivities } from './downloadActivityService'
 import { AppUpdateService, normalizeAppUpdateUrl } from './appUpdateService'
 import { AppChangelogService } from './appChangelogService'
 import { prepareCleanReinstall } from './appReinstall'
-import { inspectForDecompilation, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar, type DecompileRunRequest } from './decompilePipeline'
-import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from './decompiledPluginProject'
-import { DECOMPILE_MIN_JAVA } from './jarDecompileService'
-import { createModuleFromDecompiledSources, DECOMPILE_TERMS_TITLE, DECOMPILE_TERMS_VERSION, DECOMPILE_TERMS_SECTIONS, plannedModulePaths, renderDecompileTerms, seedProjectFromDecompiledSources } from './decompileModuleExport'
-import { readDecompileCacheEntry } from './decompileCache'
+import { type DecompileRunRequest } from "../../feature-plugins/decompile/src/main/decompilePipeline"
+const inspectForDecompilation: typeof import("../../feature-plugins/decompile/src/main/decompilePipeline").inspectForDecompilation = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').inspectForDecompilation(...args)
+const listCachedSourceFiles: typeof import("../../feature-plugins/decompile/src/main/decompilePipeline").listCachedSourceFiles = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').listCachedSourceFiles(...args)
+const readCachedSourceFile: typeof import("../../feature-plugins/decompile/src/main/decompilePipeline").readCachedSourceFile = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').readCachedSourceFile(...args)
+const runDecompilation: typeof import("../../feature-plugins/decompile/src/main/decompilePipeline").runDecompilation = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').runDecompilation(...args)
+const scanReferencesForJar: typeof import("../../feature-plugins/decompile/src/main/decompilePipeline").scanReferencesForJar = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').scanReferencesForJar(...args)
+
+
+const restoreDecompiledPluginProject: typeof import("../../feature-plugins/decompile/src/main/decompiledPluginProject").restoreDecompiledPluginProject = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').restoreDecompiledPluginProject(...args)
+const validateDecompiledProjectTarget: typeof import("../../feature-plugins/decompile/src/main/decompiledPluginProject").validateDecompiledProjectTarget = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').validateDecompiledProjectTarget(...args)
+
+function decompileMinimumJava(): number { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').DECOMPILE_MIN_JAVA }
+
+
+function decompileTermsVersion(): string { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').DECOMPILE_TERMS_VERSION }
+const createModuleFromDecompiledSources: typeof import("../../feature-plugins/decompile/src/main/decompileModuleExport").createModuleFromDecompiledSources = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').createModuleFromDecompiledSources(...args)
+const plannedModulePaths: typeof import("../../feature-plugins/decompile/src/main/decompileModuleExport").plannedModulePaths = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').plannedModulePaths(...args)
+const renderDecompileTerms: typeof import("../../feature-plugins/decompile/src/main/decompileModuleExport").renderDecompileTerms = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').renderDecompileTerms(...args)
+const seedProjectFromDecompiledSources: typeof import("../../feature-plugins/decompile/src/main/decompileModuleExport").seedProjectFromDecompiledSources = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').seedProjectFromDecompiledSources(...args)
+
+
+const readDecompileCacheEntry: typeof import("../../feature-plugins/decompile/src/main/decompileCache").readDecompileCacheEntry = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').readDecompileCacheEntry(...args)
+
 import type { DecompileProvenance } from '../shared/decompile'
 import type { DecompileInspectResult } from '../shared/decompile'
 
@@ -282,13 +377,8 @@ function sendDecompileEvent(signal: AbortSignal | undefined, event: { jarSha256:
   if (signal?.aborted) return
   mainWindow?.webContents.send('decompile:event', event)
 }
+async function readDecompileProvenanceForExport(decompileCacheRoot: string, sourceSha256: string): Promise<DecompileProvenance> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').readDecompileProvenanceForExport(decompileCacheRoot, sourceSha256) }
 
-async function readDecompileProvenanceForExport(decompileCacheRoot: string, sourceSha256: string): Promise<DecompileProvenance> {
-  if (!/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('缺少有效的反编译缓存标识')
-  const entry = await readDecompileCacheEntry(decompileCacheRoot, sourceSha256)
-  if (!entry?.provenance) throw new Error('该 JAR 尚无反编译缓存，请先完成反编译')
-  return entry.provenance
-}
 
 const workbenchApprovals = new WorkbenchApprovals(owner => {
   const window = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.webContents.id === owner)
@@ -344,11 +434,7 @@ function projectKnowledgeStore(): InspirationKnowledgeStore {
 }
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
-  'workspace', 'sounds', 'relationships', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
-  'modpack-mod-list', 'third-party-mods', 'modpack-manifest', 'modpack-config', 'modpack-scripts',
-  'modpack-datapacks', 'modpack-resourcepacks', 'modpack-shaders', 'modpack-ui', 'modpack-worlds',
-  'modpack-client', 'modpack-server-content', 'modpack-files', 'inspiration', 'image-studio',
-  'blockbench', 'minecraft', 'mappings', 'code', 'build', 'snapshots', 'production', 'decompile', 'settings'
+  'workspace', 'modpack-server', 'inspiration', 'minecraft', 'code', 'build', 'settings', 'plugins', 'features'
 ])
 
 function describeRuntimeError(error: unknown): string {
@@ -388,22 +474,16 @@ async function runDiagnosticOperation<T>(subsystem: string, operation: string, m
     throw error
   }
 }
-let blockbenchBridge: BlockbenchBridge | null = null
 let minecraftRuntime: MinecraftRuntimeManager | null = null
 let localServerManager: LocalServerManager | null = null
 let playerTestService: PlayerTestService | null = null
 let localTestService: LocalTestService | null = null
 let headlessMcService: HeadlessMcService | null = null
 let forwardMinecraftEventsToServerPanel = false
-let mappingService: MappingService | null = null
 let loaderCatalog: LoaderCatalog | null = null
-let dependencyService: DependencyService | null = null
-let addonRelationshipService: AddonRelationshipService | null = null
-let gitService: GitService | null = null
-let contentService: ContentService | null = null
-let releaseService: ReleaseService | null = null
 let giteeBuildService: GiteeBuildService | null = null
-let imageStudioService: ImageStudioService | null = null
+let featurePluginService: FeaturePluginService
+let featureStoreService: FeatureStoreService
 let remoteClient: RemoteClientService | null = null
 let remoteDeviceId: string | null = null
 let modProviderRegistry: ModProviderRegistry | null = null
@@ -567,8 +647,10 @@ function requireModProviderRegistry(): ModProviderRegistry {
 }
 
 if (!hasSingleInstanceLock) app.quit()
-else if (process.defaultApp && process.argv[1]) app.setAsDefaultProtocolClient('mcdev', process.execPath, [path.resolve(process.argv[1])])
-else app.setAsDefaultProtocolClient('mcdev')
+else if (!app.getVersion().endsWith('-plugintest')) {
+  if (process.defaultApp && process.argv[1]) app.setAsDefaultProtocolClient('mcdev', process.execPath, [path.resolve(process.argv[1])])
+  else app.setAsDefaultProtocolClient('mcdev')
+}
 
 const initialDeviceDeepLinkIndex = process.argv.findIndex((argument) => argument.startsWith('mcdev://'))
 if (initialDeviceDeepLinkIndex >= 0) {
@@ -625,6 +707,7 @@ function shutdownApplication(): Promise<void> {
   verifiedDownload.beginShutdown()
   deviceAuthorizationController?.abort()
   for (const controller of aiAbortControllers.values()) controller.abort()
+  featureStoreService?.shutdown()
   for (const active of activeAiBackendSwitches.values()) active.controller.abort()
   const timeout = setTimeout(() => {
     diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'timeout', message: 'Shutdown exceeded 20 seconds' })
@@ -637,6 +720,7 @@ function shutdownApplication(): Promise<void> {
     await localServerManager?.stop().catch(error => diagnosticJournal.recordCritical({ subsystem: 'local-server', operation: 'shutdown', phase: 'error', message: '服务端正常停止失败', error }))
     const results = await Promise.allSettled([
       Promise.resolve().then(() => shutdownPlugins()),
+      Promise.resolve().then(() => featurePluginService?.shutdown()),
       Promise.resolve().then(() => chatCompletionsAdapter.close()),
       stopRemoteClient(), stopPublicMcpBridge(),
       playerTestService?.stop(), headlessMcService?.stop(), localServerManager?.stop(), minecraftRuntime?.stop(),
@@ -747,63 +831,24 @@ async function validateAiAttachments(attachments: AiAttachment[], requestedProje
   }
   return validated
 }
+function requireMappings(): MappingService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/mappings/main').activate>>('mappings').requireMappings() }
 
-function requireMappings(): MappingService {
-  if (!mappingService) mappingService = new MappingService(path.join(app.getPath('userData'), 'mappings'), app.getVersion())
-  return mappingService
-}
 
 function requireLoaderCatalog(): LoaderCatalog {
   if (!loaderCatalog) loaderCatalog = new LoaderCatalog(path.join(app.getPath('userData'), 'loader-catalog.json'), app.getVersion())
   return loaderCatalog
 }
+function requireDependencyService(): DependencyService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').requireDependencyService() }
 
-function requireDependencyService(): DependencyService {
-  if (!dependencyService) {
-    dependencyService = new DependencyService(
-      requireProject,
-      (filePath) => requireMinecraftRuntime().importMods([filePath]),
-      (fileName) => requireMinecraftRuntime().removeMod(fileName),
-      app.getVersion()
-    )
-  }
-  return dependencyService
-}
+function createAddonRelationshipService(getProject: () => ProjectInfo, runtimeIntegration = true): AddonRelationshipService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').createAddonRelationshipService(getProject, runtimeIntegration) }
 
-function createAddonRelationshipService(getProject: () => ProjectInfo, runtimeIntegration = true): AddonRelationshipService {
-  return new AddonRelationshipService({
-    getProject,
-    registry: requireModProviderRegistry,
-    cacheRoot: path.join(app.getPath('userData'), 'addon-references'),
-    importRuntime: runtimeIntegration ? (filePath) => requireMinecraftRuntime().importMods([filePath]) : async () => undefined,
-    removeRuntime: runtimeIntegration ? (fileName) => requireMinecraftRuntime().removeMod(fileName) : async () => undefined,
-    readProject: (projectPath) => readProjectInfo(projectPath),
-    mcmod: mcmodService
-  })
-}
+function requireAddonRelationshipService(): AddonRelationshipService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').requireAddonRelationshipService() }
+async function buildLinkedProjectTree(project: ProjectInfo, signal: AbortSignal | undefined, stack: string[]): Promise<string> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').buildLinkedProjectTree(project, signal, stack) }
 
-function requireAddonRelationshipService(): AddonRelationshipService {
-  if (!addonRelationshipService) addonRelationshipService = createAddonRelationshipService(requireProject)
-  return addonRelationshipService
-}
+function requireGitService(): GitService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/versions/main').activate>>('versions').requireGitService() }
 
-async function buildLinkedProjectTree(project: ProjectInfo, signal: AbortSignal | undefined, stack: string[]): Promise<string> {
-  const normalized = path.resolve(project.path)
-  if (stack.map((entry) => path.resolve(entry)).includes(normalized)) throw new Error(`检测到 ModMind 项目循环依赖：${[...stack, normalized].join(' -> ')}`)
-  const service = createAddonRelationshipService(() => project, false)
-  await service.refreshLinkedProjects((linked) => buildLinkedProjectTree(linked, signal, [...stack, normalized]), [...stack, normalized])
-  return requireMinecraftRuntime().buildDependencyProject(project, signal)
-}
+function requireContentService(): ContentService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/publishing/main').activate>>('publishing').requireContentService() }
 
-function requireGitService(): GitService {
-  if (!gitService) gitService = new GitService(requireProject)
-  return gitService
-}
-
-function requireContentService(): ContentService {
-  if (!contentService) contentService = new ContentService(requireProject)
-  return contentService
-}
 
 function releaseSecretsFile(): string {
   return path.join(app.getPath('userData'), 'release-secrets.json')
@@ -837,11 +882,8 @@ async function writeReleaseSecrets(secrets: ReleaseSecrets): Promise<void> {
     githubToken: encrypt(secrets.githubToken)
   }, null, 2), 'utf8')
 }
+function requireReleaseService(): ReleaseService { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/publishing/main').activate>>('publishing').requireReleaseService() }
 
-function requireReleaseService(): ReleaseService {
-  if (!releaseService) releaseService = new ReleaseService(requireProject, readReleaseSecrets, writeReleaseSecrets, app.getVersion())
-  return releaseService
-}
 
 function requireGiteeBuildService(): GiteeBuildService {
   if (!giteeBuildService) giteeBuildService = new GiteeBuildService({ getProject: requireProject, readSettings: readGiteeBuildSettings })
@@ -987,6 +1029,7 @@ function disconnectedDeviceState(message?: string): DeviceConnectionState {
 }
 
 async function checkForAppUpdates(): Promise<AppVersionCheckResult> {
+  if (app.getVersion().endsWith('-plugintest')) return { currentVersion: app.getVersion(), latestVersion: app.getVersion(), updateAvailable: false, currentChannel: 'beta', targetChannel: 'beta' }
   const siteUrl = configuredDeviceSiteUrl()
   if (!siteUrl) throw new Error('未配置版本检查服务，暂时无法检查更新')
   return checkAppVersion(siteUrl, app.getVersion(), AbortSignal.timeout(12_000))
@@ -1489,6 +1532,7 @@ function scheduleSnapshotStorageMaintenance(project: ProjectInfo): void {
 }
 
 function emitProjectChanged(): void {
+  void featurePluginService?.projectChanged(currentProject?.path ?? null).catch(error => diagnosticJournal.record({ subsystem: 'feature-plugins', operation: 'project-change', phase: 'error', message: 'Plugin project lifecycle failed', error }))
   diagnosticJournal.record({
     subsystem: 'project',
     operation: 'changed',
@@ -1567,7 +1611,7 @@ async function createProjectForRemote(input: ProjectCreateInput): Promise<Projec
   }
   currentProject = project
   await rememberRecentProject(project)
-  await refreshExternalAgentContext(project).catch(() => undefined)
+  await refreshExternalAgentContext(project, featurePluginService.enabled('image-studio')).catch(() => undefined)
   emitProjectChanged()
   return project
 }
@@ -1585,7 +1629,7 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
       if (!info) throw new Error('目标项目不存在或项目清单无效')
       currentProject = await offerProjectVersionMigration(info)
       await rememberRecentProject(currentProject)
-      await refreshExternalAgentContext(currentProject).catch(() => undefined)
+      await refreshExternalAgentContext(currentProject, featurePluginService.enabled('image-studio')).catch(() => undefined)
       emitProjectChanged()
       return currentProject
     }
@@ -1645,11 +1689,11 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
       if (!isModpackProject(pack)) throw new Error('AI 只能在整合包项目中把反编译源码导出为自制模组')
       // The AI must have surfaced the CURRENT terms to the user and passed that exact
       // version back; anything else is rejected so consent can never be fabricated.
-      if (action.termsVersionAcknowledged !== DECOMPILE_TERMS_VERSION) {
-        throw new Error(`AI 声明的条款版本（${action.termsVersionAcknowledged || '空'}）与当前版本（${DECOMPILE_TERMS_VERSION}）不一致；请让用户在反编译工作区阅读并确认最新条款`)
+      if (action.termsVersionAcknowledged !== decompileTermsVersion()) {
+        throw new Error(`AI 声明的条款版本（${action.termsVersionAcknowledged || '空'}）与当前版本（${decompileTermsVersion()}）不一致；请让用户在反编译工作区阅读并确认最新条款`)
       }
       const controller = new AbortController()
-      const javaPath = await requireMinecraftRuntime().ensureJavaRuntime(undefined, DECOMPILE_MIN_JAVA)
+      const javaPath = await requireMinecraftRuntime().ensureJavaRuntime(undefined, decompileMinimumJava())
       const result = await runDecompilation({ jarPath: action.jarPath, skipRemap: action.skipRemap, ...(action.minecraftVersion ? { minecraftVersion: action.minecraftVersion } : {}) }, {
         cacheRoot: path.join(app.getPath('userData'), 'decompile'),
         javaPath,
@@ -1670,7 +1714,7 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
         }
       })
       await addModpackModule(pack, { name: created.name, namespace: created.namespace, path: created.relativePath, createdAt: new Date().toISOString() })
-      diagnosticJournal.record({ subsystem: 'decompile', operation: 'remote-create-module', phase: 'success', level: 'info', message: `Remote Controller 已从反编译源码创建自制模组 ${created.namespace}（来源 ${provenance.sourceFileName}，条款 v${DECOMPILE_TERMS_VERSION}）`, data: { namespace: created.namespace, fileCount: created.fileCount } })
+      diagnosticJournal.record({ subsystem: 'decompile', operation: 'remote-create-module', phase: 'success', level: 'info', message: `Remote Controller 已从反编译源码创建自制模组 ${created.namespace}（来源 ${provenance.sourceFileName}，条款 v${decompileTermsVersion()}）`, data: { namespace: created.namespace, fileCount: created.fileCount } })
       return created
     }
     case 'set_workbench_agent': {
@@ -2000,8 +2044,8 @@ async function prepareManagedCodex(
           configSource,
           existingExecutable: existingExecutable?.trim() || undefined,
           bundledSkillsDir: bundledCodexSkillsDirectory(),
-          bundledSkillNames: workbenchSkillNames(project),
-          imageToolsEnabled: true,
+          bundledSkillNames: workbenchSkillNames(project, featurePluginService.enabled('image-studio')),
+          imageToolsEnabled: featurePluginService.enabled('image-studio'),
           rememberPrepared: false,
           onProgress: (progress) => {
             for (const listener of listeners) listener(progress)
@@ -2126,16 +2170,8 @@ function showMainWindow(): void {
   mainWindow.show()
   mainWindow.focus()
 }
+function disposeBlockbenchBridge(): void {}
 
-function disposeBlockbenchBridge(): void {
-  const bridge = blockbenchBridge
-  blockbenchBridge = null
-  try {
-    bridge?.destroy()
-  } catch {
-    // Window shutdown must not surface a native-view cleanup error.
-  }
-}
 
 function prepareForAppUpdateInstall(): void {
   quitRequested = true
@@ -2480,14 +2516,6 @@ function createWindow(): void {
     diagnosticJournal.record({ subsystem: 'renderer', operation: 'load', phase: 'error', level: 'error', message: errorDescription, data: { errorCode, validatedURL } })
   })
 
-  const blockbenchEntry = app.isPackaged
-    ? path.join(process.resourcesPath, 'blockbench', 'index.html')
-    : path.join(app.getAppPath(), 'vendor', 'blockbench', 'index.html')
-  blockbenchBridge = new BlockbenchBridge({
-    window: mainWindow,
-    entryPath: blockbenchEntry,
-    getProjectRoot: () => currentProject?.path ?? null
-  })
   minecraftRuntime = new MinecraftRuntimeManager({
     getProject: () => aiProjectContext.getStore() ?? currentProject,
     onState: (state) => mainWindow?.webContents.send('minecraft:state', state),
@@ -2496,7 +2524,7 @@ function createWindow(): void {
     getGradleDownloadSource: async () => (await readSettings()).gradleDownloadSource ?? 'auto',
     getJavaPreference: async () => (await readSettings()).javaPreferences,
     prepareProjectDependencies: async (project, signal) => {
-      if (project.kind === 'modpack' || !isJavaLoader(project.loader)) return
+      if (project.kind === 'modpack' || !isJavaLoader(project.loader) || !featurePluginService.enabled('relationships')) return
       await requireAddonRelationshipService().refreshLinkedProjects((linked) => buildLinkedProjectTree(linked, signal, [project.path]), [project.path])
     }
   })
@@ -2550,30 +2578,6 @@ function createWindow(): void {
       })
     })
   })
-  blockbenchBridge.onStatus((status) => {
-    diagnosticJournal.record({ subsystem: 'blockbench', operation: 'bridge', phase: status.phase, level: status.phase === 'error' ? 'error' : 'info', message: status.message || `Blockbench bridge: ${status.phase}`, data: status })
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
-    mainWindow?.webContents.send('blockbench:state', {
-      ...status,
-      status: status.phase,
-      connected: status.phase === 'ready'
-    })
-  })
-  const blockbenchLoad = blockbenchBridge.load()
-  void blockbenchLoad.catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error)
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
-    mainWindow?.webContents.send('blockbench:state', { status: 'error', connected: false, message })
-  })
-  imageStudioService = new ImageStudioService({
-    userDataDir: app.getPath('userData'),
-    projectRoot: () => currentProject?.path ?? null,
-    getHostedLease: createHostedImageLease,
-    getSyncedImageApi: async () => {
-      const credentials = await readDeviceCredentials()
-      return { customMode: credentials?.provider === 'custom', imageApi: credentials?.provider === 'custom' ? credentials.localImageApi ?? null : null }
-    }
-  })
   mainWindow.on('closed', () => {
     for (const window of detachedWindows.values()) window.close()
     detachedWindows.clear()
@@ -2596,7 +2600,6 @@ function createWindow(): void {
     minecraftRuntime = null
     void headlessMcService?.stop()
     headlessMcService = null
-    imageStudioService = null
     if (tray) {
       tray.destroy()
       tray = null
@@ -2635,18 +2638,9 @@ function requireProject(): ProjectInfo {
   if (!currentProject) throw new Error('Please create or open a project first')
   return currentProject
 }
+function requireBlockbench(): BlockbenchBridge { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').requireBlockbench() }
 
-function requireBlockbench(): BlockbenchBridge {
-  if (!blockbenchBridge) throw new Error('Blockbench bridge is not available')
-  return blockbenchBridge
-}
-
-function requireBlockbenchForProject(project: ProjectInfo): BlockbenchBridge {
-  if (!currentProject || !sameProjectPath(currentProject.path, project.path)) {
-    throw new Error('Blockbench 当前属于另一个前台项目；请切回任务项目后重试该操作')
-  }
-  return requireBlockbench()
-}
+function requireBlockbenchForProject(project: ProjectInfo): BlockbenchBridge { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').requireBlockbenchForProject(project) }
 
 async function previewAssetIntentCandidate(
   bridge: BlockbenchBridge,
@@ -2654,21 +2648,9 @@ async function previewAssetIntentCandidate(
   capture: BlockbenchCaptureRequest = {},
   signal?: AbortSignal,
   expectedRevision?: string
-): Promise<unknown> {
-  const candidate = compileAssetIntent(input)
-  if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-  const preview = await bridge.previewCandidateActions(candidate.actions, capture, signal, expectedRevision)
-  return {
-    ...candidate,
-    execution: preview.execution,
-    validation: preview.validation,
-    ...preview.capture
-  }
-}
+): Promise<unknown> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').previewAssetIntentCandidate(bridge, input, capture, signal, expectedRevision) }
 
-async function compileAssetRefinementForBridge(bridge: BlockbenchBridge, input: unknown): Promise<ReturnType<typeof compileAssetRefinement>> {
-  return compileAssetRefinement(input, await bridge.getProjectState())
-}
+async function compileAssetRefinementForBridge(bridge: BlockbenchBridge, input: unknown): Promise<ReturnType<typeof compileAssetRefinement>> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').compileAssetRefinementForBridge(bridge, input) }
 
 async function previewAssetRefinementCandidate(
   bridge: BlockbenchBridge,
@@ -2676,31 +2658,14 @@ async function previewAssetRefinementCandidate(
   capture: BlockbenchCaptureRequest = {},
   signal?: AbortSignal,
   expectedRevision?: string
-): Promise<unknown> {
-  const candidate = await compileAssetRefinementForBridge(bridge, input)
-  if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-  if (expectedRevision && candidate.baseRevision !== expectedRevision) throw new Error(`Blockbench project changed since the refinement was requested (expected ${expectedRevision}, current ${candidate.baseRevision})`)
-  const preview = await bridge.previewRefinementActions(candidate.actions, capture, signal, candidate.baseRevision)
-  return {
-    ...candidate, execution: preview.execution, validation: preview.validation, ...preview.capture,
-    baselineCaptures: preview.baselineCapture.captures, diff: preview.diff
-  }
-}
+): Promise<unknown> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').previewAssetRefinementCandidate(bridge, input, capture, signal, expectedRevision) }
 
 async function applyAssetRefinementCandidate(
   bridge: BlockbenchBridge,
   input: unknown,
   signal?: AbortSignal,
   expectedRevision?: string
-): Promise<unknown> {
-  const candidate = await compileAssetRefinementForBridge(bridge, input)
-  if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-  if (expectedRevision && candidate.baseRevision !== expectedRevision) {
-    throw new Error(`Blockbench project changed since the refinement was requested (expected ${expectedRevision}, current ${candidate.baseRevision})`)
-  }
-  const execution = await bridge.executeActions(candidate.actions, signal, candidate.baseRevision)
-  return {...candidate, execution}
-}
+): Promise<unknown> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').applyAssetRefinementCandidate(bridge, input, signal, expectedRevision) }
 
 async function previewAdvancedAssetComparison(
   bridge: BlockbenchBridge,
@@ -2709,33 +2674,7 @@ async function previewAdvancedAssetComparison(
   options: AdvancedAssetPreviewOptions = {},
   signal?: AbortSignal,
   expectedRevision?: string
-): Promise<AdvancedAssetComparison> {
-  const maxIterations = Math.max(1, Math.min(3, Number(options.maxIterations ?? 3)))
-  const targetScore = Math.max(0, Math.min(100, Number(options.targetScore ?? 82)))
-  const compiled = compileAdvancedAssetVariants(input)
-  const errors = compiled.flatMap((candidate) => candidate.diagnostics.filter((diagnostic) => diagnostic.severity === 'error'))
-  if (errors.length) throw new Error(errors.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join('; '))
-  const previews: AdvancedAssetCandidatePreview[] = []
-  for (const original of compiled) {
-    let current = original
-    let best = await previewAdvancedCandidate(bridge, current, capture, 1, signal, expectedRevision)
-    for (let iteration = 2; iteration <= maxIterations && best.review.score < targetScore; iteration += 1) {
-      const mode = best.review.metrics.contrast < 0.25
-        ? 'contrast'
-        : best.review.metrics.occupancy < 0.18
-          ? 'occupancy-up'
-          : 'occupancy-down'
-      const optimizedProgram = optimizeAdvancedProgram(current.program, mode)
-      const optimized = compileAdvancedAsset(optimizedProgram)
-      current = {...optimized, variantId: original.variantId, label: original.label}
-      const preview = await previewAdvancedCandidate(bridge, current, capture, iteration, signal, expectedRevision)
-      if (preview.review.score > best.review.score) best = preview
-    }
-    previews.push(best)
-  }
-  previews.sort((left, right) => right.review.score - left.review.score)
-  return {comparisonVersion: 1, selectedCandidateId: previews[0].variantId, candidates: previews}
-}
+): Promise<AdvancedAssetComparison> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').previewAdvancedAssetComparison(bridge, input, capture, options, signal, expectedRevision) }
 
 async function previewAdvancedCandidate(
   bridge: BlockbenchBridge,
@@ -2744,14 +2683,7 @@ async function previewAdvancedCandidate(
   iteration: number,
   signal?: AbortSignal,
   expectedRevision?: string
-): Promise<AdvancedAssetCandidatePreview> {
-  const preview = await bridge.previewCandidateActions(candidate.actions, capture, signal, expectedRevision)
-  const review = await reviewAssetCaptures(preview.capture.captures)
-  return {
-    ...candidate, execution: preview.execution, validation: preview.validation, ...preview.capture,
-    review, iteration, actionDiff: describeBlockbenchActions(candidate.actions)
-  }
-}
+): Promise<AdvancedAssetCandidatePreview> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').previewAdvancedCandidate(bridge, candidate, capture, iteration, signal, expectedRevision) }
 
 async function previewReferenceImageCandidate(
   bridge: BlockbenchBridge,
@@ -2759,15 +2691,8 @@ async function previewReferenceImageCandidate(
   capture: BlockbenchCaptureRequest = {},
   signal?: AbortSignal,
   expectedRevision?: string
-): Promise<AdvancedAssetCandidatePreview & {reference: Awaited<ReturnType<typeof compileReferenceImageAsset>>['reference']}> {
-  const candidate = await compileReferenceImageAsset(input)
-  const preview = await bridge.previewCandidateActions(candidate.actions, capture, signal, expectedRevision)
-  const review = await reviewAssetCaptures(preview.capture.captures)
-  return {
-    ...candidate, execution: preview.execution, validation: preview.validation, ...preview.capture,
-    review, iteration: 1, actionDiff: describeBlockbenchActions(candidate.actions)
-  }
-}
+): Promise<AdvancedAssetCandidatePreview & {reference: Awaited<ReturnType<typeof compileReferenceImageAsset>>['reference']}> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').previewReferenceImageCandidate(bridge, input, capture, signal, expectedRevision) }
+
 
 function requireMinecraftRuntime(): MinecraftRuntimeManager {
   if (!minecraftRuntime) throw new Error('Minecraft runtime manager is not available')
@@ -2833,7 +2758,7 @@ async function renameProjectRecord(project: ProjectInfo, input: ProjectRenameInp
   await fs.rename(temporary, manifestPath)
   if (currentProject && sameProjectPath(currentProject.path, project.path)) currentProject = nextProject
   await rememberRecentProject(nextProject)
-  await refreshExternalAgentContext(nextProject).catch(() => undefined)
+  await refreshExternalAgentContext(nextProject, featurePluginService.enabled('image-studio')).catch(() => undefined)
   return nextProject
 }
 
@@ -2885,9 +2810,8 @@ async function copyBundledGradleWrapper(projectRoot: string): Promise<void> {
   if (process.platform !== 'win32') await fs.chmod(path.join(projectRoot, 'gradlew'), 0o755)
 }
 
-function requireImageStudio(): ImageStudioService {
-  if (!imageStudioService) throw new Error('图像工坊服务尚未准备好')
-  return imageStudioService
+function requireImageStudio(): ImageStudioBackend {
+  return featurePluginService.service<ImageStudioBackend>('image-studio')
 }
 
 function generateStudioImage(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent') {
@@ -3659,7 +3583,7 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
     diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'settings-summary', phase: 'error', level: 'warning', message: 'Unable to read settings for diagnostics', error })
     return null
   })
-  const imageSettings = await requireImageStudio().getSettings().catch(() => null)
+  const imageSettings = featurePluginService.enabled('image-studio') ? await requireImageStudio().getSettings().catch(() => null) : null
   const disk = await fs.statfs(userData).catch(() => null)
   const summary = {
     exportedAt,
@@ -5112,12 +5036,8 @@ function validateMigrationId(value: unknown): string {
   if (typeof value !== 'string' || !/^migration-[0-9A-Za-z._-]{1,120}$/.test(value)) throw new Error('迁移记录 ID 无效')
   return value
 }
+async function writeModpackMigrationRecord(project: ProjectInfo, record: ModpackMigrationRecord): Promise<void> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').writeModpackMigrationRecord(project, record) }
 
-async function writeModpackMigrationRecord(project: ProjectInfo, record: ModpackMigrationRecord): Promise<void> {
-  const directory = modpackMigrationDirectory(project, record.id)
-  await fs.mkdir(directory, { recursive: true })
-  await fs.writeFile(path.join(directory, 'migration.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8')
-}
 
 async function readModpackMigrationRecord(project: ProjectInfo, migrationId: string): Promise<ModpackMigrationRecord> {
   const id = validateMigrationId(migrationId)
@@ -5141,149 +5061,16 @@ async function listModpackMigrationRecords(project: ProjectInfo): Promise<Modpac
   }
   return records.sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }
-
-async function preserveDirectMigrationSources(project: ProjectInfo, migrationId: string): Promise<void> {
-  const manifest = await readModpackManifest(project)
-  const modsRoot = modpackModsRoot(project, manifest)
-  const destination = path.join(modpackMigrationDirectory(project, migrationId), 'evidence', 'source-jars')
-  await fs.mkdir(destination, { recursive: true })
-  for (const mod of manifest.mods) {
-    const source = path.join(modsRoot, mod.fileName)
-    const stat = await fs.stat(source).catch(() => null)
-    if (stat?.isFile()) await fs.copyFile(source, path.join(destination, mod.fileName))
-  }
-}
+async function preserveDirectMigrationSources(project: ProjectInfo, migrationId: string): Promise<void> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').preserveDirectMigrationSources(project, migrationId) }
 
 async function applyModpackMigrationInPlace(
   project: ProjectInfo,
   target: Awaited<ReturnType<LoaderCatalog['resolve']>>,
   input: ModpackMigrationCreateInput
-): Promise<ModpackMigrationCreateResult> {
-  assertProjectSwitchAllowed()
-  assertProjectMutationAllowed(project.path, '迁移版本')
-  const mode: ModpackMigrationMode = input.mode === 'direct' ? 'direct' : 'backup'
-  const migrationId = `migration-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
-  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-modpack-migration-'))
-  const stagedRoot = path.join(temporaryRoot, 'target')
-  const rollbackRoot = path.join(temporaryRoot, 'rollback')
-  let sourceSnapshot: SnapshotInfo | undefined
-  let sourceSnapshotTree: Awaited<ReturnType<typeof readSnapshotManifest>> | undefined
-  let rollbackFiles: string[] = []
-  let commitStarted = false
-  try {
-    if (mode === 'backup') {
-      sourceSnapshot = await createProjectSnapshot(`整合包迁移前：${project.loader} ${project.minecraftVersion} -> ${target.loader} ${target.minecraftVersion}`)
-      sourceSnapshotTree = await readSnapshotManifest(project, sourceSnapshot.id)
-    } else {
-      await copySnapshotFiles(project.path, rollbackRoot, ignoreSnapshotDirectory)
-      rollbackFiles = await listSnapshotManagedFiles(rollbackRoot)
-      await preserveDirectMigrationSources(project, migrationId)
-    }
+): Promise<ModpackMigrationCreateResult> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').applyModpackMigrationInPlace(project, target, input) }
 
-    const generated = await createModpackMigration(
-      requireModProviderRegistry(),
-      project,
-      target,
-      { ...input, mode },
-      stagedRoot,
-      copyBundledGradleWrapper,
-      mcmodService
-    )
-    const migratedProject: ProjectInfo = { ...generated.project, path: project.path }
-    await fs.writeFile(path.join(stagedRoot, currentProjectManifest), `${JSON.stringify(migratedProject, null, 2)}\n`, 'utf8')
-    const expectedFiles = await listSnapshotManagedFiles(stagedRoot)
-    if (!expectedFiles.includes(currentProjectManifest) || !expectedFiles.includes('modmind.pack.json')) {
-      throw new Error('暂存迁移项目缺少必要清单，未修改原项目')
-    }
+async function undoModpackMigration(project: ProjectInfo, migrationId: string): Promise<ModpackMigrationUndoResult> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').undoModpackMigration(project, migrationId) }
 
-    commitStarted = true
-    await restoreSnapshotFilesExact(stagedRoot, project.path, expectedFiles)
-    const committed = await readProjectInfo(project.path)
-    if (!committed || committed.kind !== 'modpack' || committed.loader !== target.loader || committed.minecraftVersion !== target.minecraftVersion) {
-      throw new Error('迁移提交后的项目清单无效')
-    }
-    const reportPath = path.join(project.path, path.relative(stagedRoot, generated.reportPath))
-    const archivedReportPath = path.join(modpackMigrationDirectory(project, migrationId), 'reports', 'modpack-migration-report.md')
-    await fs.mkdir(path.dirname(archivedReportPath), { recursive: true })
-    await fs.copyFile(reportPath, archivedReportPath)
-    const createdAt = new Date().toISOString()
-    const record: ModpackMigrationRecord = {
-      id: migrationId,
-      mode,
-      status: generated.status,
-      source: { loader: project.loader, minecraftVersion: project.minecraftVersion, loaderVersion: project.loaderVersion },
-      target: { loader: committed.loader, minecraftVersion: committed.minecraftVersion, loaderVersion: committed.loaderVersion },
-      ...(sourceSnapshot ? { sourceSnapshotId: sourceSnapshot.id } : {}),
-      reportPath: archivedReportPath,
-      deferred: generated.deferred,
-      createdAt,
-      completedAt: createdAt
-    }
-    const generatedEvidence = path.join(project.path, 'docs', 'migration-evidence')
-    const storedEvidence = path.join(modpackMigrationDirectory(project, migrationId), 'evidence')
-    if (await fs.stat(generatedEvidence).then((stat) => stat.isDirectory()).catch(() => false)) {
-      await fs.mkdir(storedEvidence, { recursive: true })
-      await fs.cp(generatedEvidence, storedEvidence, { recursive: true })
-    }
-    const recordDirectory = modpackMigrationDirectory(project, migrationId)
-    await fs.writeFile(path.join(recordDirectory, 'decisions.json'), `${JSON.stringify({ mods: input.mods, modules: input.modules, content: input.content }, null, 2)}\n`, 'utf8')
-    await fs.writeFile(path.join(recordDirectory, 'result.json'), `${JSON.stringify({
-      status: generated.status,
-      installed: generated.installed,
-      manualFiles: generated.manualFiles,
-      removed: generated.removed,
-      deferred: generated.deferred,
-      portedModules: generated.portedModules,
-      copiedContent: generated.copiedContent,
-      warnings: generated.warnings
-    }, null, 2)}\n`, 'utf8')
-    await writeModpackMigrationRecord(committed, record)
-    currentProject = committed
-    await rememberRecentProject(committed)
-    emitProjectChanged()
-    return {
-      ...generated,
-      project: committed,
-      migrationId,
-      mode,
-      sourceSnapshotId: sourceSnapshot?.id,
-      canUndo: Boolean(sourceSnapshot),
-      reportPath
-    }
-  } catch (error) {
-    if (commitStarted) {
-      try {
-        if (sourceSnapshotTree) await restoreSnapshotTree(project, sourceSnapshotTree)
-        else if (rollbackFiles.length) await restoreSnapshotFilesExact(rollbackRoot, project.path, rollbackFiles)
-        currentProject = project
-        emitProjectChanged()
-      } catch (rollbackError) {
-        throw new Error(`整合包迁移失败，自动回滚也失败。\n迁移错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`)
-      }
-    }
-    if (mode === 'direct') await fs.rm(modpackMigrationDirectory(project, migrationId), { recursive: true, force: true }).catch(() => undefined)
-    throw error
-  } finally {
-    await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
-  }
-}
-
-async function undoModpackMigration(project: ProjectInfo, migrationId: string): Promise<ModpackMigrationUndoResult> {
-  const record = await readModpackMigrationRecord(project, migrationId)
-  if (record.status === 'undone') throw new Error('该迁移已经撤销')
-  if (!record.sourceSnapshotId) throw new Error('直接迁移没有迁移前备份，不能一键撤销')
-  const restored = await restoreProjectSnapshot(record.sourceSnapshotId, project.path)
-  const updated: ModpackMigrationRecord = {
-    ...record,
-    status: 'undone',
-    preUndoSnapshotId: restored.backup.id,
-    undoneAt: new Date().toISOString()
-  }
-  await writeModpackMigrationRecord(restored.project, updated)
-  currentProject = restored.project
-  emitProjectChanged()
-  return { migration: updated, restoredProject: restored.project, preUndoSnapshot: restored.backup }
-}
 
 async function deleteProjectSnapshot(id: string, projectPath?: string): Promise<SnapshotInfo[]> {
   const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
@@ -5534,92 +5321,33 @@ function publicMcpOutputDirectory(project: ProjectInfo, input: Record<string, un
   if (target !== root && !target.startsWith(`${root}${path.sep}`)) throw new Error('outputDirectory must stay inside the active project')
   return target
 }
+async function resolveAddonImportPaths(project: ProjectInfo, values: string[]): Promise<string[]> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').resolveAddonImportPaths(project, values) }
 
-async function resolveAddonImportPaths(project: ProjectInfo, values: string[]): Promise<string[]> {
-  if (!values.length || values.length > 100) throw new Error('add-on import requires between 1 and 100 project-relative JAR paths')
-  const root = path.resolve(project.path)
-  const resolved: string[] = []
-  for (const value of values) {
-    if (typeof value !== 'string' || path.isAbsolute(value)) throw new Error('add-on import paths must be project-relative')
-    const target = path.resolve(project.path, ...value.replaceAll('\\', '/').split('/'))
-    if (!target.startsWith(`${root}${path.sep}`) || path.extname(target).toLowerCase() !== '.jar') throw new Error(`invalid add-on JAR path: ${value}`)
-    const stat = await fs.stat(target).catch(() => null)
-    if (!stat?.isFile()) throw new Error(`add-on JAR does not exist: ${value}`)
-    resolved.push(target)
-  }
-  return resolved
-}
+function normalizeAddonPrepareInput(input: Record<string, unknown> | AddonPrepareInput): AddonPrepareInput { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').normalizeAddonPrepareInput(input) }
+async function linkAddonProject(project: ProjectInfo, projectPath: string, signal?: AbortSignal): Promise<unknown> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').linkAddonProject(project, projectPath, signal) }
 
-function normalizeAddonPrepareInput(input: Record<string, unknown> | AddonPrepareInput): AddonPrepareInput {
-  const names = (value: unknown): string[] => Array.isArray(value)
-    ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string').map((entry) => entry.trim()).filter(Boolean))].slice(0, 100)
-    : []
-  const providers = Array.isArray(input.providers)
-    ? input.providers.filter((entry): entry is 'modrinth' | 'curseforge' => entry === 'modrinth' || entry === 'curseforge')
-    : undefined
-  const required = names(input.required)
-  const optional = names(input.optional)
-  if (!required.length && !optional.length) throw new Error('at least one required or optional add-on target is required')
-  return { required, optional, ...(providers?.length ? { providers } : {}) }
-}
+async function resolveModpackMigrationTarget(input: Record<string, unknown>): Promise<Awaited<ReturnType<LoaderCatalog['resolve']>>> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').resolveModpackMigrationTarget(input) }
 
-async function linkAddonProject(project: ProjectInfo, projectPath: string, signal?: AbortSignal): Promise<unknown> {
-  const targetPath = path.resolve(projectPath.trim())
-  const target = await readProjectInfo(targetPath)
-  if (!target) throw new Error('linked path is not a ModMind project')
-  const service = createAddonRelationshipService(() => project)
-  return withMinecraftResourceLock(async () => {
-    const artifact = await buildLinkedProjectTree(target, signal, [project.path])
-    return service.linkProject(target, artifact)
-  })
-}
+function normalizeMcpMigrationInput(project: ProjectInfo, input: Record<string, unknown>): ModpackMigrationCreateInput { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').normalizeMcpMigrationInput(project, input) }
 
-async function resolveModpackMigrationTarget(input: Record<string, unknown>): Promise<Awaited<ReturnType<LoaderCatalog['resolve']>>> {
-  if (!isJavaLoader(input.loader) || typeof input.minecraftVersion !== 'string' || !input.minecraftVersion.trim()) {
-    throw new Error('migration target requires a Java loader and Minecraft version')
-  }
-  return requireLoaderCatalog().resolve(input.loader, input.minecraftVersion.trim())
-}
+async function previewModpackMigrationForAgent(project: ProjectInfo, input: Record<string, unknown>): Promise<unknown> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').previewModpackMigrationForAgent(project, input) }
 
-function normalizeMcpMigrationInput(project: ProjectInfo, input: Record<string, unknown>): ModpackMigrationCreateInput {
-  if (!isJavaLoader(input.loader) || typeof input.minecraftVersion !== 'string' || !Array.isArray(input.mods) || !Array.isArray(input.modules) || !Array.isArray(input.content)) {
-    throw new Error('migration apply requires loader, minecraftVersion, mods, modules, and content')
-  }
-  const root = path.resolve(project.path)
-  const mods = input.mods.map((value) => {
-    if (!value || typeof value !== 'object') throw new Error('migration mod decision is invalid')
-    const decision = { ...(value as Record<string, unknown>) }
-    if (decision.action === 'manual-file') {
-      if (typeof decision.filePath !== 'string' || path.isAbsolute(decision.filePath)) throw new Error('Agent manual migration JAR paths must be project-relative')
-      const resolved = path.resolve(project.path, ...decision.filePath.replaceAll('\\', '/').split('/'))
-      if (!resolved.startsWith(`${root}${path.sep}`)) throw new Error('Agent manual migration JAR path must stay inside the project')
-      decision.filePath = resolved
-    }
-    return decision
-  }) as unknown as ModpackMigrationCreateInput['mods']
+async function applyModpackMigrationForAgent(project: ProjectInfo, input: Record<string, unknown>): Promise<ModpackMigrationCreateResult> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').applyModpackMigrationForAgent(project, input) }
+
+
+function featureAgentHandlers(project: ProjectInfo, signal: AbortSignal, event?: import('electron').IpcMainInvokeEvent, automaticFeatures = false): Pick<ExternalAgentBridgeHandlers, 'featureCatalog' | 'featureTools' | 'featureInvoke' | 'featureRecommend' | 'featureInstallMode'> {
   return {
-    loader: input.loader,
-    minecraftVersion: input.minecraftVersion.trim(),
-    mode: input.mode === 'direct' ? 'direct' : 'backup',
-    mods,
-    modules: input.modules as ModpackMigrationCreateInput['modules'],
-    content: input.content as ModpackMigrationCreateInput['content']
+    featureCatalog: async () => featureStoreService?.agentCatalog() ?? featurePluginService.catalog(),
+    featureInstallMode: automaticFeatures ? 'automatic' : 'manual',
+    featureRecommend: input => featureStoreService.recommend(input, automaticFeatures, signal),
+    featureTools: async surface => featurePluginService.tools(surface),
+    featureInvoke: (id, action, input, context) => aiProjectContext.run(project, async () => {
+      signal.throwIfAborted()
+      const window = BrowserWindow.getAllWindows().find(candidate => candidate.webContents === event?.sender) ?? mainWindow
+      const invoke = () => featurePluginService.invoke(id, action, input, { ...context, signal, windowId: window?.id })
+      return event ? nativeFeatureEvent.run(event, invoke) : invoke()
+    })
   }
-}
-
-async function previewModpackMigrationForAgent(project: ProjectInfo, input: Record<string, unknown>): Promise<unknown> {
-  if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-  const target = await resolveModpackMigrationTarget(input)
-  return assessModpackMigration(requireModProviderRegistry(), project, target, undefined, mcmodService)
-}
-
-async function applyModpackMigrationForAgent(project: ProjectInfo, input: Record<string, unknown>): Promise<ModpackMigrationCreateResult> {
-  if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-  const normalized = normalizeMcpMigrationInput(project, input)
-  const target = await resolveModpackMigrationTarget(normalized as unknown as Record<string, unknown>)
-  const result = await withMinecraftResourceLock(() => applyModpackMigrationInPlace(project, target, normalized))
-  Object.assign(project, result.project)
-  return result
 }
 
 async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: AbortSignal): Promise<ExternalAgentBridgeHandlers> {
@@ -5629,28 +5357,12 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     codexExecutable: managedCodexExecutablePath(app.getPath('userData')),
     projectPath: project.path
   }
-  const addonService = createAddonRelationshipService(() => project)
-  const addonContext = await addonService.describeForAi().catch(() => null)
-  const soundMcp = createSoundMcpHandlers({
-    service: soundServiceForProject(project, path.join(app.getPath('userData'), 'minecraft-runtime', 'game'), path.join(app.getPath('userData'), 'sound-library')),
-    renderMusic: draft => {
-      if (!mainWindow) throw new Error('工作台窗口不可用，无法渲染音乐')
-      return renderMusicInWindow(mainWindow, draft, signal)
-    },
-    assertCurrent: () => {
-      signal.throwIfAborted()
-      if (!isJavaLoader(project.loader) || project.kind === 'modpack' || project.kind === 'server-plugin') throw new Error('声音工作台仅适用于 Java Mod 项目')
-      if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已经切换，请重新打开当前项目的工作台')
-    }
-  })
   const handlers: ExternalAgentBridgeHandlers = {
+    ...featureAgentHandlers(project, signal),
     modpackModules: input => inspectModpackModules(project, input),
     modpackDelegateModule: async input => moduleTasks.start(input),
     modpackModuleTask: input => moduleTasks.read(input),
-    projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) },
-    resourcePackOperation: input => resourcePackAgentOperation(project, input),
-    soundRead: soundMcp.read,
-    soundCreate: soundMcp.create,
+    projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents') },
     serverOperation: input => localServerAgentOperation(project, input, signal),
     creationContext: input => creationContextOperation(project, input),
     projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
@@ -5703,19 +5415,8 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const tasks = publicMcpTodoTasks(values)
       return { success: true, tasks, intent: publicMcpIntent }
     },
-    mappingsSearch: (query, limit) => requireMappings().search(project.minecraftVersion, query, Math.min(Math.max(limit ?? 20, 1), 50)),
-    mappingsClass: (className, memberQuery) => requireMappings().getClass(project.minecraftVersion, className, memberQuery),
-    dependencySearch: (query, offset) => requireDependencyService().search(query, Math.min(Math.max(offset ?? 0, 0), 1_000)),
-    dependencyInstall: (projectId, versionId) => requireDependencyService().install({ projectId, versionId }),
-    mavenDependencyInstall: (input) => requireDependencyService().installMaven(input as unknown as MavenDependencyInput),
-    addonRelationships: () => addonService.describeForAi(),
-    addonPrepare: (input) => addonService.prepare(normalizeAddonPrepareInput(input)),
-    addonImport: async (paths, role) => addonService.importExact(await resolveAddonImportPaths(project, paths), role === 'optional' || role === 'test' ? role : 'required'),
-    addonLinkProject: (projectPath) => linkAddonProject(project, projectPath, signal),
-    contentValidate: () => requireContentService().validate(),
     testMatrix: (targets) => { moduleTasks.assertCollected(); return runProjectTestMatrix(targets.filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target)), signal) },
     testRendered: () => { moduleTasks.assertCollected(); return runManagedRenderedTest(project, signal) },
-    releasePreflight: () => requireReleaseService().preflight(),
     build: async () => { moduleTasks.assertCollected(); const artifact = await buildProjectWithLock(signal); return { success: true, artifact } },
     testMinecraft: async () => {
       moduleTasks.assertCollected()
@@ -5724,104 +5425,11 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       if (!result.success) throw new Error(result.message || 'HeadlessMC smoke test failed')
       return result
     },
-    blockbenchActions: (actions, expectedRevision) => requireBlockbenchForProject(project).executeActions(actions as BlockbenchAction[], signal, expectedRevision),
-    blockbenchProjectState: () => requireBlockbenchForProject(project).getProjectState(),
-    blockbenchValidate: () => requireBlockbenchForProject(project).validateProject(),
-    blockbenchCaptureViews: (input) => requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest),
-    blockbenchHistory: () => requireBlockbenchForProject(project).listHistory(),
-    blockbenchCheckpoint: (label) => requireBlockbenchForProject(project).createCheckpoint(label),
-    blockbenchRestoreHistory: (id) => requireBlockbenchForProject(project).restoreHistory(id),
-    assetCompileIntent: async (input) => compileAssetIntent(input),
-    assetPreviewIntent: (input, capture, expectedRevision) => previewAssetIntentCandidate(
-      requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined, signal, expectedRevision
-    ),
-    assetApplyIntent: async (input, expectedRevision) => {
-      const candidate = compileAssetIntent(input)
-      if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-      const execution = await requireBlockbenchForProject(project).executeCandidateActions(candidate.actions, signal, expectedRevision)
-      return {...candidate, execution}
-    },
-    assetCompileRefinement: (input) => compileAssetRefinementForBridge(requireBlockbenchForProject(project), input),
-    assetPreviewRefinement: (input, capture, expectedRevision) => previewAssetRefinementCandidate(
-      requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined, signal, expectedRevision
-    ),
-    assetApplyRefinement: (input, expectedRevision) => applyAssetRefinementCandidate(
-      requireBlockbenchForProject(project), input, signal, expectedRevision
-    ),
-    assetCompileAdvanced: async (input, variantId) => compileAdvancedAsset(input, variantId),
-    assetPreviewAdvanced: (input, capture, options, expectedRevision) => previewAdvancedAssetComparison(
-      requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined,
-      options as AdvancedAssetPreviewOptions | undefined, signal, expectedRevision
-    ),
-    assetApplyAdvanced: async (input, variantId, expectedRevision) => {
-      const candidate = compileAdvancedAsset(input, variantId)
-      if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-      const execution = await requireBlockbenchForProject(project).executeCandidateActions(candidate.actions, signal, expectedRevision)
-      return {...candidate, execution}
-    },
-    assetCompileReference: (input) => compileReferenceImageAsset(input),
-    assetPreviewReference: (input, capture, expectedRevision) => previewReferenceImageCandidate(
-      requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined, signal, expectedRevision
-    ),
-    assetApplyReference: async (input, expectedRevision) => {
-      const candidate = await compileReferenceImageAsset(input)
-      const execution = await requireBlockbenchForProject(project).executeCandidateActions(candidate.actions, signal, expectedRevision)
-      return {...candidate, execution}
-    },
-    assetVisualReview: async (input) => {
-      const captures = await requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest)
-      return {...captures, review: await reviewAssetCaptures(captures.captures, input.referenceHeightToWidth as number | undefined)}
-    },
     runtimeState: async () => requireMinecraftRuntime().getState(),
     javaHomeScan: () => scanConfiguredJavaHomes(),
     javaHomeProbe: (home) => probeJavaHomeInfo(home),
     appSettingsRead: async () => publicAgentSettings(await readSettings()),
     appSettingsWrite: (input) => applyAppSettingWrite(input),
-    modpackPlan: async (concept) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      const plan = await planModpack(requireModProviderRegistry(), project, concept as unknown as Parameters<typeof planModpack>[2], mcmodService, signal)
-      await saveManualModRequirements(project, plan.manualRequired ?? [])
-      return plan
-    },
-    modpackApplyPlan: async (plan) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      return applyModpackPlan(requireModProviderRegistry(), project, plan as unknown as Parameters<typeof applyModpackPlan>[2], signal)
-    },
-    modpackMigrationTargets: async () => (await requireLoaderCatalog().list()).filter((option) => ['fabric', 'quilt', 'forge', 'neoforge'].includes(option.loader)),
-    modpackMigrationPreview: (input) => previewModpackMigrationForAgent(project, input),
-    modpackMigrationApply: (input) => applyModpackMigrationForAgent(project, input),
-    modpackMigrationHistory: () => listModpackMigrationRecords(project),
-    modpackMigrationUndo: async (migrationId) => {
-      const result = await withMinecraftResourceLock(() => undoModpackMigration(project, migrationId))
-      Object.assign(project, result.restoredProject)
-      return result
-    },
-    modpackDownloadContent: (input) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      return downloadModpackContent(project, input as unknown as ModpackContentDownloadInput)
-    },
-    mcmodSearch: (query, limit) => mcmodService.search(query, Math.min(Math.max(limit ?? 10, 1), 20), signal),
-    mcmodFiles: async (projectId) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      const files = await mcmodService.listFiles(projectId, signal)
-      const loader = project.loader.toLowerCase()
-      return files.filter((file) => file.minecraftVersion.split('/').includes(project.minecraftVersion)
-        && (!file.loaders.length || file.loaders.some((value) => value.toLowerCase().includes(loader))))
-    },
-    modpackWriteFtbQuest: async (input) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      const relative = await writeFtbQuestChapter(project, input as unknown as Parameters<typeof writeFtbQuestChapter>[1])
-      return { success: true, path: relative }
-    },
-    modpackWritePatchouliBook: async (input) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      const paths = await writePatchouliBook(project, input as unknown as Parameters<typeof writePatchouliBook>[1])
-      return { success: true, paths }
-    },
-    modpackApplyKeybindPreset: async (input, allowConflicts) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      return applyKeybindPreset(project, input as unknown as Parameters<typeof applyKeybindPreset>[1], allowConflicts)
-    },
     modpackBuildServer: async (input) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
       const outputDirectory = publicMcpOutputDirectory(project, input, path.join(project.path, projectDataDirectory(project), 'server-pack'))
@@ -5837,14 +5445,6 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const outputDirectory = publicMcpOutputDirectory(project, input, path.join(project.path, projectDataDirectory(project), 'server-pack'))
       return withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), managedMinecraftDirectory: requireMinecraftRuntime().managedMinecraftDirectory(), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
-    modpackApplyOptimizationProfile: async (input) => {
-      if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      const profileId = typeof input.profileId === 'string' ? input.profileId : ''
-      const builtIn = BUILTIN_OPTIMIZATION_PROFILES.find((profile) => profile.id === profileId)
-      const profile = builtIn ?? input.profile
-      if (!profile || typeof profile !== 'object') throw new Error(`optimization profile not found: ${profileId}`)
-      return applyOptimizationProfile(requireModProviderRegistry(), project, profile as Parameters<typeof applyOptimizationProfile>[2], signal)
-    },
     modpackRunServerScenario: async (input) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
       const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
@@ -5858,11 +5458,6 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const outputDirectory = publicMcpOutputDirectory(project, input, path.join(project.path, projectDataDirectory(project), 'server-scenario'))
       return withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
-    imageGenerate: async (input) => {
-      return generateStudioImage(input, 'agent')
-    },
-    imageStudioInfo: (includeModels) => requireImageStudio().describe(includeModels),
-    imageProcess: (operation, dataUrl, options) => requireImageStudio().process(operation, dataUrl, options),
     imageProjectAssets: async () => {
       const flatten = (nodes: FileNode[]): FileNode[] => nodes.flatMap((node) => node.type === 'directory' ? flatten(node.children ?? []) : [node])
       return flatten(await listDirectory(project.path)).filter((node) => /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(node.path)).slice(0, 500).map((node) => node.path)
@@ -5885,7 +5480,7 @@ async function startPublicMcpBridge(projectPath?: string): Promise<{ projectPath
   await stopPublicMcpBridge()
   currentProject = project
   await rememberRecentProject(project)
-  await refreshExternalAgentContext(project).catch(() => undefined)
+  await refreshExternalAgentContext(project, featurePluginService.enabled('image-studio')).catch(() => undefined)
   const controller = new AbortController()
   const handlers = await createPublicMcpBridgeHandlers(project, controller.signal)
   const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget())
@@ -6135,6 +5730,7 @@ async function getAiReviewerConfig(
     reasoningEffort: configured.reasoningEffort
   }
 }
+function parseReleaseSummary(content: string, fallback: ReleaseSummaryDraft): ReleaseSummaryDraft { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/publishing/main').activate>>('publishing').parseReleaseSummary(content, fallback) }
 
 async function requestProjectAiName(project: ProjectInfo, prompt: string, sessionScope: string, backend?: AgentSettings['codingBackend'], modelSelection?: AiModelSelection): Promise<string> {
   const settings = await readSettings()
@@ -6168,42 +5764,8 @@ function suggestProjectNamespace(project: ProjectInfo, backend?: AgentSettings['
   return requestProjectAiName(project, projectNamespacePrompt(project), `project-namespace/${randomUUID()}`, backend, modelSelection)
 }
 
-function parseReleaseSummary(content: string, fallback: ReleaseSummaryDraft): ReleaseSummaryDraft {
-  const candidate = content.match(/\{[\s\S]*\}/)?.[0] ?? content
-  try {
-    const value = JSON.parse(candidate) as Record<string, unknown>
-    const summary = typeof value.summary === 'string' ? value.summary.trim().slice(0, 500) : ''
-    const changelog = typeof value.changelog === 'string' ? value.changelog.trim().slice(0, 100_000) : ''
-    if (summary) return { summary, changelog: changelog || fallback.changelog, generatedBy: 'ai' }
-  } catch { /* A non-JSON response falls back to the deterministic draft. */ }
-  return fallback
-}
+async function generateAiReleaseSummary(): Promise<ReleaseSummaryDraft> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/publishing/main').activate>>('publishing').generateAiReleaseSummary() }
 
-async function generateAiReleaseSummary(): Promise<ReleaseSummaryDraft> {
-  const fallback = await requireReleaseService().suggestSummary()
-  const settings = await readSettings()
-  const backend = settings.codingBackend
-  const config = await getAiReviewerConfig(backend === 'quota', backend === 'quota' ? 'codex' : backend, settings).catch(() => null)
-  if (!config?.baseUrl || !config.apiKey || !config.model) return fallback
-  const project = requireProject()
-  const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: 0.25,
-      messages: [
-        { role: 'system', content: 'You write concise Minecraft release notes in Simplified Chinese. Return only JSON with string fields summary and changelog. Do not claim unverified gameplay changes.' },
-        { role: 'user', content: `Create a release summary from this local metadata. Do not request files or make edits.\n${JSON.stringify({ project: project.name, minecraft: project.minecraftVersion, loader: project.loader, fallback }, null, 2)}` }
-      ]
-    }),
-    signal: AbortSignal.timeout(30_000)
-  })
-  if (!response.ok) return fallback
-  const body = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: unknown } }> } | null
-  const content = typeof body?.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : ''
-  return content ? parseReleaseSummary(content, fallback) : fallback
-}
 
 function codingHashesEqual(left: Map<string, string> | null, right: Map<string, string>): boolean {
   if (!left || left.size !== right.size) return false
@@ -6606,10 +6168,6 @@ async function runExternalCodingAgent(
       : `${runExternalConfiguration.baseUrl ?? 'local'}\n${runExternalConfiguration.model ?? 'local'}\n${configuredExecutable ?? 'detected'}`
     const retryScope = createHash('sha256').update(`${backend}\n${providerRouteIdentity}`).digest('hex').slice(0, 24)
     const sessionFingerprint = createHash('sha256').update(`${backend}\n${externalBackend}`).digest('hex').slice(0, 24)
-    const addonService = createAddonRelationshipService(() => project)
-    const addonContext = isInspiration
-      ? null
-      : await awaitWithAbort(addonService.describeForAi().catch(() => null), signal, 'Agent 任务已停止')
     throwIfAborted(signal, 'Agent 任务已停止')
     const unifiedHandoff = recovery && backendChanged
       ? `\n\nUNIFIED CONTEXT HANDOFF (revision ${activeTask.contextRevision ?? 0}). The user switched the execution backend from ${recoveryBackend} to ${backend}. This is the same conversation and the same task, not a new request.\nOriginal request: ${recovery.prompt}\nLast summary: ${recovery.state.summary || '(none)'}\nTodo: ${JSON.stringify(recovery.state.todo ?? [])}\nChanged files: ${JSON.stringify(recovery.changedFiles ?? [])}\nCompleted workflow stages: ${JSON.stringify(recovery.workflow?.completed ?? [])}\nTests: ${JSON.stringify(recovery.state.tests ?? [])}\nWarnings: ${JSON.stringify(recovery.state.warnings ?? [])}\nContinue from this unified state. Inspect current project files before editing and do not repeat completed work.`
@@ -6673,7 +6231,7 @@ async function runExternalCodingAgent(
       workflowSourceDirectory: bundledCodexSkillsDirectory(),
       pluginTarget: createPluginBridgeTarget(),
       systemPrompt: isInspiration
-        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
+        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures, featurePluginService.enabled('image-studio')) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
         : `${WORKBENCH_REQUEST_GUIDANCE}\n\n${beginnerAgent ? BEGINNER_AGENT_WORKFLOW_GUIDANCE : ''}\n\n${project.draft ? `当前工程尚未创建。已记录的选择：${JSON.stringify(project.draft.target)}。结合本次对话补齐必要信息后使用 modmind_project_setup；不要手写模板或修改占位项目配置。` : codingWorkflowPrompt(project)}`,
       sessionScope,
       sessionLane: backend,
@@ -6790,9 +6348,11 @@ async function runExternalCodingAgent(
         { ...(status === 'error' ? { terminal: false, recoverable: true } : {}), ...(notice ? { notice } : {}) }
       )),
       bridge: {
+        ...featureAgentHandlers(project, signal, event, beginnerAgent && !isInspiration),
         research: input => runInspirationResearch(project, input, {
+          backend: () => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile'),
           cacheRoot: path.join(app.getPath('userData'), 'decompile'), signal,
-          ensureJava: () => requireMinecraftRuntime().ensureJavaRuntimeForTools(DECOMPILE_MIN_JAVA),
+          ensureJava: () => requireMinecraftRuntime().ensureJavaRuntimeForTools(decompileMinimumJava()),
           onProgress: detail => { sendCodingProgress(pipelineEvent('planning', '分析材料', detail, 'running')); if (isInspiration) sendAiOutput(event, 'tool', detail, sessionId, project.path, context.runId) }
         }),
         modpackModules: input => inspectModpackModules(project, input),
@@ -6811,7 +6371,7 @@ async function runExternalCodingAgent(
           if (task.result?.changedFiles.length) recordWorkflow('implementation', `Module workbench completed edits for ${task.namespace}`)
           return task
         },
-        get projectInfo() { return { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents'), ...(addonContext ? { addonRelationships: addonContext } : {}) } },
+        get projectInfo() { return { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents') } },
         projectSetup: async input => {
           signal.throwIfAborted()
           const wasDraft = Boolean(project.draft)
@@ -6842,7 +6402,6 @@ async function runExternalCodingAgent(
           sendCodingProgress(pipelineEvent('writing', '项目已创建', `${project.name} · ${project.loader} ${project.minecraftVersion}`, 'success'))
           return { project: { ...project }, guidance: codingWorkflowPrompt(project), next: '项目已创建。需求明确就直接继续制作；否则询问一个必要问题并给出选项和推荐。无需再次确认开始，也不要重建工程。' }
         },
-        resourcePackOperation: input => resourcePackAgentOperation(project, input),
         serverOperation: input => localServerAgentOperation(project, input, signal),
         creationContext: input => creationContextOperation(project, input),
         projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
@@ -6942,154 +6501,6 @@ async function runExternalCodingAgent(
           sendCodingProgress(pipelineEvent('planning', '外部代理 Todo 已更新', `${completed}/${next.length} 个任务完成`, completed === next.length ? 'success' : 'running', next))
           return { success: true, tasks: next }
         },
-        mappingsSearch: (query, limit) => requireMappings().search(project.minecraftVersion, query, Math.min(Math.max(limit ?? 20, 1), 50)),
-        mappingsClass: (className, memberQuery) => requireMappings().getClass(project.minecraftVersion, className, memberQuery),
-        dependencySearch: (query, offset) => requireDependencyService().search(query, Math.min(Math.max(offset ?? 0, 0), 1_000)),
-        dependencyInstall: async (projectId, versionId) => {
-          try {
-            const dependency = await requireDependencyService().install({ projectId, versionId })
-            recordManagedDownload('dependency_install')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, 'build.gradle', 'modmind.dependencies.json', dependency.relativePath])]
-            await writeTask()
-            return dependency
-          } catch (error) {
-            recordManagedDownloadFailure('dependency_install', error)
-            throw error
-          }
-        },
-        mavenDependencyInstall: async (input) => {
-          try {
-            const dependency = await requireDependencyService().installMaven(input as unknown as MavenDependencyInput)
-            recordManagedDownload('maven_dependency_install')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, 'build.gradle', 'build.gradle.kts', 'modmind.dependencies.json'])]
-            await writeTask()
-            return dependency
-          } catch (error) {
-            recordManagedDownloadFailure('maven_dependency_install', error)
-            throw error
-          }
-        },
-        addonRelationships: () => addonService.describeForAi(),
-        addonPrepare: async (input) => {
-          try {
-            const manifest = await addonService.prepare(normalizeAddonPrepareInput(input))
-            recordManagedDownload('addon_prepare')
-            activeTask.changedFiles = [...new Set([
-              ...activeTask.changedFiles,
-              'modmind.relationships.json',
-              'modmind.dependencies.json',
-              'build.gradle',
-              'build.gradle.kts',
-              descriptorPath(project.loader, project.minecraftVersion),
-              ...manifest.relationships.map((entry) => entry.relativePath)
-            ])]
-            await writeTask()
-            return addonService.describeForAi()
-          } catch (error) {
-            recordManagedDownloadFailure('addon_prepare', error)
-            throw error
-          }
-        },
-        addonImport: async (paths, role) => {
-          try {
-            const manifest = await addonService.importExact(await resolveAddonImportPaths(project, paths), role === 'optional' || role === 'test' ? role : 'required')
-            recordManagedDownload('addon_prepare')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, 'modmind.relationships.json', 'modmind.dependencies.json', descriptorPath(project.loader, project.minecraftVersion), ...manifest.relationships.map((entry) => entry.relativePath)])]
-            await writeTask()
-            return addonService.describeForAi()
-          } catch (error) {
-            recordManagedDownloadFailure('addon_prepare', error)
-            throw error
-          }
-        },
-        addonLinkProject: async (projectPath) => {
-          try {
-            const manifest = await linkAddonProject(project, projectPath, signal) as Awaited<ReturnType<AddonRelationshipService['list']>>
-            recordManagedDownload('addon_prepare')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, 'modmind.relationships.json', 'modmind.dependencies.json', descriptorPath(project.loader, project.minecraftVersion), ...manifest.relationships.map((entry) => entry.relativePath)])]
-            await writeTask()
-            return addonService.describeForAi()
-          } catch (error) {
-            recordManagedDownloadFailure('addon_prepare', error)
-            throw error
-          }
-        },
-        modpackPlan: async (concept) => {
-          if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-          const plan = await planModpack(requireModProviderRegistry(), project, concept as unknown as Parameters<typeof planModpack>[2], mcmodService, signal)
-          await saveManualModRequirements(project, plan.manualRequired ?? [])
-          return plan
-        },
-        modpackApplyPlan: async (plan) => {
-          try {
-            if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-            const result = await applyModpackPlan(requireModProviderRegistry(), project, plan as unknown as Parameters<typeof applyModpackPlan>[2], signal)
-            recordManagedDownload('modpack_apply_plan')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, 'modmind.pack.json', 'modmind.modpack.lock.json', ...result.installed.map((name) => `mods/${name}`)])]
-            await writeTask()
-            return result
-          } catch (error) {
-            recordManagedDownloadFailure('modpack_apply_plan', error)
-            throw error
-          }
-        },
-        modpackMigrationTargets: async () => (await requireLoaderCatalog().list()).filter((option) => ['fabric', 'quilt', 'forge', 'neoforge'].includes(option.loader)),
-        modpackMigrationPreview: (input) => previewModpackMigrationForAgent(project, input),
-        modpackMigrationApply: async (input) => {
-          const result = await applyModpackMigrationForAgent(project, input)
-          activeTask.changedFiles = [...new Set([...activeTask.changedFiles, 'modmind.project.json', 'modmind.pack.json', 'modmind.modpack.lock.json', path.relative(project.path, result.reportPath).replaceAll('\\', '/')])]
-          await writeTask()
-          return result
-        },
-        modpackMigrationHistory: () => listModpackMigrationRecords(project),
-        modpackMigrationUndo: async (migrationId) => {
-          const result = await withMinecraftResourceLock(() => undoModpackMigration(project, migrationId))
-          Object.assign(project, result.restoredProject)
-          await writeTask()
-          return result
-        },
-        modpackDownloadContent: async (input) => {
-          try {
-            if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-            const result = await downloadModpackContent(project, input as unknown as ModpackContentDownloadInput)
-            recordManagedDownload('modpack_download_content')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, result.item.path])]
-            await writeTask()
-            return result
-          } catch (error) {
-            recordManagedDownloadFailure('modpack_download_content', error)
-            throw error
-          }
-        },
-        mcmodSearch: (query, limit) => mcmodService.search(query, Math.min(Math.max(limit ?? 10, 1), 20), signal),
-        mcmodFiles: async (projectId) => {
-          if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-          const files = await mcmodService.listFiles(projectId, signal)
-          const loader = project.loader.toLowerCase()
-          return files.filter((file) => file.minecraftVersion.split('/').includes(project.minecraftVersion)
-            && (!file.loaders.length || file.loaders.some((value) => value.toLowerCase().includes(loader))))
-        },
-        modpackWriteFtbQuest: async (input) => {
-          if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-          const relative = await writeFtbQuestChapter(project, input as unknown as Parameters<typeof writeFtbQuestChapter>[1])
-          activeTask.changedFiles = [...new Set([...activeTask.changedFiles, relative])]
-          await writeTask()
-          return { success: true, path: relative }
-        },
-        modpackWritePatchouliBook: async (input) => {
-          if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-          const paths = await writePatchouliBook(project, input as unknown as Parameters<typeof writePatchouliBook>[1])
-          activeTask.changedFiles = [...new Set([...activeTask.changedFiles, ...paths])]
-          await writeTask()
-          return { success: true, paths }
-        },
-        modpackApplyKeybindPreset: async (input, allowConflicts) => {
-          if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-          const result = await applyKeybindPreset(project, input as unknown as Parameters<typeof applyKeybindPreset>[1], allowConflicts)
-          activeTask.changedFiles = [...new Set([...activeTask.changedFiles, result.path])]
-          await writeTask()
-          return result
-        },
         modpackBuildServer: async (input) => {
           if (!isModpackProject(project)) throw new Error('current project is not a modpack')
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack')
@@ -7115,24 +6526,6 @@ async function runExternalCodingAgent(
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_verify_server_join completed successfully')
            return result
         },
-        modpackApplyOptimizationProfile: async (input) => {
-          try {
-            if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-            const value = input as Record<string, unknown>
-            const profileId = typeof value.profileId === 'string' ? value.profileId : ''
-            const builtIn = BUILTIN_OPTIMIZATION_PROFILES.find((profile) => profile.id === profileId)
-            const profile = builtIn ?? value.profile
-            if (!profile || typeof profile !== 'object') throw new Error(`optimization profile not found: ${profileId}`)
-            const result = await applyOptimizationProfile(requireModProviderRegistry(), project, profile as Parameters<typeof applyOptimizationProfile>[2], signal)
-            recordManagedDownload('modpack_apply_optimization_profile')
-            activeTask.changedFiles = [...new Set([...activeTask.changedFiles, ...result.appliedPatches, 'modmind.modpack.lock.json'])]
-            await writeTask()
-            return result
-          } catch (error) {
-            recordManagedDownloadFailure('modpack_apply_optimization_profile', error)
-            throw error
-          }
-        },
         modpackRunServerScenario: async (input) => {
           runtimeUsed = false
           lastRuntimeHashes = null
@@ -7151,11 +6544,6 @@ async function runExternalCodingAgent(
            if (result.success) lastRuntimeHashes = await managedCodingHashes(project)
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_run_server_scenario completed successfully')
            return result
-        },
-        contentValidate: async () => {
-          const result = await requireContentService().validate()
-          recordWorkflow('validate', 'modmind_validate_content completed successfully')
-          return result
         },
         testMatrix: async (targets) => {
           moduleTasks.assertCollected()
@@ -7181,7 +6569,6 @@ async function runExternalCodingAgent(
           await writeTask()
           return matrix
         },
-        releasePreflight: () => requireReleaseService().preflight(),
         build: async () => {
           moduleTasks.assertCollected()
           buildCount += 1
@@ -7239,86 +6626,12 @@ async function runExternalCodingAgent(
           lastRuntimeHashes = await managedCodingHashes(project)
           return smoke
         },
-        blockbenchActions: async (actions, expectedRevision) => {
-          return requireBlockbenchForProject(project).executeActions(actions as BlockbenchAction[], signal, expectedRevision)
-        },
-        blockbenchProjectState: () => requireBlockbenchForProject(project).getProjectState(),
-        blockbenchValidate: () => requireBlockbenchForProject(project).validateProject(),
-        blockbenchCaptureViews: (input) => requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest),
-        blockbenchHistory: () => requireBlockbenchForProject(project).listHistory(),
-        blockbenchCheckpoint: (label) => requireBlockbenchForProject(project).createCheckpoint(label),
-        blockbenchRestoreHistory: (id) => requireBlockbenchForProject(project).restoreHistory(id),
-        assetCompileIntent: async (input) => compileAssetIntent(input),
-        assetPreviewIntent: (input, capture, expectedRevision) => previewAssetIntentCandidate(
-          requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined, signal, expectedRevision
-        ),
-        assetApplyIntent: async (input, expectedRevision) => {
-          const candidate = compileAssetIntent(input)
-          if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-          const execution = await requireBlockbenchForProject(project).executeCandidateActions(candidate.actions, signal, expectedRevision)
-          return {...candidate, execution}
-        },
-        assetCompileRefinement: (input) => compileAssetRefinementForBridge(requireBlockbenchForProject(project), input),
-        assetPreviewRefinement: (input, capture, expectedRevision) => previewAssetRefinementCandidate(
-          requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined, signal, expectedRevision
-        ),
-        assetApplyRefinement: (input, expectedRevision) => applyAssetRefinementCandidate(
-          requireBlockbenchForProject(project), input, signal, expectedRevision
-        ),
-        assetCompileAdvanced: async (input, variantId) => compileAdvancedAsset(input, variantId),
-        assetPreviewAdvanced: (input, capture, options, expectedRevision) => previewAdvancedAssetComparison(
-          requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined,
-          options as AdvancedAssetPreviewOptions | undefined, signal, expectedRevision
-        ),
-        assetApplyAdvanced: async (input, variantId, expectedRevision) => {
-          const candidate = compileAdvancedAsset(input, variantId)
-          if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-          const execution = await requireBlockbenchForProject(project).executeCandidateActions(candidate.actions, signal, expectedRevision)
-          return {...candidate, execution}
-        },
-        assetCompileReference: (input) => compileReferenceImageAsset(input),
-        assetPreviewReference: (input, capture, expectedRevision) => previewReferenceImageCandidate(
-          requireBlockbenchForProject(project), input, capture as BlockbenchCaptureRequest | undefined, signal, expectedRevision
-        ),
-        assetApplyReference: async (input, expectedRevision) => {
-          const candidate = await compileReferenceImageAsset(input)
-          const execution = await requireBlockbenchForProject(project).executeCandidateActions(candidate.actions, signal, expectedRevision)
-          return {...candidate, execution}
-        },
-        assetVisualReview: async (input) => {
-          const captures = await requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest)
-          return {...captures, review: await reviewAssetCaptures(captures.captures, input.referenceHeightToWidth as number | undefined)}
-        },
         runtimeState: async () => runtime.getState(),
         javaHomeScan: () => scanConfiguredJavaHomes(),
         javaHomeProbe: (home) => probeJavaHomeInfo(home),
         appSettingsRead: async () => publicAgentSettings(await readSettings()),
         appSettingsWrite: (input) => applyAppSettingWrite(input)
-        ,imageGenerate: async (input) => {
-          const generated = await generateStudioImage(input, 'agent')
-          const outputRoot = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated')
-          await fs.mkdir(outputRoot, { recursive: true })
-          const files: string[] = []
-          const assets: Array<{ path?: string; dataUrl?: string; handoffAvailable: boolean }> = []
-          for (const [index, asset] of generated.assets.entries()) {
-            const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(asset.dataUrl)
-            let relative: string | undefined
-            if (match) {
-              const extension = asset.dataUrl.startsWith('data:image/jpeg;') ? 'jpg' : asset.dataUrl.startsWith('data:image/webp;') ? 'webp' : 'png'
-              relative = path.posix.join(project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated', `${generated.jobId}-${index + 1}.${extension}`)
-              await fs.writeFile(path.join(project.path, ...relative.split('/')), Buffer.from(match[1], 'base64'))
-              files.push(relative)
-            }
-            // Blockbench accepts a maximum 8 MiB PNG data URL. Give the
-            // agent a bounded handoff so it can process or bind the image
-            // without granting read access to ModMind's protected folder.
-            const handoffAvailable = asset.dataUrl.startsWith('data:image/') && asset.dataUrl.length <= 8 * 1024 * 1024
-            assets.push({ ...(relative ? { path: relative } : {}), ...(handoffAvailable ? { dataUrl: asset.dataUrl } : {}), handoffAvailable })
-          }
-          return { success: !generated.error, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(generated.error ? { error: generated.error } : {}) }
-        },
-        imageStudioInfo: (includeModels) => requireImageStudio().describe(includeModels),
-        imageProcess: (operation, dataUrl, options) => requireImageStudio().process(operation, dataUrl, options),
+        ,
         imageProjectAssets: async () => {
           const flatten = (nodes: FileNode[]): FileNode[] => nodes.flatMap((node) => node.type === 'directory' ? flatten(node.children ?? []) : [node])
           return flatten(await listDirectory(project.path)).filter((node) => /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(node.path)).slice(0, 500).map((node) => node.path)
@@ -7613,34 +6926,6 @@ async function runAutomatedE2E(): Promise<void> {
 }
 
 function registerIpc(): void {
-  diagnosticHandle('itemEditor:list', async (_event, projectPath: string) => {
-    const project = requireProject()
-    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
-    return listManagedItems(project)
-  })
-  diagnosticHandle('itemEditor:catalog', async (_event, projectPath: string) => {
-    const project = requireProject()
-    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
-    return listVanillaItems(project.minecraftVersion, undefined, app.getPath('userData'))
-  })
-  diagnosticHandle('itemEditor:save', async (_event, projectPath: string, input: ItemEditorSaveInput) => {
-    const project = requireProject()
-    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
-    return saveManagedItem(project, input)
-  })
-  diagnosticHandle('itemEditor:remove', async (_event, projectPath: string, id: string, revision: number) => {
-    const project = requireProject()
-    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
-    return removeManagedItem(project, id, revision)
-  })
-  diagnosticHandle('itemEditor:importTexture', async (_event, projectPath: string) => {
-    const project = requireProject()
-    if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path)) throw new Error('项目已经切换，请重新打开物品编辑器')
-    const selection = await dialog.showOpenDialog(mainWindow!, { title: '导入物品贴图', properties: ['openFile'], filters: [{ name: 'PNG 图片', extensions: ['png'] }] })
-    if (selection.canceled || !selection.filePaths[0]) return null
-    if (!sameProjectPath(project.path, requireProject().path)) throw new Error('项目已经切换，请重新导入贴图')
-    return importItemTexture(project, selection.filePaths[0])
-  })
   ipcMain.on('app:platformInfo', (event) => { event.returnValue = runtimePlatformInfo(process.platform, process.arch, app.isPackaged) })
   diagnosticHandle('app:version', () => app.getVersion())
   diagnosticHandle('app:getChangelog', (event) => {
@@ -7666,6 +6951,7 @@ function registerIpc(): void {
     return appUpdateService.updateNow(checkForAppUpdates)
   })
   diagnosticHandle('app:reinstallLatest', async (_event, confirmed: unknown) => {
+    if (app.getVersion().endsWith('-plugintest')) throw new Error('插件测试版请使用 1.5.0-plugintest 安装包重装，不接入正式版更新通道')
     if (confirmed !== true) throw new Error('请先确认重装')
     if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
     return appUpdateService.reinstallLatest(async () => confirmed === true, async report => prepareCleanReinstall({
@@ -7697,40 +6983,42 @@ function registerIpc(): void {
   diagnosticHandle('remote:stop', () => stopRemoteClient(true))
   diagnosticHandle('mcp-bridge:getState', () => mcpBridgeState())
   diagnosticHandle('mcp-bridge:setEnabled', (_event, enabled: unknown) => setMcpBridgeEnabledFromSettings(enabled === true))
-  diagnosticHandle('image-studio:getSettings', () => requireImageStudio().getSettings())
-  diagnosticHandle('image-studio:saveSettings', (_event, value) => requireImageStudio().saveSettings(value))
-  diagnosticHandle('image-studio:capabilities', () => requireImageStudio().capabilities())
-  diagnosticHandle('image-studio:generate', (_event, value: ImageGenerationRequest) => generateStudioImage(value, 'manual'))
-  diagnosticHandle('image-studio:process', (_event, operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options) => runDiagnosticOperation('image-studio', operation, 'Image processing', () => requireImageStudio().process(operation, dataUrl, options), { inputBytes: Buffer.byteLength(dataUrl, 'utf8') }))
-  diagnosticHandle('image-studio:history', () => requireImageStudio().history())
-  diagnosticHandle('image-studio:saveAsset', async (_event, dataUrl: string, suggestedName: string) => {
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) throw new Error('图片数据格式无效')
-    const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
-    if (!match) throw new Error('只支持 PNG、JPEG 或 WebP 图片')
-    const safeName = String(suggestedName || 'modmind-image').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'modmind-image'
-    const extension = match[1] === 'jpeg' ? 'jpg' : match[1]
-    const result = await dialog.showSaveDialog({ defaultPath: `${safeName}.${extension}`, filters: [{ name: 'Image', extensions: [extension] }] })
-    if (result.canceled || !result.filePath) return null
-    await fs.writeFile(result.filePath, Buffer.from(match[2], 'base64'))
-    return result.filePath
+  diagnosticHandle('feature-plugins:list', () => featurePluginService.list())
+  diagnosticHandle('feature-plugins:catalog', () => featurePluginService.catalog())
+  diagnosticHandle('feature-plugins:store', () => featureStoreService.snapshot())
+  diagnosticHandle('feature-plugins:refreshStore', () => featureStoreService.refresh(true))
+  diagnosticHandle('feature-plugins:installOfficial', (event, id: unknown) => {
+    if (event.sender !== mainWindow?.webContents || typeof id !== 'string') throw new Error('请在主窗口安装功能')
+    return featureStoreService.installOfficial(id)
   })
-  diagnosticHandle('image-studio:saveToProject', async (_event, dataUrl: string, suggestedName: string) => {
-    const project = requireProject()
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) throw new Error('图片数据格式无效')
-    const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
-    if (!match) throw new Error('加入项目目前只支持 PNG、JPEG 或 WebP 图片')
-    const safeName = String(suggestedName || 'modmind-image').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'modmind-image'
-    const extension = match[1] === 'jpeg' ? 'jpg' : match[1]
-    const relativeDirectory = isModpackProject(project)
-      ? 'overrides/modmind-images'
-      : isJavaLoader(project.loader)
-        ? `src/main/resources/assets/${project.namespace}/textures/modmind`
-        : 'resource_pack/textures/modmind'
-    const relativePath = `${relativeDirectory}/${safeName}.${extension}`
-    const target = resolveProjectPath(relativePath)
-    await fs.mkdir(path.dirname(target), { recursive: true })
-    await fs.writeFile(target, Buffer.from(match[2], 'base64'))
-    return relativePath
+  diagnosticHandle('feature-plugins:cancelDownload', event => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('请在主窗口管理下载')
+    featureStoreService.cancel()
+  })
+  diagnosticHandle('feature-plugins:invoke', (event, id: unknown, action: unknown, input: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed() || window !== mainWindow && !isDetachedWindow(window)) throw new Error('请在应用窗口调用功能插件')
+    if (typeof id !== 'string' || typeof action !== 'string' || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('功能插件调用参数无效')
+    return nativeFeatureEvent.run(event, () => featurePluginService.invoke(id, action, input as Record<string, unknown>, { projectPath: currentProject?.path, windowId: window.id }))
+  })
+  diagnosticHandle('feature-plugins:install', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('请在主窗口安装应用功能插件')
+    const selected = await dialog.showOpenDialog(mainWindow!, { title: '安装应用功能插件', properties: ['openFile'], filters: [{ name: 'ModMind 应用功能插件', extensions: ['mmfeature'] }] })
+    if (selected.canceled || !selected.filePaths[0]) return null
+    const prepared = await prepareFeaturePlugin(selected.filePaths[0])
+    const trusted = await requestWindowConfirmation(event.sender, randomUUID(), {
+      name: prepared.manifest.name, version: prepared.manifest.version, fileName: path.basename(selected.filePaths[0])
+    }, 'feature-plugins:installPreview', 'feature-plugins:confirmInstall')
+    if (!trusted) return null
+    return featurePluginService.list().some(record => record.id === prepared.manifest.id) ? featurePluginService.update(prepared) : featurePluginService.install(prepared)
+  })
+  diagnosticHandle('feature-plugins:setEnabled', (event, id: unknown, enabled: unknown) => {
+    if (event.sender !== mainWindow?.webContents || typeof id !== 'string' || typeof enabled !== 'boolean') throw new Error('插件参数或窗口无效')
+    return featurePluginService.setEnabled(id, enabled)
+  })
+  diagnosticHandle('feature-plugins:uninstall', (event, id: unknown) => {
+    if (event.sender !== mainWindow?.webContents || typeof id !== 'string') throw new Error('插件参数或窗口无效')
+    return featurePluginService.uninstall(id)
   })
   diagnosticHandle('window:minimize', (event) => (BrowserWindow.fromWebContents(event.sender) ?? mainWindow)?.minimize())
   diagnosticHandle('window:maximize', (event) => {
@@ -7751,7 +7039,8 @@ function registerIpc(): void {
   })
   diagnosticHandle('window:openDetached', (_event, view: unknown, title: unknown) => {
     const target = typeof view === 'string' ? view : ''
-    if (!sidebarViewIds.has(target as SidebarViewId) && !/^group:(?:\d{1,3}|custom-[a-z0-9-]{1,64}|ungrouped)$/.test(target)) throw new Error('Unsupported detached window target')
+    const pluginView = featurePluginService.list().some(plugin => featurePluginService.enabled(plugin.id) && plugin.manifest?.views?.some(view => view.id === target))
+    if (!sidebarViewIds.has(target as SidebarViewId) && !pluginView && !/^group:(?:\d{1,3}|custom-[a-z0-9-]{1,64}|ungrouped)$/.test(target)) throw new Error('Unsupported detached window target')
     const window = createDetachedWindow(target as DetachedWindowTarget, typeof title === 'string' ? title : '')
     return { alwaysOnTop: window.isAlwaysOnTop() }
   })
@@ -7765,101 +7054,6 @@ function registerIpc(): void {
     if (!window || !isDetachedWindow(window)) throw new Error('This window cannot be pinned')
     window.setAlwaysOnTop(alwaysOnTop === true, 'floating')
     return { alwaysOnTop: window.isAlwaysOnTop() }
-  })
-
-  diagnosticHandle('blockbench:show', (_event, bounds: BlockbenchBounds) => {
-    const bridge = requireBlockbench()
-    bridge.setBounds(bounds)
-    bridge.show()
-  })
-  diagnosticHandle('blockbench:hide', () => requireBlockbench().hide())
-  diagnosticHandle('blockbench:getState', () => {
-    const status = requireBlockbench().getStatus()
-    return { ...status, status: status.phase, connected: status.phase === 'ready' }
-  })
-  diagnosticHandle('blockbench:openProject', () =>
-    requireBlockbench().executeAction({ type: 'run-command', command: 'open-project' })
-  )
-  diagnosticHandle('blockbench:openYsm', async () => {
-    const project = requireProject()
-    if (runsForProject(project.path).length) throw new Error('项目正在执行任务，请稍后打开模型')
-    const result = await dialog.showOpenDialog(mainWindow!, { title: '打开 YSM 源模型（ysm.json 或未加密 ZIP）', properties: ['openFile'], filters: [{ name: 'YSM 模型源文件', extensions: ['json', 'zip', 'ysm'] }] })
-    if (result.canceled || !result.filePaths[0]) return null
-    const document = await readYsmSource(result.filePaths[0])
-    if (requireProject().path !== project.path || runsForProject(project.path).length) throw new Error('项目状态已改变，请重新打开模型')
-    await requireBlockbenchForProject(project).loadSourceDocument(document)
-    return { name: document.name, animations: document.animations.length }
-  })
-  diagnosticHandle('blockbench:saveProject', () =>
-    requireBlockbench().executeAction({ type: 'run-command', command: 'save-project-dialog' })
-  )
-  diagnosticHandle('blockbench:setTheme', (_event, theme: 'light' | 'dark', preset: unknown, custom: unknown) => requireBlockbench().setTheme(theme, normalizeThemePreset(preset), normalizeCustomThemeColors(custom)))
-  diagnosticHandle('blockbench:runAction', (_event, action: string) => {
-    const mapping: Record<string, BlockbenchCommand> = {
-      undo: 'undo',
-      redo: 'redo',
-      frame_all: 'frame-all',
-      toggle_grid: 'toggle-grid',
-      toggle_animate: 'toggle-animate',
-      mode_edit: 'mode-edit',
-      mode_paint: 'mode-paint',
-      mode_animate: 'mode-animate'
-    }
-    const command = mapping[action]
-    if (!command) throw new Error('Unsupported Blockbench toolbar action')
-    return requireBlockbench().executeAction({ type: 'run-command', command })
-  })
-  diagnosticHandle('blockbench:execute', (_event, action: BlockbenchAction) => requireBlockbench().executeAction(action))
-  diagnosticHandle('blockbench:executeActions', (_event, actions: BlockbenchAction[], expectedRevision?: string) =>
-    requireBlockbench().executeActions(actions, undefined, expectedRevision)
-  )
-  diagnosticHandle('blockbench:projectState', () => requireBlockbench().getProjectState())
-  diagnosticHandle('blockbench:validate', () => requireBlockbench().validateProject())
-  diagnosticHandle('blockbench:captureViews', (_event, request: BlockbenchCaptureRequest) => requireBlockbench().captureViews(request))
-  diagnosticHandle('blockbench:setAssetMetadata', (_event, metadata: BlockbenchAssetMetadata) => requireBlockbench().setAssetMetadata(metadata))
-  diagnosticHandle('blockbench:saveAssetBundle', (_event, request: BlockbenchAssetSaveRequest) => requireBlockbench().saveAssetBundle(request))
-  diagnosticHandle('blockbench:history', () => requireBlockbench().listHistory())
-  diagnosticHandle('blockbench:createCheckpoint', (_event, label?: string) => requireBlockbench().createCheckpoint(label))
-  diagnosticHandle('blockbench:restoreHistory', (_event, id: string) => requireBlockbench().restoreHistory(id))
-  diagnosticHandle('asset-intent:compile', (_event, intent: unknown) => compileAssetIntent(intent))
-  diagnosticHandle('asset-intent:preview', (_event, intent: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
-    previewAssetIntentCandidate(requireBlockbench(), intent, request, undefined, expectedRevision)
-  )
-  diagnosticHandle('asset-intent:apply', async (_event, intent: unknown, expectedRevision?: string) => {
-    const candidate = compileAssetIntent(intent)
-    if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-    const execution = await requireBlockbench().executeCandidateActions(candidate.actions, undefined, expectedRevision)
-    return {...candidate, execution}
-  })
-  diagnosticHandle('asset-refinement:compile', async (_event, refinement: unknown) => compileAssetRefinementForBridge(requireBlockbench(), refinement))
-  diagnosticHandle('asset-refinement:preview', (_event, refinement: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
-    previewAssetRefinementCandidate(requireBlockbench(), refinement, request, undefined, expectedRevision)
-  )
-  diagnosticHandle('asset-refinement:apply', async (_event, refinement: unknown, expectedRevision?: string) => {
-    return applyAssetRefinementCandidate(requireBlockbench(), refinement, undefined, expectedRevision)
-  })
-  diagnosticHandle('advanced-asset:compile', (_event, program: unknown, variantId = 'base') => compileAdvancedAsset(program, variantId))
-  diagnosticHandle('advanced-asset:preview', (_event, program: unknown, request: BlockbenchCaptureRequest, options: AdvancedAssetPreviewOptions, expectedRevision?: string) =>
-    previewAdvancedAssetComparison(requireBlockbench(), program, request, options, undefined, expectedRevision)
-  )
-  diagnosticHandle('advanced-asset:apply', async (_event, program: unknown, variantId = 'base', expectedRevision?: string) => {
-    const candidate = compileAdvancedAsset(program, variantId)
-    if (candidate.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return candidate
-    const execution = await requireBlockbench().executeCandidateActions(candidate.actions, undefined, expectedRevision)
-    return {...candidate, execution}
-  })
-  diagnosticHandle('reference-asset:compile', (_event, program: unknown) => compileReferenceImageAsset(program))
-  diagnosticHandle('reference-asset:preview', (_event, program: unknown, request: BlockbenchCaptureRequest, expectedRevision?: string) =>
-    previewReferenceImageCandidate(requireBlockbench(), program, request, undefined, expectedRevision)
-  )
-  diagnosticHandle('reference-asset:apply', async (_event, program: unknown, expectedRevision?: string) => {
-    const candidate = await compileReferenceImageAsset(program)
-    const execution = await requireBlockbench().executeCandidateActions(candidate.actions, undefined, expectedRevision)
-    return {...candidate, execution}
-  })
-  diagnosticHandle('asset-visual-review:current', async (_event, request: BlockbenchCaptureRequest) => {
-    const capture = await requireBlockbench().captureViews(request)
-    return {...capture, review: await reviewAssetCaptures(capture.captures)}
   })
 
   diagnosticHandle('minecraft:getState', () => requireMinecraftRuntime().refresh())
@@ -7919,34 +7113,6 @@ function registerIpc(): void {
     })
     if (result.canceled) return requireMinecraftRuntime().listMods()
     return requireMinecraftRuntime().importMods(result.filePaths)
-  })
-
-  diagnosticHandle('mappings:search', (_event, version: string, query: string, limit?: number) =>
-    requireMappings().search(version, query, limit)
-  )
-  diagnosticHandle('mappings:getClass', (_event, version: string, className: string, memberQuery?: string) =>
-    requireMappings().getClass(version, className, memberQuery)
-  )
-  diagnosticHandle('mappings:openSource', (_event, version: string) => {
-    if (!/^[0-9A-Za-z._-]{1,40}$/.test(version)) throw new Error('无效的 Minecraft Mappings 版本')
-    return shell.openExternal(`https://mappings.dev/${version}/index.html`)
-  })
-  diagnosticHandle('mappings:openLoaderDocs', (_event, loader: LoaderKind) => {
-    const urls: Record<LoaderKind, string> = {
-      paper: 'https://docs.papermc.io/paper/dev/',
-      spigot: 'https://hub.spigotmc.org/javadocs/spigot/',
-      folia: 'https://docs.papermc.io/folia/',
-      velocity: 'https://docs.papermc.io/velocity/dev/',
-      fabric: 'https://docs.fabricmc.net/develop/',
-      quilt: 'https://wiki.quiltmc.org/en/modding/getting-started',
-      forge: 'https://docs.minecraftforge.net/en/latest/',
-      neoforge: 'https://docs.neoforged.net/docs/gettingstarted/',
-      bedrock: 'https://learn.microsoft.com/minecraft/creator/',
-      'netease-pc': 'https://mc.163.com/dev/',
-      'netease-mobile': 'https://mc.163.com/dev/'
-    }
-    if (!urls[loader]) throw new Error('无效的 Loader 文档类型')
-    return shell.openExternal(urls[loader])
   })
 
   diagnosticHandle('project:inspectExisting', async (event, sourceType: 'folder' | 'zip' = 'folder') => {
@@ -8205,43 +7371,111 @@ function registerIpc(): void {
   diagnosticHandle('project:deletePermanent', (_event, projectPath: string) => permanentlyDeleteProjectDirectory(projectPath))
 
   diagnosticHandle('project:current', () => currentProject)
-  diagnosticHandle('modpack:get', () => readModpackManifest(requireProject()))
   const packImportControllers = new Map<string, AbortController>()
-  diagnosticHandle('modpack:importStatus', async () => {
-    const state = await readCurseForgePackState(requireProject().path)
-    const report = await fs.readFile(path.join(requireProject().path, '.modmind/import/artifact-report.json'), 'utf8').then(text => JSON.parse(text) as { warnings: string[] }).catch(() => ({ warnings: [] }))
-    return state ? { total: state.files.length, installed: state.files.filter(file => file.status === 'installed').length,
-      compatibilityWarnings: report.warnings,
-      requiredPending: state.files.filter(file => file.required && file.status !== 'installed').length,
-      failures: state.files.filter(file => file.status !== 'installed').map(file => ({ projectId: file.projectID, fileId: file.fileID, path: file.file?.path, required: file.required, error: file.error })) } : null
-  })
-  diagnosticHandle('modpack:cancelImport', () => { packImportControllers.get(requireProject().path)?.abort(); return undefined })
-  diagnosticHandle('modpack:resumeImport', async () => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    if (packImportControllers.has(project.path)) throw new Error('整合包依赖正在安装')
-    const manifest = await readModpackManifest(project)
-    const state = await readCurseForgePackState(project.path)
-    if (!state || !manifest.source) throw new Error('缺少原始导入记录，请重新导入原整合包安装包')
-    const controller = new AbortController()
-    packImportControllers.set(project.path, controller)
-    const activity = downloadActivities.start({ label: `补齐整合包 · ${project.name}`, detail: '正在核对原清单文件' })
+diagnosticHandle('modpack:buildServerPack', async (_event, input: unknown) => {
+    if (localServerManager?.isBusy())
+        throw new Error('请先停止服务端再同步服务端包');
+    const project = requireProject();
+    const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack');
+    const manifest = project.kind === 'modpack' ? await readModpackManifest(project) : null;
+    const engine = value.engine === 'internal' || !manifest?.mods.length ? 'internal' as const : 'serverpackcreator' as const;
+    const log = (message: string, level: 'info' | 'warning' | 'error' = 'info', logPath?: string): void => localServerManager?.recordOperation(message, level, logPath);
+    const progress = (message: string, fraction?: number, downloaded?: number, total?: number): void => localServerManager?.setOperationProgress({ message, fraction, downloaded, total });
+    log(`开始同步服务端包：${engine === 'serverpackcreator' ? 'ServerPackCreator' : 'ModMind 内置引擎'}`);
+    progress('正在准备服务端包同步', 0.02);
     try {
-      const result = await installCurseForgePack(project.path, modpackOverridesRoot(project, manifest), state.files, {
-        resolve: curseForgePackResolver(curseForgeProviderKey, path.join(app.getPath('userData'), 'pack-metadata-cache')), cacheDirectory: path.join(app.getPath('userData'), 'pack-download-cache'), signal: controller.signal,
-        trackDownloadActivities: false, onProgress: progress => downloadActivities.update(activity, { detail: modpackAdoptionProgressDetail(progress) })
-      })
-      const updated = await adoptExternalModpack(project, { ...manifest.source, unresolvedDependencies: result.unresolvedDependencyCount || undefined })
-      await auditImportedPackArtifacts(project)
-      if (result.unresolvedDependencyCount) downloadActivities.fail(activity, new Error(`${result.unresolvedDependencyCount} 个必需文件未完成：${result.warnings.slice(0, 3).join('；')}`))
-      else downloadActivities.complete(activity, '所有必需文件已安装并校验')
-      return updated
-    } catch (error) {
-      await adoptExternalModpack(project, manifest.source)
-      downloadActivities.fail(activity, error)
-      throw error
-    } finally { packImportControllers.delete(project.path) }
-  })
+        let javaPath: string | undefined;
+        if (engine === 'serverpackcreator') {
+            log('正在准备 ServerPackCreator 所需的托管 Java');
+            javaPath = await requireMinecraftRuntime().ensureJavaRuntime((message) => {
+                log(message);
+                progress(message, 0.04);
+            }, SERVER_PACK_CREATOR_MIN_JAVA, ({ source, downloaded, total }) => progress(`正在从 ${source} 下载 ServerPackCreator 所需的 Java`, 0.04 + 0.32 * (total > 0 ? downloaded / total : 0), downloaded, total));
+            log('托管 Java 已就绪，正在运行 ServerPackCreator');
+            progress('正在启动 ServerPackCreator', 0.38);
+        }
+        let creatorOutputWasStreamed = false;
+        const result = await buildServerPack(project, {
+            outputDirectory,
+            port: typeof value.port === 'number' ? value.port : undefined,
+            acceptEula: true,
+            includeUnknownSideMods: value.includeUnknownSideMods === true,
+            onlineMode: value.onlineMode !== false,
+            engine,
+            javaPath,
+            cacheDirectory: path.join(app.getPath('userData'), 'server-pack-creator'),
+            onProgress: (message) => progress(message, 0.42),
+            onOutput: (output) => {
+                creatorOutputWasStreamed = true;
+                log(output);
+                progress('ServerPackCreator 正在下载并筛选服务端文件', 0.42);
+            }
+        });
+        if (result.logPath && !creatorOutputWasStreamed) {
+            const creatorOutput = await fs.readFile(result.logPath, 'utf8').catch(() => '');
+            if (creatorOutput.trim())
+                log(creatorOutput);
+        }
+        progress('正在写入服务端包清单', 0.94);
+        log(`服务端包同步完成：${result.copiedMods.length} 个服务端 Mod，跳过 ${result.skippedClientMods.length} 个客户端 Mod`, 'info', result.logPath);
+        progress('服务端包同步完成', 1);
+        return result;
+    }
+    catch (error) {
+        const message = describeRuntimeError(error);
+        log(`服务端包同步失败：${message}`, 'error');
+        throw new Error(`服务端包同步失败：${message}`);
+    }
+    finally {
+        localServerManager?.clearOperationProgress();
+    }
+});
+diagnosticHandle('modpack:installServerRuntime', async (_event, input: unknown) => {
+    if (localServerManager?.isBusy())
+        throw new Error('请先停止服务端再安装运行时');
+    const project = requireProject();
+    const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    const target = serverRuntimeDownloadDescription(project);
+    const log = (message: string, level: 'info' | 'warning' | 'error' = 'info', logPath?: string): void => localServerManager?.recordOperation(message, level, logPath);
+    const progress = (message: string, fraction?: number, downloaded?: number, total?: number): void => localServerManager?.setOperationProgress({ message, fraction, downloaded, total });
+    const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, '.modmind', 'server-pack');
+    const pack = await readExistingServerPack(project, outputDirectory);
+    if (!pack) {
+        const message = '请先同步服务端包，再检查服务端运行时';
+        log(message, 'warning');
+        throw new Error(message);
+    }
+    log(`开始检查服务端运行时：${target.label}`);
+    log(`已找到同步的服务端包：${pack.copiedMods.length} 个服务端 Mod`);
+    progress('正在准备服务端运行时', 0.02);
+    try {
+        log('正在准备 Minecraft 服务器所需的兼容 Java');
+        const runtimeJavaPath = await requireMinecraftRuntime().ensureJavaRuntime((message) => {
+            log(message);
+            progress(message, 0.05);
+        }, undefined, ({ source, downloaded, total }) => progress(`正在从 ${source} 下载 Minecraft 兼容 Java`, 0.05 + 0.35 * (total > 0 ? downloaded / total : 0), downloaded, total));
+        progress('正在下载并安装服务端 Loader', 0.42);
+        const runtime = await installServerRuntime({
+            serverPack: pack,
+            javaPath: runtimeJavaPath,
+            onDownloadProgress: ({ source, downloaded, total }) => progress(`正在从 ${source.label} 下载服务端 Loader`, total ? 0.42 + 0.5 * downloaded / total : undefined, downloaded, total)
+        }, project);
+        progress('正在验证服务端运行时', 0.96);
+        log(`服务端运行时已就绪：${runtime.serverJar ? path.basename(runtime.serverJar) : '启动脚本'}`);
+        progress('服务端运行时已就绪', 1);
+        return runtime;
+    }
+    catch (error) {
+        const sources = target.sources.length ? `Sources: ${target.sources.join('; ')}` : 'No valid download source was generated';
+        const message = `检查服务端运行时失败：${sources}。${describeRuntimeError(error)}`;
+        log(message, 'error');
+        throw new Error(message);
+    }
+    finally {
+        localServerManager?.clearOperationProgress();
+    }
+});
   diagnosticHandle('modpack:getServerPackManifest', () => readServerPackManifest(requireProject()))
   diagnosticHandle('modpack:addServerPackMods', async () => {
     const project = requireProject()
@@ -8272,380 +7506,14 @@ function registerIpc(): void {
     await fs.writeFile(selected.filePath, archive)
     return selected.filePath
   })
-  diagnosticHandle('modpack:importMods', async () => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Minecraft Mod JAR', extensions: ['jar'] }]
-    })
-    if (result.canceled || !result.filePaths.length) return readModpackManifest(project)
-    return addModpackFiles(project, result.filePaths)
-  })
-  diagnosticHandle('modpack:removeMod', (_event, fileName: string) => removeModpackFile(requireProject(), fileName))
-  diagnosticHandle('modpack:importModule', async (_event, mode: 'copy' | 'link') => {
-    const pack = requireProject()
-    if (!isModpackProject(pack)) throw new Error('当前项目不是整合包')
-    if (mode !== 'copy' && mode !== 'link') throw new Error('请选择复制或直接使用原项目')
-    const selected = await dialog.showOpenDialog(mainWindow!, { title: '导入已有模组项目', properties: ['openDirectory'] })
-    if (selected.canceled || !selected.filePaths.length) return null
-    const root = selected.filePaths[0]
-    let source = await readProjectInfo(root)
-    if (!source) {
-      const { analysis } = await analyzeExistingProject(root)
-      if (analysis.kind !== 'complete') throw new Error('请选择完整的模组源码项目；已编译的 JAR 可通过“导入 Mod”添加')
-      source = { ...analysis.inferred, path: root, createdAt: new Date().toISOString() }
-    }
-    return importModpackModule(pack, source, mode)
-  })
-  diagnosticHandle('modpack:createModule', async (_event, value: string) => {
-    const pack = requireProject()
-    if (!isModpackProject(pack)) throw new Error('当前项目不是整合包')
-    const name = validateProjectNameInput(value)
-    const namespace = slugify(name)
-    if ((await readModpackManifest(pack)).modules.some(module => module.namespace === namespace)) throw new Error('同名自制 Mod 已存在')
-    const relativePath = `modules/${namespace}`
-    const modulePath = path.join(pack.path, ...relativePath.split('/'))
-    if (await pathExists(modulePath)) throw new Error('同名自制 Mod 已存在')
-    const module: ProjectInfo = {
-      kind: 'mod',
-      name,
-      path: modulePath,
-      loader: pack.loader,
-      minecraftVersion: pack.minecraftVersion,
-      namespace,
-      createdAt: new Date().toISOString(),
-      loaderVersion: pack.loaderVersion,
-      apiVersion: pack.apiVersion,
-      qslVersion: pack.qslVersion,
-      javaVersion: pack.javaVersion,
-      projectVersion: CURRENT_PROJECT_VERSION,
-      toolDataDirectory: '.modmind'
-    }
-    await fs.mkdir(modulePath, { recursive: true })
-    try {
-      await writeProjectTemplate(module)
-      await fs.mkdir(path.join(modulePath, '.modmind'), { recursive: true })
-      return addModpackModule(pack, { name, namespace, path: relativePath, createdAt: module.createdAt })
-    } catch (error) {
-      await fs.rm(modulePath, { recursive: true, force: true })
-      throw error
-    }
-  })
-  diagnosticHandle('modpack:updateModuleSide', async (_event, namespace: unknown, side: unknown) => {
-    const pack = requireProject()
-    if (!isModpackProject(pack)) throw new Error('current project is not a modpack')
-    if (typeof namespace !== 'string' || !['client', 'server', 'both', 'unknown'].includes(String(side))) throw new Error('invalid self-made mod side')
-    return updateModpackModuleSide(pack, namespace, side as ModpackModuleSide)
-  })
-  diagnosticHandle('modpack:removeModule', (_event, namespace: string) => removeModpackModule(requireProject(), namespace, (target) => shell.trashItem(target)))
-  diagnosticHandle('modpack:openModule', async (_event, namespace: string) => {
-    const pack = requireProject()
-    const manifest = await readModpackManifest(pack)
-    const module = manifest.modules.find((entry) => entry.namespace === namespace)
-    if (!module) throw new Error('找不到自制 Mod')
-    const project = await readModpackModuleProject(pack, module)
-    if (!await pathExists(path.join(project.path, currentProjectManifest))) throw new Error('自制 Mod 工程文件已缺失')
-    currentProject = project
-    await rememberRecentProject(project)
-    return project
-  })
-  diagnosticHandle('modpack:sync', () => requireMinecraftRuntime().syncModpack())
-  diagnosticHandle('modpack:listContent', (_event, refresh?: unknown) => listModpackContent(requireProject(), refresh === true))
-  diagnosticHandle('modpack:importContent', async (_event, kind: ModpackContentKind, scope?: ModpackContentScope) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    const world = kind === 'worlds'
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: world ? '选择世界存档目录' : '导入整合包内容',
-      properties: world ? ['openDirectory'] : ['openFile', 'multiSelections']
-    })
-    if (result.canceled) return null
-    return importModpackContent(project, kind, result.filePaths, scope)
-  })
-  diagnosticHandle('modpack:downloadContent', (_event, input: ModpackContentDownloadInput) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    return downloadModpackContent(project, input)
-  })
-  diagnosticHandle('modpack:removeContent', (_event, id: string) => removeModpackContent(requireProject(), id))
-  diagnosticHandle('modpack:readLock', async () => readModpackLock(requireProject()))
-  diagnosticHandle('modpack:auditLock', async () => auditModpackLock(requireProject()))
-  diagnosticHandle('modpack:providers', () => requireModProviderRegistry().list().map((id) => ({ id, label: id === 'modrinth' ? 'Modrinth' : 'CurseForge', configured: true, supportsDependencies: true })))
-  diagnosticHandle('modpack:recommendProviders', async (): Promise<ModpackSearchResponse[]> => {
-    const project = requireProject()
-    if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 平台搜索')
-    const results = await requireModProviderRegistry().search({ query: '', minecraftVersion: project.minecraftVersion, loader: project.loader, limit: 12, index: 'downloads' })
-    return results.map((result) => ({
-      provider: result.provider,
-      total: result.total,
-      error: result.error,
-      hits: result.hits.map((hit) => ({ provider: hit.provider, projectId: hit.projectId, slug: hit.slug, name: hit.name, summary: hit.summary, projectUrl: hit.projectUrl, downloads: hit.downloads, clientSide: hit.clientSide, serverSide: hit.serverSide, ...(hit.iconUrl ? { iconUrl: hit.iconUrl } : {}), ...(hit.updatedAt ? { updatedAt: hit.updatedAt } : {}) }))
-    }))
-  })
-  diagnosticHandle('modpack:recommendMcmod', async () => {
-    const project = requireProject()
-    if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持模组推荐')
-    return mcmodService.recommendations(12)
-  })
-  diagnosticHandle('modpack:searchProviders', async (_event, rawQuery: unknown, rawProviders?: unknown): Promise<ModpackSearchResponse[]> => {
-    const project = requireProject()
-    if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 平台搜索')
-    const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 120) : ''
-    if (!query) return []
-    const providers = Array.isArray(rawProviders)
-      ? rawProviders.filter((value): value is 'modrinth' | 'curseforge' => value === 'modrinth' || value === 'curseforge')
-      : undefined
-    const results = await requireModProviderRegistry().search({ query, minecraftVersion: project.minecraftVersion, loader: project.loader, limit: 30 }, providers)
-    return results.map((result) => ({
-      provider: result.provider,
-      total: result.total,
-      error: result.error,
-      hits: result.hits.map((hit) => ({ provider: hit.provider, projectId: hit.projectId, slug: hit.slug, name: hit.name, summary: hit.summary, projectUrl: hit.projectUrl, downloads: hit.downloads, clientSide: hit.clientSide, serverSide: hit.serverSide, ...(hit.iconUrl ? { iconUrl: hit.iconUrl } : {}), ...(hit.updatedAt ? { updatedAt: hit.updatedAt } : {}) }))
-    }))
-  })
-  diagnosticHandle('modpack:listProviderFiles', async (_event, rawProvider: unknown, rawProjectId: unknown): Promise<ModpackFileOption[]> => {
-    const project = requireProject()
-    if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 平台下载')
-    if (rawProvider !== 'modrinth' && rawProvider !== 'curseforge') throw new Error('不支持的 Mod 平台')
-    if (typeof rawProjectId !== 'string' || !rawProjectId.trim()) throw new Error('Mod 项目 ID 无效')
-    const files = await requireModProviderRegistry().versions(rawProvider, rawProjectId, { minecraftVersion: project.minecraftVersion, loader: project.loader })
-    return files.map((file) => ({ provider: file.provider, projectId: file.projectId, versionId: file.versionId, versionName: file.versionName, filename: file.filename, side: file.side, ...(file.size !== undefined ? { size: file.size } : {}), ...(file.publishedAt ? { publishedAt: file.publishedAt } : {}) }))
-  })
-  diagnosticHandle('modpack:installProviderFile', async (_event, rawProvider: unknown, rawProjectId: unknown, rawVersionId: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project) || !isJavaLoader(project.loader)) throw new Error('只有 Java 整合包支持第三方 Mod 下载')
-    if (rawProvider !== 'modrinth' && rawProvider !== 'curseforge') throw new Error('不支持的 Mod 平台')
-    if (typeof rawProjectId !== 'string' || typeof rawVersionId !== 'string') throw new Error('Mod 版本信息无效')
-    const files = await requireModProviderRegistry().versions(rawProvider, rawProjectId, { minecraftVersion: project.minecraftVersion, loader: project.loader })
-    const file = files.find((candidate) => candidate.versionId === rawVersionId)
-    if (!file) throw new Error('该 Mod 版本已不可用，请刷新后重试')
-    const stagingRoot = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'provider-downloads', randomUUID())
-    const staged = path.join(stagingRoot, file.filename)
-    await fs.mkdir(stagingRoot, { recursive: true })
-    try {
-      const result = await requireModProviderRegistry().install(file, staged)
-      const manifest = await addModpackFiles(project, [result.path])
-      const lock = await readModpackLock(project)
-      const locked = lockedModFromFile(file, result, file.filename)
-      await writeModpackLock(project, { ...lock, mods: [...lock.mods.filter((entry) => !(entry.provider === file.provider && entry.projectId === file.projectId) && entry.fileName.toLowerCase() !== file.filename.toLowerCase()), locked] })
-      return manifest
-    } finally {
-      await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
-    }
-  })
-  diagnosticHandle('modpack:previewMigration', async (event, input: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    if (!input || typeof input !== 'object') throw new Error('迁移目标无效')
-    const value = input as { loader?: unknown; minecraftVersion?: unknown }
-    if (!isJavaLoader(value.loader) || typeof value.minecraftVersion !== 'string') throw new Error('迁移目标必须是 Java Loader 和 Minecraft 版本')
-    const target = await requireLoaderCatalog().resolve(value.loader, value.minecraftVersion.trim())
-    return assessModpackMigration(requireModProviderRegistry(), project, target, (progress) => {
-      if (!event.sender.isDestroyed()) event.sender.send('modpack:migrationProgress', progress)
-    }, mcmodService)
-  })
-  diagnosticHandle('modpack:selectMigrationJar', async (_event, input: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    if (!input || typeof input !== 'object') throw new Error('迁移目标无效')
-    const value = input as { loader?: unknown; minecraftVersion?: unknown }
-    if (!isJavaLoader(value.loader) || typeof value.minecraftVersion !== 'string') throw new Error('迁移目标必须是 Java Loader 和 Minecraft 版本')
-    await requireLoaderCatalog().resolve(value.loader, value.minecraftVersion.trim())
-    const selected = await dialog.showOpenDialog(mainWindow!, { properties: ['openFile'], filters: [{ name: 'Minecraft Mod JAR', extensions: ['jar'] }] })
-    if (selected.canceled || !selected.filePaths[0]) return null
-    return inspectModpackMigrationJar(selected.filePaths[0], value.loader)
-  })
-  diagnosticHandle('modpack:createMigration', async (_event, input: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    if (!input || typeof input !== 'object') throw new Error('迁移方案无效')
-    const value = input as Partial<ModpackMigrationCreateInput>
-    if (!isJavaLoader(value.loader) || typeof value.minecraftVersion !== 'string' || !Array.isArray(value.mods) || !Array.isArray(value.modules) || !Array.isArray(value.content)) {
-      throw new Error('迁移方案缺少目标版本或取舍记录')
-    }
-    if (value.mode !== undefined && value.mode !== 'backup' && value.mode !== 'direct') throw new Error('迁移模式无效')
-    const target = await requireLoaderCatalog().resolve(value.loader, value.minecraftVersion.trim())
-    return withMinecraftResourceLock(() => applyModpackMigrationInPlace(project, target, { ...(value as ModpackMigrationCreateInput), mode: value.mode === 'direct' ? 'direct' : 'backup' }))
-  })
-  diagnosticHandle('modpack:migrationHistory', () => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    return listModpackMigrationRecords(project)
-  })
-  diagnosticHandle('modpack:undoMigration', async (_event, migrationId: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
-    assertProjectMutationAllowed(project.path, '撤销迁移')
-    return withMinecraftResourceLock(() => undoModpackMigration(project, validateMigrationId(migrationId)))
-  })
-  diagnosticHandle('modpack:plan', async (_event, input: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-    if (!input || typeof input !== 'object') throw new Error('modpack concept must be an object')
-    const plan = await planModpack(requireModProviderRegistry(), project, input as Parameters<typeof planModpack>[2], mcmodService)
-    await saveManualModRequirements(project, plan.manualRequired ?? [])
-    return plan
-  })
-  diagnosticHandle('modpack:applyPlan', async (_event, input: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-    if (!input || typeof input !== 'object') throw new Error('modpack plan must be an object')
-    return applyModpackPlan(requireModProviderRegistry(), project, input as Parameters<typeof applyModpackPlan>[2])
-  })
   const ftbProject = (expected: unknown): ProjectInfo => {
     const project = requireProject()
     if (expected !== undefined && (typeof expected !== 'string' || path.resolve(expected).toLowerCase() !== path.resolve(project.path).toLowerCase())) throw new Error('FTB request belongs to a different project')
     return { ...project }
   }
-  diagnosticHandle('modpack:readFtbQuestBook', (_event, projectPath: unknown) => readFtbQuestBook(ftbProject(projectPath)))
-  diagnosticHandle('modpack:listFtbQuestBackups', (_event, projectPath: unknown) => listFtbQuestBackups(ftbProject(projectPath)))
-  diagnosticHandle('modpack:restoreFtbQuestBackup', (_event, projectPath: unknown, id: unknown, baseline: unknown) => {
-    if (typeof id !== 'string' || typeof baseline !== 'string') throw new Error('Invalid backup request')
-    return restoreFtbQuestBackup(ftbProject(projectPath), id, baseline)
-  })
-  diagnosticHandle('modpack:ftbQuestIcon', (_event, input: unknown, projectPath: unknown) => resolveFtbQuestIcon(ftbProject(projectPath), input))
-  diagnosticHandle('modpack:inspectFtbQuestIcon', (_event, input: unknown, projectPath: unknown, remote: unknown) => inspectFtbQuestIcon(ftbProject(projectPath), input, remote === true))
-  diagnosticHandle('modpack:refreshFtbQuestResources', (_event, projectPath: unknown, input: unknown) => refreshFtbQuestResources(ftbProject(projectPath), input))
-  diagnosticHandle('modpack:ftbQuestItemNames', (_event, itemIds: unknown, projectPath: unknown) => resolveFtbQuestItemNames(ftbProject(projectPath), Array.isArray(itemIds) ? itemIds.filter((id): id is string => typeof id === 'string') : []))
-  diagnosticHandle('modpack:ftbQuestDependencyTexture', (_event, projectPath: unknown) => resolveFtbQuestDependencyTexture(ftbProject(projectPath)))
-  diagnosticHandle('modpack:ftbQuestShapes', (_event, projectPath: unknown) => resolveFtbQuestShapes(ftbProject(projectPath)))
-  diagnosticHandle('modpack:saveFtbQuestBook', (_event, input: unknown, projectPath: unknown) => {
-    if (!input || typeof input !== 'object') throw new Error('invalid FTB Quests book')
-    return saveFtbQuestBook(ftbProject(projectPath), input as Parameters<typeof saveFtbQuestBook>[1])
-  })
-  diagnosticHandle('modpack:writeFtbQuest', (_event, input: unknown) => writeFtbQuestChapter(requireProject(), input as Parameters<typeof writeFtbQuestChapter>[1]))
-  diagnosticHandle('modpack:writePatchouliBook', (_event, input: unknown) => writePatchouliBook(requireProject(), input as Parameters<typeof writePatchouliBook>[1]))
-  diagnosticHandle('modpack:configModIdentities', (_event, projectPath: string) => {
-    const project = requireProject()
-    if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
-    return modpackConfigIdentities(project)
-  })
   onModpackManifestChanged(projectPath => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('modpack:modsChanged', projectPath)
-    }
-  })
-  diagnosticHandle('modpack:contentFeatures', (_event, projectPath: string) => {
-    const project = requireProject()
-    if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
-    return modpackContentFeatures(project)
-  })
-  diagnosticHandle('modpack:contentProjectPath', (_event, contentPath: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-    if (typeof contentPath !== 'string') throw new Error('content path must be a string')
-    return modpackContentProjectPath(project, contentPath)
-  })
-  diagnosticHandle('modpack:getKeybinds', () => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-    return readKeybindState(project)
-  })
-  diagnosticHandle('modpack:applyKeybindPreset', (_event, input: unknown, allowConflicts?: boolean) => applyKeybindPreset(requireProject(), input as Parameters<typeof applyKeybindPreset>[1], Boolean(allowConflicts)))
-  diagnosticHandle('modpack:buildServerPack', async (_event, input: unknown) => {
-    if (localServerManager?.isBusy()) throw new Error('请先停止服务端再同步服务端包')
-    const project = requireProject()
-    const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-    const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack')
-    const manifest = project.kind === 'modpack' ? await readModpackManifest(project) : null
-    const engine = value.engine === 'internal' || !manifest?.mods.length ? 'internal' as const : 'serverpackcreator' as const
-    const log = (message: string, level: 'info' | 'warning' | 'error' = 'info', logPath?: string): void => localServerManager?.recordOperation(message, level, logPath)
-    const progress = (message: string, fraction?: number, downloaded?: number, total?: number): void => localServerManager?.setOperationProgress({ message, fraction, downloaded, total })
-    log(`开始同步服务端包：${engine === 'serverpackcreator' ? 'ServerPackCreator' : 'ModMind 内置引擎'}`)
-    progress('正在准备服务端包同步', 0.02)
-    try {
-      let javaPath: string | undefined
-      if (engine === 'serverpackcreator') {
-        log('正在准备 ServerPackCreator 所需的托管 Java')
-        javaPath = await requireMinecraftRuntime().ensureJavaRuntime(
-          (message) => {
-            log(message)
-            progress(message, 0.04)
-          },
-          SERVER_PACK_CREATOR_MIN_JAVA,
-          ({ source, downloaded, total }) => progress(`正在从 ${source} 下载 ServerPackCreator 所需的 Java`, 0.04 + 0.32 * (total > 0 ? downloaded / total : 0), downloaded, total)
-        )
-        log('托管 Java 已就绪，正在运行 ServerPackCreator')
-        progress('正在启动 ServerPackCreator', 0.38)
-      }
-      let creatorOutputWasStreamed = false
-      const result = await buildServerPack(project, {
-        outputDirectory,
-        port: typeof value.port === 'number' ? value.port : undefined,
-        acceptEula: true,
-        includeUnknownSideMods: value.includeUnknownSideMods === true,
-        onlineMode: value.onlineMode !== false,
-        engine,
-        javaPath,
-        cacheDirectory: path.join(app.getPath('userData'), 'server-pack-creator'),
-        onProgress: (message) => progress(message, 0.42),
-        onOutput: (output) => {
-          creatorOutputWasStreamed = true
-          log(output)
-          progress('ServerPackCreator 正在下载并筛选服务端文件', 0.42)
-        }
-      })
-      if (result.logPath && !creatorOutputWasStreamed) {
-        const creatorOutput = await fs.readFile(result.logPath, 'utf8').catch(() => '')
-        if (creatorOutput.trim()) log(creatorOutput)
-      }
-      progress('正在写入服务端包清单', 0.94)
-      log(`服务端包同步完成：${result.copiedMods.length} 个服务端 Mod，跳过 ${result.skippedClientMods.length} 个客户端 Mod`, 'info', result.logPath)
-      progress('服务端包同步完成', 1)
-      return result
-    } catch (error) {
-      const message = describeRuntimeError(error)
-      log(`服务端包同步失败：${message}`, 'error')
-      throw new Error(`服务端包同步失败：${message}`)
-    } finally {
-      localServerManager?.clearOperationProgress()
-    }
-  })
-  diagnosticHandle('modpack:installServerRuntime', async (_event, input: unknown) => {
-    if (localServerManager?.isBusy()) throw new Error('请先停止服务端再安装运行时')
-    const project = requireProject()
-    const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-    const target = serverRuntimeDownloadDescription(project)
-    const log = (message: string, level: 'info' | 'warning' | 'error' = 'info', logPath?: string): void => localServerManager?.recordOperation(message, level, logPath)
-    const progress = (message: string, fraction?: number, downloaded?: number, total?: number): void => localServerManager?.setOperationProgress({ message, fraction, downloaded, total })
-    const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, '.modmind', 'server-pack')
-    const pack = await readExistingServerPack(project, outputDirectory)
-    if (!pack) {
-      const message = '请先同步服务端包，再检查服务端运行时'
-      log(message, 'warning')
-      throw new Error(message)
-    }
-    log(`开始检查服务端运行时：${target.label}`)
-    log(`已找到同步的服务端包：${pack.copiedMods.length} 个服务端 Mod`)
-    progress('正在准备服务端运行时', 0.02)
-    try {
-      log('正在准备 Minecraft 服务器所需的兼容 Java')
-      const runtimeJavaPath = await requireMinecraftRuntime().ensureJavaRuntime(
-        (message) => {
-          log(message)
-          progress(message, 0.05)
-        },
-        undefined,
-        ({ source, downloaded, total }) => progress(`正在从 ${source} 下载 Minecraft 兼容 Java`, 0.05 + 0.35 * (total > 0 ? downloaded / total : 0), downloaded, total)
-      )
-      progress('正在下载并安装服务端 Loader', 0.42)
-      const runtime = await installServerRuntime({
-        serverPack: pack,
-        javaPath: runtimeJavaPath,
-        onDownloadProgress: ({ source, downloaded, total }) => progress(`正在从 ${source.label} 下载服务端 Loader`, total ? 0.42 + 0.5 * downloaded / total : undefined, downloaded, total)
-      }, project)
-      progress('正在验证服务端运行时', 0.96)
-      log(`服务端运行时已就绪：${runtime.serverJar ? path.basename(runtime.serverJar) : '启动脚本'}`)
-      progress('服务端运行时已就绪', 1)
-      return runtime
-    } catch (error) {
-      const sources = target.sources.length ? `Sources: ${target.sources.join('; ')}` : 'No valid download source was generated'
-      const message = `检查服务端运行时失败：${sources}。${describeRuntimeError(error)}`
-      log(message, 'error')
-      throw new Error(message)
-    } finally {
-      localServerManager?.clearOperationProgress()
     }
   })
   diagnosticHandle('modpack:verifyServerJoin', async (_event, input: unknown) => {
@@ -8718,8 +7586,6 @@ function registerIpc(): void {
     return managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: value.onlineMode === true, javaPath, steps, onEvent: (event) => mainWindow?.webContents.send('minecraft:event', event) })
   })
   registerServerPluginIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(localServerManager?.isBusy() || runsForProject(requireProject().path).length) })
-  registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), blockbench: requireBlockbench })
-  registerSoundLibraryIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), minecraftRoot: () => requireMinecraftRuntime().managedMinecraftDirectory(), cacheRoot: path.join(app.getPath('userData'), 'sound-library') })
   diagnosticHandle('local-test:getState', () => localTestService?.getState())
   diagnosticHandle('local-test:start', (_event, options: LocalTestOptions) => {
     if (!localTestService) throw new Error('本机测试服务不可用')
@@ -8750,33 +7616,6 @@ function registerIpc(): void {
   diagnosticHandle('modpack:sendServerCommand', (_event, command: unknown) => {
     if (!localServerManager) throw new Error('本机服务端管理器不可用')
     return localServerManager.sendCommand(typeof command === 'string' ? command : '')
-  })
-  diagnosticHandle('modpack:listOptimizationProfiles', () => BUILTIN_OPTIMIZATION_PROFILES)
-  diagnosticHandle('modpack:applyOptimizationProfile', async (_event, input: unknown) => {
-    const project = requireProject()
-    if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-    if (!input || typeof input !== 'object') throw new Error('optimization profile input must be an object')
-    const value = input as Record<string, unknown>
-    const profileId = typeof value.profileId === 'string' ? value.profileId : ''
-    const builtIn = BUILTIN_OPTIMIZATION_PROFILES.find((profile) => profile.id === profileId)
-    const profile = builtIn ?? value.profile as Parameters<typeof applyOptimizationProfile>[2]
-    if (!profile || typeof profile !== 'object') throw new Error(`optimization profile not found: ${profileId}`)
-    return applyOptimizationProfile(requireModProviderRegistry(), project, profile as Parameters<typeof applyOptimizationProfile>[2])
-  })
-  diagnosticHandle('modpack:listManualMods', () => readManualModRequirements(requireProject()))
-  diagnosticHandle('modpack:searchMcmod', (_event, query: string) => mcmodService.search(typeof query === 'string' ? query : '', 20))
-  diagnosticHandle('modpack:listMcmodFiles', (_event, projectId: string) => mcmodService.listFiles(typeof projectId === 'string' ? projectId : ''))
-  diagnosticHandle('modpack:beginMcmodDownload', (event, projectId: string, fileKey: string) => {
-    if (!mainWindow || event.sender.id !== mainWindow.webContents.id) throw new Error('MC百科下载只能由当前客户端窗口发起')
-    return mcmodService.beginDownload(requireProject(), projectId, fileKey)
-  })
-  diagnosticHandle('modpack:refreshMcmodCaptcha', (event, sessionId: string) => {
-    if (!mainWindow || event.sender.id !== mainWindow.webContents.id) throw new Error('验证码只能由当前客户端窗口刷新')
-    return mcmodService.refreshCaptcha(requireProject(), sessionId)
-  })
-  diagnosticHandle('modpack:submitMcmodCaptcha', (event, sessionId: string, captcha: string) => {
-    if (!mainWindow || event.sender.id !== mainWindow.webContents.id) throw new Error('验证码只能由当前客户端窗口提交')
-    return mcmodService.submitCaptcha(requireProject(), sessionId, captcha)
   })
   diagnosticHandle('project:listFiles', async (_event, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
@@ -9027,7 +7866,7 @@ function registerIpc(): void {
       return result.filePath
     }
     if (isModpackProject(project)) {
-      const release = await requireReleaseService().prepareExport()
+      const release = featurePluginService.enabled('publishing') ? await requireReleaseService().prepareExport() : { version: '1.0.0', summary: '' }
       const result = await dialog.showSaveDialog(mainWindow!, {
         title: '导出 Modrinth 整合包',
         defaultPath: path.join(app.getPath('downloads'), `${project.namespace}-${release.version}.mrpack`),
@@ -9036,7 +7875,7 @@ function registerIpc(): void {
       if (result.canceled || !result.filePath) return null
       const archive = await createModrinthPackArchive(project, { version: release.version, summary: release.summary })
       await fs.writeFile(result.filePath, archive)
-      await requireReleaseService().markExported()
+      if (featurePluginService.enabled('publishing')) await requireReleaseService().markExported()
       return result.filePath
     }
     if (!isJavaLoader(project.loader)) {
@@ -9058,7 +7897,7 @@ function registerIpc(): void {
       if (path.resolve(result.filePath) !== path.resolve(latest.source)) await fs.copyFile(latest.source, result.filePath)
       return result.filePath
     }
-    await requireReleaseService().prepareExport()
+    if (featurePluginService.enabled('publishing')) await requireReleaseService().prepareExport()
     await requireMinecraftRuntime().buildProject()
     const buildDirectory = path.join(project.path, 'build', 'libs')
     const entries = await fs.readdir(buildDirectory, { withFileTypes: true }).catch(() => [])
@@ -9077,7 +7916,7 @@ function registerIpc(): void {
     })
     if (result.canceled || !result.filePath) return null
     if (path.resolve(result.filePath) !== path.resolve(latest.source)) await fs.copyFile(latest.source, result.filePath)
-    await requireReleaseService().markExported()
+    if (featurePluginService.enabled('publishing')) await requireReleaseService().markExported()
     return result.filePath
   })
   diagnosticHandle('project:prepareIde', () => prepareProjectIde(requireProject()))
@@ -9128,144 +7967,6 @@ function registerIpc(): void {
     }
   })
 
-  diagnosticHandle('snapshots:create', async (_event, label: string, projectPath?: string): Promise<SnapshotInfo> => {
-    const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
-    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-    return createProjectSnapshot(label.trim() || '手动快照', {}, project)
-  })
-  diagnosticHandle('snapshots:list', async (_event, projectPath?: string): Promise<SnapshotInfo[]> => {
-    const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
-    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-    const root = path.join(project.path, projectDataDirectory(project), 'snapshots')
-    if (!(await pathExists(root))) return []
-    const entries = await fs.readdir(root, { withFileTypes: true })
-    const snapshots: SnapshotInfo[] = []
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      try {
-        snapshots.push(JSON.parse(await fs.readFile(path.join(root, entry.name, 'snapshot.json'), 'utf8')) as SnapshotInfo)
-      } catch {
-        // Ignore incomplete snapshots.
-      }
-    }
-    return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  })
-  diagnosticHandle('snapshots:storage', async (_event, projectPath?: string) => {
-    const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
-    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-    return readSnapshotStorage(project.path)
-  })
-  diagnosticHandle('snapshots:restore', (_event, id: string, projectPath?: string): Promise<SnapshotRestoreResult> => restoreProjectSnapshot(id, projectPath))
-  diagnosticHandle('snapshots:delete', (_event, id: string, projectPath?: string): Promise<SnapshotInfo[]> => deleteProjectSnapshot(id, projectPath))
-
-  diagnosticHandle('relationships:list', () => requireAddonRelationshipService().list())
-  diagnosticHandle('relationships:providers', () => requireAddonRelationshipService().providers())
-  diagnosticHandle('relationships:recommendations', () => requireAddonRelationshipService().recommendations())
-  diagnosticHandle('relationships:search', (_event, query: unknown, providers?: unknown) => {
-    const selected = Array.isArray(providers) ? providers.filter((entry): entry is 'modrinth' | 'curseforge' | 'mcmod' => entry === 'modrinth' || entry === 'curseforge' || entry === 'mcmod') : undefined
-    return requireAddonRelationshipService().search(typeof query === 'string' ? query : '', selected)
-  })
-  diagnosticHandle('relationships:versions', (_event, provider: unknown, projectId: unknown) => {
-    if (provider === 'mcmod' && typeof projectId === 'string') return requireAddonRelationshipService().versions(provider, projectId)
-    if ((provider !== 'modrinth' && provider !== 'curseforge') || typeof projectId !== 'string') throw new Error('模组平台或项目 ID 无效')
-    return requireAddonRelationshipService().versions(provider, projectId)
-  })
-  diagnosticHandle('relationships:installPlatform', (_event, input: AddonPlatformInstallInput) => {
-    if (!input || (input.provider !== 'modrinth' && input.provider !== 'curseforge') || typeof input.projectId !== 'string' || !['required', 'optional', 'test'].includes(String(input.role))) throw new Error('平台目标参数无效')
-    return requireAddonRelationshipService().installPlatform(input)
-  })
-  diagnosticHandle('relationships:beginMcmodDownload', (_event, projectId: unknown, fileKey: unknown) => {
-    if (typeof projectId !== 'string' || typeof fileKey !== 'string') throw new Error('MC百科文件参数无效')
-    return requireAddonRelationshipService().beginMcmodDownload(projectId, fileKey)
-  })
-  diagnosticHandle('relationships:refreshMcmodCaptcha', (_event, sessionId: unknown) => {
-    if (typeof sessionId !== 'string') throw new Error('MC百科验证码会话无效')
-    return requireAddonRelationshipService().refreshMcmodCaptcha(sessionId)
-  })
-  diagnosticHandle('relationships:submitMcmodCaptcha', (_event, sessionId: unknown, captcha: unknown, role: unknown) => {
-    if (typeof sessionId !== 'string' || typeof captcha !== 'string' || !['required', 'optional', 'test'].includes(String(role))) throw new Error('MC百科验证码参数无效')
-    return requireAddonRelationshipService().submitMcmodCaptcha(sessionId, captcha, role as AddonRelationshipRole)
-  })
-  diagnosticHandle('relationships:prepare', (_event, input: AddonPrepareInput) => requireAddonRelationshipService().prepare(normalizeAddonPrepareInput(input && typeof input === 'object' ? input : {})))
-  diagnosticHandle('relationships:beginImport', async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: '导入目标模组 JAR',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Minecraft Mod JAR', extensions: ['jar'] }]
-    })
-    if (result.canceled || !result.filePaths.length) return null
-    return requireAddonRelationshipService().beginImport(result.filePaths)
-  })
-  diagnosticHandle('relationships:confirmImport', (_event, batchId: unknown, selections: unknown) => {
-    if (typeof batchId !== 'string' || !Array.isArray(selections)) throw new Error('批量导入确认无效')
-    return requireAddonRelationshipService().confirmImport(batchId, selections as AddonImportSelection[])
-  })
-  diagnosticHandle('relationships:cancelImport', (_event, batchId: unknown) => {
-    if (typeof batchId === 'string') requireAddonRelationshipService().cancelImport(batchId)
-  })
-  diagnosticHandle('relationships:linkProject', async () => {
-    const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择另一个 ModMind 模组项目', properties: ['openDirectory'] })
-    if (selected.canceled || !selected.filePaths[0]) return null
-    const target = await readProjectInfo(selected.filePaths[0])
-    if (!target) throw new Error('所选目录不是 ModMind 项目')
-    return invokeMinecraftOperation(() => withMinecraftResourceLock(async () => {
-      const artifact = await buildLinkedProjectTree(target, undefined, [requireProject().path])
-      return requireAddonRelationshipService().linkProject(target, artifact)
-    }))
-  })
-  diagnosticHandle('relationships:importSource', async (_event, relationshipId: unknown, sourceType: unknown) => {
-    if (typeof relationshipId !== 'string' || (sourceType !== 'archive' && sourceType !== 'folder')) throw new Error('源码导入参数无效')
-    const selected = await dialog.showOpenDialog(mainWindow!, sourceType === 'folder'
-      ? { title: '选择目标模组源码目录', properties: ['openDirectory'] }
-      : { title: '选择目标模组源码归档', properties: ['openFile'], filters: [{ name: 'Source Archive', extensions: ['jar', 'zip'] }] })
-    if (selected.canceled || !selected.filePaths[0]) return null
-    return requireAddonRelationshipService().importSource(relationshipId, selected.filePaths[0])
-  })
-  diagnosticHandle('relationships:setRole', (_event, relationshipId: unknown, role: unknown) => {
-    if (typeof relationshipId !== 'string' || !['required', 'optional', 'test'].includes(String(role))) throw new Error('联动关系参数无效')
-    return requireAddonRelationshipService().setRole(relationshipId, role as AddonRelationshipRole)
-  })
-  diagnosticHandle('relationships:remove', (_event, relationshipId: unknown) => {
-    if (typeof relationshipId !== 'string') throw new Error('联动关系 ID 无效')
-    return requireAddonRelationshipService().remove(relationshipId)
-  })
-  diagnosticHandle('relationships:audit', () => requireAddonRelationshipService().audit())
-
-  diagnosticHandle('dependencies:search', (_event, query: string, offset?: number) => requireDependencyService().search(query, offset))
-  diagnosticHandle('dependencies:versions', (_event, projectId: string) => requireDependencyService().versions(projectId))
-  diagnosticHandle('dependencies:list', () => requireDependencyService().list())
-  diagnosticHandle('dependencies:install', (_event, input) => requireDependencyService().install(input))
-  diagnosticHandle('dependencies:installMaven', (_event, input) => requireDependencyService().installMaven(input))
-  diagnosticHandle('dependencies:audit', () => requireDependencyService().audit())
-  diagnosticHandle('dependencies:remove', (_event, projectId: string) => requireDependencyService().remove(projectId))
-
-  diagnosticHandle('git:status', () => requireGitService().status())
-  diagnosticHandle('git:initialize', () => requireGitService().initialize())
-  diagnosticHandle('git:diff', (_event, relativePath?: string) => requireGitService().diff(relativePath))
-  diagnosticHandle('git:commit', (_event, input: GitCommitInput) => requireGitService().commit(input))
-  diagnosticHandle('git:createBranch', (_event, name: string) => requireGitService().createBranch(name))
-  diagnosticHandle('git:listRemotes', () => requireGitService().listRemotes())
-  diagnosticHandle('git:addRemote', (_event, name: string, url: string) => requireGitService().addRemote(name, url))
-  diagnosticHandle('git:removeRemote', (_event, name: string) => requireGitService().removeRemote(name))
-  diagnosticHandle('git:fetch', (_event, remote?: string) => requireGitService().fetch(remote))
-  diagnosticHandle('git:pull', (_event, remote?: string, branch?: string) => requireGitService().pull(remote, branch))
-  diagnosticHandle('git:push', (_event, remote?: string, branch?: string) => requireGitService().push(remote, branch))
-  diagnosticHandle('git:merge', (_event, branch: string) => requireGitService().merge(branch))
-  diagnosticHandle('git:rebase', (_event, branch: string) => requireGitService().rebase(branch))
-  diagnosticHandle('git:pullRequestUrl', async (_event, remote?: string) => {
-    const url = await requireGitService().pullRequestUrl(remote)
-    await shell.openExternal(url)
-    return url
-  })
-
-  diagnosticHandle('content:create', (_event, input: ContentCreateInput) => requireContentService().create(input))
-  diagnosticHandle('content:importAudio', async (_event, input: AudioImportInput) => {
-    const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openFile'], filters: [{ name: 'Audio', extensions: ['ogg', 'mp3', 'wav', 'flac', 'm4a'] }] })
-    if (result.canceled || !result.filePaths[0]) return null
-    return requireContentService().importAudio(result.filePaths[0], input)
-  })
-  diagnosticHandle('content:validate', () => requireContentService().validate())
-
   diagnosticHandle('tests:runMatrix', async (event, targets: TestTarget[]): Promise<TestMatrixResult> => {
     requireProject()
     return runDiagnosticOperation('tests', 'matrix', 'Project test matrix', () => runProjectTestMatrix(targets, undefined, (target, completed, total) => {
@@ -9274,25 +7975,12 @@ function registerIpc(): void {
   })
   diagnosticHandle('tests:generateWorkflow', () => generateGithubWorkflow(requireProject()))
 
-  diagnosticHandle('release:getSettings', () => requireReleaseService().getSettings())
-  diagnosticHandle('release:saveSettings', async (_event, settings: ReleaseSettings) => {
-    const saved = await requireReleaseService().saveSettings(settings)
-    const providerSecrets = await readReleaseSecrets()
-    curseForgeProviderKey = providerSecrets.curseForgeToken || process.env.MODMIND_CURSEFORGE_API_KEY || '$2a$10$BB17.sSejQebcTN01XAqmeXbucdfzq/nIKXylaKLpQHtHLrREVPku'
-    modProviderRegistry = null
-    return saved
-  })
-  diagnosticHandle('release:prepareExport', () => requireReleaseService().prepareExport())
-  diagnosticHandle('release:markExported', () => requireReleaseService().markExported())
-  diagnosticHandle('release:suggestSummary', () => generateAiReleaseSummary())
-  diagnosticHandle('release:preflight', () => requireReleaseService().preflight())
-  diagnosticHandle('release:publish', (_event, input: ReleasePublishInput) => runDiagnosticOperation('release', 'publish', 'Project release', () => requireReleaseService().publish(input), { targets: input.targets }))
-
   const inspirationKnowledge = projectKnowledgeStore()
   diagnosticHandle('inspiration:readEvidence', async (_event, projectPath: string, input: InspirationEvidenceRequest) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project || !input || typeof input !== 'object') throw new Error('来源请求无效')
     if (input.file) return runInspirationResearch(project, { operation: input.kind === 'resource' ? 'resource' : 'read', path: input.path, relativePath: input.file, startLine: input.line, limit: 100 }, {
+      backend: () => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile'),
       cacheRoot: path.join(app.getPath('userData'), 'decompile'), signal: AbortSignal.timeout(30000), ensureJava: async () => { throw new Error('查看来源不会启动反编译') }
     })
     try {
@@ -9301,6 +7989,7 @@ function registerIpc(): void {
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes('1 MiB')) throw error
       return runInspirationResearch(project, { operation: 'text', path: input.path, startLine: input.line, limit: 100 }, {
+        backend: () => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile'),
         cacheRoot: path.join(app.getPath('userData'), 'decompile'), signal: AbortSignal.timeout(30000), ensureJava: async () => { throw new Error('文本读取不会启动 Java') }
       })
     }
@@ -9327,167 +8016,6 @@ function registerIpc(): void {
   // Controlled JAR decompilation (受控反编译): results live in the userData cache, never in project sources.
   const decompileCacheRoot = (): string => path.join(app.getPath('userData'), 'decompile')
   const activeDecompileRuns = new Map<string, AbortController>()
-  diagnosticHandle('decompile:pickJar', async () => {
-    const selected = await dialog.showOpenDialog(mainWindow!, { title: '选择模组或服务端插件 JAR', properties: ['openFile'], filters: [{ name: 'Minecraft Mod / Server Plugin JAR', extensions: ['jar'] }] })
-    if (selected.canceled || !selected.filePaths[0]) return null
-    return selected.filePaths[0]
-  })
-  diagnosticHandle('decompile:inspect', (_event, jarPath: unknown) => runDiagnosticOperation('decompile', 'inspect', 'JAR decompile inspection', async () => {
-    if (typeof jarPath !== 'string' || !jarPath.trim()) throw new Error('缺少 JAR 路径')
-    return inspectForDecompilation(jarPath.trim(), { cacheRoot: decompileCacheRoot() })
-  }, { jarPath }))
-  diagnosticHandle('decompile:start', (_event, input: unknown) => runDiagnosticOperation('decompile', 'start', 'Controlled JAR decompilation', async () => {
-    if (!input || typeof input !== 'object') throw new Error('反编译请求无效')
-    const value = input as Partial<DecompileRunRequest>
-    if (typeof value.jarPath !== 'string' || !value.jarPath.trim()) throw new Error('缺少 JAR 路径')
-    const request: DecompileRunRequest = {
-      jarPath: value.jarPath.trim(),
-      skipRemap: value.skipRemap === true,
-      ...(typeof value.minecraftVersion === 'string' && value.minecraftVersion.trim() ? { minecraftVersion: value.minecraftVersion.trim() } : {})
-    }
-    const controller = new AbortController()
-    activeDecompileRuns.set(request.jarPath, controller)
-    try {
-      const javaPath = await requireMinecraftRuntime().ensureJavaRuntimeForTools(
-        DECOMPILE_MIN_JAVA,
-        (message) => sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'inspecting', message }),
-        ({ source, downloaded, total }) => sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'downloading-mappings', message: `正在从 ${source} 下载托管 Java`, ...(total > 0 ? { ratio: Math.min(0.05, 0.05 * downloaded / total) } : {}) })
-      )
-      return await runDecompilation(request, {
-        cacheRoot: decompileCacheRoot(),
-        javaPath,
-        signal: controller.signal,
-        onProgress: (event) => sendDecompileEvent(controller.signal, event),
-        onOutput: (output) => diagnosticJournal.record({ subsystem: 'decompile', operation: 'engine-output', phase: 'output', level: 'debug', message: redactDiagnosticText(output.slice(-2000)) })
-      })
-    } finally {
-      activeDecompileRuns.delete(request.jarPath)
-    }
-  }))
-  diagnosticHandle('decompile:cancel', (_event, jarPath: unknown) => {
-    if (typeof jarPath !== 'string') throw new Error('缺少 JAR 路径')
-    activeDecompileRuns.get(jarPath)?.abort()
-    return true
-  })
-  diagnosticHandle('decompile:listFiles', (_event, sourceSha256: unknown) => runDiagnosticOperation('decompile', 'listFiles', 'List decompiled sources', async () => {
-    if (typeof sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('非法的缓存键')
-    return listCachedSourceFiles(decompileCacheRoot(), sourceSha256)
-  }))
-  diagnosticHandle('decompile:readFile', (_event, sourceSha256: unknown, relativePath: unknown) => runDiagnosticOperation('decompile', 'readFile', 'Read decompiled source', async () => {
-    if (typeof sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('非法的缓存键')
-    if (typeof relativePath !== 'string') throw new Error('缺少文件路径')
-    return readCachedSourceFile(decompileCacheRoot(), sourceSha256, relativePath)
-  }))
-  diagnosticHandle('decompile:scanReferences', (_event, jarPath: unknown, knownPackages: unknown) => runDiagnosticOperation('decompile', 'scanReferences', 'Class reference scan', async () => {
-    if (typeof jarPath !== 'string' || !jarPath.trim()) throw new Error('缺少 JAR 路径')
-    const known = Array.isArray(knownPackages)
-      ? knownPackages.filter((entry): entry is { modId: string; packages: string[] } =>
-        Boolean(entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).modId === 'string' && Array.isArray((entry as Record<string, unknown>).packages)))
-      : []
-    return scanReferencesForJar(jarPath.trim(), known)
-  }))
-  diagnosticHandle('decompile:getTerms', (_event, sourceFileName: unknown) => {
-    return { version: DECOMPILE_TERMS_VERSION, title: DECOMPILE_TERMS_TITLE, sections: DECOMPILE_TERMS_SECTIONS, rendered: renderDecompileTerms(typeof sourceFileName === 'string' ? sourceFileName : 'mod.jar') }
-  })
-  diagnosticHandle('decompile:createModuleFromJar', (_event, input: unknown) => runDiagnosticOperation('decompile', 'createModuleFromJar', 'Export decompiled sources as self-made module', async () => {
-    const pack = requireProject()
-    if (!isModpackProject(pack)) throw new Error('只有整合包项目可以把反编译结果转为自制模组')
-    assertProjectMutationAllowed(pack.path, '从反编译源码创建自制模组')
-    if (!input || typeof input !== 'object') throw new Error('导出请求无效')
-    const value = input as Record<string, unknown>
-    // The terms acknowledgement is mandatory and must reference the current terms version.
-    const terms = value.termsAcknowledgement && typeof value.termsAcknowledgement === 'object' ? value.termsAcknowledgement as Record<string, unknown> : null
-    if (!terms || terms.termsVersion !== DECOMPILE_TERMS_VERSION) throw new Error(`需要接受当前版本（${DECOMPILE_TERMS_VERSION}）的反编译源码使用条款后才能导出`)
-    if (terms.acknowledged !== true) throw new Error('未确认使用条款')
-    const origin = terms.origin === 'ai-action' ? 'ai-action' as const : 'user-workspace' as const
-    const moduleName = typeof value.moduleName === 'string' ? value.moduleName : ''
-    const plan = plannedModulePaths(pack.path, moduleName)
-    const provenance = await readDecompileProvenanceForExport(decompileCacheRoot(), String(value.sourceSha256 ?? ''))
-    const created = await createModuleFromDecompiledSources({
-      packPath: pack.path,
-      jarName: provenance.sourceFileName,
-      moduleName,
-      provenance,
-      sourcesDirectory: path.join(decompileCacheRoot(), 'jars', String(value.sourceSha256 ?? ''), 'sources'),
-      acknowledgement: {
-        acceptedAt: new Date().toISOString(),
-        sourceJarSha256: provenance.sourceSha256,
-        sourceFileName: provenance.sourceFileName,
-        origin
-      }
-    })
-    await addModpackModule(pack, { name: created.name, namespace: created.namespace, path: created.relativePath, createdAt: new Date().toISOString() })
-    diagnosticJournal.record({ subsystem: 'decompile', operation: 'create-module', phase: 'success', level: 'info', message: `已从反编译源码创建自制模组 ${created.namespace}（来源 ${provenance.sourceFileName}，条款 v${DECOMPILE_TERMS_VERSION}，${origin === 'ai-action' ? 'AI 发起' : '用户发起'}）`, data: { namespace: created.namespace, fileCount: created.fileCount } })
-    return created
-  }))
-  diagnosticHandle('decompile:createProjectFromJar', (_event, input: unknown) => runDiagnosticOperation('decompile', 'createProjectFromJar', 'Create ModMind project from decompiled sources', async () => {
-    assertProjectSwitchAllowed()
-    if (!input || typeof input !== 'object') throw new Error('项目创建请求无效')
-    const value = input as Record<string, unknown>
-    const sourceSha256 = typeof value.sourceSha256 === 'string' ? value.sourceSha256.trim() : ''
-    if (!/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('缺少有效的反编译缓存标识')
-    const terms = value.termsAcknowledgement && typeof value.termsAcknowledgement === 'object'
-      ? value.termsAcknowledgement as Record<string, unknown>
-      : null
-    if (!terms || terms.termsVersion !== DECOMPILE_TERMS_VERSION) throw new Error(`需要接受当前版本（${DECOMPILE_TERMS_VERSION}）的反编译源码使用条款后才能创建项目`)
-    if (terms.acknowledged !== true) throw new Error('未确认使用条款')
-    const loader = value.loader
-    if (!isJavaLoader(loader) && !isServerPluginPlatform(loader)) throw new Error('反编译项目仅支持 Java 模组或服务端插件平台')
-    const provenance = await readDecompileProvenanceForExport(decompileCacheRoot(), sourceSha256)
-    validateDecompiledProjectTarget(provenance, loader)
-    const name = validateProjectNameInput(typeof value.name === 'string' ? value.name : '')
-    const minecraftVersion = typeof value.minecraftVersion === 'string' ? value.minecraftVersion.trim() : ''
-    if (!(loader === 'velocity' ? /^[34]\.\d+\.\d+(?:-SNAPSHOT)?$/ : /^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?$/).test(minecraftVersion)) throw new Error('Minecraft 或代理 API 版本格式无效')
-    const compatibility = await requireLoaderCatalog().resolve(loader, minecraftVersion)
-    const destination = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
-    if (destination.canceled || !destination.filePaths[0]) return null
-    const namespace = slugify(name)
-    const projectPath = path.join(destination.filePaths[0], namespace)
-    if (await pathExists(projectPath)) throw new Error('目标项目目录已经存在，请选择其他位置或名称')
-    const project: ProjectInfo = {
-      name,
-      path: projectPath,
-      loader,
-      minecraftVersion,
-      namespace,
-      createdAt: new Date().toISOString(),
-      loaderVersion: compatibility.loaderVersion,
-      apiVersion: compatibility.apiVersion,
-      qslVersion: compatibility.qslVersion,
-      javaVersion: compatibility.javaVersion,
-      projectVersion: CURRENT_PROJECT_VERSION,
-      toolDataDirectory: '.modmind'
-    }
-    if (isServerPluginPlatform(loader)) project.kind = 'server-plugin'
-    let seededFileCount = 0
-    await fs.mkdir(projectPath)
-    try {
-      await writeProjectTemplate(project, false)
-      const seeded = await seedProjectFromDecompiledSources({
-        projectPath,
-        jarName: provenance.sourceFileName,
-        provenance,
-        sourcesDirectory: path.join(decompileCacheRoot(), 'jars', sourceSha256, 'sources'),
-        acknowledgement: {
-          acceptedAt: new Date().toISOString(),
-          sourceJarSha256: provenance.sourceSha256,
-          sourceFileName: provenance.sourceFileName,
-          origin: terms.origin === 'ai-action' ? 'ai-action' : 'user-workspace'
-        }
-      })
-      seededFileCount = seeded.fileCount
-      if (provenance.plugin) await restoreDecompiledPluginProject(project, provenance, path.join(decompileCacheRoot(), 'jars', sourceSha256, 'resources'))
-    } catch (error) {
-      await fs.rm(projectPath, { recursive: true, force: true }).catch(() => undefined)
-      throw error
-    }
-    currentProject = project
-    await rememberRecentProject(project)
-    await refreshExternalAgentContext(project).catch(() => undefined)
-    emitProjectChanged()
-    diagnosticJournal.record({ subsystem: 'decompile', operation: 'create-project', phase: 'success', level: 'info', message: `已从反编译源码创建 ModMind 项目 ${project.namespace}（来源 ${provenance.sourceFileName}，条款 v${DECOMPILE_TERMS_VERSION}）`, data: { projectPath, fileCount: seededFileCount } })
-    return project
-  }))
 
   diagnosticHandle('settings:revealSecret', async (_event, key: string) => {
     switch (key) {
@@ -9667,7 +8195,7 @@ function registerIpc(): void {
     const executable = kind === 'codex'
       ? configuredCodex?.executable ?? (configured.mode === 'hosted' ? await ensureManagedCodexRuntime({ rootDir: app.getPath('userData') }) : (await detectInstalledCodex(configured)).executable)
       : configured.executable
-    await launchExternalAgent(kind, project, executable, env)
+    await launchExternalAgent(kind, project, executable, env, undefined, featurePluginService.enabled('image-studio'))
   })
   diagnosticHandle('beginner-codex:prepare', async (event, projectPath?: string) => {
     const routedProjectPath = typeof projectPath === 'string' && projectPath.trim() ? path.resolve(projectPath) : undefined
@@ -10104,8 +8632,38 @@ function registerIpc(): void {
   })
 }
 
+protocol.registerSchemesAsPrivileged([{ scheme: 'modmind-feature', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
+
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return
+  featurePluginService = new FeaturePluginService(path.join(app.getPath('userData'), 'feature-plugins'), {
+    requireFrom: path.join(app.getAppPath(), 'package.json'),
+    projectRoot: () => (aiProjectContext.getStore() ?? currentProject)?.path ?? null,
+    capabilities: { downloadActivities, runtime: featureHostRuntime },
+    busy: () => activeAiRuns.size > 0,
+    changed: () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:changed'); featureStoreService?.publish() },
+    event: (id, event, value, windowId) => {
+      for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && (window === mainWindow || isDetachedWindow(window)) && (windowId === undefined || window.id === windowId)) window.webContents.send('feature-plugins:event', id, event, value)
+    },
+    options: () => ({
+      host: nativeFeatureHost(),
+      userDataDir: app.getPath('userData'),
+      projectRoot: () => (aiProjectContext.getStore() ?? currentProject)?.path ?? null,
+      getHostedLease: createHostedImageLease,
+      getSyncedImageApi: async () => {
+        const credentials = await readDeviceCredentials()
+        return { customMode: credentials?.provider === 'custom', imageApi: credentials?.provider === 'custom' ? credentials.localImageApi ?? null : null }
+      }
+    })
+  })
+  await featurePluginService.initialize()
+  featureStoreService = new FeatureStoreService(path.join(app.getPath('userData'), 'feature-store'), featurePluginService, snapshot => {
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:storeChanged', snapshot)
+  })
+  await featureStoreService.initialize()
+  void featureStoreService.refresh()
+  configureNativeFeatureServices(id => featurePluginService.service<Record<string, unknown>>(id))
+  protocol.handle('modmind-feature', request => featurePluginService.serve(request))
   await pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
   protocol.handle('modmind-media', request => serveBackgroundMedia(request, path.join(app.getPath('userData'), 'appearance-media')))
   let expectedSampleAt = Date.now() + 30_000
@@ -10151,8 +8709,10 @@ app.whenReady().then(async () => {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('app:updateState', state)
     }
   })
-  if (await appUpdateService.installPendingUpdateOnStartup()) return
-  await migrateLegacyUserData()
+  if (!app.getVersion().endsWith('-plugintest')) {
+    if (await appUpdateService.installPendingUpdateOnStartup()) return
+    await migrateLegacyUserData()
+  }
   appChangelogService = new AppChangelogService({
     currentVersion: app.getVersion(),
     userDataPath: app.getPath('userData'),
@@ -10160,7 +8720,7 @@ app.whenReady().then(async () => {
     installMarkerPath: process.platform === 'win32' ? path.join(process.resourcesPath, 'modmind-install-versions.txt') : undefined
   })
   await appChangelogService.initialize()
-  electronApp.setAppUserModelId('dev.modmind.desktop')
+  electronApp.setAppUserModelId(app.getVersion().endsWith('-plugintest') ? 'dev.modmind.desktop.plugintest' : 'dev.modmind.desktop')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc()
   await cleanupTerminalScripts(path.join(app.getPath('userData'), 'terminal-sessions'))
@@ -10249,3 +8809,65 @@ app.on('window-all-closed', () => {
   diagnosticJournal.record({ subsystem: 'app', operation: 'windows', phase: 'closed', message: 'All application windows closed' })
   if (process.platform !== 'darwin') app.quit()
 })
+
+const nativeFeatureEvent = new AsyncLocalStorage<import('electron').IpcMainInvokeEvent>()
+export function nativeFeatureHost() { return {
+get modpackMigrationDirectory() { return modpackMigrationDirectory },
+get readSnapshotManifest() { return readSnapshotManifest },
+get copySnapshotFiles() { return copySnapshotFiles },
+get listSnapshotManagedFiles() { return listSnapshotManagedFiles },
+get copyBundledGradleWrapper() { return copyBundledGradleWrapper },
+get restoreSnapshotFilesExact() { return restoreSnapshotFilesExact },
+get restoreSnapshotTree() { return restoreSnapshotTree },
+get readModpackMigrationRecord() { return readModpackMigrationRecord },
+
+get resolveAddonImportPaths() { return resolveAddonImportPaths },
+get linkAddonProject() { return linkAddonProject },
+get previewModpackMigrationForAgent() { return previewModpackMigrationForAgent },
+get applyModpackMigrationForAgent() { return applyModpackMigrationForAgent },
+get analyzeExistingProject() { return analyzeExistingProject },
+get applyModpackMigrationInPlace() { return applyModpackMigrationInPlace },
+get assertProjectMutationAllowed() { return assertProjectMutationAllowed },
+get assertProjectSwitchAllowed() { return assertProjectSwitchAllowed },
+get buildLinkedProjectTree() { return buildLinkedProjectTree },
+get createProjectSnapshot() { return createProjectSnapshot },
+get currentProject() { return currentProject }, set currentProject(value: typeof currentProject) { currentProject = value },
+get currentProjectManifest() { return currentProjectManifest },
+get curseForgeProviderKey() { return curseForgeProviderKey }, set curseForgeProviderKey(value: typeof curseForgeProviderKey) { curseForgeProviderKey = value },
+get deleteProjectSnapshot() { return deleteProjectSnapshot },
+get describeRuntimeError() { return describeRuntimeError },
+get emitProjectChanged() { return emitProjectChanged },
+get featurePluginService() { return featurePluginService },
+get getAiReviewerConfig() { return getAiReviewerConfig },
+get invokeMinecraftOperation() { return invokeMinecraftOperation },
+get listModpackMigrationRecords() { return listModpackMigrationRecords },
+get localServerManager() { return localServerManager },
+get mainWindow() { const sender = nativeFeatureEvent.getStore()?.sender; return BrowserWindow.getAllWindows().find(window => window.webContents === sender) ?? mainWindow },
+get mcmodService() { return mcmodService },
+get modProviderRegistry() { return modProviderRegistry }, set modProviderRegistry(value: typeof modProviderRegistry) { modProviderRegistry = value },
+get modpackAdoptionProgressDetail() { return modpackAdoptionProgressDetail },
+get parseReleaseSummary() { return parseReleaseSummary },
+get pathExists() { return pathExists },
+get projectDataDirectory() { return projectDataDirectory },
+get readProjectInfo() { return readProjectInfo },
+get readReleaseSecrets() { return readReleaseSecrets },
+get readSettings() { return readSettings },
+get readSnapshotStorage() { return readSnapshotStorage },
+get rememberRecentProject() { return rememberRecentProject },
+get requireLoaderCatalog() { return requireLoaderCatalog },
+get requireMinecraftRuntime() { return requireMinecraftRuntime },
+get requireModProviderRegistry() { return requireModProviderRegistry },
+get requireProject() { return requireProject },
+get restoreProjectSnapshot() { return restoreProjectSnapshot },
+get runDiagnosticOperation() { return runDiagnosticOperation },
+get runsForProject() { return runsForProject },
+get sendDecompileEvent() { return sendDecompileEvent },
+get slugify() { return slugify },
+get undoModpackMigration() { return undoModpackMigration },
+get validateMigrationId() { return validateMigrationId },
+get withMinecraftResourceLock() { return withMinecraftResourceLock },
+get writeProjectTemplate() { return writeProjectTemplate },
+get writeReleaseSecrets() { return writeReleaseSecrets },
+event: (): import('electron').IpcMainInvokeEvent => { const event = nativeFeatureEvent.getStore(); if (event) return event; if (mainWindow && !mainWindow.isDestroyed()) return { sender: mainWindow.webContents } as import('electron').IpcMainInvokeEvent; throw new Error('Native plugin action requires a window invocation') }
+} }
+export type NativeFeatureHost = ReturnType<typeof nativeFeatureHost>

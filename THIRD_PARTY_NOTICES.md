@@ -1,5 +1,15 @@
 # Third-Party Notices
 
+## Ajv
+
+Native feature plugin action schemas are validated by Ajv 8.20.0.
+Upstream: https://github.com/ajv-validator/ajv
+
+Copyright (c) 2015-2021 Evgeny Poberezkin
+
+Provided under the MIT License; the MIT permission and warranty text reproduced
+in the React Zoom Pan Pinch section below applies.
+
 ## LobeHub Icons
 
 The Codex brand path in `src/renderer/src/components/AgentBrandIcon.tsx`

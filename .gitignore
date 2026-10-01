@@ -39,3 +39,18 @@ ui-check*.jpg
 /scripts/restore-timeline.py
 /scripts/smoke-loader-templates.ts
 /scripts/smoke-packaged-app.mjs
+
+# Application feature plugin build output
+/feature-plugin-dist/
+/feature-release/
+/tools/feature-publisher/node_modules/
+/test-results/feature-publisher/
+/test-results/feature-plugins-live/profile/
+/test-results/feature-plugins/*/profile/
+/test-results/build-temp-*/
+/test-results/test-temp-*/
+/test-results/feature-store/
+/test-results/features-page-preview/
+!/docs/feature-plugins.zh-CN.md
+!/docs/official-features-publishing.zh-CN.md
+!/docs/branch-workspaces.zh-CN.md

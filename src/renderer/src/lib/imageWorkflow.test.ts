@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { connectionIsValid, planImageWorkflow, runImageWorkflow, snapshotImageWorkflow, type WorkflowNodeType, type WorkflowKind } from './imageWorkflow'
-import { parseImageWorkflowLibrary, parseWorkflowGraph } from './imageWorkflowStorage'
+import { connectionIsValid, planImageWorkflow, runImageWorkflow, snapshotImageWorkflow, type WorkflowNodeType, type WorkflowKind } from '../../../../feature-plugins/image-studio/src/renderer/src/lib/imageWorkflow'
+import { parseImageWorkflowLibrary, parseWorkflowGraph } from '../../../../feature-plugins/image-studio/src/renderer/src/lib/imageWorkflowStorage'
 import type { ImageAsset, ImageGenerationResult } from '../../../shared/imageStudio'
-import { imageStudioPresets } from './imageStudioPresets'
+import { imageStudioPresets } from '../../../../feature-plugins/image-studio/src/renderer/src/lib/imageStudioPresets'
 
 const image: ImageAsset = { id: 'chosen', dataUrl: 'data:image/png;base64,AA==', model: 'test', hosted: true, credits: 1, createdAt: '', quality: 'low', size: '1024x1024', style: 'free' }
 const node = (id: string, kind: WorkflowKind, data: Partial<WorkflowNodeType['data']> = {}): WorkflowNodeType => ({ id, type: 'workflow', position: { x: 0, y: 0 }, data: { kind, title: id, subtitle: '', ...data } })

@@ -1,0 +1,31 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "model-studio",
+  "name": "模型",
+  "version": "1.5.0-plugintest-r7",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "blockbench",
+      "label": "模型",
+      "component": "blockbench",
+      "icon": "Box",
+      "group": "资源",
+      "order": 30
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "model-studio",
+      "name": "模型",
+      "description": "通过内嵌 Blockbench 创建、编辑、预览和保存模型，并编辑资源包中的模型。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ],
+  "assets": {
+    "blockbench": "feature-plugins/model-studio/assets/blockbench"
+  }
+}

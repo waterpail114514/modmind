@@ -1,9 +1,10 @@
 import { Children, isValidElement, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Search, X } from 'lucide-react'
 import { ScrollArea } from './AppScrollbars'
-import { settingsCategories as categories, settingsSections as sections, findSettingsSections } from '../settingsDefinitions'
+import { settingsCategories as categories, settingsSections, findSettingsSections, type SettingsSectionDefinition } from '../settingsDefinitions'
 
-export default function SettingsSections({ children, feedback = '', initialSection = '' }: { children: ReactNode; feedback?: string; initialSection?: string }): React.JSX.Element {
+export default function SettingsSections({ children, feedback = '', initialSection = '', extraSections = [] }: { children: ReactNode; feedback?: string; initialSection?: string; extraSections?: SettingsSectionDefinition[] }): React.JSX.Element {
+  const sections = [...settingsSections, ...extraSections]
   const [activeCategory, setActiveCategory] = useState<string>(() => sections.find(section => section.id === initialSection)?.category ?? 'general')
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -14,7 +15,7 @@ export default function SettingsSections({ children, feedback = '', initialSecti
   }, [activeCategory, query])
   const content = new Map(Children.toArray(children).flatMap(child =>
     isValidElement<{ id?: string }>(child) && child.props.id ? [[child.props.id, child] as const] : []))
-  const { searching, visibleSections } = findSettingsSections(new Set(content.keys()), activeCategory, query)
+  const { searching, visibleSections } = findSettingsSections(new Set(content.keys()), activeCategory, query, extraSections)
   const visibleIds = new Set<string>(visibleSections.map(section => section.id))
   const clearSearch = (): void => { setQuery(''); searchRef.current?.focus() }
   return <>

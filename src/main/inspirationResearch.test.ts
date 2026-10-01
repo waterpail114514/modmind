@@ -5,7 +5,10 @@ import path from 'node:path'
 import { createStoredZip } from './bedrockAddon'
 import { runInspirationResearch } from './inspirationResearch'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
-import { createDecompileCacheStaging } from './decompileCache'
+import { createDecompileCacheStaging } from "../../feature-plugins/decompile/src/main/decompileCache"
+import { readDecompileCacheEntry } from '../../feature-plugins/decompile/src/main/decompileCache'
+import { inspectDecompileJar } from '../../feature-plugins/decompile/src/main/decompileJarInspection'
+import { listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar } from '../../feature-plugins/decompile/src/main/decompilePipeline'
 import type { ProjectInfo } from '../shared/types'
 
 const roots: string[] = []
@@ -15,7 +18,7 @@ async function fixture() {
   roots.push(root)
   const project: ProjectInfo = { path: path.join(root, 'project'), name: 'Research', namespace: 'research', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' }
   await fs.mkdir(path.join(project.path, '.modmind', 'attachments'), { recursive: true })
-  const options = { cacheRoot: path.join(root, 'cache'), signal: new AbortController().signal, ensureJava: vi.fn(async () => { throw new Error('Must not launch Java') }) }
+  const options = { backend: () => ({ inspectDecompileJar, readDecompileCacheEntry, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar }), cacheRoot: path.join(root, 'cache'), signal: new AbortController().signal, ensureJava: vi.fn(async () => { throw new Error('Must not launch Java') }) }
   const jar = (version: string, config: string) => createStoredZip([
     { name: 'fabric.mod.json', data: Buffer.from(JSON.stringify({ schemaVersion: 1, id: 'research', name: 'Research', version, depends: { minecraft: '>=1.21', helper: '*' } })) },
     { name: 'config.json', data: Buffer.from(config) }

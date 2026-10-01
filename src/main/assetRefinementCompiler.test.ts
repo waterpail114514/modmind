@@ -1,8 +1,8 @@
 import {describe, expect, it} from 'vitest'
 import type {AssetRefinementProgram} from '../shared/assetIntent'
 import type {BlockbenchCubeState, BlockbenchProjectState} from '../shared/blockbench'
-import {compileAssetRefinement} from './assetRefinementCompiler'
-import {validateAction} from './blockbenchBridge'
+import {compileAssetRefinement} from "../../feature-plugins/model-studio/src/main/assetRefinementCompiler"
+import {validateAction} from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
 
 const faces: BlockbenchCubeState['faces'] = {
   north: {enabled: true, textureUuid: 'texture'},

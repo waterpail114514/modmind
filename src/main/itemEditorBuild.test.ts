@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import type { ManagedItem } from '../shared/itemEditor'
 import type { ProjectInfo } from '../shared/types'
 import { projectTemplateFiles } from './projectTemplates'
-import { saveManagedItem } from './itemEditorService'
+import { saveManagedItem } from "../../feature-plugins/item-editor/src/main/itemEditorService"
 
 const targets: Record<string, Pick<ProjectInfo, 'loader' | 'minecraftVersion' | 'loaderVersion' | 'apiVersion' | 'qslVersion'>> = {
   'fabric-1.20.1': { loader: 'fabric', minecraftVersion: '1.20.1', loaderVersion: '0.19.3', apiVersion: '0.92.11+1.20.1' },

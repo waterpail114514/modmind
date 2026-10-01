@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, createModpackTemplate, readModpackManifest } from './modpackService'
 import { createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
-import { applyModpackPlan, planModpack } from './modpackPlanner'
+import { applyModpackPlan, planModpack } from "../../feature-plugins/modpack-mods/src/main/modpackPlanner"
 import type { ModFile, ModProviderRegistry } from './modProviderService'
 
 const roots: string[] = []

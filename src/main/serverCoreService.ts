@@ -6,8 +6,8 @@ import type { ServerCore, ServerCoreBuild, ServerProfile } from '../shared/serve
 import { isServerPluginPlatform } from '../shared/projectPlatform'
 import { fetchJsonWithRetry } from './networkRequest'
 import { verifiedDownload, type DownloadSource } from './downloadService'
-import { archiveEntries } from './ftbResourceArchive'
-import { archiveRead } from './ftbResourceArchive'
+import { archiveEntries } from "./archiveInspection"
+import { archiveRead } from "./archiveInspection"
 import { findPluginArtifact, inspectPluginJar, listPluginDependencies } from './serverPluginService'
 import { configureLocalServer, deployServerInstance } from './serverInstance'
 import type { ServerPackResult, ServerRuntimeResult } from './serverPackService'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { newStudioDraft, parseStudioDraft, renderEffectWav } from '../../../shared/soundStudio'
-import { draftToMidi, midiToDraft } from './soundStudioEngine'
+import { draftToMidi, midiToDraft } from '../../../../feature-plugins/sound-studio/components/soundStudioEngine'
 
 describe('sound studio project', () => {
   it('migrates the original repeating 16-step draft without losing notes', () => {

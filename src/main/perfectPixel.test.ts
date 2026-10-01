@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
-import { runEmbeddedPerfectPixel } from './perfectPixel'
+import { runEmbeddedPerfectPixel } from '../../feature-plugins/image-studio/src/main/perfectPixel'
 
 describe('embedded PerfectPixel', () => {
   it('refines an image using a supplied grid without Python', async () => {

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { parseStatus } from './gitService'
-import { GitService } from './gitService'
+import { parseStatus } from "../../feature-plugins/versions/src/main/gitService"
+import { GitService } from "../../feature-plugins/versions/src/main/gitService"
 
 describe('Git status parsing', () => {
   it('parses branches, divergence, and changed paths', () => {

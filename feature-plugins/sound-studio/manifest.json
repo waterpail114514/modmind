@@ -1,0 +1,32 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "sound-studio",
+  "dependencies": ["media-runtime"],
+  "name": "声音",
+  "version": "1.5.0-plugintest-r7",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "sounds",
+      "label": "声音",
+      "component": "sounds",
+      "icon": "Music",
+      "group": "资源",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "sound-studio",
+      "name": "声音",
+      "description": "管理声音事件、导入音频并创作音效与音乐，保留原声音工作流。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ],
+  "assets": {
+    "beepbox": "feature-plugins/sound-studio/assets/beepbox"
+  }
+}

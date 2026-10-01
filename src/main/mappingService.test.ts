@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { MappingService } from './mappingService'
+import { MappingService } from "../../feature-plugins/mappings/src/main/mappingService"
 import { fetchTextWithRetry } from './networkRequest'
 
 vi.mock('./networkRequest', () => ({ fetchTextWithRetry: vi.fn() }))

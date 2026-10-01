@@ -21,7 +21,8 @@ export const WORKBENCH_SKILL_ROUTES = [
   ['modmind-plugin-development', '开发或修复 ModMind 应用插件的清单、面板、后端、宿主消息或 MCP 工具；制作面板或悬浮界面时读取其界面设计规范并复用模板主题与控件；不用于 Minecraft Mod、Blockbench 插件或其他软件插件。']
 ] as const
 
-export function workbenchSkillNames(project?: ProjectInfo): string[] | undefined {
+export function workbenchSkillNames(project?: ProjectInfo, imageStudioAvailable = true): string[] | undefined {
+  if (!imageStudioAvailable) return (workbenchSkillNames(project) ?? WORKBENCH_SKILL_ROUTES.map(([name]) => name)).filter(name => name !== 'modmind-image-assets')
   if (project?.draft) return undefined
   if (project?.kind === 'modpack') return [
     'minecraft-modpack-authoring', 'minecraft-modpack-migration', 'minecraft-server-pack-testing',
@@ -36,7 +37,7 @@ export function workbenchSkillNames(project?: ProjectInfo): string[] | undefined
 
 export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：
 先判断用户本轮目标，再决定是否需要查证、操作或读取 skill。不要向用户输出这段分类过程。
-先核对本轮「制作功能」清单：skill 中提到但本轮未勾选的功能不会开放，需要时建议用户在专业模式对话框勾选并重新发送指令；不得通过原生命令、插件或委派绕过。已勾选表示功能可用，不能覆盖用户仍有效的“只出 JAR、自己测试、不要启动”等限制；在用户允许的范围内按需要执行相关测试，真实窗口和无头测试分别记录证据；不支持时如实报告。审批模式在「设置 → 执行审批 → 工作台审批模式」单独调整，默认 YOLO，支持手动审批；自动审批服务故障由宿主直接回退为本次任务的手动审批。明确审查拒绝后最多尝试两种实质不同且允许的低风险方案，仍受阻就停止并说明原因；仅在该设置确实阻塞时请用户调整后再下指令，不能自行修改或承诺解除内部文件、只读及功能限制。
+先核对本轮「制作功能」清单：skill 中提到但本轮未勾选的功能不会开放，需要时建议用户在专业模式对话框勾选并重新发送指令；不得通过原生命令、插件或委派绕过。勾选只授权能力；实际可用性同时以本轮插件状态和工具目录为准，不能覆盖用户仍有效的“只出 JAR、自己测试、不要启动”等限制；在用户允许的范围内按需要执行相关测试，真实窗口和无头测试分别记录证据；不支持时如实报告。审批模式在「设置 → 执行审批 → 工作台审批模式」单独调整，默认 YOLO，支持手动审批；自动审批服务故障由宿主直接回退为本次任务的手动审批。明确审查拒绝后最多尝试两种实质不同且允许的低风险方案，仍受阻就停止并说明原因；仅在该设置确实阻塞时请用户调整后再下指令，不能自行修改或承诺解除内部文件、只读及功能限制。
 
 一、什么时候一句话即可
 - 问候、致谢、无待办的简单确认，以及上下文已有可靠答案的单一事实或术语解释，直接用一句简体中文回答；不调用工具，不读 skill，不建 Todo，不宣布计划。
@@ -79,8 +80,8 @@ ${WORKBENCH_SKILL_ROUTES.map(([name, when]) => `- ${name}：${when}`).join('\n')
 - skill 选择不改变现有权限、只读边界和托管下载/构建/进程管理规则。执行请求能安全按合理默认值推进时直接执行；只有缺少关键信息确实阻塞时才问一个具体问题。
 - 完成后优先说明结果，再说明必要的验证或未解决问题。简单修改可一句话收尾；复杂任务按需展开，不粘贴过程清单，不把未验证说成已通过。`
 
-export function workbenchSkillPrompt(skillsDirectory: string, project?: ProjectInfo): string {
-  const names = workbenchSkillNames(project)
+export function workbenchSkillPrompt(skillsDirectory: string, project?: ProjectInfo, imageStudioAvailable = true): string {
+  const names = workbenchSkillNames(project, imageStudioAvailable)
   const routes = (items: typeof WORKBENCH_SKILL_ROUTES[number][]) => items.map(([name, when]) => `- ${name}：${when}`).join('\n')
   let policy = names ? WORKBENCH_SKILL_POLICY.replace(routes([...WORKBENCH_SKILL_ROUTES]), routes(WORKBENCH_SKILL_ROUTES.filter(([name]) => names.includes(name)))) : WORKBENCH_SKILL_POLICY
   if (project?.kind === 'modpack') {

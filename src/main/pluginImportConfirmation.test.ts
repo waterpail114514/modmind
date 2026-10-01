@@ -8,7 +8,7 @@ vi.mock('electron', async () => {
   return { ipcMain: new EventEmitter() }
 })
 import { ipcMain } from 'electron'
-import { requestPluginImportConfirmation } from './pluginImportConfirmation'
+import { requestPluginImportConfirmation, requestWindowConfirmation } from './pluginImportConfirmation'
 
 const preview: PluginImportPreview = { manifest: { id: 'asset-library', name: '资源素材库', version: '1.1.0', description: '', permissions: ['storage'] }, scope: 'project', fileName: 'assets.zip' }
 function windowSender() {
@@ -17,6 +17,17 @@ function windowSender() {
 afterEach(() => ipcMain.removeAllListeners())
 
 describe('plugin import confirmation', () => {
+  it('keeps native feature trust separate from third-party plugin confirmation', async () => {
+    const sender = windowSender()
+    const result = requestWindowConfirmation(sender, 'feature-1', { name: '图像工坊' }, 'feature-plugins:installPreview', 'feature-plugins:confirmInstall')
+    expect(sender.send).toHaveBeenCalledWith('feature-plugins:installPreview', 'feature-1', { name: '图像工坊' })
+    ipcMain.emit('plugins:confirmImport', { sender }, 'feature-1', true)
+    ipcMain.emit('feature-plugins:confirmInstall', { sender: windowSender() }, 'feature-1', true)
+    expect(ipcMain.listenerCount('feature-plugins:confirmInstall')).toBe(1)
+    ipcMain.emit('feature-plugins:confirmInstall', { sender }, 'feature-1', false)
+    expect(await result).toBe(false)
+    expect(ipcMain.listenerCount('feature-plugins:confirmInstall')).toBe(0)
+  })
   it('only accepts an explicit decision from the requesting window and request', async () => {
     const sender = windowSender()
     const result = requestPluginImportConfirmation(sender, 'request-1', preview)

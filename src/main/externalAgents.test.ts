@@ -1,4 +1,6 @@
 import { normalizeInspirationFeatures } from '../shared/inspirationFeatures'
+import ffmpeg from 'ffmpeg-static'
+import { configureNativeFeatureServices } from './nativeFeatureServices'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 import { diagnosticJournal } from './diagnosticLog'
 import { normalizeWorkbenchFeatures } from '../shared/workbenchFeatures'
@@ -14,8 +16,8 @@ import { LiveConfiguration } from './liveConfiguration'
 import { WORKBENCH_SKILL_POLICY, workbenchSkillPrompt } from './workbenchSkillPolicy'
 import { createDraftProject, initializeDraftProject } from './draftProjectService'
 import * as webResearch from './webResearch'
-import { SoundLibraryService } from './soundLibraryService'
-import { createSoundMcpHandlers } from './soundMcpService'
+import { SoundLibraryService } from "../../feature-plugins/sound-studio/src/main/soundLibraryService"
+import { createSoundMcpHandlers } from "../../feature-plugins/sound-studio/src/main/soundMcpService"
 import { newStudioDraft } from '../shared/soundStudio'
 import { MCP_PROBE_MARKER, MCP_PROBE_TOOL } from './agentToolReadiness'
 
@@ -2140,6 +2142,10 @@ describe('ModMind external agent MCP bridge', () => {
   }, 30000)
 
   it('exports, reads back and previews a sound through the live workbench MCP bridge', async () => {
+    configureNativeFeatureServices(id => {
+      if (id !== 'media-runtime') throw new Error('Unexpected test feature: ' + id)
+      return { executable: () => ffmpeg }
+    })
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-sound-bridge-')); temporaryRoots.push(root)
     const project = { name: 'Sounds', path: root, loader: 'fabric', minecraftVersion: '1.20.1', namespace: 'sounds', createdAt: '' } as ProjectInfo
     const service = new SoundLibraryService(project, path.join(root, 'minecraft'), path.join(root, 'cache'))

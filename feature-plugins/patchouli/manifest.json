@@ -1,0 +1,28 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "patchouli",
+  "name": "Patchouli 指南书",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "patchouli",
+      "label": "Patchouli 指南书",
+      "component": "patchouli",
+      "icon": "LibraryBig",
+      "group": "内容",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "patchouli",
+      "name": "Patchouli 指南书",
+      "description": "创建和编辑 Patchouli 指南书、分类和条目并保存到当前整合包。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

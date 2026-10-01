@@ -14,6 +14,7 @@ Var PersonalDesktopPath
 !macroend
 
 !macro customFinishPage
+  !ifndef MODMIND_FEATURE_TEST_INPLACE_UPGRADE
   Function StartModMind
     ${If} ${isUpdated}
       StrCpy $1 "--updated"
@@ -22,12 +23,15 @@ Var PersonalDesktopPath
     ${EndIf}
     ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
   FunctionEnd
+  !endif
 
   !define MUI_FINISHPAGE_TITLE "ModMind 已准备就绪"
   !define MUI_FINISHPAGE_TEXT "安装已经完成。现在可以开始创建、接管和测试 Minecraft 项目。"
-  !define MUI_FINISHPAGE_RUN
-  !define MUI_FINISHPAGE_RUN_TEXT "立即启动 ModMind"
-  !define MUI_FINISHPAGE_RUN_FUNCTION "StartModMind"
+  !ifndef MODMIND_FEATURE_TEST_INPLACE_UPGRADE
+    !define MUI_FINISHPAGE_RUN
+    !define MUI_FINISHPAGE_RUN_TEXT "立即启动 ModMind"
+    !define MUI_FINISHPAGE_RUN_FUNCTION "StartModMind"
+  !endif
   !insertmacro MUI_PAGE_FINISH
 !macroend
 

@@ -1,7 +1,7 @@
 import sharp from 'sharp'
 import {describe, expect, it} from 'vitest'
 import type {BlockbenchCaptureFrame} from '../shared/blockbench'
-import {reviewAssetCaptures} from './assetVisualReview'
+import {reviewAssetCaptures} from "../../feature-plugins/model-studio/src/main/assetVisualReview"
 
 async function capture(view: BlockbenchCaptureFrame['view'], foreground: boolean): Promise<BlockbenchCaptureFrame> {
   let image = sharp({create: {width: 160, height: 160, channels: 4, background: '#ededed'}})

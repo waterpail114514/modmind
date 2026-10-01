@@ -10,9 +10,23 @@
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
-      "@shared/*": ["src/shared/*"]
+      "@renderer/*": [
+        "src/renderer/src/*"
+      ],
+      "@shared/*": [
+        "src/shared/*"
+      ]
     }
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/shared/**/*.ts"]
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.tsx",
+    "src/shared/**/*.ts",
+    "feature-plugins/*/**/*.tsx",
+    "feature-plugins/*/components/**/*.ts",
+    "feature-plugins/*/renderer.ts",
+    "feature-plugins/sdk/renderer.ts",
+    "feature-plugins/sdk/hostModals.ts",
+    "feature-plugins/*/src/renderer/**/*.ts"
+  ]
 }

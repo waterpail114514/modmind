@@ -19,7 +19,7 @@ async function launch(version = current, isPackaged = true): Promise<AppChangelo
 
 describe('app changelog startup persistence', () => {
   it('keeps a fresh install quiet across restarts and offers offline notes', async () => {
-    expect((await launch()).snapshot()).toMatchObject({ automatic: false, currentVersion: current, releases: APP_CHANGELOG })
+    expect((await launch()).snapshot()).toMatchObject({ automatic: false, currentVersion: current, releases: APP_CHANGELOG.filter(release => { const order = compareSemanticAppVersions(release.version, current); return order !== null && order <= 0 }) })
     expect((await launch()).snapshot().automatic).toBe(false)
   })
   it('shows an upgrade once, including simultaneous presentation acknowledgements', async () => {

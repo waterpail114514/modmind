@@ -97,3 +97,15 @@ export interface ImageProcessingResult {
   operation: 'perfect-pixel' | 'remove-background'
   detail: string
 }
+
+/** Stable host contract; implementation is supplied by an application feature plugin. */
+export interface ImageStudioBackend {
+  revealApiKey(): Promise<string>
+  getSettings(): Promise<ImageStudioSettings>
+  saveSettings(input: ImageStudioSettingsInput): Promise<ImageStudioSettings>
+  capabilities(): Promise<ImageStudioCapabilities>
+  describe(includeModels?: boolean): Promise<unknown>
+  generate(input: ImageGenerationRequest | Record<string, unknown>, source?: ImageStudioSource): Promise<ImageGenerationResult>
+  process(operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options?: ImageProcessingOptions): Promise<ImageProcessingResult>
+  history(): Promise<ImageHistoryItem[]>
+}

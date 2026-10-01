@@ -1,0 +1,12 @@
+.feature-plugin-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding-block: 12px; border-top: 1px solid var(--theme-line); }
+.feature-plugin-info { display: flex; flex: 1 1 220px; flex-direction: column; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.feature-plugin-info > span { color: var(--theme-muted); font-size: 12px; }
+.feature-plugin-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; margin-left: auto; }
+.feature-plugin-row > [role="alert"] { flex: 1 1 100%; overflow-wrap: anywhere; color: var(--theme-danger); }
+.feature-install-dialog { width: min(460px, calc(100vw - 32px)); border-radius: 14px; }
+.feature-install-dialog .plugin-install-header h2 { font-size: 17px; }
+.feature-install-dialog .plugin-install-name h3 { font-size: 15px; }
+.feature-install-dialog .plugin-install-description { font-size: 12px; }
+.feature-install-trust { display: flex; align-items: flex-start; gap: 10px; padding-top: 16px; border-top: 1px solid var(--theme-line); color: var(--theme-muted); }
+.feature-install-trust svg { flex: 0 0 auto; margin-top: 2px; }
+.feature-install-trust p { margin: 0; line-height: 1.7; }

@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { listVanillaItems } from './itemCatalogService'
+import { listVanillaItems } from "../../feature-plugins/item-editor/src/main/itemCatalogService"
 
 it('loads a versioned vanilla item catalog with localized names and caches it', async () => {
   const getJson = vi.fn(async (url: string) => url.includes('dataPaths.json') ? { pc: { '1.21.9': { items: 'pc/1.21.9', blocks: 'pc/1.21.9' } } } : url.includes('blocks.json') ? [{ name: 'stone' }] : url.includes('items.json') ? [
