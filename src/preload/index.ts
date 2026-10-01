@@ -651,6 +651,15 @@ const api: ModMindApi = {
   }
   ,
   featurePlugins: {
+    store: () => invoke('feature-plugins:store'),
+    refreshStore: () => invoke('feature-plugins:refreshStore'),
+    installOfficial: (id: string) => invoke('feature-plugins:installOfficial', id),
+    cancelDownload: () => invoke('feature-plugins:cancelDownload'),
+    onStoreChanged: (callback: (snapshot: import('../shared/featureStore').FeatureStoreSnapshot) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, snapshot: import('../shared/featureStore').FeatureStoreSnapshot): void => callback(snapshot)
+      ipcRenderer.on('feature-plugins:storeChanged', listener)
+      return () => ipcRenderer.removeListener('feature-plugins:storeChanged', listener)
+    },
     list: () => invoke('feature-plugins:list'),
     catalog: () => invoke('feature-plugins:catalog'),
     invoke: (id: string, action: string, input: Record<string, unknown>) => invoke('feature-plugins:invoke', id, action, input),

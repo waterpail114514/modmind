@@ -101,6 +101,8 @@ export interface ExternalAgentPluginBridgeTarget {
 }
 
 export interface ExternalAgentBridgeHandlers {
+  featureInstallMode?: 'automatic' | 'manual'
+  featureRecommend?: (input: Record<string, unknown>) => Promise<unknown>
   featureCatalog?: () => Promise<FeaturePluginCatalogEntry[]>
   featureTools?: (surface: FeaturePluginSurface) => Promise<FeaturePluginDiscoveredTool[]>
   featureInvoke?: (id: string, action: string, input: Record<string, unknown>, context: FeaturePluginInvocationContext) => Promise<unknown>
@@ -1562,6 +1564,8 @@ const imageTools = [
 ];
 tools.push(...imageTools);
 tools.push({name:'modmind_feature_catalog',description:'Read ModMind application feature plugins and installable capabilities, including not installed, disabled and available states. This is a product capability catalog, not a list of executable tools.',inputSchema:{type:'object',additionalProperties:false,properties:{}},annotations:readOnlyLocal});
+tools.push({name:'modmind_recommend_features',description:'Recommend 1–6 official ModMind features relevant to the current task, with a specific reason for each. In beginner mode the host automatically downloads, verifies and enables missing official features and dependencies. Other modes return manual installation guidance. Never assume success; show a recommendation/reason/result table. Does not upload anything.',inputSchema:{type:'object',additionalProperties:false,required:['recommendations'],properties:{recommendations:{type:'array',minItems:1,maxItems:6,items:{type:'object',additionalProperties:false,required:['id','reason'],properties:{id:{type:'string',pattern:'^[a-z][a-z0-9-]{0,63}$'},reason:{type:'string',minLength:1,maxLength:400}}}}}},annotations:managedAction});
+tools.push({name:'modmind_feature_call',description:'Invoke a currently enabled feature tool, including one installed during this turn. Use the exact tool name and input schema returned by modmind_recommend_features or modmind_feature_catalog. The host enforces availability, permissions and user tool selections.',inputSchema:{type:'object',additionalProperties:false,required:['tool','input'],properties:{tool:{type:'string',pattern:'^modmind_[a-z0-9_]+$'},input:{type:'object'}}},annotations:managedAction});
 const pluginAuthoringTools = [
   {name:'modmind_plugins_scaffold', description:'Create a ModMind plugin scaffold in the global plugin directory.', inputSchema:{type:'object',additionalProperties:false,required:['kind','id','name'],properties:{kind:{type:'string',enum:['panel-only','tools-only','panel-and-tools']},id:{type:'string'},name:{type:'string'},description:{type:'string'},author:{type:'string'},tools:{type:'array',items:{type:'object'}}}}, annotations:managedAction},
   {name:'modmind_plugins_read_source', description:'Read the source files of one installed ModMind plugin.', inputSchema:{type:'object',additionalProperties:false,required:['pluginId'],properties:{pluginId:{type:'string'}}}, annotations:readOnlyLocal},
@@ -1670,6 +1674,8 @@ input.on('line', async (line) => {
       modmind_web_read: 'web_read',
       modmind_project_info: 'project_info',
       modmind_feature_catalog: 'feature_catalog',
+      modmind_recommend_features: 'feature_recommend',
+      modmind_feature_call: 'feature_tool_call',
       modmind_mcp_probe: 'mcp_probe',
       modmind_project_setup: 'project_setup',
       modmind_modpack_modules: 'modpack_modules',
@@ -2231,6 +2237,7 @@ export class ModMindBridge {
       data: { runId: this.runId, bridgeId: this.diagnosticId } })
     const bridgePath = path.join(this.directory, 'bridge.json')
     await fs.writeFile(bridgePath, JSON.stringify({port: this.port, token: this.token, version: this.appVersion, sourceFingerprint: MODMIND_SOURCE_FINGERPRINT, hasPluginTools: Boolean(this.pluginTarget), featurePluginTools: Boolean(this.handlers.featureTools), featurePluginAvailability: Boolean(this.handlers.imageStudioAvailable || this.handlers.featureCatalog), hiddenToolPrefixes: [...hiddenWorkbenchToolPrefixes(this.features),
+      ...(this.readOnly || !this.handlers.featureRecommend ? ['modmind_recommend_features'] : []),
       ...(this.readOnly && !this.inspirationFeatures?.imageGeneration ? ['modmind_image_generate', 'modmind_image_perfect_pixel', 'modmind_image_remove_background'] : []),
       ...(this.inspirationFeatures && !this.inspirationFeatures.webResearch ? ['modmind_web_'] : []),
       ...(this.inspirationFeatures && !this.inspirationFeatures.minecraftResearch ? ['modmind_mapping_', 'modmind_dependency_search', 'modmind_mcmod_'] : []),
@@ -2327,12 +2334,19 @@ export class ModMindBridge {
       if (body.action === 'feature_catalog') {
         const tools = await this.availableFeatureTools()
         const features = (await this.handlers.featureCatalog?.() ?? []).map(feature => ({
-          id: feature.id, name: feature.name, version: feature.version, state: feature.state,
+          id: feature.id, name: feature.name, version: feature.version, state: feature.state, description: feature.description,
           installed: feature.installed, enabled: feature.enabled, available: feature.available, error: feature.error,
-          capabilities: feature.manifest?.capabilities ?? [], installHint: feature.installHint,
-          tools: tools.filter(tool => tool.pluginId === feature.id).map(tool => tool.name)
+          capabilities: feature.manifest?.capabilities ?? [], installHint: feature.installHint, download: feature.download,
+          tools: tools.filter(tool => tool.pluginId === feature.id).map(tool => tool.name),
+          callableTools: tools.filter(tool => tool.pluginId === feature.id)
         }))
         response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ features })); return
+      }
+      if (body.action === 'feature_recommend') {
+        if (this.readOnly || !this.handlers.featureRecommend) throw new Error('功能推荐安装仅在工作台中可用')
+        const value = await this.handlers.featureRecommend(input)
+        this.handlers.toolCalled?.('feature_recommend')
+        response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return
       }
       let featureTool: FeaturePluginDiscoveredTool | undefined
       if (body.action === 'feature_tool_call') {
@@ -3362,7 +3376,8 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   const toolchainPrompt = options.bridge.featureCatalog ? await featurePluginTurnPrompt({
     directory: path.join(options.project.path, options.project.toolDataDirectory ?? '.modmind', 'external-agents'),
     scope: options.sessionScope ?? 'workspace', surface: options.readOnly ? 'inspiration' : 'workbench', catalog,
-    tools: await bridge.availableFeatureTools(), selections: options.readOnly ? options.inspirationFeatures : options.workbenchFeatures
+    tools: await bridge.availableFeatureTools(), selections: options.readOnly ? options.inspirationFeatures : options.workbenchFeatures,
+    installationMode: options.bridge.featureInstallMode ?? 'manual'
   }) : ''
   options = { ...options, toolchainPrompt }
   const skillInstructions = options.readOnly || options.retryOnly

@@ -11,8 +11,8 @@ const quests: FeaturePageDefinition = { id: 'ftb-quests', label: 'FTB 任务书'
 const ids = (value: ReturnType<typeof buildNavigationDefinitions>) => value.baseVisibleNavGroups.flatMap(group => group.items.map(item => item.id))
 describe('feature plugin navigation', () => {
   it('keeps only core surfaces when no feature modules are installed', () => {
-    expect(ids(buildNavigationDefinitions({ project, uiMode: 'advanced', plugins: [] }))).toEqual(['workspace', 'inspiration', 'code', 'minecraft', 'build', 'settings', 'plugins'])
-    expect(ids(buildNavigationDefinitions({ project: null, uiMode: 'beginner', plugins: [] }))).toEqual(['workspace', 'settings', 'plugins'])
+    expect(ids(buildNavigationDefinitions({ project, uiMode: 'advanced', plugins: [] }))).toEqual(['workspace', 'inspiration', 'code', 'minecraft', 'build', 'features', 'settings', 'plugins'])
+    expect(ids(buildNavigationDefinitions({ project: null, uiMode: 'beginner', plugins: [] }))).toEqual(['workspace', 'features', 'settings', 'plugins'])
   })
   it('discovers pages from feature declarations and removes them when a module disappears', () => {
     const installed = buildNavigationDefinitions({ project, uiMode: 'advanced', plugins: [], featurePages: [image, quests] })

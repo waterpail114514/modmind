@@ -83,7 +83,7 @@ export function useFeaturePlugins(): Snapshot {
 }
 
 export function featurePages(modules: Record<string, FeatureRendererModule>): FeaturePageDefinition[] {
-  const ids = new Set(['workspace', 'inspiration', 'code', 'minecraft', 'modpack-server', 'build', 'settings', 'plugins'])
+  const ids = new Set(['workspace', 'inspiration', 'code', 'minecraft', 'modpack-server', 'build', 'settings', 'plugins', 'features'])
   return Object.values(modules).flatMap(module => module.pages).filter(page => {
     if (ids.has(page.id)) return false
     ids.add(page.id)

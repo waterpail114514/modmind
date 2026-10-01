@@ -42,8 +42,12 @@ ui-check*.jpg
 
 # Application feature plugin build output
 /feature-plugin-dist/
+/feature-release/
 /test-results/feature-plugins-live/profile/
 /test-results/feature-plugins/*/profile/
 /test-results/build-temp-*/
 /test-results/test-temp-*/
+/test-results/feature-store/
+/test-results/features-page-preview/
 !/docs/feature-plugins.zh-CN.md
+!/docs/official-features-publishing.zh-CN.md

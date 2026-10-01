@@ -166,7 +166,8 @@ import GlobalDownloadIndicator from './components/GlobalDownloadIndicator'
 import { useFeaturePlugins, FeaturePluginRoutes, FeaturePluginBackgrounds, FeatureSettingsSection, featurePages, featureSettings } from './featurePlugins'
 import type { FeaturePageContext } from './featurePluginTypes'
 import ServerTestWorkspace from './components/ServerTestWorkspace'
-import FeaturePluginSettings from './components/FeaturePluginSettings'
+import FeaturesPage from './components/FeaturesPage'
+import { useFeatureStore } from './useFeatureStore'
 import AgentWorkbench from './components/AgentWorkbench'
 import { PluginPanelHost } from './components/PluginPanelHost'
 import { PluginsManager } from './components/PluginsManager'
@@ -2064,13 +2065,15 @@ export default function App(): React.JSX.Element {
   const [javaScanState, setJavaScanState] = useState<'idle' | 'scanning' | 'done' | 'failed'>('idle')
   const javaScanRequestedRef = useRef(false)
   const featurePlugins = useFeaturePlugins()
+  const featureStore = useFeatureStore()
+  const featureUpdates = featureStore.entries.filter(entry => entry.updateAvailable).length
   const installedPages = useMemo(() => featurePages(featurePlugins.modules), [featurePlugins.modules])
   const installedSettings = useMemo(() => featureSettings(featurePlugins.modules), [featurePlugins.modules])
   useEffect(() => {
-    const coreViews = new Set(['workspace', 'inspiration', 'minecraft', 'modpack-server', 'build', 'code', 'settings', 'plugins'])
+    const coreViews = new Set(['workspace', 'inspiration', 'minecraft', 'modpack-server', 'build', 'code', 'settings', 'plugins', 'features'])
     if (!featurePlugins.ready || coreViews.has(view) || view.startsWith('plugin:')) return
     if (!installedPages.some(page => page.id === view && (!page.supports || page.supports(project, uiMode)))) {
-      setView('settings'); setSettingsInitialSection('settings-feature-plugins')
+      setView('features')
       setNotice('当前功能插件未安装、未启用或不支持此项目')
     }
   }, [featurePlugins.ready, installedPages, view, project?.path, uiMode])
@@ -4960,7 +4963,7 @@ export default function App(): React.JSX.Element {
       void refreshFilesFor(restored.path); void refreshSnapshotsFor(restored.path)
     }
   }
-  const projectIndependentView = view === 'settings' || view === 'plugins' || installedPages.some(page => page.id === view && (!page.supports || page.supports(null, uiMode)))
+  const projectIndependentView = view === 'settings' || view === 'plugins' || view === 'features' || installedPages.some(page => page.id === view && (!page.supports || page.supports(null, uiMode)))
     || view.startsWith('plugin:')
 
   if (false && initialDetachedGroup) {
@@ -5095,6 +5098,7 @@ export default function App(): React.JSX.Element {
                   type="button"
                 >
                   <item.icon size={sidebarCollapsed ? 19 : 16} /><span>{item.label}</span>
+                  {item.id === 'features' && featureUpdates > 0 ? <small className="feature-update-badge" aria-label={`${featureUpdates} 个功能可更新`}>{featureUpdates}</small> : null}
                   {item.id === 'snapshots' && snapshotStorageWarning ? <CircleAlert className="snapshot-sidebar-warning" size={15} aria-hidden="true" /> : null}
                   {showFeatureBeta(item.id) ? <em className="agent-beta-tag feature-beta-tag">Beta</em> : null}
                   {item.id === 'build' && latestEvent ? <i className={`status-dot ${latestEvent.status}`} /> : null}
@@ -5314,6 +5318,7 @@ export default function App(): React.JSX.Element {
             ) : null}
 
 
+            {view === 'features' ? <FeaturesPage onOpen={id => navigateToView(id as ViewId)} onSettings={id => { setSettingsInitialSection(id); setView('settings') }} /> : null}
             {view === 'plugins' ? (
               <PluginsManager
                 snapshot={pluginSnapshot}
@@ -5507,7 +5512,7 @@ export default function App(): React.JSX.Element {
                   ) : null}
                  </section>
                 {installedSettings.filter(definition => !definition.supports || definition.supports(project)).map(definition => <FeatureSettingsSection key={definition.id} id={definition.id} definition={definition} context={{ ...featureContext, visible: true }} />)}
-                <section id="settings-feature-plugins" className="settings-section"><FeaturePluginSettings /></section>
+                <section id="settings-feature-plugins" className="settings-section"><div className="settings-heading"><h2>应用功能</h2></div><button className="secondary-button compact" onClick={() => setView('features')}>打开功能管理</button></section>
                 <section id="settings-build" className="settings-section">
                   <div className="settings-heading"><h2>构建工具</h2></div>
                   <div className="appearance-row"><div><strong>项目 Gradle Wrapper</strong></div><span className="status-dot success" /></div>

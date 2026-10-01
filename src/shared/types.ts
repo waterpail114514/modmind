@@ -1267,6 +1267,7 @@ export type SidebarViewId =
   | 'snapshots'
   | 'production'
   | 'settings'
+  | 'features'
   | 'plugins'
   | `plugin:${string}`
   | 'decompile'

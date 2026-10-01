@@ -50,10 +50,12 @@ export interface FeaturePluginRecord {
   manifest?: FeaturePluginDefinition
 }
 export interface FeaturePluginCatalogEntry extends FeaturePluginRecord {
+  description?: string
   installed: boolean
   available: boolean
   state: 'not-installed' | 'disabled' | 'ready' | 'error' | 'dependency-missing'
   installHint: string
+  download?: { available: boolean; latestVersion?: string; updateAvailable: boolean; message?: string }
 }
 export interface FeaturePluginDiscoveredTool extends FeaturePluginTool {
   pluginId: string
@@ -69,6 +71,11 @@ export interface FeaturePluginRuntime {
   projectChanged?: (projectPath: string | null) => void | Promise<void>
 }
 export interface FeaturePluginApi {
+  store: () => Promise<import('./featureStore').FeatureStoreSnapshot>
+  refreshStore: () => Promise<import('./featureStore').FeatureStoreSnapshot>
+  installOfficial: (id: string) => Promise<FeaturePluginRecord[]>
+  cancelDownload: () => Promise<void>
+  onStoreChanged: (callback: (snapshot: import('./featureStore').FeatureStoreSnapshot) => void) => () => void
   list: () => Promise<FeaturePluginRecord[]>
   catalog: () => Promise<FeaturePluginCatalogEntry[]>
   invoke: (id: string, action: string, input: Record<string, unknown>) => Promise<unknown>

@@ -1,7 +1,7 @@
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile, readdir, appendFile, access, cp } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, readdir, appendFile, access, cp, rm } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
@@ -52,6 +52,9 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
   definitions.push(definition)
   if (only && only !== manifest.id) continue
   const output = path.join(outputRoot, manifest.id)
+  const relativeOutput = path.relative(outputRoot, path.resolve(output))
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(relativeOutput)) throw new Error(`Invalid feature output: ${manifest.id}`)
+  await rm(output, { recursive: true, force: true })
   await mkdir(output, { recursive: true })
   const mainBuild = await build({ entryPoints: [path.join(source, 'main.ts')], outfile: path.join(output, 'main.cjs'), bundle: true, metafile: true, platform: 'node', format: 'cjs', external: ['electron', 'sharp', 'ffmpeg-static', '@modmind/host', '7zip-bin', 'pdfjs-dist'], plugins: sharedShims })
   const rendererEntry = path.join(source, await exists(path.join(source, 'renderer.tsx')) ? 'renderer.tsx' : 'renderer.ts')
@@ -116,7 +119,7 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
   await new Promise((resolve, reject) => {
     const out = createWriteStream(archivePath), zip = archiver('zip', { zlib: { level: 9 } })
     out.on('close', resolve); out.on('error', reject); zip.on('error', reject); zip.pipe(out)
-    for (const file of ['manifest.json', ...Object.keys(files)]) zip.file(path.join(output, file), { name: file })
+    for (const file of ['manifest.json', ...Object.keys(files)].sort()) zip.file(path.join(output, file), { name: file, date: new Date('2000-01-01T00:00:00.000Z') })
     zip.finalize()
   })
   await writeFile(path.join(output, 'build-inputs.json'), JSON.stringify({ main: Object.keys(mainBuild.metafile.inputs), renderer: Object.keys(rendererBuild.metafile.inputs) }, null, 2))

@@ -40,3 +40,16 @@ it('reports plugin removal and selection changes on resumed turns without leakin
   const inspiration = await featurePluginTurnPrompt({ ...base, surface: 'inspiration', catalog: catalog('ready'), tools: [tool] })
   expect(inspiration).toContain('"firstTurn":true')
 })
+
+it('requests a task-specific recommendation table and distinguishes automatic beginner installation from manual and read-only modes', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-recommendation-')); roots.push(directory)
+  const base = { directory, scope: 'recommendations', surface: 'workbench' as const, catalog: catalog('not-installed'), tools: [] }
+  const manual = await featurePluginTurnPrompt(base)
+  expect(manual).toContain('推荐功能｜推荐原因｜安装状态')
+  expect(manual).toContain('不擅自安装')
+  const automatic = await featurePluginTurnPrompt({ ...base, installationMode: 'automatic' })
+  expect(automatic).toContain('不再询问用户确认')
+  expect(automatic).toContain('modmind_feature_call')
+  const inspiration = await featurePluginTurnPrompt({ ...base, surface: 'inspiration', installationMode: 'automatic' })
+  expect(inspiration).not.toContain('不再询问用户确认')
+})

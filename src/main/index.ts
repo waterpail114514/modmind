@@ -271,6 +271,7 @@ import type {
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 import type { ImageStudioBackend } from '../shared/imageStudio'
 import { FeaturePluginService, prepareFeaturePlugin } from './featurePluginService'
+import { FeatureStoreService } from './featureStoreService'
 import { configureNativeFeatureServices } from './nativeFeatureServices'
 import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from './modpackService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
@@ -431,7 +432,7 @@ function projectKnowledgeStore(): InspirationKnowledgeStore {
 }
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
-  'workspace', 'modpack-server', 'inspiration', 'minecraft', 'code', 'build', 'settings', 'plugins'
+  'workspace', 'modpack-server', 'inspiration', 'minecraft', 'code', 'build', 'settings', 'plugins', 'features'
 ])
 
 function describeRuntimeError(error: unknown): string {
@@ -480,6 +481,7 @@ let forwardMinecraftEventsToServerPanel = false
 let loaderCatalog: LoaderCatalog | null = null
 let giteeBuildService: GiteeBuildService | null = null
 let featurePluginService: FeaturePluginService
+let featureStoreService: FeatureStoreService
 let remoteClient: RemoteClientService | null = null
 let remoteDeviceId: string | null = null
 let modProviderRegistry: ModProviderRegistry | null = null
@@ -703,6 +705,7 @@ function shutdownApplication(): Promise<void> {
   verifiedDownload.beginShutdown()
   deviceAuthorizationController?.abort()
   for (const controller of aiAbortControllers.values()) controller.abort()
+  featureStoreService?.shutdown()
   for (const active of activeAiBackendSwitches.values()) active.controller.abort()
   const timeout = setTimeout(() => {
     diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'timeout', message: 'Shutdown exceeded 20 seconds' })
@@ -5325,9 +5328,11 @@ async function previewModpackMigrationForAgent(project: ProjectInfo, input: Reco
 async function applyModpackMigrationForAgent(project: ProjectInfo, input: Record<string, unknown>): Promise<ModpackMigrationCreateResult> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').applyModpackMigrationForAgent(project, input) }
 
 
-function featureAgentHandlers(project: ProjectInfo, signal: AbortSignal, event?: import('electron').IpcMainInvokeEvent): Pick<ExternalAgentBridgeHandlers, 'featureCatalog' | 'featureTools' | 'featureInvoke'> {
+function featureAgentHandlers(project: ProjectInfo, signal: AbortSignal, event?: import('electron').IpcMainInvokeEvent, automaticFeatures = false): Pick<ExternalAgentBridgeHandlers, 'featureCatalog' | 'featureTools' | 'featureInvoke' | 'featureRecommend' | 'featureInstallMode'> {
   return {
-    featureCatalog: async () => featurePluginService.catalog(),
+    featureCatalog: async () => featureStoreService?.agentCatalog() ?? featurePluginService.catalog(),
+    featureInstallMode: automaticFeatures ? 'automatic' : 'manual',
+    featureRecommend: input => featureStoreService.recommend(input, automaticFeatures, signal),
     featureTools: async surface => featurePluginService.tools(surface),
     featureInvoke: (id, action, input, context) => aiProjectContext.run(project, async () => {
       signal.throwIfAborted()
@@ -6304,7 +6309,7 @@ async function runExternalCodingAgent(
         { ...(status === 'error' ? { terminal: false, recoverable: true } : {}), ...(notice ? { notice } : {}) }
       )),
       bridge: {
-        ...featureAgentHandlers(project, signal, event),
+        ...featureAgentHandlers(project, signal, event, beginnerAgent && !isInspiration),
         research: input => runInspirationResearch(project, input, {
           backend: () => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile'),
           cacheRoot: path.join(app.getPath('userData'), 'decompile'), signal,
@@ -6940,6 +6945,16 @@ function registerIpc(): void {
   diagnosticHandle('mcp-bridge:setEnabled', (_event, enabled: unknown) => setMcpBridgeEnabledFromSettings(enabled === true))
   diagnosticHandle('feature-plugins:list', () => featurePluginService.list())
   diagnosticHandle('feature-plugins:catalog', () => featurePluginService.catalog())
+  diagnosticHandle('feature-plugins:store', () => featureStoreService.snapshot())
+  diagnosticHandle('feature-plugins:refreshStore', () => featureStoreService.refresh(true))
+  diagnosticHandle('feature-plugins:installOfficial', (event, id: unknown) => {
+    if (event.sender !== mainWindow?.webContents || typeof id !== 'string') throw new Error('请在主窗口安装功能')
+    return featureStoreService.installOfficial(id)
+  })
+  diagnosticHandle('feature-plugins:cancelDownload', event => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('请在主窗口管理下载')
+    featureStoreService.cancel()
+  })
   diagnosticHandle('feature-plugins:invoke', (event, id: unknown, action: unknown, input: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || window.isDestroyed() || window !== mainWindow && !isDetachedWindow(window)) throw new Error('请在应用窗口调用功能插件')
@@ -6955,7 +6970,7 @@ function registerIpc(): void {
       name: prepared.manifest.name, version: prepared.manifest.version, fileName: path.basename(selected.filePaths[0])
     }, 'feature-plugins:installPreview', 'feature-plugins:confirmInstall')
     if (!trusted) return null
-    return featurePluginService.install(prepared)
+    return featurePluginService.list().some(record => record.id === prepared.manifest.id) ? featurePluginService.update(prepared) : featurePluginService.install(prepared)
   })
   diagnosticHandle('feature-plugins:setEnabled', (event, id: unknown, enabled: unknown) => {
     if (event.sender !== mainWindow?.webContents || typeof id !== 'string' || typeof enabled !== 'boolean') throw new Error('插件参数或窗口无效')
@@ -8617,7 +8632,7 @@ app.whenReady().then(async () => {
     projectRoot: () => (aiProjectContext.getStore() ?? currentProject)?.path ?? null,
     capabilities: { downloadActivities, runtime: featureHostRuntime },
     busy: () => activeAiRuns.size > 0,
-    changed: () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:changed') },
+    changed: () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:changed'); featureStoreService?.publish() },
     event: (id, event, value, windowId) => {
       for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && (window === mainWindow || isDetachedWindow(window)) && (windowId === undefined || window.id === windowId)) window.webContents.send('feature-plugins:event', id, event, value)
     },
@@ -8633,6 +8648,11 @@ app.whenReady().then(async () => {
     })
   })
   await featurePluginService.initialize()
+  featureStoreService = new FeatureStoreService(path.join(app.getPath('userData'), 'feature-store'), featurePluginService, snapshot => {
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:storeChanged', snapshot)
+  })
+  await featureStoreService.initialize()
+  void featureStoreService.refresh()
   configureNativeFeatureServices(id => featurePluginService.service<Record<string, unknown>>(id))
   protocol.handle('modmind-feature', request => featurePluginService.serve(request))
   await pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))

@@ -138,6 +138,7 @@ export class FeaturePluginService {
   private projectPath: string | null = null
   constructor(private readonly root: string, private readonly host: FeaturePluginHost) {}
   list(): FeaturePluginRecord[] { return [...this.records.values()].map(record => structuredClone(record)) }
+  fingerprint(id: string): string | undefined { const manifest = this.manifests.get(id); return manifest ? hash(Buffer.from(JSON.stringify(manifest))) : undefined }
   manifest(id: string): FeaturePluginDefinition | undefined { const manifest = this.manifests.get(id); return manifest ? definition(manifest) : undefined }
   enabled(id: string, ancestors = new Set<string>()): boolean {
     const record = this.records.get(id)
@@ -157,7 +158,7 @@ export class FeaturePluginService {
         enabled: record?.enabled ?? false, error: record?.error, manifest: manifest ? structuredClone(manifest) : undefined,
         installed: Boolean(record), available,
         state: !record ? 'not-installed' : record.error ? 'error' : !record.enabled ? 'disabled' : available ? 'ready' : 'dependency-missing',
-        installHint: '设置 → 集成 → 应用功能插件'
+        installHint: '侧边栏 → 功能，按名称搜索并安装或启用'
       }
     })
   }
@@ -230,7 +231,7 @@ export class FeaturePluginService {
     }
   }
   service<T extends object>(id: string): T {
-    if (!this.enabled(id)) throw new Error(`应用功能插件 ${this.records.get(id)?.name ?? id} 未启用，请在设置 → 集成 → 应用功能插件中安装或启用`)
+    if (!this.enabled(id)) throw new Error(`应用功能插件 ${this.records.get(id)?.name ?? id} 未启用，请在侧边栏 → 功能中安装或启用`)
     if (!this.services.has(id)) {
       try {
         const file = path.join(this.root, id, 'main.cjs')
@@ -280,8 +281,8 @@ export class FeaturePluginService {
     }
     return this.services.get(id) as T
   }
-  private async change(action: () => Promise<void>): Promise<FeaturePluginRecord[]> {
-    if (this.changing || this.activeCalls || this.host.busy()) throw new Error('请等待当前插件任务或工作台任务完成后再更改插件')
+  private async change(action: () => Promise<void>, additiveAgentInstall = false): Promise<FeaturePluginRecord[]> {
+    if (this.changing || this.activeCalls || (!additiveAgentInstall && this.host.busy())) throw new Error('请等待当前插件任务或工作台任务完成后再更改插件')
     this.changing = true
     try { await action(); this.revision++; this.host.changed(); return this.list() } finally { this.changing = false }
   }
@@ -297,6 +298,7 @@ export class FeaturePluginService {
     }
     walk(manifest.id)
     for (const installed of this.manifests.values()) {
+      if (installed.id === manifest.id) continue
       for (const key of ['views', 'settings', 'tools'] as const) {
         const identifiers = new Set((installed[key] ?? []).map(entry => 'id' in entry ? entry.id : entry.name))
         if ((manifest[key] ?? []).some(entry => identifiers.has('id' in entry ? entry.id : entry.name))) throw new Error(`插件贡献与 ${installed.name} 冲突：${key}`)
@@ -327,7 +329,7 @@ export class FeaturePluginService {
     this.projectPath = projectPath
     await Promise.all([...this.runtimes.values()].map(runtime => runtime.projectChanged?.(projectPath)))
   }
-  async install(prepared: PreparedPlugin): Promise<FeaturePluginRecord[]> {
+  async install(prepared: PreparedPlugin, additiveAgentInstall = false): Promise<FeaturePluginRecord[]> {
     return this.change(async () => {
       const manifest = validate(prepared.files)
       if (this.records.has(manifest.id)) throw new Error('此插件已安装；更新前请先卸载，已有项目数据和设置会保留')
@@ -340,9 +342,41 @@ export class FeaturePluginService {
       } finally { await retryTransientFileLock(() => fs.rm(staging, { recursive: true, force: true })) }
       this.manifests.set(manifest.id, manifest)
       this.records.set(manifest.id, { id: manifest.id, name: manifest.name, version: manifest.version, enabled: true, manifest: definition(manifest) })
+    }, additiveAgentInstall)
+  }
+  /** Replace one verified package; keep the old directory until the new runtime loads. */
+  async update(prepared: PreparedPlugin): Promise<FeaturePluginRecord[]> {
+    return this.change(async () => {
+      const manifest = validate(prepared.files), previous = this.manifests.get(manifest.id), record = this.records.get(manifest.id)
+      if (!previous || !record) throw new Error('请先安装此功能')
+      this.checkConflicts(manifest)
+      const directory = path.join(this.root, manifest.id), staging = path.join(this.root, '.install-' + randomUUID()), backup = path.join(this.root, '.backup-' + randomUUID())
+      await fs.mkdir(staging)
+      let moved = false, replaced = false
+      try {
+        for (const [name, bytes] of prepared.files) { const target = path.join(staging, name); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, bytes) }
+        if (!record.enabled) await fs.writeFile(path.join(staging, 'disabled'), '')
+        // Dependants may hold references to this runtime. Dispose them before replacing it.
+        const affected = new Set([manifest.id])
+        for (let changed = true; changed;) { changed = false; for (const value of this.manifests.values()) if (!affected.has(value.id) && value.dependencies?.some(id => affected.has(id))) { affected.add(value.id); changed = true } }
+        for (const id of [...affected].reverse()) await this.deactivate(id)
+        await retryTransientFileLock(() => fs.rename(directory, backup)); moved = true
+        await retryTransientFileLock(() => fs.rename(staging, directory)); replaced = true
+        this.manifests.set(manifest.id, manifest)
+        this.records.set(manifest.id, { id: manifest.id, name: manifest.name, version: manifest.version, enabled: record.enabled, manifest: definition(manifest) })
+        if (this.enabled(manifest.id)) this.service(manifest.id)
+      } catch (error) {
+        if (replaced) { await this.deactivate(manifest.id).catch(() => undefined); await retryTransientFileLock(() => fs.rm(directory, { recursive: true, force: true })) }
+        if (moved) await retryTransientFileLock(() => fs.rename(backup, directory))
+        this.manifests.set(manifest.id, previous); this.records.set(manifest.id, record)
+        this.host.changed()
+        throw error
+      } finally { await retryTransientFileLock(() => fs.rm(staging, { recursive: true, force: true })) }
+      // A locked retired file must not turn a successful activation into a false failure.
+      await retryTransientFileLock(() => fs.rm(backup, { recursive: true, force: true })).catch(() => undefined)
     })
   }
-  async setEnabled(id: string, enabled: boolean): Promise<FeaturePluginRecord[]> {
+  async setEnabled(id: string, enabled: boolean, additiveAgentInstall = false): Promise<FeaturePluginRecord[]> {
     return this.change(async () => {
       if (!idPattern.test(id) || !this.records.has(id) || !this.manifests.has(id)) throw new Error('插件不可用，请重新安装')
       if (!enabled) this.assertNoDependents(id)
@@ -351,7 +385,7 @@ export class FeaturePluginService {
       const marker = path.join(this.root, id, 'disabled')
       if (enabled) await fs.rm(marker, { force: true }); else await fs.writeFile(marker, '')
       Object.assign(this.records.get(id)!, { enabled, error: undefined })
-    })
+    }, enabled && additiveAgentInstall)
   }
   async uninstall(id: string): Promise<FeaturePluginRecord[]> {
     return this.change(async () => {

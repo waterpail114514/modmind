@@ -1,4 +1,4 @@
-import { Code2, FolderOpen, Gamepad2, Hammer, Lightbulb, MessageSquareText, Puzzle, Server, Settings, type LucideIcon } from 'lucide-react'
+import { Code2, FolderOpen, Gamepad2, Hammer, LayoutGrid, Lightbulb, MessageSquareText, Puzzle, Server, Settings, type LucideIcon } from 'lucide-react'
 import type { ProjectInfo, SidebarViewId, UiMode } from '../../shared/types'
 import type { PluginRecord } from '../../shared/plugins'
 import type { ModpackContentFeatures } from '../../shared/modpackContentFeatures'
@@ -29,10 +29,10 @@ export function buildNavigationDefinitions({ project, uiMode, plugins, featurePa
       ...(project.kind !== 'server-plugin' && (project.kind === 'modpack' || isJavaLoader(project.loader)) ? [{ id: 'minecraft' as const, label: project.kind === 'modpack' ? '游戏测试' : '测试', icon: Gamepad2 }] : []),
       { id: 'build', label: '构建与导出', icon: Hammer }
     ] },
-    { label: '项目', items: [{ id: 'settings', label: '设置', icon: Settings }] }
+    { label: '项目', items: [{ id: 'features', label: '功能', icon: LayoutGrid }, { id: 'settings', label: '设置', icon: Settings }] }
   ] : [
     { label: '项目', items: [{ id: 'workspace', label: '项目', icon: FolderOpen }] },
-    { label: '应用', items: [{ id: 'settings', label: '设置', icon: Settings }] }
+    { label: '应用', items: [{ id: 'features', label: '功能', icon: LayoutGrid }, { id: 'settings', label: '设置', icon: Settings }] }
   ]
   for (const page of [...featurePages].sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
     if (page.supports && !page.supports(project, uiMode)) continue
