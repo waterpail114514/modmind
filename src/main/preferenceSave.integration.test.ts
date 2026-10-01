@@ -65,7 +65,7 @@ it('passes the selected quota model override into the runtime catalog', async ()
   let preferences: BeginnerAiPreferences = { model: 'gpt-5.6-sol', reasoningLevel: 'medium', fastMode: false, modelContextWindows: { 'gpt-5.6-sol': 1050000 }, modelAutoCompactTokenLimits: { 'gpt-5.6-sol': 800000 } }
   const sandbox = {
     readDeviceCredentials: async () => ({ baseUrl: 'https://relay.example/v1', apiKey: 'fixture' }),
-    quotaModelsForCredentials: async () => [preferences.model, 'inspiration-model'].map(id => ({ id, reasoning: { efforts: ['medium', 'ultra'], source: 'provider', controls: ['effort'] } })),
+    quotaModelsForCredentials: async () => [preferences.model, 'inspiration-model'].map(id => ({ id, reasoning: { efforts: ['medium', 'max'], source: 'provider', controls: ['effort'] } })),
     reconcileQuotaModelPreferences: vi.fn(async () => preferences),
     readBeginnerAiPreferences: async () => preferences,
     sameDeviceCredentials: () => true,
@@ -79,14 +79,14 @@ it('passes the selected quota model override into the runtime catalog', async ()
   const config = await sandbox.readBeginnerAgentServerConfig()
   expect(config.contextWindow).toBe(1050000)
   expect(config.autoCompactTokenLimit).toBe(800000)
-  expect(config.reasoningCapabilities?.efforts).toEqual(['low', 'medium', 'high', 'xhigh', 'ultra'])
+  expect(config.reasoningCapabilities?.efforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   expect(buildCodexModelCatalog(config.model, config)?.models.at(-1)?.context_window).toBe(1050000)
   preferences = { ...preferences, model: 'gpt-5.6-terra' }
   expect((await sandbox.readBeginnerAgentServerConfig()).contextWindow).toBeUndefined()
   expect((await sandbox.readBeginnerAgentServerConfig()).autoCompactTokenLimit).toBeUndefined()
   sandbox.reconcileQuotaModelPreferences.mockClear()
-  const independent = await sandbox.readBeginnerAgentServerConfig({ model: 'inspiration-model', reasoningLevel: 'ultra' })
-  expect(independent).toMatchObject({ model: 'inspiration-model', reasoningEffort: 'ultra' })
+  const independent = await sandbox.readBeginnerAgentServerConfig({ model: 'inspiration-model', reasoningLevel: 'max' })
+  expect(independent).toMatchObject({ model: 'inspiration-model', reasoningEffort: 'max' })
   expect(independent.contextWindow).toBeUndefined()
   expect(independent.autoCompactTokenLimit).toBeUndefined()
   expect(preferences.model).toBe('gpt-5.6-terra')
