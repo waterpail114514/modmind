@@ -1,2 +1,3 @@
 *.pdf binary
 *.docx binary
+*.cmd text eol=crlf

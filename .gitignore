@@ -43,6 +43,8 @@ ui-check*.jpg
 # Application feature plugin build output
 /feature-plugin-dist/
 /feature-release/
+/tools/feature-publisher/node_modules/
+/test-results/feature-publisher/
 /test-results/feature-plugins-live/profile/
 /test-results/feature-plugins/*/profile/
 /test-results/build-temp-*/
