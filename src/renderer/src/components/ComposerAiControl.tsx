@@ -51,7 +51,7 @@ export default function ComposerAiControl({ model, effort, models, allowedEffort
     {open ? createPortal(<div ref={panel} id={id} role="dialog" aria-label="模型与思考强度" className="composer-ai-panel" style={position}>
       {onBackendChange ? <div className="composer-ai-engines" role="group" aria-label="灵感台 AI 引擎">
         <button type="button" aria-pressed={followWorkbench} onClick={onFollowWorkbench}>默认</button>
-        {(['quota', 'codex', 'claude'] as const).map(value => <button type="button" key={value} aria-pressed={!followWorkbench && backend === value} onClick={() => onBackendChange(value)}>{value === 'quota' ? 'ModMind' : value === 'codex' ? 'Codex' : 'Claude'}</button>)}
+        {(['quota', 'codex'] as const).map(value => <button type="button" key={value} aria-pressed={!followWorkbench && backend === value} onClick={() => onBackendChange(value)}>{value === 'quota' ? 'ModMind' : 'Codex'}</button>)}
       </div> : null}
       <div className="composer-ai-heading"><div><strong>{titles[draft]}{draft !== 'auto' ? <small>{draft}</small> : null}</strong>
         <button type="button" className="composer-ai-model" onClick={() => { setChoosingModel(value => !value); setQuery('') }}>{model || '选择模型'}<ChevronDown size={12} /></button></div>

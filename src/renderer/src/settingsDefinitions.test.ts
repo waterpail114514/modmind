@@ -19,7 +19,7 @@ const baseline = JSON.parse(readFileSync(new URL('./__fixtures__/extensionDefini
 describe('settings definition compatibility', () => {
   it.each(['压缩 阈值', 'compaction'])('finds both compaction settings from %s', query => {
     const result = findSettingsSections(new Set(settingsSections.map(section => section.id)), 'general', query)
-    expect(result.visibleSections.map(section => section.id)).toEqual(['settings-ai', 'settings-agents'])
+    expect(result.visibleSections.map(section => section.id)).toEqual(['settings-ai'])
   })
   it('preserves category and section IDs, order, labels, descriptions and search keywords', () => {
     expect(settingsCategories).toEqual(baseline.settings.categories)

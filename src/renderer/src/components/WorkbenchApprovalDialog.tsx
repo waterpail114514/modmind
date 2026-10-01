@@ -45,7 +45,7 @@ export function ApprovalDialog({ request, remaining, onResolve }: {
   }}>
     <header className="workbench-approval-header">
       <span className="workbench-approval-symbol"><Icon size={21} strokeWidth={1.7} /></span>
-      <div><span className="workbench-approval-eyebrow"><AgentBrandIcon kind={request.engine} size={13} />{request.engine === 'codex' ? 'Codex' : 'Claude Code'}<span>·</span>等待你的审批{remaining > 1 ? <span className="workbench-approval-count">{remaining} 项</span> : null}</span><h2 id={`${id}-title`}>{request.title}</h2></div>
+      <div><span className="workbench-approval-eyebrow"><AgentBrandIcon kind={request.engine} size={13} />Codex<span>·</span>等待你的审批{remaining > 1 ? <span className="workbench-approval-count">{remaining} 项</span> : null}</span><h2 id={`${id}-title`}>{request.title}</h2></div>
       <button type="button" className="icon-button" aria-label="拒绝并关闭" title="拒绝并关闭（Esc）" disabled={busy} onClick={() => void resolve('deny')}><X size={17} /></button>
     </header>
     <div className="workbench-approval-body">

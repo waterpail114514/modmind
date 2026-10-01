@@ -97,4 +97,29 @@ describe('Minecraft task stall recovery', () => {
     await expect(resultPromise).resolves.toBe('done')
     vi.useRealTimers()
   })
+
+  it('retries a recoverable download error without exposing an intermediate failure', async () => {
+    const retries: number[] = []
+    let attempts = 0
+    const result = await runMinecraftTaskWithRecovery({
+      createTask: () => mockTask(async () => {
+        if (++attempts === 1) throw new Error('mirror returned corrupt data')
+        return 'done'
+      }),
+      retryOnError: (error) => error instanceof Error && error.message.includes('corrupt data'),
+      onRetry: (attempt) => retries.push(attempt)
+    })
+    expect(result).toBe('done')
+    expect(attempts).toBe(2)
+    expect(retries).toEqual([2])
+  })
+
+  it('does not retry an error rejected by the recovery predicate', async () => {
+    let attempts = 0
+    await expect(runMinecraftTaskWithRecovery({
+      createTask: () => mockTask(async () => { attempts++; throw new Error('installer configuration is invalid') }),
+      retryOnError: () => false
+    })).rejects.toThrow('installer configuration is invalid')
+    expect(attempts).toBe(1)
+  })
 })

@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSource } from '../shared/aiAttachments'
 import { diagnosticErrorPayload } from '../shared/diagnostics'
 import { presentClientResult } from '../shared/clientResult'
-import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface } from '../shared/types'
+import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
@@ -171,6 +171,11 @@ const api: ModMindApi = {
     deleteProject: (projectPath: string) => invoke('project:delete', projectPath),
     deleteProjectPermanent: (projectPath: string) => invoke('project:deletePermanent', projectPath),
     inspectExisting: (sourceType?: 'folder' | 'zip') => invoke('project:inspectExisting', sourceType),
+    onInspectionProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: ExistingProjectInspectionProgress): void => listener(presentResult(progress, 'project:inspectionProgress'))
+      ipcRenderer.on('project:inspectionProgress', handler)
+      return () => ipcRenderer.removeListener('project:inspectionProgress', handler)
+    },
     adoptExisting: (input: ExistingProjectAdoptInput) => invoke('project:adoptExisting', input),
     current: () => invoke('project:current'),
     listFiles: (projectPath?: string) => invoke('project:listFiles', projectPath),
@@ -303,6 +308,12 @@ const api: ModMindApi = {
   snapshots: {
     create: (label: string, projectPath?: string) => invoke('snapshots:create', label, projectPath),
     list: (projectPath?: string) => invoke('snapshots:list', projectPath),
+    storage: (projectPath?: string) => invoke('snapshots:storage', projectPath),
+    onStorageChanged: (listener: (status: SnapshotStorageInfo) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: SnapshotStorageInfo): void => listener(presentResult(status, 'snapshots:storageChanged'))
+      ipcRenderer.on('snapshots:storageChanged', handler)
+      return () => ipcRenderer.removeListener('snapshots:storageChanged', handler)
+    },
     restore: (id: string, projectPath?: string) => invoke('snapshots:restore', id, projectPath),
     delete: (id: string, projectPath?: string) => invoke('snapshots:delete', id, projectPath)
   },
@@ -430,6 +441,7 @@ const api: ModMindApi = {
   },
   externalAgents: {
     detect: () => invoke('external-agents:detect'),
+    scanLocal: () => invoke('external-agents:scanLocal'),
     configure: (kind: ExternalAgentKind, settings: ExternalAgentConfiguration) => invoke('external-agents:configure', kind, settings),
     history: (kind: ExternalAgentKind) => invoke('external-agents:history', kind),
     install: (kind: ExternalAgentKind) => invoke('external-agents:install', kind),

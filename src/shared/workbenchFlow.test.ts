@@ -48,9 +48,9 @@ describe('minimal workbench phases', () => {
   })
 
   it('uses quota for beginner discussion and an explicit handoff even after a UI switch', () => {
-    expect(workbenchFlowBackend('beginner', 'claude', false)).toBe('quota')
-    expect(workbenchFlowBackend('advanced', 'claude', true)).toBe('quota')
-    expect(workbenchFlowBackend('advanced', 'claude', false)).toBe('claude')
+    expect(workbenchFlowBackend('beginner', 'codex', false)).toBe('quota')
+    expect(workbenchFlowBackend('advanced', 'codex', true)).toBe('quota')
+    expect(workbenchFlowBackend('advanced', 'codex', false)).toBe('codex')
   })
 
   it('hands off the conversation and actual project context without claiming discussion made changes', () => {

@@ -7,19 +7,18 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { auditExternalAgentCompletion, agentStreamFailureMessage, buildWindowsExternalAgentLaunch, classifyAgentStreamFailure, clearExternalAgentFailureCircuits, decodeExternalProcessOutput, detectExternalAgent, externalAgentAttemptPrompt, externalAgentContextText, externalAgentDocsUrl, externalAgentLabel, externalAgentRetryPrompt, extractClaudeTokenUsage, installExternalAgent, isExternalAgentCompletionEvent, isForcefulProcessTerminationCommand, isNativeGradleBuildCommand, isReadOnlyActionDenied, isResumedPromptRejection, managedNativeDownloadAction, MCP_SERVER_SOURCE, ModMindBridge, nativePermissionArgs, parseExternalAgentOutputLine, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentBridgeHandlers } from './externalAgents'
+import { auditExternalAgentCompletion, agentStreamFailureMessage, buildWindowsExternalAgentLaunch, classifyAgentStreamFailure, clearExternalAgentFailureCircuits, detectExternalAgent, externalAgentAttemptPrompt, externalAgentContextText, externalAgentDocsUrl, externalAgentLabel, externalAgentRetryPrompt, isExternalAgentCompletionEvent, isForcefulProcessTerminationCommand, isNativeGradleBuildCommand, isReadOnlyActionDenied, isResumedPromptRejection, managedNativeDownloadAction, MCP_SERVER_SOURCE, ModMindBridge, nativePermissionArgs, parseExternalAgentOutputLine, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentBridgeHandlers } from './externalAgents'
 import type { ProjectInfo } from '../shared/types'
 import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
 import { LiveConfiguration } from './liveConfiguration'
 import { WORKBENCH_SKILL_POLICY, workbenchSkillPrompt } from './workbenchSkillPolicy'
-import { CLAUDE_REQUIRED_FLAGS } from './claudeCompatibility'
 import { createDraftProject, initializeDraftProject } from './draftProjectService'
 import * as webResearch from './webResearch'
 import { SoundLibraryService } from './soundLibraryService'
 import { createSoundMcpHandlers } from './soundMcpService'
 import { newStudioDraft } from '../shared/soundStudio'
+import { MCP_PROBE_MARKER, MCP_PROBE_TOOL } from './agentToolReadiness'
 
-const claudeHelpFixture = `if (process.argv.includes('--help')) { console.log(${JSON.stringify(CLAUDE_REQUIRED_FLAGS.join(' ') + ' dontAsk --bare')}); process.exit(0); }`
 
 const temporaryRoots: string[] = []
 const bridges: ModMindBridge[] = []
@@ -47,6 +46,18 @@ describe('MC百科 MCP boundary', () => {
       const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
       const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
       const names = (listed.result as { tools: { name: string }[] }).tools.map(tool => tool.name)
+      expect(names).toContain(MCP_PROBE_TOOL)
+      const probe = await rpc(child, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: MCP_PROBE_TOOL, arguments: {} } })
+      expect(JSON.stringify(probe)).toContain(MCP_PROBE_MARKER)
+      expect(diagnosticJournal.snapshot().some(event => event.operation === 'mcp-bridge' && event.phase === 'probe'
+        && (event.data as { bridgeId?: string; callerPhase?: string })?.bridgeId === bridge.diagnosticId
+        && (event.data as { callerPhase?: string })?.callerPhase === 'host-preflight')).toBe(true)
+      bridge.markAgentTurnStarted()
+      await rpc(child, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: MCP_PROBE_TOOL, arguments: {} } })
+      expect(bridge.agentProbeCalls).toBe(1)
+      expect(diagnosticJournal.snapshot().some(event => event.operation === 'mcp-bridge' && event.phase === 'probe'
+        && (event.data as { bridgeId?: string; callerPhase?: string })?.bridgeId === bridge.diagnosticId
+        && (event.data as { callerPhase?: string })?.callerPhase === 'agent-turn')).toBe(true)
       for (const name of ['modmind_project_setup', 'modmind_research', 'modmind_web_search', 'modmind_project_knowledge_read', 'modmind_build_project', 'modmind_test_session', 'modmind_blockbench_actions']) expect(names).toContain(name)
       const result = await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'modmind_project_setup', arguments: { kind: 'mod', loader: 'fabric', minecraftVersion: '1.21.1' } } })
       if (readOnly) {
@@ -238,6 +249,10 @@ describe('agent stream failure extraction', () => {
     expect(badRequest.status).toBe(400)
     expect(classifyAgentStreamFailure('模型服务与当前 Agent 请求不兼容（415）').kind).toBe('invalid-request')
     expect(classifyAgentStreamFailure('401 Unauthorized').reason).toContain('更新 API Key')
+    expect(classifyAgentStreamFailure(`{"error":{"message":"Invalid value: 'ultra'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.","type":"invalid_request_error"}}`))
+      .toMatchObject({ transient: false, kind: 'invalid-request', reason: '模型线路不支持 ultra 思考强度。请选择自动或线路支持的档位后重试。' })
+    expect(classifyAgentStreamFailure('401 Unauthorized: {"code":"API_KEY_DISABLED","message":"API key is disabled"}'))
+      .toMatchObject({ status: 401, transient: false, kind: 'auth' })
     expect(classifyAgentStreamFailure('402 Payment Required').reason).toContain('额度不足')
     expect(classifyAgentStreamFailure('404 Not Found').reason).toContain('重新扫描模型')
     // Dropped connections retry; digits inside request ids never look like statuses.
@@ -520,8 +535,8 @@ describe('ModMind external agent MCP bridge', () => {
       "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
       "    else if (request.method === 'initialized') {}",
-      "    else if (request.method === 'mcpServerStatus/list') send({id:request.id,result:{data:[{name:'modmind',runtimeStatus:'connected',tools:Object.fromEntries(['modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>[name,{name}]))}],nextCursor:null}})",
-      "    else if (request.method === 'mcpServer/tool/call') send({id:request.id,result:{content:[{type:'text',text:'{}'}]}})",
+      "    else if (request.method === 'mcpServerStatus/list') send({id:request.id,result:{data:[{name:'modmind',runtimeStatus:'connected',tools:Object.fromEntries(['modmind_mcp_probe','modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>[name,{name}]))}],nextCursor:null}})",
+      `    else if (request.method === 'mcpServer/tool/call') send({id:request.id,result:{content:[{type:'text',text:JSON.stringify({ok:true,marker:${JSON.stringify(MCP_PROBE_MARKER)}})}]}})`,
       "    else if (request.method === 'thread/start') send({id:request.id,result:{thread:{id:'thread-new'}}})",
       "    else if (request.method === 'thread/fork') send({id:request.id,result:{thread:{id:'thread-fork'}}})",
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
@@ -886,7 +901,7 @@ describe('ModMind external agent MCP bridge', () => {
     const fake = await fakeAppServer(root)
     const onOutput = vi.fn()
     const result = await runExternalAgent({
-      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'test',
+      kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'diagnostic-secret-prompt', runId: 'diagnostic-probe-test', adapterRouteId: 'a'.repeat(32),
       env: { FAKE_APP_SERVER_LOG: fake.log }, signal: new AbortController().signal,
       onOutput, onProgress: () => undefined, bridge: stubBridgeHandlers(project)
     })
@@ -901,6 +916,11 @@ describe('ModMind external agent MCP bridge', () => {
     expect(requests).toContain('"approvalPolicy":"never"')
     const turn = requests.trim().split('\n').map(line => JSON.parse(line)).find(request => request.method === 'turn/start')
     expect(turn.params.input[0].text).toContain(workbenchSkillPrompt('', project).split('\n\n本轮备用 skill 目录：')[0])
+    const toolEvidence = diagnosticJournal.snapshot().filter(event => event.operation === 'codex-tool-state'
+      && (event.data as { runId?: string })?.runId === 'diagnostic-probe-test')
+    expect(toolEvidence.map(event => event.phase)).toEqual(expect.arrayContaining(['catalog-ready', 'host-probe-ready', 'turn-submitted', 'turn-completed']))
+    expect(toolEvidence.every(event => (event.data as { routeId?: string }).routeId === 'a'.repeat(32))).toBe(true)
+    expect(JSON.stringify(toolEvidence)).not.toContain('diagnostic-secret-prompt')
   })
 
   it.each([false, true])('keeps native reconnects in the same turn (readOnly=%s)', async (readOnly) => {
@@ -1381,10 +1401,7 @@ describe('ModMind external agent MCP bridge', () => {
   it.each([
     {kind: 'codex' as const, mode: 'new'},
     {kind: 'codex' as const, mode: 'resumed'},
-    {kind: 'codex' as const, mode: 'read-only'},
-    {kind: 'claude' as const, mode: 'new'},
-    {kind: 'claude' as const, mode: 'resumed'},
-    {kind: 'claude' as const, mode: 'read-only'}
+    {kind: 'codex' as const, mode: 'read-only'}
   ])('delivers skill routing to $kind $mode workspace turns without embedding skill bodies', async ({kind, mode}) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-skill-routing-'))
     temporaryRoots.push(root)
@@ -1397,18 +1414,16 @@ describe('ModMind external agent MCP bridge', () => {
     const runner = path.join(root, 'fake-agent.mjs')
     await fs.writeFile(runner, [
       "import fs from 'node:fs';",
-      "const claude = process.argv.includes('--input-format');",
-      claudeHelpFixture,
       "let input = ''; let done = false;",
       "function finish() { if (done) return; done = true;",
-      "const prompt = claude ? JSON.parse(input.trim()).message.content : input;",
+      "const prompt = input;",
       `const skillBody = fs.readFileSync(${JSON.stringify(path.join(skillsDirectory, 'minecraft-build-repair', 'SKILL.md'))}, 'utf8');`,
       `fs.writeFileSync(${JSON.stringify(receivedFile)}, JSON.stringify({prompt, skillBody, args: process.argv.slice(2)}));`,
-      "console.log(JSON.stringify(claude ? {type:'result',subtype:'success',is_error:false,result:'完成'} : {type:'item.completed',item:{type:'agent_message',text:'完成'}}));",
-      "if (!claude) console.log(JSON.stringify({type:'turn.completed'}));",
+      "console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'完成'}}));",
+      "console.log(JSON.stringify({type:'turn.completed'}));",
       "process.exit(0); }",
       "process.stdin.setEncoding('utf8');",
-      "process.stdin.on('data', chunk => { if (!claude) { input += chunk; return; } for (const line of chunk.trim().split('\\n')) { const r=JSON.parse(line); if(r.type==='control_request') { console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:r.request_id,response:r.request.subtype==='mcp_status'?{mcpServers:[{name:'modmind',status:'connected',tools:['modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>({name}))}]}:{}}})); } else { input=line; finish(); } } });",
+      "process.stdin.on('data', chunk => { input += chunk; });",
       "process.stdin.on('end', finish);"
     ].join('\n'), 'utf8')
     const executable = process.platform === 'win32' ? path.join(root, 'fake-agent.cmd') : path.join(root, 'fake-agent.sh')
@@ -1427,10 +1442,8 @@ describe('ModMind external agent MCP bridge', () => {
     expect(received.prompt).toContain('谢谢')
     expect(received.prompt).not.toContain('SKILL_BODY_MUST_STAY_ON_DISK')
     expect(received.skillBody).toBe('SKILL_BODY_MUST_STAY_ON_DISK')
-    const identity = kind === 'claude'
-      ? received.args[received.args.indexOf('--append-system-prompt') + 1]
-      : JSON.parse(received.args.find(arg => arg.startsWith('developer_instructions='))!.slice('developer_instructions='.length))
-    expect(identity).toContain(`我是 ModMind ${mode === 'read-only' ? '灵感台' : '工作台'}，基于 ${kind === 'claude' ? 'Claude Code' : 'Codex'}`)
+    const identity = JSON.parse(received.args.find(arg => arg.startsWith('developer_instructions='))!.slice('developer_instructions='.length))
+    expect(identity).toContain(`我是 ModMind ${mode === 'read-only' ? '灵感台' : '工作台'}，基于 Codex`)
     expect(identity).toContain('Do not preface ordinary identity/model answers with internal attribution')
     if (mode === 'read-only') {
       expect(received.prompt).not.toContain(WORKBENCH_SKILL_POLICY)
@@ -1440,6 +1453,7 @@ describe('ModMind external agent MCP bridge', () => {
       expect(received.prompt).toContain(skillsDirectory.replaceAll('\\', '/'))
     }
     if (mode === 'resumed') expect(received.args).toContain('existing-native-thread')
+    expect(identity).toContain('modmind_mcp_probe')
   }, 20_000)
 
   it('keeps retry prompts to the single continuation instruction', () => {
@@ -1447,15 +1461,6 @@ describe('ModMind external agent MCP bridge', () => {
     expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 1)).toEqual({prompt: '继续', retryOnly: true})
     expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 1, false)).toEqual({prompt: '备用任务'})
     expect(externalAgentAttemptPrompt({prompt: '原始任务', fallbackPrompt: '备用任务'}, 0)).toEqual({prompt: '原始任务', fallbackPrompt: '备用任务'})
-  })
-
-  it('treats Claude API error messages and failed results as errors', () => {
-    expect(parseExternalAgentOutputLine(JSON.stringify({
-      type: 'assistant', is_error: true, message: {role: 'assistant', content: [{type: 'text', text: 'Failed to authenticate'}]}
-    }), 'stdout')).toMatchObject({kind: 'error', agentMessage: false})
-    expect(parseExternalAgentOutputLine(JSON.stringify({
-      type: 'result', subtype: 'success', is_error: true, result: 'API Error: 403'
-    }), 'stdout')).toMatchObject({kind: 'error', content: 'API Error: 403', agentMessage: false})
   })
 
   it('recognizes Codex terminal events without requiring a tool call', () => {
@@ -1490,12 +1495,10 @@ describe('ModMind external agent MCP bridge', () => {
     expect(auditExternalAgentCompletion({rawExitCode: 1, terminalEventSeen: false, noOutputTimedOut: false})).toMatchObject({complete: false, reason: 'process-error'})
   })
 
-  it('uses each CLI\'s managed permission mode', () => {
+  it('uses Codex managed permission modes', () => {
     expect(nativePermissionArgs('codex')).toEqual(['--dangerously-bypass-approvals-and-sandbox'])
     expect(nativePermissionArgs('codex', false, 'auto-review')).toEqual(expect.arrayContaining(['approval_policy={granular={sandbox_approval=false,rules=true,skill_approval=true,request_permissions=false,mcp_elicitations=true}}', 'approvals_reviewer="auto_review"']))
-    expect(nativePermissionArgs('claude')).toEqual(['--permission-mode', 'dontAsk', '--tools', 'Read', 'Glob', 'Grep', '--allowedTools', 'mcp__modmind'])
     expect(nativePermissionArgs('codex', true)).toEqual(['-s', 'read-only', '-a', 'never', '-c', 'approvals_reviewer="user"'])
-    expect(nativePermissionArgs('claude', true)).toEqual(['--permission-mode', 'dontAsk', '--tools', 'Read', 'Glob', 'Grep', '--allowedTools', 'mcp__modmind'])
     expect(isReadOnlyActionDenied('apply_edits')).toBe(true)
     expect(isReadOnlyActionDenied('maven_dependency_install')).toBe(true)
     expect(isReadOnlyActionDenied('modpack_download_content')).toBe(true)
@@ -1525,12 +1528,6 @@ describe('ModMind external agent MCP bridge', () => {
     expect(isForcefulProcessTerminationCommand('Get-Process java')).toBe(false)
   })
 
-  it('decodes Windows command errors emitted in the active GBK code page', () => {
-    const gbk = Buffer.from('276e706d2e636d642720b2bbcac7c4dab2bfbbf2cde2b2bfc3fcc1eea3acd2b2b2bbcac7bfc9d4cbd0d0b5c4b3ccd0f2', 'hex')
-    expect(decodeExternalProcessOutput(gbk, 'win32')).toBe("'npm.cmd' 不是内部或外部命令，也不是可运行的程序")
-    expect(decodeExternalProcessOutput(Buffer.from('安装完成', 'utf8'), 'win32')).toBe('安装完成')
-  })
-
   it('creates a visible Windows terminal for manually launched agents', () => {
     const launch = buildWindowsExternalAgentLaunch('codex', 'C:\\Projects\\Demo', 'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd', 'Read the context')
     expect(launch.args.slice(0, 4)).toEqual(['/d', '/c', 'start', '""'])
@@ -1539,13 +1536,6 @@ describe('ModMind external agent MCP bridge', () => {
     expect(launch.args).toContain('-EncodedCommand')
     const encoded = launch.args.at(-1) ?? ''
     expect(Buffer.from(encoded, 'base64').toString('utf16le')).toContain("Set-Location -LiteralPath 'C:\\Projects\\Demo'")
-  })
-
-  it('keeps uninstalled agents as explicit, non-ready entries', async () => {
-    const status = await detectExternalAgent('claude')
-    expect(status.kind).toBe('claude')
-    expect(status.label).toBe('Claude Code')
-    expect(typeof status.installed).toBe('boolean')
   })
 
   it('detects only the explicitly supplied managed Codex executable when requested', async () => {
@@ -1564,13 +1554,8 @@ describe('ModMind external agent MCP bridge', () => {
     })
   })
 
-  it('does not install Codex latest through the generic package-manager path', async () => {
-    await expect(installExternalAgent('codex')).rejects.toThrow('固定版本托管运行时')
-  })
-
   it('opens Bilibili installation tutorials', () => {
     expect(externalAgentDocsUrl('codex')).toMatch(/^https:\/\/search\.bilibili\.com\//)
-    expect(externalAgentDocsUrl('claude')).toMatch(/^https:\/\/search\.bilibili\.com\//)
   })
 
   it.each(['paper', 'spigot', 'folia', 'velocity'] as const)('describes %s as a server plugin', (loader) => {
@@ -1679,17 +1664,6 @@ describe('ModMind external agent MCP bridge', () => {
     expect(parseExternalAgentOutputLine('{"type":"event_msg","payload":{"type":"agent_message","message":"Codex 的完整回答"}}', 'stdout')).toMatchObject({
       kind: 'response', content: 'Codex 的完整回答', agentMessage: true
     })
-  })
-
-  it('streams Claude partial messages and reads top-level result usage', () => {
-    const partial = parseExternalAgentOutputLine(JSON.stringify({
-      type: 'stream_event',
-      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '正在回答' } },
-      session_id: 'claude-session'
-    }), 'stdout')
-    expect(partial).toMatchObject({ kind: 'response', content: '正在回答', agentMessage: true })
-    expect(parseExternalAgentOutputLine(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: ' \n' } } }), 'stdout')?.content).toBe(' \n')
-    expect(extractClaudeTokenUsage({ type: 'result', model: 'claude-sonnet-4', usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 5 } })).toEqual({ inputTokens: 10, cachedInputTokens: 3, outputTokens: 5, cumulative: true })
   })
 
   it('reports backend readiness only after the Agent process really spawns', async () => {
@@ -2006,8 +1980,7 @@ describe('ModMind external agent MCP bridge', () => {
   }, 20_000)
 
   it.each([
-    {kind: 'codex' as const, sessionEvent: '{"type":"thread.started","thread_id":"native-session-test"}', successEvents: ['{"type":"item.completed","item":{"type":"agent_message","text":"resumed"}}', '{"type":"turn.completed"}']},
-    {kind: 'claude' as const, sessionEvent: '{"type":"system","subtype":"init","session_id":"native-session-test"}', successEvents: ['{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"resumed"}]},"session_id":"native-session-test"}', '{"type":"result","subtype":"success","is_error":false,"result":"resumed","session_id":"native-session-test"}']}
+    {kind: 'codex' as const, sessionEvent: '{"type":"thread.started","thread_id":"native-session-test"}', successEvents: ['{"type":"item.completed","item":{"type":"agent_message","text":"resumed"}}', '{"type":"turn.completed"}']}
   ])('does not restart the discovered $kind session after process failure', async ({kind, sessionEvent, successEvents}) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), `modmind-${kind}-retry-session-`))
     temporaryRoots.push(root)
@@ -2017,7 +1990,6 @@ describe('ModMind external agent MCP bridge', () => {
     await fs.writeFile(runner, [
       "import fs from 'node:fs';",
       `const attempts = ${JSON.stringify(attempts)};`,
-      claudeHelpFixture,
       "const previous = fs.existsSync(attempts) ? fs.readFileSync(attempts, 'utf8').trim().split(/\\r?\\n/).filter(Boolean).length : 0;",
       "fs.appendFileSync(attempts, JSON.stringify(process.argv.slice(2)) + '\\n');",
       "function execute() {",
@@ -2025,9 +1997,7 @@ describe('ModMind external agent MCP bridge', () => {
       "if (!process.argv.includes('native-session-test')) process.exit(2);",
       ...successEvents.map((event) => `console.log(${JSON.stringify(event)});`),
       "}",
-      kind === 'claude'
-        ? "let buffer=''; process.stdin.on('data', chunk=>{buffer+=chunk; const lines=buffer.split('\\n');buffer=lines.pop();for(const line of lines){const r=JSON.parse(line); if(r.type==='control_request') console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:r.request_id,response:r.request.subtype==='mcp_status'?{mcpServers:[{name:'modmind',status:'connected',tools:['modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>({name}))}]}:{}}}));else execute();}});"
-        : 'execute();'
+      'execute();'
     ].join('\n'), 'utf8')
     const executable = process.platform === 'win32' ? path.join(root, 'fake-agent.cmd') : path.join(root, 'fake-agent.sh')
     await fs.writeFile(executable, process.platform === 'win32'
@@ -2542,6 +2512,22 @@ describe('ModMind external agent MCP bridge', () => {
     expect(readSource).toHaveBeenCalledWith('example')
     expect(writeFiles).toHaveBeenCalledWith(expect.objectContaining({ pluginId: 'example' }))
     expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to an installed managed executable without requiring a saved path', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-codex-fallback-'))
+    temporaryRoots.push(root)
+    const managed = path.join(root, process.platform === 'win32' ? 'managed.cmd' : 'managed')
+    const local = path.join(root, process.platform === 'win32' ? 'local.cmd' : 'local')
+    const script = (version: string) => process.platform === 'win32' ? `@echo off\r\necho codex-cli ${version}\r\n` : `#!/bin/sh\necho codex-cli ${version}\n`
+    await fs.writeFile(managed, script('0.154.0'))
+    if (process.platform !== 'win32') await fs.chmod(managed, 0o755)
+    const options = { executables: [local], includeDefaults: false, fallbackExecutables: [managed] }
+    await expect(detectExternalAgent('codex', options)).resolves.toMatchObject({ installed: true, executable: managed, version: 'codex-cli 0.154.0' })
+    await fs.writeFile(local, script('0.153.4'))
+    if (process.platform !== 'win32') await fs.chmod(local, 0o755)
+    await expect(detectExternalAgent('codex', options)).resolves.toMatchObject({ installed: true, executable: local, version: 'codex-cli 0.153.4' })
+    await expect(detectExternalAgent('codex', { includeDefaults: false, fallbackExecutables: [path.join(root, 'missing')] })).resolves.toMatchObject({ installed: false, executable: '' })
   })
 
   it.each([false, true])('retries plugin discovery and reports persistent failure without claiming plugins were disabled (readOnly=%s)', async readOnly => {

@@ -6,7 +6,6 @@ import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 import { assignDefaultProjectNamespace, projectNamespacePrompt } from './projectNamespace'
 import { requestAiName } from './aiNaming'
 import { importAiAttachmentSources } from './aiAttachmentImport'
-import { claudeHostedEnvironment, claudeSessionHome, fetchClaudeModels } from './claudeCompatibility'
 import type { AiAttachmentSource } from '../shared/aiAttachments'
 import { normalizeThemePreset, normalizeAppearance, normalizeCustomThemeColors } from '../shared/appTheme'
 import { importBackgroundMedia, pruneSavedBackgroundMedia, serveBackgroundMedia } from './appearanceMedia'
@@ -79,6 +78,7 @@ import { migrateMovedProjectMetadata } from './projectMetadataMigration'
 import { renameProjectFiles } from './projectRename'
 import { convertLegacyModtoolProject, readLegacyModtoolProject } from './legacyProjectImport'
 import { copySnapshotFilesIncremental, snapshotFileHash, type SnapshotFileMetadata } from './snapshotStore'
+import { ignoreSnapshotDirectory, repairLegacySnapshotCaches, snapshotStorageInfo } from './snapshotStorage'
 import { requireManagedRuntimePreparation } from './managedRuntimePreparation'
 import { isAddonPlatform, isJavaLoader, isServerPluginPlatform, platformLabel, PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { findPluginArtifact, parsePluginDescriptor } from './serverPluginService'
@@ -91,7 +91,8 @@ import { serverPluginContext } from '../shared/serverPluginContext'
 import { createResourcePack, deployResourcePack, listResourcePacks, resourcePackArchive, validateResourcePack } from './resourcePackService'
 import { normalizeProjectName, validateProjectNameInput } from '../shared/projectName'
 import { buildBedrockAddon, buildNeteaseArchive, createStoredZip } from './bedrockAddon'
-import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, installExternalAgent, launchExternalAgent, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
+import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, launchExternalAgent, listLocalCodexModels, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
+import { readLocalCodexApiKey, readLocalCodexConfig } from './localCodexConfig'
 import { createPluginBridgeTarget, getPluginService, getPluginRuntime, importPluginZipInteractive, initializePlugins, refreshPluginRegistry, registerPluginProtocolSchemeEarly, shutdownPlugins, waitForPluginRegistry } from './pluginBridgeIntegration'
 import { PluginChatBridge } from './pluginChatBridge'
 import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from '../shared/plugins'
@@ -186,6 +187,7 @@ import type {
   CodingResult,
   ExistingProjectAdoptInput,
   ExistingProjectAnalysis,
+  ExistingProjectInspectionProgress,
   ExternalAgentConfiguration,
   FileNode,
   JavaPreferences,
@@ -201,6 +203,7 @@ import type {
   ProjectMigrationPreview,
   ProjectMigrationResult,
   SnapshotInfo,
+  SnapshotStorageInfo,
   SnapshotRestoreResult,
   DeviceConnectionState,
   RemoteConnectionState,
@@ -880,6 +883,7 @@ function modelReasoningFor(baseUrl: string, apiKey: string, model: string) {
 }
 
 async function refreshConfiguredReasoning(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration): Promise<void> {
+  void kind
   if (!configuration.baseUrl?.trim() || !configuration.apiKey?.trim()) return
   const baseUrl = normalizeApiBaseUrl(configuration.baseUrl), apiKey = configuration.apiKey.trim()
   const key = quotaPreferenceKey(baseUrl, apiKey)
@@ -887,10 +891,7 @@ async function refreshConfiguredReasoning(kind: ExternalAgentKind, configuration
   if (cached && Date.now() - cached.checkedAt < 5 * 60_000) return
   await modelReasoningCatalog.refresh()
   try {
-    if (kind === 'claude') {
-      const models = modelReasoningCatalog.enrich(parseModelPayload(await fetchClaudeModels(baseUrl, apiKey)), baseUrl)
-      scannedModelCapabilities.set(key, { checkedAt: Date.now(), models })
-    } else await fetchAvailableModels(baseUrl, apiKey, '无法读取模型能力')
+    await fetchAvailableModels(baseUrl, apiKey, '无法读取模型能力')
   } catch { /* Relays without model-list support still use exact public metadata. */ }
 }
 
@@ -1440,6 +1441,53 @@ async function remoteAppState(): Promise<RemoteAppState> {
   }
 }
 
+const snapshotMaintenanceJobs = new Map<string, Promise<void>>()
+const snapshotStatusJobs = new Map<string, Promise<SnapshotStorageInfo>>()
+const snapshotMaintenanceDone = new Set<string>()
+
+function snapshotStorageKey(projectPath: string): string {
+  const resolved = path.resolve(projectPath)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+async function readSnapshotStorage(projectPath: string): Promise<SnapshotStorageInfo> {
+  const key = snapshotStorageKey(projectPath)
+  await snapshotMaintenanceJobs.get(key)?.catch(() => undefined)
+  const running = snapshotStatusJobs.get(key)
+  if (running) return running
+  const task = snapshotStorageInfo(projectPath)
+  snapshotStatusJobs.set(key, task)
+  try { return await task } finally { if (snapshotStatusJobs.get(key) === task) snapshotStatusJobs.delete(key) }
+}
+
+async function publishSnapshotStorage(projectPath: string): Promise<void> {
+  const pending = snapshotStatusJobs.get(snapshotStorageKey(projectPath))
+  if (pending) await pending.catch(() => undefined)
+  const status = await readSnapshotStorage(projectPath)
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('snapshots:storageChanged', status)
+  }
+}
+
+function scheduleSnapshotStorageMaintenance(project: ProjectInfo): void {
+  const key = snapshotStorageKey(project.path)
+  if (snapshotMaintenanceDone.has(key) || snapshotMaintenanceJobs.has(key)) return
+  const task = (async () => {
+    if (runsForProject(project.path).some(run => run.surface === 'workspace') || await pathExists(activeAiTaskPath(project))) return
+    const result = await repairLegacySnapshotCaches(project.path)
+    snapshotMaintenanceDone.add(key)
+    if (result.repaired || result.skipped) diagnosticJournal.record({
+      subsystem: 'snapshots', operation: 'legacy-cache-cleanup', phase: result.skipped ? 'warning' : 'success',
+      level: result.skipped ? 'warning' : 'info', message: `旧快照缓存清理：已修复 ${result.repaired} 份，跳过 ${result.skipped} 份`
+    })
+  })()
+  snapshotMaintenanceJobs.set(key, task)
+  void task.finally(() => { if (snapshotMaintenanceJobs.get(key) === task) snapshotMaintenanceJobs.delete(key) })
+    .catch(error => console.warn('旧快照缓存清理失败', error))
+    .then(() => publishSnapshotStorage(project.path))
+    .catch(error => console.warn('快照占用检查失败', error))
+}
+
 function emitProjectChanged(): void {
   diagnosticJournal.record({
     subsystem: 'project',
@@ -1462,6 +1510,7 @@ function emitProjectChanged(): void {
     void startPublicMcpBridge(currentProject.path).catch((error) => console.warn('[mcp-bridge] failed to start after project open', error))
   }
   void playerTestService?.projectChanged(currentProject?.path).catch(error => console.warn('测试会话清理失败', error))
+  if (currentProject) scheduleSnapshotStorageMaintenance(currentProject)
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
   mainWindow.webContents.send('project:changed', currentProject)
 }
@@ -1923,7 +1972,7 @@ async function prepareManagedCodex(
   await migrateLegacyManagedCodexSessions(home)
   const routeRevision = configSource === 'device' ? quotaConfiguration.current() : undefined
   const configurationId = createHash('sha256').update(JSON.stringify(serverConfig)).digest('hex')
-  const key = `${process.platform === 'win32' ? home.toLowerCase() : home}:${configurationId}:${routeRevision?.sequence ?? 0}`
+  const key = `${process.platform === 'win32' ? home.toLowerCase() : home}:${configurationId}:${routeRevision?.sequence ?? 0}:${existingExecutable ?? ''}`
   const listeners = managedCodexPreparationListeners.get(key) ?? new Set<(progress: CodexSetupProgress) => void>()
   managedCodexPreparationListeners.set(key, listeners)
   if (onProgress) listeners.add(onProgress)
@@ -1977,6 +2026,17 @@ async function prepareManagedCodex(
   })
 }
 
+async function detectInstalledCodex(configuration: ExternalAgentConfiguration = {}) {
+  // A user-installed CLI wins; the already-downloaded managed runtime is a
+  // fallback executable only. Its account/configuration is never imported.
+  let managedExecutable: string | undefined
+  try { managedExecutable = managedCodexExecutablePath(app.getPath('userData')) } catch { /* The user CLI can still support an unbundled platform. */ }
+  return detectExternalAgent('codex', {
+    executables: configuration.executable ? [configuration.executable] : [],
+    fallbackExecutables: managedExecutable ? [managedExecutable] : []
+  })
+}
+
 async function prepareConfiguredCodex(
   project: ProjectInfo,
   sessionScope: string,
@@ -1984,12 +2044,13 @@ async function prepareConfiguredCodex(
   onProgress?: (progress: CodexSetupProgress) => void,
   signal?: AbortSignal
 ): ReturnType<typeof prepareCodex> {
+  const installed = await detectInstalledCodex(configuration)
   return prepareManagedCodex(
     project,
     sessionScope,
     await configuredCodexServerConfig(configuration),
     'local-settings',
-    undefined,
+    installed.installed ? installed.executable : undefined,
     onProgress,
     signal
   )
@@ -2003,24 +2064,22 @@ async function prepareQuotaCodex(project: ProjectInfo, sessionScope: string, onP
 }
 
 function externalAgentEnvironment(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration, codexHome?: string): NodeJS.ProcessEnv {
-  if (kind === 'claude' && configuration.mode !== 'hosted') return {}
+  void kind
   const apiKey = configuration.apiKey?.trim() ?? ''
   if (!apiKey) throw new Error('请先填写 API Key')
   const baseUrl = normalizeApiBaseUrl(configuration.baseUrl ?? '')
   const model = configuration.model?.trim() ?? ''
   if (!model) throw new Error('请先选择模型')
-  if (kind === 'codex') {
-    if (!codexHome) throw new Error('Codex 配置目录不可用')
-    return {CODEX_HOME: codexHome, MODMIND_THIRD_PARTY_API_KEY: apiKey}
-  }
-  if (kind !== 'claude') return {}
-  return claudeHostedEnvironment(configuration, path.join(app.getPath('userData'), 'external-agents', 'claude'))
+  if (!codexHome) throw new Error('Codex 配置目录不可用')
+  return {CODEX_HOME: codexHome, MODMIND_THIRD_PARTY_API_KEY: apiKey}
 }
 
 async function configureExternalAgentProvider(kind: ExternalAgentKind, settings: AgentSettings): Promise<{kind: ExternalAgentKind; executable?: string; configPath?: string; detail: string}> {
   const configured = settings.externalAgents?.[kind] ?? {}
-  if (kind === 'claude' && configured.mode !== 'hosted') {
-    return {kind, executable: configured.executable, detail: 'Claude Code 将沿用本机登录状态和本机配置；ModMind 不写入全局 Claude 配置'}
+  if (configured.mode !== 'hosted') {
+    const detected = await detectInstalledCodex(configured)
+    if (!detected.installed) throw new Error('未检测到本机 Codex CLI')
+    return { kind, executable: detected.executable, detail: '使用本机 Codex 登录与配置' }
   }
   if (!externalAgentSupportsHostedConfiguration(kind)) {
     return {kind, executable: configured.executable, detail: `${externalAgentLabel(kind)} 使用本机已有配置；ModMind 将在项目中准备 MCP 工具桥`}
@@ -2028,25 +2087,14 @@ async function configureExternalAgentProvider(kind: ExternalAgentKind, settings:
   if (!configured.apiKey?.trim()) throw new Error('请先填写 API Key')
   normalizeApiBaseUrl(configured.baseUrl ?? '')
   if (!configured.model?.trim()) throw new Error('请先选择模型')
-  const executable = configured.executable
-  if (kind === 'claude') {
-    externalAgentEnvironment('claude', configured)
-    return {kind, executable, detail: 'Claude Code 配置已保存，仅在 ModMind 启动的进程中生效'}
-  }
-  const managedExecutable = managedCodexExecutablePath(app.getPath('userData'))
-  const detected = await detectExternalAgent('codex', {executables: [managedExecutable], includeDefaults: false})
-  return {kind, executable: detected.executable || undefined, detail: 'Codex 配置已保存；将与智能额度共用 ModMind 托管运行时、协议适配和项目会话隔离流程'}
+  const detected = await detectInstalledCodex(configured)
+  return { kind, executable: detected.executable || undefined, detail: 'Codex 服务配置已保存；工作台将优先使用本机 CLI 和项目隔离会话' }
 }
 
 async function externalAgentRunEnvironment(kind: ExternalAgentKind, settings: AgentSettings): Promise<NodeJS.ProcessEnv | undefined> {
   const configured = settings.externalAgents?.[kind] ?? {}
+  if (configured.mode !== 'hosted') return undefined
   if (!configured.apiKey?.trim() || !externalAgentSupportsHostedConfiguration(kind)) return undefined
-  if (kind === 'claude' && configured.mode !== 'hosted') return undefined
-  if (kind === 'claude') {
-    await refreshConfiguredReasoning(kind, configured)
-    reasoningSelectionEffort(configured.reasoningEffort ?? 'auto', modelReasoningFor(normalizeApiBaseUrl(configured.baseUrl ?? ''), configured.apiKey.trim(), configured.model?.trim() ?? ''))
-    return externalAgentEnvironment('claude', configured)
-  }
   return {MODMIND_THIRD_PARTY_API_KEY: configured.apiKey.trim()}
 }
 
@@ -3261,7 +3309,7 @@ async function prepareProjectIde(project: ProjectInfo): Promise<string[]> {
   return changed
 }
 
-async function resolveExistingProjectSource(inputPath: string): Promise<string> {
+async function resolveExistingProjectSource(inputPath: string, onProgress?: (percent?: number) => void): Promise<string> {
   const resolved = path.resolve(inputPath)
   const stat = await fs.stat(resolved).catch(() => null)
   if (!stat) throw new Error('Selected file or folder does not exist')
@@ -3277,9 +3325,19 @@ async function resolveExistingProjectSource(inputPath: string): Promise<string> 
     if (signature === 'tar' || extension === '.tar') {
       await extractTar(resolved, extractionRoot, (entry) => recordZipExpansion(expansion, entry))
     } else if (signature === 'zip' || ['.zip', '.mrpack'].includes(extension)) {
+      let processedEntries = 0
+      let lastPercent = -1
       await extractZip(resolved, {
         dir: extractionRoot,
-        onEntry: (entry) => recordZipExpansion(expansion, entry)
+        onEntry: (entry, zipfile) => {
+          recordZipExpansion(expansion, entry)
+          processedEntries += 1
+          const percent = Math.min(99, Math.floor((processedEntries - 1) / zipfile.entryCount * 100))
+          if (percent !== lastPercent) {
+            lastPercent = percent
+            onProgress?.(percent)
+          }
+        }
       })
     } else {
       await extractSevenZipArchive(resolved, extractionRoot, (entry) => recordZipExpansion(expansion, entry))
@@ -3299,6 +3357,7 @@ async function resolveExistingProjectSource(inputPath: string): Promise<string> 
     await fs.mkdir(provenance, { recursive: true })
     await fs.writeFile(path.join(provenance, 'source-archive.json'), JSON.stringify({ fileName: path.basename(resolved), size: stat.size, sha256: hash.digest('hex') }, null, 2), 'utf8')
   }
+  onProgress?.(100)
   return selectedRoot
 }
 
@@ -3384,16 +3443,16 @@ async function sendBuildProgress(event: Electron.IpcMainInvokeEvent, item: Pipel
   await new Promise((resolve) => setTimeout(resolve, wait))
 }
 
-async function copySnapshotFiles(source: string, destination: string): Promise<number> {
+async function copySnapshotFiles(source: string, destination: string, ignoreDirectory: (name: string) => boolean = (name) => ignoredDirectories.has(name) || isToolDataDirectory(name)): Promise<number> {
   let count = 0
   const entries = await fs.readdir(source, { withFileTypes: true })
   await fs.mkdir(destination, { recursive: true })
   for (const entry of entries) {
     if (entry.isSymbolicLink()) continue
-    if (ignoredDirectories.has(entry.name) || isToolDataDirectory(entry.name)) continue
+    if (ignoreDirectory(entry.name)) continue
     const from = path.join(source, entry.name)
     const to = path.join(destination, entry.name)
-    if (entry.isDirectory()) count += await copySnapshotFiles(from, to)
+    if (entry.isDirectory()) count += await copySnapshotFiles(from, to, ignoreDirectory)
     else {
       await fs.copyFile(from, to)
       count += 1
@@ -3510,7 +3569,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   })
   agentSettingsWriteTail = agentSettingsWriteTail.catch(() => undefined).then(async () => {
     try {
-  const kinds = ['codex', 'claude'] as const
+  const kinds = ['codex'] as const
   const normalized: AgentSettings = {
     ...value,
     codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
@@ -3546,7 +3605,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
       reasoningSelectionEffort(entry.reasoningEffort ?? 'auto', undefined, selectedReasoningEfforts(model, entry.reasoningEffortOptions))
     }
     if (entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
-    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: kind === 'codex' || entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, hasStoredKey: undefined}
+    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, hasStoredKey: undefined}
     if (entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
     else if (existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
   }
@@ -3718,7 +3777,6 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
       [path.join(project.path, 'docs', 'last-ai-change.json'), 'project/ai/last-ai-change.json'],
       [path.join(project.path, 'docs', 'ai-tasks.md'), 'project/ai/ai-tasks.md'],
       [path.join(dataRoot, 'external-agents', 'session-codex.json'), 'project/ai/session-codex.json'],
-      [path.join(dataRoot, 'external-agents', 'session-claude.json'), 'project/ai/session-claude.json'],
       [path.join(dataRoot, 'external-agents', 'agent-context.md'), 'project/ai/agent-context.md']
     ] as const) await collector.addFile(source, archiveName)
   }
@@ -3912,7 +3970,6 @@ async function readSettings(): Promise<AgentSettings> {
       encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>>
       externalAgentProvider?: ExternalAgentKind
       codexExecutable?: string
-      claudeExecutable?: string
       baseUrl?: string
       model?: string
       reasoningEffort?: unknown
@@ -3924,7 +3981,7 @@ async function readSettings(): Promise<AgentSettings> {
     const storedReasoning = stored.reasoningEffort
     const storedAgents = stored.externalAgents && typeof stored.externalAgents === 'object' ? stored.externalAgents : {}
     const externalAgents: AgentSettings['externalAgents'] = {}
-    for (const kind of ['codex', 'claude'] as const) {
+    for (const kind of ['codex'] as const) {
       const entry = storedAgents[kind]
       if (!entry || typeof entry !== 'object') continue
       const encrypted = stored.encryptedAgentKeys?.[kind]
@@ -3935,13 +3992,13 @@ async function readSettings(): Promise<AgentSettings> {
       }
       externalAgents[kind] = {
         executable: typeof entry.executable === 'string' ? entry.executable.slice(0, 4096) : undefined,
-        mode: kind === 'codex' || entry.mode === 'hosted' ? 'hosted' : 'local',
+        mode: entry.mode === 'hosted' ? 'hosted' : 'local',
         baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.slice(0, 4096) : undefined,
         model: typeof entry.model === 'string' ? entry.model.slice(0, 512) : undefined,
         modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows),
         modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits),
-        reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined,
-        reasoningEffort: isReasoningEffort(entry.reasoningEffort) && (kind === 'claude' || selectedReasoningEfforts(entry.model ?? '', normalizeReasoningEffortOptions(entry.reasoningEffortOptions)).includes(entry.reasoningEffort)) ? entry.reasoningEffort : undefined,
+        reasoningEffortOptions: normalizeReasoningEffortOptions(entry.reasoningEffortOptions),
+        reasoningEffort: isReasoningEffort(entry.reasoningEffort) && selectedReasoningEfforts(entry.model ?? '', normalizeReasoningEffortOptions(entry.reasoningEffortOptions)).includes(entry.reasoningEffort) ? entry.reasoningEffort : undefined,
         apiKey: agentApiKey,
         hasStoredKey: Boolean(encrypted)
       }
@@ -3950,13 +4007,10 @@ async function readSettings(): Promise<AgentSettings> {
     if (!externalAgents.codex && (stored.codexExecutable || stored.externalAgentProvider === 'codex')) {
       externalAgents.codex = {executable: stored.codexExecutable, mode: 'hosted', baseUrl: stored.baseUrl, model: stored.model, reasoningEffort: storedReasoning as ExternalAgentConfiguration['reasoningEffort'], apiKey: stored.externalAgentProvider === 'codex' ? legacyApiKey : '', hasStoredKey: stored.externalAgentProvider === 'codex' && Boolean(stored.encryptedKey)}
     }
-    if (!externalAgents.claude && (stored.claudeExecutable || stored.externalAgentProvider === 'claude')) {
-      externalAgents.claude = {executable: stored.claudeExecutable, mode: stored.externalAgentProvider === 'claude' ? 'hosted' : 'local', baseUrl: stored.baseUrl, model: stored.model, reasoningEffort: storedReasoning as ExternalAgentConfiguration['reasoningEffort'], apiKey: stored.externalAgentProvider === 'claude' ? legacyApiKey : '', hasStoredKey: stored.externalAgentProvider === 'claude' && Boolean(stored.encryptedKey)}
-    }
     settings = {
       externalAgents,
       codexApprovalMode: normalizeAgentApprovalMode(stored.codexApprovalMode),
-      codingBackend: ['quota', 'codex', 'claude'].includes(String(stored.codingBackend))
+      codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
         : 'quota',
       allowBuildScriptChanges: stored.allowBuildScriptChanges !== false,
@@ -3974,6 +4028,10 @@ async function readSettings(): Promise<AgentSettings> {
   } catch {
     settings = defaults
   }
+  if (settings.externalAgents?.codex?.mode !== 'hosted' && !settings.externalAgents?.codex?.model) {
+    const local = await readLocalCodexConfig().catch(() => null)
+    if (local?.model) settings.externalAgents = { ...settings.externalAgents, codex: { ...settings.externalAgents?.codex, mode: 'local', model: local.model } }
+  }
   return settings
 }
 
@@ -3985,19 +4043,22 @@ function normalizeApiBaseUrl(value: string): string {
 }
 
 async function listAvailableAgentModels(kind: ExternalAgentKind, input: ExternalAgentConfiguration): Promise<AiModelInfo[]> {
+  if (kind === 'codex' && input.mode !== 'hosted') {
+    const local = await readLocalCodexConfig()
+    const detected = await detectInstalledCodex(input)
+    const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
+    return modelReasoningCatalog.enrich([...new Set([...models, ...local.models, ...(input.model ? [input.model] : [])])].map(id => ({ id })), '')
+  }
   await modelReasoningCatalog.refresh(true)
   const stored = await readSettings()
   const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
   const storedEntry = stored.externalAgents?.[kind]
   const storedBaseUrl = storedEntry?.baseUrl ? normalizeApiBaseUrl(storedEntry.baseUrl) : ''
-  const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '')
+  const native = await readLocalCodexConfig()
+  const nativeBaseUrl = native.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '') || (baseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
-  if (kind === 'claude') {
-    const models = modelReasoningCatalog.enrich(parseModelPayload(await fetchClaudeModels(baseUrl, apiKey)), baseUrl)
-    scannedModelCapabilities.set(quotaPreferenceKey(baseUrl, apiKey), { checkedAt: Date.now(), models })
-    return models
-  }
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
 }
 
@@ -4091,7 +4152,7 @@ async function createProjectSnapshot(label: string, metadata: { taskId?: string 
   const copied = await copySnapshotFilesIncremental(
     project.path,
     snapshotPath,
-    (name) => ignoredDirectories.has(name) || isToolDataDirectory(name),
+    ignoreSnapshotDirectory,
     await latestSnapshotBaseline(project)
   )
   const fileCount = copied.fileCount
@@ -4105,6 +4166,7 @@ async function createProjectSnapshot(label: string, metadata: { taskId?: string 
     projectPath: project.path
   }
   await fs.writeFile(path.join(path.dirname(snapshotPath), 'snapshot.json'), JSON.stringify(manifest, null, 2), 'utf8')
+  void publishSnapshotStorage(project.path).catch(() => undefined)
   return info
 }
 
@@ -4605,23 +4667,16 @@ async function assertBackendSwitchTargetReady(backend: AgentSettings['codingBack
 
   const configured = settings.externalAgents?.[backend] ?? {}
   if (backend === 'codex') {
-    const usesConfiguredService = Boolean(configured.apiKey?.trim() || configured.baseUrl?.trim() || configured.model?.trim())
+    const usesConfiguredService = configured.mode === 'hosted'
     if (usesConfiguredService) {
       await configuredCodexServerConfig(configured)
       return
     }
-    const detected = await detectExternalAgent('codex', {
-      executables: [managedCodexExecutablePath(app.getPath('userData'))],
-      includeDefaults: false
-    })
-    if (!detected.installed) throw new Error('Codex 尚未安装或未配置模型服务，请先在设置中完成配置')
+    const detected = await detectInstalledCodex(configured)
+    if (!detected.installed) throw new Error('未检测到本机 Codex，请先安装 Codex CLI')
     return
   }
 
-  if (configured.mode === 'hosted') externalAgentEnvironment('claude', configured)
-  const detected = await detectExternalAgent('claude', {executables: [configured.executable ?? '']})
-  if (!detected.installed) throw new Error('Claude Code 尚未安装或命令路径不可用，请先在设置中完成配置')
-  if (detected.compatible === false) throw new Error(detected.detail)
 }
 
 function registerAiRun(run: ActiveAiRun): void {
@@ -4651,6 +4706,9 @@ async function withAiRun<T>(run: ActiveAiRun, controller: AbortController, opera
     aiAbortControllers.delete(run.id)
     aiCancelRequests.delete(run.id)
     activeAiRuns.delete(run.id)
+    if (run.surface === 'workspace') {
+      void readProjectInfo(run.projectPath).then(project => { if (project) scheduleSnapshotStorageMaintenance(project) }).catch(() => undefined)
+    }
     const route = recentAiRunRoutes.get(run.id)
     const timer = setTimeout(() => { if (recentAiRunRoutes.get(run.id) === route) recentAiRunRoutes.delete(run.id) }, 60_000)
     timer.unref?.()
@@ -4969,7 +5027,7 @@ function updateManagedDownloadAudit(workflow: AiWorkflowState, project: ProjectI
 }
 
 async function listSnapshotManagedFiles(root: string): Promise<string[]> {
-  return listManagedFiles(root, (name) => ignoredDirectories.has(name) || isToolDataDirectory(name))
+  return listManagedFiles(root, ignoreSnapshotDirectory)
 }
 
 async function restoreSnapshotFilesExact(snapshotRoot: string, destinationRoot: string, expectedFiles: string[]): Promise<void> {
@@ -4977,8 +5035,8 @@ async function restoreSnapshotFilesExact(snapshotRoot: string, destinationRoot: 
     snapshotRoot,
     destinationRoot,
     expectedFiles,
-    (name) => ignoredDirectories.has(name) || isToolDataDirectory(name),
-    copySnapshotFiles
+    ignoreSnapshotDirectory,
+    (source, destination) => copySnapshotFiles(source, destination, ignoreSnapshotDirectory)
   )
 }
 
@@ -5117,7 +5175,7 @@ async function applyModpackMigrationInPlace(
       sourceSnapshot = await createProjectSnapshot(`整合包迁移前：${project.loader} ${project.minecraftVersion} -> ${target.loader} ${target.minecraftVersion}`)
       sourceSnapshotTree = await readSnapshotManifest(project, sourceSnapshot.id)
     } else {
-      await copySnapshotFiles(project.path, rollbackRoot)
+      await copySnapshotFiles(project.path, rollbackRoot, ignoreSnapshotDirectory)
       rollbackFiles = await listSnapshotManagedFiles(rollbackRoot)
       await preserveDirectMigrationSources(project, migrationId)
     }
@@ -5239,6 +5297,7 @@ async function deleteProjectSnapshot(id: string, projectPath?: string): Promise<
   const active = await readActiveAiTask(project)
   if (active?.snapshotId === selected.manifest.id) throw new Error('不能删除当前 AI 恢复任务依赖的快照')
   await fs.rm(path.dirname(selected.root), { recursive: true, force: true })
+  void publishSnapshotStorage(project.path).catch(() => undefined)
   const root = path.join(project.path, projectDataDirectory(project), 'snapshots')
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => [])
   const snapshots: SnapshotInfo[] = []
@@ -6029,7 +6088,7 @@ async function managedCodingHashes(project: ProjectInfo): Promise<Map<string, st
 }
 
 async function managedCodingHashesAt(root: string): Promise<Map<string, string>> {
-  const files = await listManagedFiles(root, (name) => ignoredDirectories.has(name) || isToolDataDirectory(name))
+  const files = await listManagedFiles(root, ignoreSnapshotDirectory)
   const hashes = new Map<string, string>()
   for (const relative of files) {
     const content = await fs.readFile(path.join(root, relative)).catch(() => Buffer.alloc(0))
@@ -6056,15 +6115,16 @@ async function getAiReviewerConfig(
   }
   const configured = settings.externalAgents?.[backend]
   if (backend === 'codex' && projectPath) {
+    const local = configured?.mode !== 'hosted'
     return {
-      ...(configured?.baseUrl?.trim() ? { baseUrl: normalizeApiBaseUrl(configured.baseUrl) } : {}),
-      ...(configured?.apiKey?.trim() ? { apiKey: configured.apiKey.trim() } : {}),
+      ...(!local && configured?.baseUrl?.trim() ? { baseUrl: normalizeApiBaseUrl(configured.baseUrl) } : {}),
+      ...(!local && configured?.apiKey?.trim() ? { apiKey: configured.apiKey.trim() } : {}),
       ...(configured?.model?.trim() ? { model: configured.model.trim() } : {}),
       reasoningEffort: configured?.reasoningEffort,
       reviewMode: 'codex-auto',
-      codexExecutable: managedCodexExecutablePath(app.getPath('userData')),
+      codexExecutable: local ? (await detectInstalledCodex(configured)).executable : managedCodexExecutablePath(app.getPath('userData')),
       projectPath,
-      ...(configured?.apiKey?.trim() ? { environment: { MODMIND_THIRD_PARTY_API_KEY: configured.apiKey.trim() } } : {})
+      ...(!local && configured?.apiKey?.trim() ? { environment: { MODMIND_THIRD_PARTY_API_KEY: configured.apiKey.trim() } } : {})
     }
   }
   if (!configured?.apiKey?.trim() || !configured.baseUrl?.trim() || !configured.model?.trim()) return null
@@ -6078,7 +6138,7 @@ async function getAiReviewerConfig(
 
 async function requestProjectAiName(project: ProjectInfo, prompt: string, sessionScope: string, backend?: AgentSettings['codingBackend'], modelSelection?: AiModelSelection): Promise<string> {
   const settings = await readSettings()
-  const selected = backend === 'quota' || backend === 'codex' || backend === 'claude' ? backend : settings.codingBackend
+  const selected = backend === 'quota' || backend === 'codex' ? backend : settings.codingBackend
   const config = selected === 'quota'
     ? await readBeginnerAgentServerConfig(modelSelection).catch(() => null)
     : await getAiReviewerConfig(false, selected, settings).catch(() => null)
@@ -6334,7 +6394,7 @@ async function runExternalCodingAgent(
   // session continues inside the same workbench thread.
   const sessionScope = recovery ? aiRecoverySessionScope(recovery) : normalizeAiSessionScope(context.sessionScope)
   // The beginner-unlimited profile belongs exclusively to the quota engine.
-  // Never carry it across a hot switch into a user-configured Codex/Claude
+  // Never carry it across a hot switch into a user-configured Codex
   // process, otherwise the target backend would silently use the old account.
   const executionProfile: AiExecutionProfile = backend === 'quota'
     ? (recovery?.executionProfile === 'beginner-unlimited' || requestedExecutionProfile === 'beginner-unlimited' ? 'beginner-unlimited' : 'standard')
@@ -6377,20 +6437,16 @@ async function runExternalCodingAgent(
     }
   } else if (externalBackend === 'codex') {
     const configured = runExternalConfiguration
-    if (configured.apiKey?.trim() || configured.baseUrl?.trim() || configured.model?.trim()) {
+    if (configured.mode === 'hosted') {
       codexSetup = await prepareConfiguredCodex(project, sessionScope, configured, (progress) => {
         sendCodingProgress(pipelineEvent('planning', progress.title, progress.detail, progress.status))
       }, signal)
     }
   }
   throwIfAborted(signal, 'Agent 任务已停止')
-  let configuredExecutable = externalBackend === 'codex'
-    ? codexSetup?.executable ?? await awaitWithAbort(ensureManagedCodexRuntime({ rootDir: app.getPath('userData') }), signal, 'Agent 任务已停止')
-    : runExternalConfiguration.executable
+  let configuredExecutable = codexSetup?.executable
   if (!configuredExecutable) {
-    const detected = await awaitWithAbort(detectExternalAgent(externalBackend, externalBackend === 'codex'
-      ? {executables: [managedCodexExecutablePath(app.getPath('userData'))], includeDefaults: false}
-      : {}), signal, 'Agent 任务已停止')
+    const detected = await awaitWithAbort(detectInstalledCodex(runExternalConfiguration), signal, 'Agent 任务已停止')
     if (!detected?.installed) {
       throw new Error(`${agentLabel} CLI 未安装或不在 PATH 中`)
     }
@@ -6582,9 +6638,14 @@ async function runExternalCodingAgent(
       runId: activeTask.runId,
       appVersion: app.getVersion(),
       executable: configuredExecutable,
-      env: externalBackend === 'claude' && modelSelection ? { ...managedExternalEnvironment, ANTHROPIC_MODEL: modelSelection.model, CLAUDE_CODE_EFFORT_LEVEL: modelSelection.reasoningLevel === 'auto' ? undefined : modelSelection.reasoningLevel } : managedExternalEnvironment,
-      sessionHome: codexSetup?.home ?? (externalBackend === 'claude' ? claudeSessionHome(managedExternalEnvironment ?? process.env) : undefined),
-      ...(!usesQuota && runExternalConfiguration.model ? { model: runExternalConfiguration.model, reasoningEffort: runExternalConfiguration.reasoningEffort, ...(externalBackend === 'codex' ? { modelProvider: 'thirdparty' } : {}) } : {}),
+      env: managedExternalEnvironment,
+      sessionHome: codexSetup?.home,
+      adapterRouteId: codexSetup?.adapterRouteId,
+      ...(!usesQuota && runExternalConfiguration.model ? { model: runExternalConfiguration.model, reasoningEffort: runExternalConfiguration.reasoningEffort, ...(runExternalConfiguration.mode === 'hosted' ? { modelProvider: 'thirdparty' } : {}) } : {}),
+      ...(!usesQuota && runExternalConfiguration.mode !== 'hosted' ? { providerConfig: {
+        ...(runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ? { model_context_window: runExternalConfiguration.modelContextWindows[runExternalConfiguration.model ?? ''] } : {}),
+        ...(runExternalConfiguration.modelAutoCompactTokenLimits?.[runExternalConfiguration.model ?? ''] ? { model_auto_compact_token_limit: runExternalConfiguration.modelAutoCompactTokenLimits[runExternalConfiguration.model ?? ''] } : {})
+      } } : {}),
       ...(usesQuota ? {
         liveConfiguration: quotaConfiguration,
         refreshConfiguration: async (configurationSignal: AbortSignal) => {
@@ -6596,7 +6657,7 @@ async function runExternalCodingAgent(
           const adapterUrl = await chatCompletionsAdapter.baseUrl(config.baseUrl, `${codexProviderIdentity(config)}:${revision.sequence}`, revision.signal, config.model, config.model, config.reasoningEffort ?? null)
           diagnosticJournal.record({ subsystem: 'ai', operation: 'execution-configuration', phase: 'prepared', message: `执行模型 ${config.model}`, data: { runId: activeTask.runId, revision: revision.sequence, baseUrl: config.baseUrl, model: config.model } })
           return {
-            executable: prepared.executable, env: prepared.environment, sessionHome: prepared.home,
+            executable: prepared.executable, env: prepared.environment, sessionHome: prepared.home, adapterRouteId: prepared.adapterRouteId,
             model: config.model, modelProvider: 'thirdparty', reasoningEffort: config.reasoningEffort,
             providerConfig: {
               'model_providers.thirdparty.base_url': adapterUrl,
@@ -6627,8 +6688,9 @@ async function runExternalCodingAgent(
       signal: signal ?? new AbortController().signal,
       persistentRetry: true,
       onStarted: () => {
-        if (codexSetup?.contextWindow) {
-          executionUsage = { contextWindow: codexSetup.contextWindow, contextWindowSource: 'configuration', model: codexSetup.model, backend }
+        const configuredContextWindow = codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined)
+        if (configuredContextWindow) {
+          executionUsage = { contextWindow: configuredContextWindow, contextWindowSource: 'configuration', model: codexSetup?.model ?? runExternalConfiguration.model, backend }
           sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
         }
         activeTask.lifecycle = 'running'
@@ -6638,8 +6700,8 @@ async function runExternalCodingAgent(
       },
       onUsage: usage => {
         executionUsage = { ...usage, contextTokens: usage.contextTokens ?? (usage.cumulative ? executionUsage?.contextTokens : usage.inputTokens),
-          contextWindow: codexSetup?.contextWindow ?? usage.contextWindow ?? executionUsage?.contextWindow,
-          contextWindowSource: codexSetup?.contextWindow ? 'configuration' : 'runtime',
+          contextWindow: codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined) ?? usage.contextWindow ?? executionUsage?.contextWindow,
+          contextWindowSource: codexSetup?.contextWindow || !usesQuota && runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ? 'configuration' : 'runtime',
           model: usage.model ?? codexSetup?.model ?? runExternalConfiguration.model, backend }
         sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
         if (!isInspiration) void creation.mutate(state => {
@@ -7887,7 +7949,7 @@ function registerIpc(): void {
     return shell.openExternal(urls[loader])
   })
 
-  diagnosticHandle('project:inspectExisting', async (_event, sourceType: 'folder' | 'zip' = 'folder') => {
+  diagnosticHandle('project:inspectExisting', async (event, sourceType: 'folder' | 'zip' = 'folder') => {
     const result = sourceType === 'zip'
       ? await dialog.showOpenDialog(mainWindow!, {
           properties: ['openFile'],
@@ -7898,7 +7960,16 @@ function registerIpc(): void {
         })
       : await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
-    const sourcePath = await resolveExistingProjectSource(result.filePaths[0])
+    const selectedPath = result.filePaths[0]
+    const sourceName = path.basename(selectedPath)
+    const report = (progress: ExistingProjectInspectionProgress): void => {
+      if (!event.sender.isDestroyed()) event.sender.send('project:inspectionProgress', progress)
+    }
+    if (sourceType === 'zip') report({ phase: 'extracting', sourceName })
+    const sourcePath = await resolveExistingProjectSource(selectedPath, (percent) => report({ phase: 'extracting', sourceName, percent }))
+    report({ phase: 'analyzing', sourceName })
+    const existingProject = await readProjectInfo(sourcePath).catch(() => null)
+    if (existingProject) return { existingProject, archive: sourceType === 'zip' }
     return (await analyzeExistingProject(sourcePath)).analysis
   })
 
@@ -8814,7 +8885,7 @@ function registerIpc(): void {
     if (!document) throw new Error('对话不存在')
     if (document.titleSource) return document
     if (typeof userText !== 'string' || !userText.trim() || typeof answer !== 'string' || !answer.trim()) throw new Error('首轮问答内容不完整')
-    const selected = backend === 'quota' || backend === 'codex' || backend === 'claude' ? backend : (await readSettings()).codingBackend
+    const selected = backend === 'quota' || backend === 'codex' ? backend : (await readSettings()).codingBackend
     const titlePrompt = `根据首轮对话给这段聊天起一个简短、具体的中文标题，最多 20 个汉字。只输出标题，不要引号、解释或标点。\n用户：${userText.slice(0, 1200)}\nAI：${answer.slice(0, 1800)}`
     let title = selected === 'quota' ? '' : answer.replaceAll(/```[\s\S]*?```/gu, '').replaceAll(/[#>*`_]/gu, '').split(/\r?\n|[。！？!?]/u).map(item => item.trim()).find(Boolean) ?? ''
     try {
@@ -8910,7 +8981,6 @@ function registerIpc(): void {
     const scoped = normalized.replace(/^\.modmind\//u, '')
     const workbenchDocument = /^(?:workbench-conversations|workbench-timeline(?:-[\w-]+)?)\.json$/u.test(scoped)
     if (scoped !== 'external-agents/session-codex.json'
-      && scoped !== 'external-agents/session-claude.json'
       && !workbenchDocument
       && !/^external-agents\/sessions\/workspace\/[\w.-]+$/u.test(scoped)) {
       throw new Error('只能删除工作台对话数据文件')
@@ -9080,6 +9150,11 @@ function registerIpc(): void {
     }
     return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   })
+  diagnosticHandle('snapshots:storage', async (_event, projectPath?: string) => {
+    const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return readSnapshotStorage(project.path)
+  })
   diagnosticHandle('snapshots:restore', (_event, id: string, projectPath?: string): Promise<SnapshotRestoreResult> => restoreProjectSnapshot(id, projectPath))
   diagnosticHandle('snapshots:delete', (_event, id: string, projectPath?: string): Promise<SnapshotInfo[]> => deleteProjectSnapshot(id, projectPath))
 
@@ -9232,12 +9307,9 @@ function registerIpc(): void {
   })
   diagnosticHandle('inspiration:listModels', async (_event, backend: AgentSettings['codingBackend']) => {
     if (backend === 'quota') return listBeginnerModels(true)
-    if (backend !== 'codex' && backend !== 'claude') throw new Error('不支持的 AI 引擎')
+    if (backend !== 'codex') throw new Error('不支持的 AI 引擎')
     const settings = await readSettings()
     const configuration = settings.externalAgents?.[backend] ?? {}
-    if (backend === 'claude' && configuration.mode !== 'hosted') {
-      return configuration.model ? modelReasoningCatalog.enrich([{ id: configuration.model }], '') : []
-    }
     return listAvailableAgentModels(backend, configuration)
   })
   diagnosticHandle('inspiration:readKnowledge', async (_event, projectPath: string) => {
@@ -9419,7 +9491,10 @@ function registerIpc(): void {
 
   diagnosticHandle('settings:revealSecret', async (_event, key: string) => {
     switch (key) {
-      case 'codex': case 'claude': return (await readSettings()).externalAgents?.[key]?.apiKey ?? ''
+      case 'codex': {
+        const configured = (await readSettings()).externalAgents?.codex
+        return configured?.mode === 'hosted' ? configured.apiKey || await readLocalCodexApiKey() : await readLocalCodexApiKey() || configured?.apiKey || ''
+      }
       case 'image': return requireImageStudio().revealApiKey()
       case 'gitee': return (await readGiteeBuildSettings()).token
       case 'modrinthToken': case 'curseForgeToken': case 'githubToken': return (await readReleaseSecrets())[key]
@@ -9512,77 +9587,85 @@ function registerIpc(): void {
   }))
   diagnosticHandle('remote-build:gitee:trigger', () => runDiagnosticOperation('gitee', 'trigger', 'Gitee remote build', () => requireGiteeBuildService().trigger()))
   diagnosticHandle('external-agents:detect', async () => {
-    const settings = await readSettings()
+    const configured = (await readSettings()).externalAgents?.codex
     return Promise.all([
-      detectExternalAgent('codex', {
-        executables: [managedCodexExecutablePath(app.getPath('userData'))],
-        includeDefaults: false
-      }),
-      detectExternalAgent('claude', {executables: [settings.externalAgents?.claude?.executable ?? '']})
+      detectInstalledCodex(configured)
     ])
   })
+  diagnosticHandle('external-agents:scanLocal', async () => {
+    const settings = await readSettings()
+    const configured = settings.externalAgents?.codex
+    const detected = await detectInstalledCodex(configured)
+    const local = await readLocalCodexConfig()
+    const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
+    return { status: detected, ...local, models: [...new Set([...models, ...local.models, ...(configured?.mode !== 'hosted' && configured?.model ? [configured.model] : [])])] }
+  })
   diagnosticHandle('external-agents:configure', async (_event, kind: ExternalAgentKind, configuration: NonNullable<AgentSettings['externalAgents']>[ExternalAgentKind]) => {
-    if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
+    if (kind !== 'codex') throw new Error('不支持的外部代理')
     const settings = await readSettings()
     const existingConfiguration = settings.externalAgents?.[kind]
+    const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
+    const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
+    const native = configuration?.mode === 'hosted' ? await readLocalCodexConfig() : null
+    const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+    const apiKey = configuration?.apiKey?.trim()
+      || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
+      || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
     const nextConfiguration = {
       ...existingConfiguration,
       ...configuration,
-      ...(kind === 'codex' ? { executable: undefined } : {}),
-      ...(configuration?.apiKey?.trim() ? {apiKey: configuration.apiKey.trim()} : existingConfiguration?.apiKey ? {apiKey: existingConfiguration.apiKey} : {})
+      executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
+      apiKey: apiKey || ''
     }
     const next: AgentSettings = {
       ...settings,
       externalAgents: {...settings.externalAgents, [kind]: nextConfiguration}
     }
-    if (kind === 'codex' || nextConfiguration.mode === 'hosted') {
+    if (nextConfiguration.mode === 'hosted') {
+      if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
       await refreshConfiguredReasoning(kind, nextConfiguration)
       const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
-      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), kind === 'codex' ? selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions) : undefined)
+      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
     }
     const saved = await saveAgentSettings(next)
     return configureExternalAgentProvider(kind, saved)
   })
   diagnosticHandle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
-    if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
+    if (kind !== 'codex') throw new Error('不支持的外部代理')
     const project = aiProjectContext.getStore() ?? currentProject
     if (!project) return ''
-    const environment = kind === 'claude' ? await externalAgentRunEnvironment(kind, await readSettings()) : undefined
-    return readExternalAgentHistory(project, kind, 'workspace', kind === 'claude' ? claudeSessionHome(environment ?? process.env) : undefined)
+    return readExternalAgentHistory(project, kind, 'workspace')
   })
   diagnosticHandle('external-agents:install', async (_event, kind: ExternalAgentKind) => {
-    if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
-    if (kind === 'codex') {
-      const executable = await ensureManagedCodexRuntime({rootDir: app.getPath('userData')})
-      const status = await detectExternalAgent('codex', {executables: [executable], includeDefaults: false})
-      if (!status.installed || !isManagedCodexVersion(status.version)) throw new Error('Codex 托管运行时版本校验失败')
-      const settings = await readSettings()
-      await saveAgentSettings({
-        ...settings,
-        externalAgents: {
-          ...settings.externalAgents,
-          codex: {...settings.externalAgents?.codex, executable}
-        }
-      })
-      return status
-    }
-    return downloadActivities.run({ label: `安装 ${externalAgentLabel(kind)}`, detail: '正在通过系统包管理器下载安装' }, () => installExternalAgent(kind))
+    if (kind !== 'codex') throw new Error('不支持的外部代理')
+    const executable = await ensureManagedCodexRuntime({rootDir: app.getPath('userData')})
+    const status = await detectExternalAgent('codex', {executables: [executable], includeDefaults: false})
+    if (!status.installed || !isManagedCodexVersion(status.version)) throw new Error('Codex 托管运行时版本校验失败')
+    const settings = await readSettings()
+    await saveAgentSettings({
+      ...settings,
+      externalAgents: {
+        ...settings.externalAgents,
+        codex: {...settings.externalAgents?.codex, executable}
+      }
+    })
+    return status
   })
   diagnosticHandle('external-agents:openDocs', (_event, kind: ExternalAgentKind) => {
-    if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
+    if (kind !== 'codex') throw new Error('不支持的外部代理')
     return shell.openExternal(externalAgentDocsUrl(kind))
   })
   diagnosticHandle('external-agents:launch', async (_event, kind: ExternalAgentKind) => {
-    if (!['codex', 'claude'].includes(kind)) throw new Error('不支持的外部代理')
+    if (kind !== 'codex') throw new Error('不支持的外部代理')
     const project = requireProject()
     const settings = await readSettings()
     const configured = settings.externalAgents?.[kind] ?? {}
-    const configuredCodex = kind === 'codex' && Boolean(configured.apiKey?.trim() || configured.baseUrl?.trim() || configured.model?.trim())
+    const configuredCodex = kind === 'codex' && configured.mode === 'hosted'
       ? await prepareConfiguredCodex(project, 'manual', configured)
       : undefined
     const env = configuredCodex?.environment ?? await externalAgentRunEnvironment(kind, settings)
     const executable = kind === 'codex'
-      ? configuredCodex?.executable ?? await ensureManagedCodexRuntime({ rootDir: app.getPath('userData') })
+      ? configuredCodex?.executable ?? (configured.mode === 'hosted' ? await ensureManagedCodexRuntime({ rootDir: app.getPath('userData') }) : (await detectInstalledCodex(configured)).executable)
       : configured.executable
     await launchExternalAgent(kind, project, executable, env)
   })
@@ -9652,9 +9735,9 @@ function registerIpc(): void {
     const recovery = recoveryCandidate && aiRecoveryMatchesSessionScope(recoveryCandidate, options?.sessionScope)
       ? recoveryCandidate
       : undefined
-    const selectedBackend = backend === 'quota' || backend === 'codex' || backend === 'claude'
+    const selectedBackend = backend === 'quota' || backend === 'codex'
       ? backend
-      : recovery?.backend === 'quota' || recovery?.backend === 'codex' || recovery?.backend === 'claude'
+      : recovery?.backend === 'quota' || recovery?.backend === 'codex'
         ? recovery.backend
         : (await readSettings()).codingBackend
     const preparedConversation = await prepareConversationRequest(project, prompt, requestedSurface, options ?? {}, recovery)
@@ -9761,7 +9844,7 @@ function registerIpc(): void {
     if (features !== undefined) recovery.workbenchFeatures = normalizeWorkbenchFeatures(features)
     if (conversationId !== undefined && aiConversationIdForSession(recovery) !== conversationId) throw new Error('该未完成任务属于另一个对话，请切换到原对话继续')
     const executionProfile = recovery.executionProfile === 'beginner-unlimited' ? 'beginner-unlimited' : 'standard'
-    const backend = recovery.backend === 'quota' || recovery.backend === 'codex' || recovery.backend === 'claude' ? recovery.backend : 'codex'
+    const backend = recovery.backend === 'quota' || recovery.backend === 'codex' ? recovery.backend : 'codex'
     const recoveryConversation = recovery.conversationId ? await conversationStore.read(project.path, recovery.conversationId).catch(() => null) : null
     const recoveryTurnId = `turn-${recovery.taskId}`
     const run: ActiveAiRun = { id: aiRunId(event.sender.id, project.path, recovery.sessionId), senderId: event.sender.id, startedAt: recovery.startedAt, sessionId: recovery.sessionId, sessionScope: recovery.sessionScope, projectPath: project.path, executionProfile, backend, surface: 'workspace', ...(recovery.conversationId ? { conversationId: recovery.conversationId } : {}), ...(recoveryConversation ? { generation: recoveryConversation.generation } : {}), turnId: recoveryTurnId }
@@ -9778,7 +9861,7 @@ function registerIpc(): void {
 
   })
   diagnosticHandle('ai:switchBackend', async (event, requestedBackend: AgentSettings['codingBackend'], projectPath?: string, sessionScope?: string, switchId?: number): Promise<AiBackendSwitchResult> => {
-    if (!['quota', 'codex', 'claude'].includes(requestedBackend)) throw new Error('不支持的 AI 内核')
+    if (!['quota', 'codex'].includes(requestedBackend)) throw new Error('不支持的 AI 内核')
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或无效')
     if (activeWorkspaceRun(project.path)?.workbenchPhase === 'discussion') throw new Error('请先停止快速问答或等待回答完成后再切换引擎')

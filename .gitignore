@@ -21,6 +21,7 @@ ui-check*.jpg
 /modmind-mcp-open-source.zip
 /docs/*
 !/docs/design-spec.zh-CN.md
+!/docs/app-changelog.zh-CN.md
 !/docs/sidebar-layout.zh-CN.md
 !/docs/diagnostics-audit-2026-09-16.zh-CN.md
 !/docs/plugin-development.zh-CN.md

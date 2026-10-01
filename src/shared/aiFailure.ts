@@ -18,9 +18,14 @@ export function describeAiFailureForUser(error: unknown): string {
 
   // Tool preparation failures have their own recovery path. Preserve it through
   // repeated IPC/UI formatting instead of suggesting a model or network change.
-  if (/工具尚未准备好，本轮对话未开始|ModMind 工具连接已中断/.test(message)) {
+  if (/工具尚未准备好，本轮对话未开始|ModMind 工具连接已中断|模型回复称本轮没有可用的项目工具/.test(message)) {
+    if (message.startsWith('模型回复称本轮没有可用的项目工具')) return message
     return message.includes(AGENT_TOOL_RECOVERY_GUIDANCE) ? message : `${message}${AGENT_TOOL_RECOVERY_GUIDANCE}`
   }
+  if (/^模型线路不支持 (?:none|minimal|low|medium|high|xhigh|max|ultra) 思考强度/.test(message)) return message
+  const unsupportedEffort = message.match(/Invalid value: ['"]?(none|minimal|low|medium|high|xhigh|max|ultra)['"]?\. Supported values are:/i)?.[1]
+  if (unsupportedEffort) return `模型线路不支持 ${unsupportedEffort} 思考强度。请选择自动或线路支持的档位后重试。`
+  if (/API_KEY_DISABLED/i.test(message)) return '当前模型服务的 API Key 已被禁用，请重新连接账号；仍失败请联系线路服务方。'
 
   if (statusIn(message, 413)) {
     return 'AI 请求内容过大（413），超过了服务或网关的大小限制。请新建会话并精简历史、附件或日志；如仍失败，请联系线路管理员调整请求大小限制。'

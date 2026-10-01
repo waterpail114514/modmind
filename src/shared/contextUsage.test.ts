@@ -18,9 +18,9 @@ describe('persisted context usage', () => {
     expect(contextTokens(mergeContextUsage(compacted, { contextTokens: 0 }))).toBe(0)
   })
 
-  it('preserves context when Claude reports cumulative billing at turn end', () => {
-    const measuredClaude = { model: 'claude-opus-5.5', backend: 'claude' as const, contextTokens: 100000, contextWindow: 1000000 }
-    const terminal = mergeContextUsage(measuredClaude, { cumulative: true, inputTokens: 5000000, contextTokens: undefined })
+  it('preserves context when a terminal event reports cumulative billing', () => {
+    const measuredUsage = { model: 'gpt-6-sol', backend: 'codex' as const, contextTokens: 100000, contextWindow: 1000000 }
+    const terminal = mergeContextUsage(measuredUsage, { cumulative: true, inputTokens: 5000000, contextTokens: undefined })
     expect(contextTokens(terminal)).toBe(100000)
     expect(contextTokens(mergeContextUsage(terminal, { cumulative: true, contextTokens: 30000 }))).toBe(30000)
     expect(contextTokens({ cumulative: true, inputTokens: 5000000 })).toBeUndefined()

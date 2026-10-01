@@ -40,6 +40,7 @@ export interface CodexServerConfig {
 
 export interface CodexSetupResult {
   model: string
+  adapterRouteId?: string
   contextWindow?: number
   executable: string
   version: string
@@ -292,6 +293,7 @@ export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexS
   return {
     executable,
     model: config.model,
+    adapterRouteId: config.baseUrl.match(/\/adapter\/([a-f0-9]{32})\/v1\/?$/)?.[1],
     contextWindow: (buildCodexModelCatalog(config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities })?.models.find(entry => entry.slug === config.model)
       ?? builtinCatalog.models.find(entry => entry.slug === config.model))?.context_window,
     version,

@@ -117,10 +117,12 @@ import type {
   AppUpdateState,
   AppVersionCheckResult,
   ExternalAgentStatus,
+  LocalCodexScan,
   ExternalAgentConfiguration,
   ExternalAgentKind,
   ExistingProjectAdoptInput,
   ExistingProjectAnalysis,
+  ExistingProjectInspectionProgress,
   FileNode,
   DetectedJavaHome,
   JavaPreferences,
@@ -133,6 +135,7 @@ import type {
   ProjectKind,
   ProjectMigrationPreview,
   SnapshotInfo,
+  SnapshotStorageInfo,
   UiMode,
   BeginnerTaskState,
   BeginnerAiPreferences,
@@ -471,7 +474,6 @@ function formatBalanceCents(value?: string): string {
 
 const EXTERNAL_AGENT_OPTIONS: Array<{kind: ExternalAgentKind; label: string; detail: string; managedService: boolean}> = [
   {kind: 'codex', label: 'Codex', detail: '使用 ModMind 托管的稳定版 Codex；需要时可在此配置中转服务', managedService: true},
-  {kind: 'claude', label: 'Claude Code', detail: '读取本机 Claude Code 配置；需要时可在此配置中转服务', managedService: true}
 ]
 
 function externalAgentLabel(kind: ExternalAgentKind): string {
@@ -480,7 +482,6 @@ function externalAgentLabel(kind: ExternalAgentKind): string {
 
 function externalAgentIcon(kind: ExternalAgentKind, size = 13): React.JSX.Element {
   if (kind === 'codex') return <Code2 size={size} />
-  if (kind === 'claude') return <Sparkles size={size} />
   return <Zap size={size} />
 }
 
@@ -532,6 +533,12 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
     new Date(value)
   )
+}
+
+function formatStorageBytes(value: number): string {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`
+  return `${Math.ceil(value / 1024)} KB`
 }
 
 function errorMessage(error: unknown): string {
@@ -965,21 +972,34 @@ function ExistingImportPicker({ onClose, onSelect }: { onClose: () => void; onSe
   )
 }
 
-function ProjectInspectionDialog({ kind }: { kind: 'project' | 'mod' }): React.JSX.Element {
+function ProjectInspectionDialog({ kind, progress, error, onClose, onRetry }: {
+  kind: 'project' | 'mod'
+  progress?: ExistingProjectInspectionProgress | null
+  error?: string
+  onClose?: () => void
+  onRetry?: () => void
+}): React.JSX.Element {
   const title = kind === 'mod' ? '接管模组或插件' : '接管现有项目'
-  const detail = kind === 'mod'
-    ? '正在读取 JAR 描述文件、识别模组或插件平台，请稍候…'
-    : '正在扫描文件、读取构建配置并识别项目类型，请稍候…'
+  const phase = progress?.phase === 'extracting' ? '正在解压项目' : '正在识别项目'
+  const detail = progress?.sourceName ?? (kind === 'mod' ? '正在读取 JAR 描述文件、识别模组或插件平台' : '正在读取项目')
+  const percent = progress?.phase === 'extracting' ? progress.percent : undefined
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="dialog adopt-dialog inspection-dialog" role="dialog" aria-modal="true" aria-busy="true">
+      <div className="dialog adopt-dialog inspection-dialog" role="dialog" aria-modal="true" aria-busy={!error}>
         <div className="dialog-header">
-          <div><h2>{title}</h2><p>正在识别</p></div>
+          <div><h2>{title}</h2></div>
         </div>
-        <div className="inspection-status" role="status">
-          <LoaderCircle className="spin" size={22} />
-          <div><strong>{kind === 'mod' ? '正在识别 JAR' : '正在识别项目'}</strong><span>{detail}</span></div>
+        <div className={`inspection-status${error ? ' failed' : ''}`} role={error ? 'alert' : 'status'}>
+          {error ? <CircleAlert size={22} /> : <LoaderCircle className="spin" size={22} />}
+          <div><strong>{error ? '识别失败' : kind === 'mod' ? '正在识别 JAR' : phase}</strong><span>{error || detail}</span></div>
         </div>
+        {kind === 'project' && !error ? <div className="inspection-progress">
+          {percent !== undefined ? <div className="inspection-progress-heading"><span>解压进度</span><strong>{percent}%</strong></div> : null}
+          <div className={`inspection-progress-track${percent === undefined ? ' indeterminate' : ''}`} role="progressbar" aria-label={phase} aria-valuemin={percent === undefined ? undefined : 0} aria-valuemax={percent === undefined ? undefined : 100} aria-valuenow={percent}>
+            <span style={percent === undefined ? undefined : { width: `${percent}%` }} />
+          </div>
+        </div> : null}
+        {error ? <div className="dialog-footer"><button className="secondary-button" onClick={onClose}>关闭</button><button className="primary-button" onClick={onRetry}><RotateCcw size={16} />重新选择</button></div> : null}
       </div>
     </div>
   )
@@ -1977,6 +1997,9 @@ export default function App(): React.JSX.Element {
   const [existingAnalysis, setExistingAnalysis] = useState<ExistingProjectAnalysis | null>(null)
   const [existingImportPicker, setExistingImportPicker] = useState(false)
   const [existingInspecting, setExistingInspecting] = useState(false)
+  const [existingInspectionProgress, setExistingInspectionProgress] = useState<ExistingProjectInspectionProgress | null>(null)
+  const [existingInspectionError, setExistingInspectionError] = useState('')
+  const [existingInspectionSource, setExistingInspectionSource] = useState<'folder' | 'zip'>('folder')
   const [decompileJarHandoff, setDecompileJarHandoff] = useState<string | null>(null)
   const [modJarInspection, setModJarInspection] = useState<DecompileInspectResult | null>(null)
   const [modJarInspecting, setModJarInspecting] = useState(false)
@@ -2105,9 +2128,7 @@ export default function App(): React.JSX.Element {
       setActiveWorkbenchConversationId(fork.id)
       if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
       setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? view)
-      setNotice(fork.parent?.nativeMode === 'visible-history-rebuild' && settingsRef.current.codingBackend === 'claude'
-        ? '已从聊天记录重建分支；原对话仍保留，Claude 先前的工具执行上下文不会完整继承'
-        : '已从此处创建新的对话分支；原对话仍保留')
+      setNotice('已从此处创建新的对话分支；原对话仍保留')
     } catch (error) {
       setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
       sessionResetConversationIdsRef.current.add(conversationId)
@@ -2121,8 +2142,29 @@ export default function App(): React.JSX.Element {
   const [minecraftEvents, setMinecraftEvents] = useState<MinecraftRuntimeEvent[]>([])
   const [building, setBuilding] = useState(false)
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
+  const [snapshotStorage, setSnapshotStorage] = useState<SnapshotStorageInfo | null>(null)
+  const [snapshotStorageError, setSnapshotStorageError] = useState('')
   const [restoringSnapshotId, setRestoringSnapshotId] = useState('')
   const [deletingSnapshotId, setDeletingSnapshotId] = useState('')
+  const currentSnapshotStorage = snapshotStorage && project && normalizeProjectPath(snapshotStorage.projectPath) === normalizeProjectPath(project.path) ? snapshotStorage : null
+  const snapshotStorageWarning = Boolean(currentSnapshotStorage?.warning)
+  useEffect(() => {
+    const projectPath = project?.path
+    setSnapshotStorage(null)
+    setSnapshotStorageError('')
+    if (!projectPath) return
+    let active = true
+    const unsubscribe = window.modmind.snapshots.onStorageChanged(status => {
+      if (!active || normalizeProjectPath(status.projectPath) !== normalizeProjectPath(projectPath)) return
+      setSnapshotStorage(status)
+      setSnapshotStorageError('')
+      void window.modmind.snapshots.list(projectPath).then(setSnapshots).catch(() => undefined)
+    })
+    void window.modmind.snapshots.storage(projectPath).then(status => {
+      if (active) { setSnapshotStorage(status); setSnapshotStorageError('') }
+    }).catch(error => { if (active) setSnapshotStorageError(errorMessage(error)) })
+    return () => { active = false; unsubscribe() }
+  }, [project?.path])
   const [loaderCatalog, setLoaderCatalog] = useState<LoaderVersionOption[]>([])
   const [migrationLoader, setMigrationLoader] = useState<LoaderKind>('fabric')
   const [migrationVersion, setMigrationVersion] = useState('')
@@ -2520,9 +2562,8 @@ export default function App(): React.JSX.Element {
         // timeline and session pointer still live in the legacy single files.
         void window.modmind.project.deleteWorkbenchData('.modmind/workbench-timeline.json', projectPath).catch(() => undefined)
         void window.modmind.project.deleteWorkbenchData('.modmind/external-agents/session-codex.json', projectPath).catch(() => undefined)
-        void window.modmind.project.deleteWorkbenchData('.modmind/external-agents/session-claude.json', projectPath).catch(() => undefined)
         try {
-          for (const backend of ['quota', 'codex', 'claude']) localStorage.removeItem(`${projectPath}:${backend}`)
+          for (const backend of ['quota', 'codex']) localStorage.removeItem(`${projectPath}:${backend}`)
         } catch { /* storage is optional */ }
       } else {
         void window.modmind.project.deleteWorkbenchData(`.modmind/external-agents/sessions/workspace/${conversationId}`, projectPath).catch(() => undefined)
@@ -2592,9 +2633,6 @@ export default function App(): React.JSX.Element {
   const [beginnerAvailableModels, setBeginnerAvailableModels] = useState<AiModelInfo[]>([])
   const [scanningBeginnerModels, setScanningBeginnerModels] = useState(false)
   const [beginnerModelScanMessage, setBeginnerModelScanMessage] = useState('连接账号后扫描可用模型')
-  const [availableModels, setAvailableModels] = useState<AiModelInfo[]>([])
-  const [modelSearch, setModelSearch] = useState('')
-  const [scanningModels, setScanningModels] = useState(false)
   const [savingAiPreferences, setSavingAiPreferences] = useState(false)
   const [exportArtifactAvailable, setExportArtifactAvailable] = useState(false)
   const [diagnosticExporting, setDiagnosticExporting] = useState(false)
@@ -2622,12 +2660,19 @@ export default function App(): React.JSX.Element {
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateState>({ phase: 'idle', currentVersion: '' })
   const [updateDownloadedOpen, setUpdateDownloadedOpen] = useState(false)
   const [updateActionBusy, setUpdateActionBusy] = useState(false)
-  const [modelScanMessage, setModelScanMessage] = useState('输入 API Key 后扫描')
   const [externalAgents, setExternalAgents] = useState<ExternalAgentStatus[]>([])
   const [externalAgentsReady, setExternalAgentsReady] = useState(false)
+  const [localCodexScan, setLocalCodexScan] = useState<LocalCodexScan | null>(null)
+  const [localCodexScanning, setLocalCodexScanning] = useState(false)
+  const [localCodexScanError, setLocalCodexScanError] = useState('')
+  const localCodexScanInFlight = useRef<Promise<LocalCodexScan | null> | null>(null)
+  const [aiSettingsBackend, setAiSettingsBackend] = useState<CodingBackend | null>(null)
+  const aiSettingsSelectionGeneration = useRef(0)
+  const visibleAiSettingsBackend = aiSettingsBackend ?? settings.codingBackend
+  const codexInstalled = localCodexScan?.status.installed ?? externalAgents.find(agent => agent.kind === 'codex')?.installed
+  const codexSettingsBlocked = codexInstalled !== true
   const [installingAgents, setInstallingAgents] = useState<Partial<Record<ExternalAgentKind, boolean>>>({})
   const [configuringAgents, setConfiguringAgents] = useState<Partial<Record<ExternalAgentKind, boolean>>>({})
-  const [editingAgent, setEditingAgent] = useState<ExternalAgentKind | null>(null)
   const [agentDraft, setAgentDraft] = useState<ExternalAgentConfiguration>({})
   const [aiHistoryLoadedKey, setAiHistoryLoadedKey] = useState('')
   const [workbenchPersistenceState, setWorkbenchPersistenceState] = useState<WorkbenchPersistenceState>('loading')
@@ -2818,7 +2863,7 @@ export default function App(): React.JSX.Element {
     .replaceAll('tool steps', '个操作')
     .replaceAll('Agent step', 'AI 操作')
     return uiMode === 'beginner'
-      ? humanized.replaceAll('Codex', '智能开发引擎').replaceAll('Claude Code', '智能开发引擎')
+      ? humanized.replaceAll('Codex', '智能开发引擎')
       : humanized
   }
 
@@ -2828,7 +2873,7 @@ export default function App(): React.JSX.Element {
       .replaceAll('The model failed the Agent protocol 3 times:', '上游连续 3 次没有按 Agent 协议返回可执行操作：')
       .replaceAll('The AI model did not respond within 10 minutes.', '上游模型在等待 10 分钟后没有返回任何内容，请稍后重试或切换线路')
       .replaceAll('Unable to connect to the AI service:', '无法连接 AI 服务：')
-    return /(?:上游模型|模型服务|Codex|Claude|AI 服务).*(?:失败|拒绝|不可用|超时|中断|参数|额度|凭证|没有返回|429|4\d\d|5\d\d)/i.test(humanized)
+    return /(?:上游模型|模型服务|Codex|AI 服务).*(?:失败|拒绝|不可用|超时|中断|参数|额度|凭证|没有返回|429|4\d\d|5\d\d)/i.test(humanized)
       ? describeAiFailureForUser(humanized)
       : humanized
   }
@@ -3327,7 +3372,7 @@ export default function App(): React.JSX.Element {
       settingsRef.current = { ...settingsRef.current, codingBackend: event.backend }
       setSettings((current) => ({ ...current, codingBackend: event.backend }))
       setRunningBackend(event.backend)
-      setNotice(`已切换到 ${event.backend === 'quota' ? 'ModMind' : event.backend === 'codex' ? 'Codex' : 'Claude Code'}，正在继续当前任务`)
+      setNotice(`已切换到 ${event.backend === 'quota' ? 'ModMind' : 'Codex'}，正在继续当前任务`)
     })
     return () => {
       removeBuildListener()
@@ -3486,14 +3531,42 @@ export default function App(): React.JSX.Element {
   }, [aiRecovery?.conversationId, activeWorkbenchConversationId, aiRecovery?.contextRevision, aiRecovery?.lifecycle, aiRecovery?.pending, aiRecovery?.retry, planning, project?.path])
 
   const inspectExistingProject = async (sourceType: 'folder' | 'zip'): Promise<void> => {
+    setExistingInspectionSource(sourceType)
+    setExistingInspectionProgress(null)
+    setExistingInspectionError('')
     setExistingInspecting(true)
+    const stopProgress = window.modmind.project.onInspectionProgress(setExistingInspectionProgress)
+    let failed = false
     try {
-      const analysis = await window.modmind.project.inspectExisting(sourceType)
-      if (analysis) setExistingAnalysis(analysis)
+      const inspection = await window.modmind.project.inspectExisting(sourceType)
+      if (!inspection) return
+      if ('existingProject' in inspection) {
+        if (inspection.archive) {
+          failed = true
+          setExistingInspectionError('压缩包内已包含 ModMind 项目。请先解压，再通过“打开项目”选择项目文件夹。')
+          return
+        }
+        const selected = inspection.existingProject
+        if (project && normalizeProjectPath(project.path) === normalizeProjectPath(selected.path)) {
+          setView('workspace')
+          setProjectLauncherOpen(false)
+          return
+        }
+        await waitForAppLoadingCover()
+        const opened = await window.modmind.project.openRecent(selected.path)
+        setProject(opened)
+        setView('workspace')
+        setProjectLauncherOpen(false)
+        void refreshRecentProjects()
+      } else {
+        setExistingAnalysis(inspection)
+      }
     } catch (error) {
-      setErrorNotice(errorMessage(error))
+      failed = true
+      setExistingInspectionError(errorMessage(error))
     } finally {
-      setExistingInspecting(false)
+      stopProgress()
+      if (!failed) setExistingInspecting(false)
     }
   }
 
@@ -4102,7 +4175,7 @@ export default function App(): React.JSX.Element {
         id: `plan-${Date.now()}`,
         stage: 'planning',
         title: 'AI 正在分析请求',
-        detail: selectedBackend === 'quota' ? deviceState.provider === 'custom' ? '正在连接自定义 API' : '正在使用 ModMind 额度启动 Codex' : selectedBackend === 'codex' ? 'Codex 正在判断任务意图' : 'Claude Code 正在判断任务意图',
+        detail: selectedBackend === 'quota' ? deviceState.provider === 'custom' ? '正在连接自定义 API' : '正在使用 ModMind 额度启动 Codex' : 'Codex 正在判断任务意图',
         status: 'running',
         time: new Date().toISOString()
       },
@@ -4590,29 +4663,29 @@ export default function App(): React.JSX.Element {
 
   const configureExternalAgent = async (kind: ExternalAgentKind): Promise<void> => {
     if (configuringAgents[kind]) return
-    const usesManagedService = kind === 'codex'
-    if (usesManagedService && (!agentDraft.baseUrl?.trim() || !agentDraft.model?.trim() || (!agentDraft.apiKey?.trim() && !settings.externalAgents?.[kind]?.hasStoredKey))) {
-      setNotice('请填写 Base URL、API Key 并选择模型')
+    const model = settings.externalAgents?.codex?.model?.trim() || localCodexScan?.model || ''
+    const configuration: ExternalAgentConfiguration = { ...settings.externalAgents?.codex, ...agentDraft, mode: 'hosted', model }
+    if (!configuration.baseUrl?.trim() || !model) {
+      setNotice('请填写 Base URL 并选择模型')
       return
     }
-    const contextLimit = agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? '']
+    const contextLimit = configuration.modelContextWindows?.[model]
     if (contextLimit !== undefined && (!Number.isSafeInteger(contextLimit) || contextLimit < 1024 || contextLimit > 100000000)) {
       setNotice('上下文窗口必须是 1,024–100,000,000 之间的整数')
       return
     }
-    const compactLimit = agentDraft.modelAutoCompactTokenLimits?.[agentDraft.model?.trim() ?? '']
+    const compactLimit = configuration.modelAutoCompactTokenLimits?.[model]
     if (compactLimit !== undefined && (!Number.isSafeInteger(compactLimit) || compactLimit < 1024 || compactLimit > 100000000 || contextLimit !== undefined && compactLimit > Math.floor(contextLimit * 0.9))) {
       setNotice('自动压缩阈值必须是有效整数，且不超过上下文窗口的 90%')
       return
     }
     setConfiguringAgents((current) => ({ ...current, [kind]: true }))
     try {
-      const result = await window.modmind.externalAgents.configure(kind, agentDraft)
+      const result = await window.modmind.externalAgents.configure(kind, configuration)
       const refreshedSettings = await window.modmind.settings.getAgent()
       settingsRef.current = refreshedSettings
       setSettings(refreshedSettings)
-      setEditingAgent(null)
-      setAgentDraft({})
+      setAgentDraft({ baseUrl: refreshedSettings.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
       setNotice(`${externalAgentLabel(kind)} 配置完成${result.configPath ? `：${result.configPath}` : ''}`)
     } catch (error) {
       setNotice(`自动配置失败：${errorMessage(error)}`)
@@ -4706,6 +4779,55 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  const scanLocalCodex = (): Promise<LocalCodexScan | null> => {
+    if (localCodexScanInFlight.current) return localCodexScanInFlight.current
+    setLocalCodexScanning(true)
+    setLocalCodexScanError('')
+    const request = window.modmind.externalAgents.scanLocal().then(result => {
+      setLocalCodexScan(result)
+      setExternalAgents(current => [...current.filter(agent => agent.kind !== 'codex'), result.status])
+      setExternalAgentsReady(true)
+      return result
+    }).catch(error => {
+      setLocalCodexScanError(errorMessage(error))
+      return null
+    }).finally(() => {
+      setLocalCodexScanning(false)
+      localCodexScanInFlight.current = null
+    })
+    localCodexScanInFlight.current = request
+    return request
+  }
+
+  const saveLocalCodexPreference = async (patch: Partial<ExternalAgentConfiguration>): Promise<void> => {
+    const current = settingsRef.current
+    await saveSettingsPatch({ externalAgents: { ...current.externalAgents, codex: { ...current.externalAgents?.codex, mode: current.externalAgents?.codex?.mode ?? 'local', ...patch } } })
+  }
+
+  useEffect(() => {
+    if (visibleAiSettingsBackend !== 'codex' || view !== 'settings') return
+    const storedUrl = settings.externalAgents?.codex?.baseUrl ?? ''
+    const preferredUrl = settings.externalAgents?.codex?.mode === 'hosted' ? storedUrl || localCodexScan?.baseUrl || '' : localCodexScan?.baseUrl || storedUrl
+    setAgentDraft(current => current.baseUrl?.trim() && current.baseUrl !== storedUrl ? current : {
+      ...current, baseUrl: preferredUrl
+    })
+  }, [visibleAiSettingsBackend, view, localCodexScan?.baseUrl, settings.externalAgents?.codex?.baseUrl, settings.externalAgents?.codex?.mode])
+
+  useEffect(() => {
+    if (visibleAiSettingsBackend === 'codex') void scanLocalCodex()
+  }, [visibleAiSettingsBackend, view === 'settings'])
+
+  const selectAiSettingsBackend = async (backend: CodingBackend): Promise<void> => {
+    // Opening settings must remain possible even when this engine cannot run.
+    setAiSettingsBackend(backend)
+    const generation = ++aiSettingsSelectionGeneration.current
+    if (backend === 'codex') {
+      const detected = await scanLocalCodex()
+      if (generation !== aiSettingsSelectionGeneration.current || !detected?.status.installed) return
+    }
+    selectCodingBackend(backend)
+  }
+
   const selectCodingBackend = (backend: AgentSettings['codingBackend']): void => {
     if (planning && workspaceSessionRef.current.startsWith('discussion-')) {
       setNotice('快速问答进行中，请先停止或等待回答后再切换引擎')
@@ -4779,7 +4901,7 @@ export default function App(): React.JSX.Element {
         }
         setAiRecovery(null)
         if (result.result) storeProjectPlan(taskProjectPath, result.result)
-        if (result.status === 'idle') setNotice(`已切换到 ${backend === 'quota' ? 'ModMind' : backend === 'codex' ? 'Codex' : 'Claude Code'}`)
+        if (result.status === 'idle') setNotice(`已切换到 ${backend === 'quota' ? 'ModMind' : 'Codex'}`)
       })
       .catch(async (error) => {
         const taskState = await window.modmind.ai.getProjectTaskState(taskProjectPath).catch(() => null)
@@ -4838,6 +4960,9 @@ export default function App(): React.JSX.Element {
     try {
       const status = await window.modmind.externalAgents.install(kind)
       setExternalAgents((current) => [...current.filter((item) => item.kind !== kind), status])
+      // A pre-install scan may still be finishing; always follow it with a new one.
+      await localCodexScanInFlight.current
+      await scanLocalCodex()
       setNotice(`${status.label} ${status.version ?? ''} 安装完成`)
     } catch (error) {
       setNotice(`安装失败：${errorMessage(error)}`)
@@ -4853,38 +4978,6 @@ export default function App(): React.JSX.Element {
       setNotice(`无法打开安装教程：${errorMessage(error)}`)
     }
   }
-
-  const scanModels = async (): Promise<void> => {
-    if (scanningModels || !editingAgent || !agentDraft.baseUrl?.trim()) return
-    setScanningModels(true)
-    setModelScanMessage('正在读取可用模型…')
-    try {
-      const models = await window.modmind.settings.listAgentModels(editingAgent, agentDraft)
-      setAvailableModels(models)
-      setModelScanMessage(models.length ? `发现 ${models.length} 个模型` : '接口没有返回可用模型，可手动填写 ID')
-      if (models.length === 1 && !agentDraft.model) setAgentDraft((current) => ({ ...current, model: models[0].id }))
-    } catch (error) {
-      setAvailableModels([])
-      setModelScanMessage(aiFailureMessage(error))
-    } finally {
-      setScanningModels(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!editingAgent || !agentDraft.baseUrl?.trim() || editingAgent === 'claude' && agentDraft.mode !== 'hosted') return
-    if (!agentDraft.apiKey?.trim() && !settings.externalAgents?.[editingAgent]?.hasStoredKey) return
-    let active = true
-    setScanningModels(true)
-    setModelScanMessage('正在读取模型和思考能力…')
-    void window.modmind.settings.listAgentModels(editingAgent, agentDraft).then(models => {
-      if (!active) return
-      setAvailableModels(models)
-      setModelScanMessage(`发现 ${models.length} 个模型，思考档位已同步`)
-    }).catch(error => { if (active) setModelScanMessage(aiFailureMessage(error)) })
-      .finally(() => { if (active) setScanningModels(false) })
-    return () => { active = false; setScanningModels(false) }
-  }, [editingAgent])
 
   const scanBeginnerModels = async (): Promise<void> => {
     if (scanningBeginnerModels) return
@@ -4967,7 +5060,6 @@ export default function App(): React.JSX.Element {
     : '例如：制作一个可以储存经验值的水晶方块，右键存入，Shift 右键取出…'
   const migrationVersions = loaderCatalog.filter((option) => option.loader === migrationLoader)
   const selectedMigrationVersion = migrationVersion || migrationVersions[0]?.minecraftVersion || ''
-  const filteredModels = availableModels.filter((model) => model.id.toLowerCase().includes(modelSearch.trim().toLowerCase()))
   const filteredMappingMembers = mappingDetail?.members.filter((member) => {
     const query = mappingMemberQuery.trim().toLowerCase()
     return !query || `${member.type} ${Object.values(member.names).join(' ')}`.toLowerCase().includes(query)
@@ -5275,10 +5367,10 @@ export default function App(): React.JSX.Element {
                   key={item.id}
                   data-sidebar-drag-key={`item:${item.id}`}
                   draggable
-                  className={`sidebar-nav-item ${view === item.id ? 'active' : ''} ${sidebarDraggedId === item.id ? 'dragging' : ''} ${sidebarDropTargetId === item.id ? 'drop-target' : ''}`}
+                  className={`sidebar-nav-item ${view === item.id ? 'active' : ''} ${sidebarDraggedId === item.id ? 'dragging' : ''} ${sidebarDropTargetId === item.id ? 'drop-target' : ''} ${item.id === 'snapshots' && snapshotStorageWarning ? 'storage-warning' : ''}`}
                   aria-current={view === item.id ? 'page' : undefined}
-                  aria-label={item.label}
-                  title={sidebarCollapsed ? item.label : undefined}
+                  aria-label={`${item.label}${item.id === 'snapshots' && snapshotStorageWarning ? '，备份占用偏大' : ''}`}
+                  title={sidebarCollapsed || item.id === 'snapshots' && snapshotStorageWarning ? `${item.label}${item.id === 'snapshots' && snapshotStorageWarning ? '，备份占用偏大' : ''}` : undefined}
                   onClick={() => { navigateToView(item.id); if (project) setProjectLauncherOpen(false) }}
                   onDragStart={(event) => beginSidebarDrag(event, item, group.groupKey)}
                   onDragOver={(event) => {
@@ -5307,6 +5399,7 @@ export default function App(): React.JSX.Element {
                   type="button"
                 >
                   <item.icon size={sidebarCollapsed ? 19 : 16} /><span>{item.label}</span>
+                  {item.id === 'snapshots' && snapshotStorageWarning ? <CircleAlert className="snapshot-sidebar-warning" size={15} aria-hidden="true" /> : null}
                   {showFeatureBeta(item.id) ? <em className="agent-beta-tag feature-beta-tag">Beta</em> : null}
                   {item.id === 'build' && latestEvent ? <i className={`status-dot ${latestEvent.status}`} /> : null}
                 </button>
@@ -5446,7 +5539,7 @@ export default function App(): React.JSX.Element {
               scanningBeginnerModels={scanningBeginnerModels}
               savingAiPreferences={savingAiPreferences || draftPreparing}
               beginnerModelScanMessage={beginnerModelScanMessage}
-              contextModel={settings.codingBackend === 'codex' || settings.codingBackend === 'claude' ? settings.externalAgents?.[settings.codingBackend]?.model : undefined}
+              contextModel={settings.codingBackend === 'codex' ? settings.externalAgents?.codex?.model : undefined}
               onScanBeginnerModels={() => void scanBeginnerModels()}
               onModelChange={model => setWorkbenchAiOverride({ ...workbenchAiSelection, model, reasoningLevel: 'auto' })}
               onReasoningLevelChange={reasoningLevel => setWorkbenchAiOverride({ ...workbenchAiSelection, reasoningLevel })}
@@ -5644,7 +5737,7 @@ export default function App(): React.JSX.Element {
             ) : null}
 
             {view === 'snapshots' && project ? (
-              <div className="standard-page">
+              <div className="standard-page snapshot-page">
                 <div className="content-toolbar">
                   <h1 className="visually-hidden">版本与迁移</h1><span className="toolbar-context">{platformLabel(project.loader)} · {project.minecraftVersion}</span>
                   <button className="primary-button" onClick={() => void createSnapshot()}><Plus size={16} />创建快照</button>
@@ -5668,6 +5761,13 @@ export default function App(): React.JSX.Element {
                   </div> : null}
                 </section> : <section className="migration-band"><div className="section-title-row"><h2>平台版本</h2><span>{platformLabel(project.loader)}</span></div><p>基岩与网易工程不执行 Java Loader 自动迁移。升级最低引擎或 Mod SDK 前请先创建快照，并按目标平台 API 逐项验证</p></section>)}
                 <GitWorkspace project={project} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} />
+                <div className={`snapshot-storage ${snapshotStorageWarning ? 'warning' : ''} ${snapshotStorageError ? 'error' : ''}`} role={snapshotStorageError ? 'alert' : snapshotStorageWarning ? 'status' : undefined}>
+                  {currentSnapshotStorage ? <>
+                    <strong>{snapshotStorageWarning ? '备份占用偏大' : '备份占用'}</strong>
+                    <span>磁盘去重估算 {formatStorageBytes(currentSnapshotStorage.uniqueBytes)} · 按文件累计 {formatStorageBytes(currentSnapshotStorage.logicalBytes)}</span>
+                    {snapshotStorageWarning ? <p>{currentSnapshotStorage.incomplete ? '文件过多，统计未完成。' : ''}历史运行数据不会自动删除；可在下方移除不再需要的快照。</p> : null}
+                  </> : snapshotStorageError ? <><strong>无法统计备份占用</strong><span>{snapshotStorageError}</span><button className="secondary-button compact" type="button" onClick={() => { setSnapshotStorageError(''); void window.modmind.snapshots.storage(project.path).then(setSnapshotStorage).catch(error => setSnapshotStorageError(errorMessage(error))) }}>重试</button></> : <span>正在统计备份占用…</span>}
+                </div>
                 <div className="snapshot-list">
                   {snapshots.length ? snapshots.map((snapshot) => (
                     <article className="snapshot-row" key={snapshot.id}>
@@ -5741,10 +5841,15 @@ export default function App(): React.JSX.Element {
                       <option value="manual">手动审批</option>
                       <option value="yolo">YOLO（默认，完全绕过审批与沙箱）</option>
                     </select>
-                  </label><p className="settings-note" style={{ gridColumn: '1 / -1' }}>仅对工作台生效，支持 Codex 与 Claude Code。默认 YOLO；自动审批不可用时，本次任务直接转为手动确认。新任务使用已保存的模式。</p></div>
+                  </label><p className="settings-note" style={{ gridColumn: '1 / -1' }}>仅对工作台生效，支持 Codex。默认 YOLO；自动审批不可用时，本次任务直接转为手动确认。新任务使用已保存的模式。</p></div>
                 </section>
                 <section id="settings-ai" className="settings-section">
                   <div className="settings-heading"><h2>AI 模型</h2></div>
+                  <div className="segmented-control" role="group" aria-label="模型来源">
+                    <button type="button" className={visibleAiSettingsBackend === 'quota' ? 'active' : ''} aria-pressed={visibleAiSettingsBackend === 'quota'} onClick={() => void selectAiSettingsBackend('quota')}>ModMind</button>
+                    <button type="button" className={visibleAiSettingsBackend === 'codex' ? 'active' : ''} aria-pressed={visibleAiSettingsBackend === 'codex'} onClick={() => void selectAiSettingsBackend('codex')}>本机 Codex</button>
+                  </div>
+                  {visibleAiSettingsBackend === 'quota' ? <>
                   <ProductionSettingsPanel
                     aiSettings={beginnerAiPreferences}
                     deviceState={deviceState}
@@ -5780,8 +5885,53 @@ export default function App(): React.JSX.Element {
                       void saveBeginnerAiPreference({ modelContextWindows, modelAutoCompactTokenLimits })
                     }}
                   />
+                  </> : <div className="codex-settings-gate">
+                  <fieldset className="codex-ai-settings" aria-label="本机 Codex 设置" disabled={codexSettingsBlocked} aria-hidden={codexSettingsBlocked || undefined}><div className="local-codex-settings">
+                    <div className="beginner-ai-preferences">
+                      <label className="beginner-model-control"><span>模型</span><div>{localCodexScan?.models.length ? <select value={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} disabled={localCodexScanning} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
+                        {[...new Set([settings.externalAgents?.codex?.model, localCodexScan?.model, ...localCodexScan.models].filter((value): value is string => Boolean(value)))].map(model => <option key={model} value={model}>{model}</option>)}
+                      </select> : <input key={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} defaultValue={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} placeholder="输入模型 ID" disabled={localCodexScanning} onBlur={event => { const model = event.target.value.trim(); if (model && model !== settings.externalAgents?.codex?.model) void saveLocalCodexPreference({ model, reasoningEffort: undefined }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />}<button type="button" className="icon-button" title="扫描本机 Codex 配置与模型" disabled={localCodexScanning} onClick={() => void scanLocalCodex()}>{localCodexScanning ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div></label>
+                      <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={settings.externalAgents?.codex?.reasoningEffort ?? 'auto'} allowedEfforts={selectedReasoningEfforts(settings.externalAgents?.codex?.model ?? '', settings.externalAgents?.codex?.reasoningEffortOptions)} disabled={localCodexScanning} onChange={value => void saveLocalCodexPreference({ reasoningEffort: value === 'auto' ? undefined : value })} /></div>
+                    </div>
+                    {localCodexScanError && !codexSettingsBlocked ? <p role="alert">{localCodexScanError} <button className="secondary-button compact" type="button" onClick={() => void scanLocalCodex()}>重试</button></p> : null}
+                    {settings.externalAgents?.codex?.mode === 'hosted' ? <div className="settings-actions"><span>当前使用 ModMind 配置的模型服务</span><button className="secondary-button compact" type="button" disabled={localCodexScanning || !localCodexScan?.status.installed} onClick={() => { setAgentDraft({ baseUrl: localCodexScan?.baseUrl ?? '', apiKey: '' }); void saveLocalCodexPreference({ mode: 'local', model: localCodexScan?.model ?? '', modelContextWindows: {}, modelAutoCompactTokenLimits: {}, reasoningEffort: undefined }) }}>使用本机配置</button></div> : null}
+                    <ModelContextSetting
+                      key={`codex:${settings.externalAgents?.codex?.mode}:${settings.externalAgents?.codex?.model}:${settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined) ?? 'auto'}:${settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined) ?? 'auto'}`}
+                      model={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''}
+                      value={settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined)}
+                      compactValue={settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined)}
+                      saving={localCodexScanning}
+                      onSave={(value, compactValue) => {
+                        const model = settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''
+                        const modelContextWindows = { ...settings.externalAgents?.codex?.modelContextWindows }
+                        const modelAutoCompactTokenLimits = { ...settings.externalAgents?.codex?.modelAutoCompactTokenLimits }
+                        if (value === undefined) delete modelContextWindows[model]; else modelContextWindows[model] = value
+                        if (compactValue === undefined) delete modelAutoCompactTokenLimits[model]; else modelAutoCompactTokenLimits[model] = compactValue
+                        void saveLocalCodexPreference({ modelContextWindows, modelAutoCompactTokenLimits })
+                      }}
+                    />
+                  </div>
+                  <div className="external-agent-settings">
+                    <div className="codex-connection-settings">
+                        <div className="external-agent-editor-form">
+                          <label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={event => setAgentDraft(current => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
+                          <label className="field-label">API Key<SecretInput secretKey="codex" stored={Boolean(settings.externalAgents?.codex?.hasStoredKey || agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey)} value={agentDraft.apiKey ?? ''} onChange={event => setAgentDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey || settings.externalAgents?.codex?.hasStoredKey ? '已发现凭证，留空保持不变' : '输入 API Key'} /></label>
+                        </div>
+                        <div className="settings-actions editor-actions"><span role="status">{agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey ? '已读取本机凭证' : settings.externalAgents?.codex?.hasStoredKey ? '已有加密凭证' : ''}</span><div className="settings-button-group"><button className="primary-button compact" type="button" disabled={configuringAgents.codex} onClick={() => void configureExternalAgent('codex')}>{configuringAgents.codex ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存连接</button></div></div>
+                    </div>
+                  </div></fieldset>
+                  {codexSettingsBlocked ? <div className="codex-install-overlay">
+                    <div role={localCodexScanError ? 'alert' : 'status'}>
+                      {localCodexScanning && codexInstalled === undefined ? <><LoaderCircle className="spin" size={20} aria-hidden="true" /><p>正在检测 Codex…</p></> : localCodexScanError ? <><strong>暂时无法检测 Codex</strong><p>{localCodexScanError}</p></> : <><strong>未检测到 Codex</strong><p>请先到“集成”下载 Codex</p></>}
+                    </div>
+                    <div className="settings-button-group">
+                      <button className="secondary-button compact" type="button" disabled={localCodexScanning} onClick={() => void scanLocalCodex()}>{localCodexScanning ? '正在检测…' : '重新检测'}</button>
+                      <button className="primary-button compact" type="button" data-settings-target="settings-agent-info">前往集成</button>
+                    </div>
+                  </div> : null}
+                  </div>}
                 </section>
-                <section id="settings-agents" className="settings-section">
+                <section id="settings-agent-info" className="settings-section">
                   <div className="settings-heading"><h2>外部 Agent</h2></div>
                   <div className="external-agent-settings">
                     <div className="external-agent-list">
@@ -5791,26 +5941,13 @@ export default function App(): React.JSX.Element {
                         return <div className="external-agent-row" key={agent.kind}>
                           <div className="external-agent-name"><span className={`status-dot ${status?.installed && status.compatible !== false ? 'success' : 'warning'}`} /><div><strong>{agent.label}</strong><p>{status?.compatible === false ? status.detail : status?.installed ? `${status.version ?? '已检测到'} · ${configured?.baseUrl && configured.mode !== 'local' ? '已设置 ModMind 服务' : '使用本机登录与用户配置'}` : externalAgentsReady ? '未检测到命令行工具' : '正在检测…'}</p></div></div>
                           <div className="external-agent-row-actions">
-                            <button className="secondary-button compact" type="button" onClick={() => { setEditingAgent(agent.kind); setAgentDraft({...configured, mode: configured?.mode ?? (agent.kind === 'claude' ? 'local' : 'hosted'), apiKey: ''}); setAvailableModels([]); setModelScanMessage('输入 API Key 后扫描') }}><Pencil size={14} />配置</button>
-                            {status?.installed || configured?.executable ? <button className="icon-button" type="button" title={`打开 ${agent.label}`} onClick={() => void launchExternalAgent(agent.kind)}><TerminalSquare size={15} /></button> : <button className="icon-button" type="button" title={`安装 ${agent.label}`} disabled={!externalAgentsReady || installingAgents[agent.kind]} onClick={() => void installExternalAgent(agent.kind)}>{installingAgents[agent.kind] ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}</button>}
+                            {status?.installed ? <button className="icon-button" type="button" title={`打开 ${agent.label}`} onClick={() => void launchExternalAgent(agent.kind)}><TerminalSquare size={15} /></button> : <button className="icon-button" type="button" title={`安装 ${agent.label}`} disabled={!externalAgentsReady || installingAgents[agent.kind]} onClick={() => void installExternalAgent(agent.kind)}>{installingAgents[agent.kind] ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}</button>}
                             <button className="icon-button" type="button" title={`${agent.label} 文档`} onClick={() => void openExternalAgentDocs(agent.kind)}><ExternalLink size={15} /></button>
                           </div>
                         </div>
                       })}
                     </div>
-                    {editingAgent ? (() => {
-                      const selectedAgent = EXTERNAL_AGENT_OPTIONS.find((item) => item.kind === editingAgent)!
-                      const agent = {...selectedAgent, managedService: selectedAgent.managedService && (editingAgent !== 'claude' || agentDraft.mode === 'hosted')}
-                      return <div className="external-agent-editor">
-                        <div className="external-agent-editor-heading"><div><strong>配置 {agent.label}</strong></div><button className="icon-button" type="button" title="关闭" onClick={() => { setEditingAgent(null); setAgentDraft({}) }}><X size={15} /></button></div>
-                        <div className="external-agent-editor-form">
-                          {editingAgent === 'claude' ? <label className="field-label">Claude Code 模式<select value={agentDraft.mode ?? 'local'} onChange={(event) => setAgentDraft((current) => ({...current, mode: event.target.value as ExternalAgentConfiguration['mode']}))}><option value="local">本机登录和配置</option><option value="hosted">ModMind 中转服务</option></select></label> : null}
-                          {editingAgent === 'claude' ? <label className="field-label">命令路径<input value={agentDraft.executable ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, executable: event.target.value}))} placeholder="留空则从 PATH 查找" /></label> : null}
-                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value, modelContextWindows: undefined, modelAutoCompactTokenLimits: undefined, reasoningEffortOptions: undefined, reasoningEffort: undefined}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div>{editingAgent === 'codex' ? <><label className="field-label">当前模型上下文上限（Token，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="自动使用模型能力表" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const windows = { ...current.modelContextWindows }; const model = current.model?.trim() ?? ''; if (value === '') delete windows[model]; else windows[model] = Number(value); return { ...current, modelContextWindows: windows } }) }} /><small>填写服务商支持的上限，留空自动匹配</small></label><label className="field-label">自动压缩阈值（tokens，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelAutoCompactTokenLimits?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="留空自动计算" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const limits = { ...current.modelAutoCompactTokenLimits }; const model = current.model?.trim() ?? ''; if (value === '') delete limits[model]; else limits[model] = Number(value); return { ...current, modelAutoCompactTokenLimits: limits } }) }} /><small>最多为上下文窗口的 90%</small></label></> : null}<div className="external-agent-reasoning-control"><span>思考强度</span><ReasoningControl value={agentDraft.reasoningEffort ?? 'auto'} capabilities={availableModels.find(model => model.id === agentDraft.model)?.reasoning} allowedEfforts={editingAgent === 'codex' ? selectedReasoningEfforts(agentDraft.model?.trim() ?? '', agentDraft.reasoningEffortOptions) : undefined} disabled={scanningModels || configuringAgents[editingAgent]} onChange={value => setAgentDraft(current => ({ ...current, reasoningEffort: value === 'auto' ? undefined : value }))} /></div>{editingAgent === 'codex' ? <ReasoningEffortSettings value={selectedReasoningEfforts(agentDraft.model?.trim() ?? '', agentDraft.reasoningEffortOptions)} disabled={!agentDraft.model?.trim() || configuringAgents.codex} onChange={(efforts) => setAgentDraft(current => { const options = { ...current.reasoningEffortOptions }; const model = current.model?.trim() ?? ''; if (efforts.join(',') === DEFAULT_CODEX_REASONING_EFFORTS.join(',')) delete options[model]; else options[model] = efforts; return { ...current, reasoningEffortOptions: options, reasoningEffort: current.reasoningEffort && !efforts.includes(current.reasoningEffort) ? undefined : current.reasoningEffort } })} /> : null}</> : null}
-                        </div>
-                        <div className="settings-actions editor-actions"><span><ShieldCheck size={15} />凭证通过系统加密保存</span><button className="primary-button compact" type="button" disabled={configuringAgents[editingAgent]} onClick={() => void configureExternalAgent(editingAgent)}>{configuringAgents[editingAgent] ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存 {agent.label} 配置</button></div>
-                      </div>
-                    })() : null}
+                    <div className="settings-agent-info" role="note">配置请前往 <button type="button" data-settings-target="settings-ai">AI 与图像</button></div>
                   </div>
                 </section>
                 <section id="settings-mcp" className="settings-section">
@@ -5991,7 +6128,7 @@ export default function App(): React.JSX.Element {
       {showCreate ? <CreateProjectDialog onClose={() => setShowCreate(false)} onCreated={(created) => { if (uiMode === 'beginner' && beginnerStartupDraft.trim()) pendingBeginnerStartRef.current = { projectPath: created.path, prompt: beginnerStartupDraft }; setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
       {existingImportPicker ? <ExistingImportPicker onClose={() => setExistingImportPicker(false)} onSelect={(sourceType) => { setExistingImportPicker(false); void inspectExistingProject(sourceType) }} /> : null}
-      {existingInspecting ? <ProjectInspectionDialog kind="project" /> : null}
+      {existingInspecting ? <ProjectInspectionDialog kind="project" progress={existingInspectionProgress} error={existingInspectionError} onClose={() => setExistingInspecting(false)} onRetry={() => void inspectExistingProject(existingInspectionSource)} /> : null}
       {modJarInspecting ? <ProjectInspectionDialog kind="mod" /> : null}
       {existingAnalysis ? <AdoptProjectDialog analysis={existingAnalysis} onClose={() => setExistingAnalysis(null)} onAdopted={(adopted) => { setExistingAnalysis(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {modJarInspection ? <AdoptModJarDialog inspection={modJarInspection} onClose={() => setModJarInspection(null)} onAdopted={(adopted) => { setModJarInspection(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}

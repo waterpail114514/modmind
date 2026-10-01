@@ -4,6 +4,8 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import { promisify } from 'node:util'
 import { Decompress as ZstdDecompress } from 'fzstd'
 import { fetchWithApprovalModelFallback } from './agentApproval'
+import { diagnosticJournal } from './diagnosticLog'
+import { MCP_PROBE_TOOL } from './agentToolReadiness'
 import type { ReasoningEffort } from '../shared/types'
 
 type JsonRecord = Record<string, unknown>
@@ -45,6 +47,20 @@ class AdapterRequestError extends Error {
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+export function toolDeclarationSummary(value: unknown): { count: number; probeDeclared: boolean; dispatcherDeclared: boolean } {
+  if (!Array.isArray(value)) return { count: 0, probeDeclared: false, dispatcherDeclared: false }
+  const names = value.flatMap(item => {
+    if (!isRecord(item)) return []
+    if (item.type === 'namespace' && Array.isArray(item.tools)) return item.tools.flatMap(child => isRecord(child) && typeof child.name === 'string' ? [child.name] : [])
+    return typeof item.name === 'string' ? [item.name] : []
+  })
+  return {
+    count: names.length,
+    probeDeclared: names.some(name => name === MCP_PROBE_TOOL || name.endsWith(`__${MCP_PROBE_TOOL}`)),
+    dispatcherDeclared: names.some(name => name === 'exec' || name === 'functions__exec')
+  }
 }
 
 function stringValue(value: unknown): string {
@@ -594,6 +610,10 @@ export class ChatCompletionsAdapter {
       // provider reject an otherwise valid request.
       const sanitizedBody = normalizeHistoryMessageIds(sanitizeTokenBudgets(body))
       const outgoingPayload = normalizeResponsesTools(JSON.parse(sanitizedBody.toString('utf8')) as JsonRecord)
+      const requestId = randomUUID()
+      const declarations = toolDeclarationSummary(outgoingPayload.tools)
+      diagnosticJournal.record({ subsystem: 'ai', operation: 'model-tool-catalog', phase: 'request', message: 'Model request tool declarations',
+        data: { routeId: route.id, requestId, protocol: route.protocol, ...declarations } })
       // Resumed threads can still emit the previous group's model (including
       // internal requests). Bind task requests to this execution's selection.
       // Dedicated approval requests retain their own model and fallback policy.
@@ -615,6 +635,8 @@ export class ChatCompletionsAdapter {
       let translated: ChatCompletionTranslation | undefined
       const requestUpstreamChat = (): Promise<Response> => {
         translated ??= responsesRequestToChatCompletions(outgoingPayload)
+        diagnosticJournal.record({ subsystem: 'ai', operation: 'model-tool-catalog', phase: 'translated', message: 'Chat Completions tool declarations',
+          data: { routeId: route.id, requestId, ...toolDeclarationSummary(translated.body.tools) } })
         return fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'chat/completions'), {
           method: 'POST',
           headers: requestHeaders(request.headers),
@@ -627,6 +649,8 @@ export class ChatCompletionsAdapter {
       // switches often keep the same public Base URL while changing protocol.
       if (route.protocol === 'chat-completions') {
         const chat = await requestUpstreamChat()
+        diagnosticJournal.record({ subsystem: 'ai', operation: 'model-tool-catalog', phase: 'upstream', message: 'Chat Completions response',
+          data: { routeId: route.id, requestId, protocol: 'chat-completions', status: chat.status } })
         if (chat.ok) {
           const payload = await chat.json() as unknown
           const output = sseBody(chatCompletionToResponsesEvents(payload, translated!.tools))
@@ -642,6 +666,8 @@ export class ChatCompletionsAdapter {
           return
         }
         const upstream = await requestUpstreamResponses()
+        diagnosticJournal.record({ subsystem: 'ai', operation: 'model-tool-catalog', phase: 'upstream', message: 'Responses fallback response',
+          data: { routeId: route.id, requestId, protocol: 'responses', status: upstream.status } })
         if (upstream.ok) {
           route.protocol = 'responses'
           return void await relayResponse(upstream, response)
@@ -651,6 +677,8 @@ export class ChatCompletionsAdapter {
       }
 
       const upstreamResponses = await requestUpstreamResponses()
+      diagnosticJournal.record({ subsystem: 'ai', operation: 'model-tool-catalog', phase: 'upstream', message: 'Responses response',
+        data: { routeId: route.id, requestId, protocol: 'responses', status: upstreamResponses.status } })
       if (upstreamResponses.ok) {
         route.protocol = 'responses'
         return void await relayResponse(upstreamResponses, response)
@@ -664,6 +692,8 @@ export class ChatCompletionsAdapter {
       }
 
       const upstream = await requestUpstreamChat()
+      diagnosticJournal.record({ subsystem: 'ai', operation: 'model-tool-catalog', phase: 'upstream', message: 'Chat Completions fallback response',
+        data: { routeId: route.id, requestId, protocol: 'chat-completions', status: upstream.status } })
       if (!upstream.ok) {
         await relayResponse(upstream, response)
         return

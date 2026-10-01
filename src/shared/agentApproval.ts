@@ -2,7 +2,7 @@ export type AgentApprovalMode = 'auto-review' | 'manual' | 'yolo'
 
 export type AgentApprovalDecision = 'allow' | 'allow-session' | 'deny'
 export interface AgentApprovalDetails {
-  engine: 'codex' | 'claude'
+  engine: 'codex'
   kind: 'command' | 'files' | 'permissions' | 'tool'
   title: string
   detail: string

@@ -217,26 +217,6 @@ describe('ConversationStore', () => {
     await expect(store.appendOutput(project, { kind: 'delta', content: 'late', time: new Date().toISOString(), conversationId: fork.id, generation: 0, turnId: 'turn-a' })).rejects.toThrow('旧对话分支')
   })
 
-  it('marks historical Claude branches as visible-history rebuilds', async () => {
-    const { project, store } = await fixture()
-    await store.create(project, { id: 'idea-a', surface: 'inspiration' })
-    await store.appendUser(project, 'idea-a', 0, 'turn-a', { prompt: 'a' })
-    const fork = await store.fork(project, { sourceConversationId: 'idea-a', id: 'idea-b', throughTurnId: 'turn-a', view: { messages: [] }, backend: 'claude' })
-    expect(fork.parent?.nativeMode).toBe('visible-history-rebuild')
-    expect(fork.native).toEqual({})
-  })
-
-  it('uses Claude native HEAD fork only for the latest completed turn', async () => {
-    const { project, store } = await fixture()
-    await store.create(project, { id: 'idea-a', surface: 'inspiration' })
-    await store.appendUser(project, 'idea-a', 0, 'turn-a', { prompt: 'a' })
-    await store.setNativeState(project, 'idea-a', 0, 'claude', 'claude-session', undefined, 'turn-a')
-    const head = await store.fork(project, { sourceConversationId: 'idea-a', id: 'idea-head', throughTurnId: 'turn-a', view: { messages: [] }, backend: 'claude' })
-    const before = await store.fork(project, { sourceConversationId: 'idea-a', id: 'idea-before', beforeTurnId: 'turn-a', view: { messages: [] }, backend: 'claude' })
-    expect(head.parent?.nativeMode).toBe('native')
-    expect(before.parent?.nativeMode).toBe('visible-history-rebuild')
-  })
-
   it('serializes the shared index across concurrent conversations', async () => {
     const { project, store } = await fixture()
     await Promise.all(Array.from({ length: 12 }, (_, index) => store.create(project, { id: `ws-${index}`, surface: 'workspace', title: `Conversation ${index}` })))

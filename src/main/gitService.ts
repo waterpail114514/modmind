@@ -59,7 +59,7 @@ async function untrackedDiff(project: ProjectInfo, relativePath: string): Promis
 async function ensureGitignore(project: ProjectInfo): Promise<void> {
   const target = path.join(project.path, '.gitignore')
   const existing = await fs.readFile(target, 'utf8').catch(() => '')
-  const entries = ['.gradle/', 'build/', 'run/', 'logs/', '.modmind/']
+  const entries = ['.gradle/', '.gradle-cloud-storage-test/', 'build/', 'run/', 'logs/', '.modmind/']
   const lines = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
   const missing = entries.filter((entry) => !lines.has(entry))
   if (!missing.length) return

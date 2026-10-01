@@ -31,7 +31,11 @@ export default function SettingsSections({ children, feedback = '', initialSecti
         {categories.map(item => <button key={item.id} type="button" aria-current={!searching && activeCategory === item.id ? 'page' : undefined} onClick={() => { setActiveCategory(item.id); setQuery('') }}>{item.label}</button>)}
       </nav>
     </div>
-    <ScrollArea className="settings-scroll-area" ref={scrollRef}>
+    <ScrollArea className="settings-scroll-area" ref={scrollRef} onClickCapture={event => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>('[data-settings-target]')?.dataset.settingsTarget
+      const category = sections.find(section => section.id === target)?.category
+      if (category) { setActiveCategory(category); setQuery('') }
+    }}>
     {searching && <p className="settings-search-count" role="status">找到 {visibleSections.length} 个相关设置分区</p>}
     <div className="settings-category-content">
       {sections.map(section => <div key={section.id} hidden={!visibleIds.has(section.id)}>

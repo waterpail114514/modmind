@@ -70,7 +70,7 @@ export function agentProtectionConfigArgs(projectPath?: string): string[] {
   const roots = [...applicationRoots]
   if (projectPath) roots.push(path.join(path.resolve(projectPath), '.modmind'), canonicalPath(path.join(path.resolve(projectPath), '.modmind')))
   // A named profile preserves read-only islands inside writable project roots.
-  const filesystem = { ':root': 'read', ':project_roots': 'write', ':project_roots/.modmind': 'write', ...Object.fromEntries(roots.map(root => [root, 'read'])) }
+  const filesystem = { ':root': 'read', ':project_roots': 'write', ...Object.fromEntries(roots.map(root => [root, 'read'])) }
   const table = Object.entries(filesystem).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(',')
   return ['-c', `default_permissions="${AGENT_PROTECTION_PROFILE}"`,
     '-c', `permissions.${AGENT_PROTECTION_PROFILE}={filesystem={${table}},network={enabled=true}}`,

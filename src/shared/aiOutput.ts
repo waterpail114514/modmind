@@ -5,7 +5,7 @@ const OPERATIONAL_STATUS_PATTERNS = [
   /第\s*\d+\s*次.{0,30}最多\s*\d+\s*次/i,
   /(?:rate\s*limit|service\s*unavailable|connection\s*(?:lost|closed|reset)|request\s*timed?\s*out).{0,160}(?:retry|attempt)/i,
   /(?:retrying|retry\s+attempt|will\s+retry|retries?\s+exhausted|retry\s+limit)/i,
-  /^(?:external\s+agent|codex|claude(?:\s+code)?).{0,100}(?:waiting|reconnecting|retrying)/i,
+  /^(?:external\s+agent|codex).{0,100}(?:waiting|reconnecting|retrying)/i,
   /^外部(?:代理| Agent)任务已停止/i,
   /^(?:我会先|我先|我将|我正在|接下来我会|现在我会).{0,180}(?:读取|检查|定位|调用|重试|继续|切换|验证|处理)/i,
   /^(?:我已|.{0,40}已确认).{0,180}(?:接下来|下一步|现在).{0,120}(?:读取|检查|定位|调用|重试|继续|切换|验证|处理|实现)/i,

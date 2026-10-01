@@ -411,7 +411,11 @@ export async function downloadModpackContent(project: ProjectInfo, input: Modpac
       const state = { entryCount: 0, expandedBytes: 0 }
       await extractZip(downloaded, {
         dir: extracted,
-        onEntry: (entry) => recordZipExpansion(state, { fileName: entry.fileName, uncompressedSize: entry.uncompressedSize })
+        onEntry: (entry) => recordZipExpansion(state, { fileName: entry.fileName, uncompressedSize: entry.uncompressedSize }, {
+          maxEntries: 20_000,
+          maxEntryBytes: 256 * 1024 * 1024,
+          maxExpandedBytes: 2 * 1024 * 1024 * 1024
+        })
       })
       const roots = (await fs.readdir(extracted, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
       const source = roots.length === 1 ? path.join(extracted, roots[0].name) : extracted

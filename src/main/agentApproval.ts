@@ -31,7 +31,7 @@ export function codexApprovalResponse(method: string, params: Record<string, unk
 
 export function agentApprovalPrompt(mode?: AgentApprovalMode): string {
   const label = normalizeAgentApprovalMode(mode) === 'yolo' ? 'YOLO（默认）' : mode === 'manual' ? '手动审批' : '自动审批'
-  return `工作台执行审批：当前为 ${label}。用户可在「设置 → 执行审批 → 工作台审批模式」选择 YOLO、自动审批或手动审批，适用于 Codex 和 Claude Code，仅影响工作台。
+  return `工作台执行审批：当前为 ${label}。用户可在「设置 → 执行审批 → 工作台审批模式」选择 YOLO、自动审批或手动审批，适用于 Codex，仅影响工作台。
 手动审批由 ModMind 弹窗收集用户决定；等待审批时不要重复请求同一操作，也不要把未作答当作同意。自动审批服务故障时，宿主会直接回退为本次任务的手动审批，不修改默认设置，不切换 YOLO。
 明确的审查拒绝不是服务故障。先说明操作及原因，可尝试最多两种实质不同且允许的低风险方案；仍受阻则停止该操作并保留进度，不得伪装重试或绕过拒绝。审批不能解除只读边界、未开放功能或 ModMind 内部文件保护。`
 }

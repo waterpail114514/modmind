@@ -6,7 +6,7 @@ describe('backend switch coordinator', () => {
     const coordinator = new BackendSwitchCoordinator<string, string>()
     const first = coordinator.request('project')
     const second = coordinator.request('project')
-    const acceptedSecond = coordinator.accept(second, 'codex', 'claude')
+    const acceptedSecond = coordinator.accept(second, 'codex', 'quota')
     expect(acceptedSecond).not.toBeNull()
     expect(coordinator.accept(first, 'codex', 'quota')).toBeNull()
   })
@@ -22,8 +22,8 @@ describe('backend switch coordinator', () => {
   it('keeps the original stable rollback value across several pre-ready switches', () => {
     const coordinator = new BackendSwitchCoordinator<string, string>()
     const first = coordinator.accept(coordinator.request('project'), 'quota', 'codex')!
-    const second = coordinator.accept(coordinator.request('project'), 'codex', 'claude')!
-    const third = coordinator.accept(coordinator.request('project'), 'claude', 'quota')!
+    const second = coordinator.accept(coordinator.request('project'), 'codex', 'quota')!
+    const third = coordinator.accept(coordinator.request('project'), 'quota', 'codex')!
     expect(first.rollbackValue).toBe('quota')
     expect(second.rollbackValue).toBe('quota')
     expect(third.rollbackValue).toBe('quota')
@@ -33,7 +33,7 @@ describe('backend switch coordinator', () => {
     const coordinator = new BackendSwitchCoordinator<string, string>()
     const first = coordinator.accept(coordinator.request('project'), 'quota', 'codex')!
     expect(coordinator.markReady(first)).toBe(true)
-    const second = coordinator.accept(coordinator.request('project'), 'codex', 'claude')!
+    const second = coordinator.accept(coordinator.request('project'), 'codex', 'quota')!
     expect(second.rollbackValue).toBe('codex')
     expect(coordinator.markReady(first)).toBe(false)
   })
@@ -50,7 +50,7 @@ describe('backend switch coordinator', () => {
   it('clears only the current failed transition', () => {
     const coordinator = new BackendSwitchCoordinator<string, string>()
     const first = coordinator.accept(coordinator.request('project'), 'quota', 'codex')!
-    const second = coordinator.accept(coordinator.request('project'), 'codex', 'claude')!
+    const second = coordinator.accept(coordinator.request('project'), 'codex', 'quota')!
     expect(coordinator.fail(first)).toBe(false)
     expect(coordinator.current('project')).toBe(second)
     expect(coordinator.fail(second)).toBe(true)

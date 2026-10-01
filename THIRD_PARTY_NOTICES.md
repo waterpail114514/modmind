@@ -2,8 +2,8 @@
 
 ## LobeHub Icons
 
-The Codex and Claude brand paths in `src/renderer/src/components/AgentBrandIcon.tsx`
-are adapted from LobeHub Icons (`packages/static-svg/icons/codex.svg` and `claude.svg`).
+The Codex brand path in `src/renderer/src/components/AgentBrandIcon.tsx`
+is adapted from LobeHub Icons (`packages/static-svg/icons/codex.svg`).
 Upstream: https://github.com/lobehub/lobe-icons
 
 Copyright (c) 2023 LobeHub

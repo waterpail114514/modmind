@@ -60,7 +60,7 @@ describe('quota model preferences', () => {
     const store = parseStoredQuotaModelPreferences({ model: 'legacy', reasoningLevel: 'high', fastMode: true }, defaults)
     expect(store).toEqual({
       version: 3,
-      current: { model: 'legacy', reasoningLevel: 'auto', fastMode: true },
+      current: { model: 'legacy', reasoningLevel: 'max', fastMode: true },
       profiles: {}
     })
   })

@@ -98,7 +98,7 @@ export default function GlobalDownloadIndicator(): React.JSX.Element | null {
                     <span className="global-download-actions">
                       {activity.status === 'downloading' && activity.restartable ? <button type="button" title="停止当前连接并从缓存重启" aria-label={`重启 ${activity.label}`} onClick={() => void window.modmind.downloads.restart(activity.id).then(setSnapshot)}><RotateCcw size={14} /></button> : null}
                       {activity.status === 'downloading' && activity.cancellable ? <button type="button" title="停止下载" aria-label={`停止 ${activity.label}`} onClick={() => void window.modmind.downloads.cancel(activity.id).then(setSnapshot)}><Square size={13} /></button> : null}
-                      {activity.status !== 'downloading' && activity.retryable ? <button type="button" title="校验已有缓存并重试" aria-label={`重试 ${activity.label}`} onClick={() => void window.modmind.downloads.retry(activity.id).then(setSnapshot)}><RotateCcw size={14} /></button> : null}
+                      {activity.status !== 'downloading' && activity.retryable && !hasActive ? <button type="button" title="校验已有缓存并重试" aria-label={`重试 ${activity.label}`} onClick={() => void window.modmind.downloads.retry(activity.id).then(setSnapshot)}><RotateCcw size={14} /></button> : null}
                       {activity.status !== 'downloading' ? (
                       <button type="button" title="移除此任务" aria-label={`移除 ${activity.label}`} onClick={() => void window.modmind.downloads.dismiss(activity.id).then(setSnapshot)}><X size={14} /></button>
                       ) : null}
@@ -116,15 +116,15 @@ export default function GlobalDownloadIndicator(): React.JSX.Element | null {
       </section>
       <button
         type="button"
-        className={`global-download-ball${hasFailed ? ' failed' : ''}`}
-        aria-label={hasFailed ? '查看下载失败原因' : hasActive ? '查看正在下载的任务' : hasStopped ? '查看已停止的下载' : '查看已完成的下载'}
+        className={`global-download-ball${hasFailed && !hasActive ? ' failed' : ''}`}
+        aria-label={hasActive ? '查看正在下载的任务' : hasFailed ? '查看下载失败原因' : hasStopped ? '查看已停止的下载' : '查看已完成的下载'}
         aria-expanded={open}
-        title={hasFailed ? '下载失败' : hasActive ? '正在下载' : hasStopped ? '下载已停止' : '下载完成'}
+        title={hasActive ? '正在下载' : hasFailed ? '下载失败' : hasStopped ? '下载已停止' : '下载完成'}
         onClick={() => setOpen((value) => !value)}
       >
-        {hasFailed ? <CircleAlert size={23} /> : hasActive ? <Download size={23} /> : hasStopped ? <Square size={20} /> : <CheckCircle2 size={23} />}
+        {hasActive ? <Download size={23} /> : hasFailed ? <CircleAlert size={23} /> : hasStopped ? <Square size={20} /> : <CheckCircle2 size={23} />}
         {activities.length > 1 ? <span>{activities.length > 99 ? '99+' : activities.length}</span> : null}
-        {activeProgress !== undefined && !hasFailed ? <i style={{ transform: `scaleX(${activeProgress})` }} /> : null}
+        {activeProgress !== undefined ? <i style={{ transform: `scaleX(${activeProgress})` }} /> : null}
       </button>
     </div>
   )
