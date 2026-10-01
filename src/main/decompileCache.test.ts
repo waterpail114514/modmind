@@ -7,7 +7,7 @@ import {
   DECOMPILE_OUTPUT_DIRECTORY,
   enforceDecompileCacheLimit,
   readDecompileCacheEntry
-} from './decompileCache'
+} from "../../feature-plugins/decompile/src/main/decompileCache"
 
 describe('decompileCache', () => {
   let cacheRoot: string

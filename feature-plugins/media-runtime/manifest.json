@@ -1,0 +1,13 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "media-runtime",
+  "name": "媒体处理支持",
+  "version": "1.5.0-plugintest-r7",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "nativeBinaries": { "ffmpeg": "ffmpeg-static" },
+  "capabilities": [{ "id": "media-conversion", "name": "媒体格式转换支持", "description": "为声音和发布插件提供本地音频转换；这两个插件需要先安装并启用媒体处理支持。" }]
+}

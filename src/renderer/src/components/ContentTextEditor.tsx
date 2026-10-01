@@ -1,7 +1,7 @@
 import { reportClientFailure } from '../lib/clientFailure'
 import { useEffect, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react'
 import { LoaderCircle, RotateCcw, Save } from 'lucide-react'
-import MonacoCodeEditor from './MonacoCodeEditor'
+import MonacoCodeEditor from '../../../../feature-plugins/sdk/MonacoCodeEditor'
 import { useConfirmDialog } from './InteractionDialogs'
 import { editorLanguage } from '../lib/editorLanguage'
 import { contentDraftKey, getContentDraft, saveContentDraft, setContentDraft, subscribeContentDrafts } from '../lib/contentDrafts'

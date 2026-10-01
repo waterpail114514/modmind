@@ -11,7 +11,7 @@ import {
   scanClassFile,
   scanExtractedJarReferences,
   scanJarReferences
-} from './classReferenceScanner'
+} from "../../feature-plugins/decompile/src/main/classReferenceScanner"
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))

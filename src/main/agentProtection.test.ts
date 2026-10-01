@@ -41,6 +41,7 @@ describe('agent infrastructure protection', () => {
     expect(() => assertAgentProjectAllowed(path.join(root, 'application-project'))).not.toThrow()
     expect(() => assertAgentWriteAllowed(root, 'custom-data/settings.json')).toThrow()
     expect(agentProtectionConfigArgs(root).join(' ')).toContain(JSON.stringify(userData))
+    expect(agentProtectionConfigArgs(root).join(' ')).not.toContain(':project_roots/.modmind')
   })
 
   it('rejects linked directories and hard-linked leaf files', async () => {

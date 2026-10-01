@@ -8,7 +8,7 @@ import helper from './nativeMinecraftMcpHelper.json'
 import { afterEach, expect, it, vi } from 'vitest'
 import { NativeMinecraftMcpClient, nativeMcpFor, prepareLocalMcpJar, restrictMcpServerAddress } from './nativeMinecraftMcp'
 import { createStoredZip } from './bedrockAddon'
-import { archiveRead } from './ftbResourceArchive'
+import { archiveRead } from "./archiveInspection"
 
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 vi.mock('./downloadService', () => ({ verifiedDownload: { download: vi.fn() } }))

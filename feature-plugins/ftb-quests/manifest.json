@@ -1,0 +1,28 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "ftb-quests",
+  "name": "FTB 任务书",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "ftb-quests",
+      "label": "FTB 任务书",
+      "component": "ftb-quests",
+      "icon": "BookOpen",
+      "group": "内容",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "ftb-quests",
+      "name": "FTB 任务书",
+      "description": "读取、编辑、校验、保存与恢复 FTB Quests 任务书，提供游戏物品和模型图标参照。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

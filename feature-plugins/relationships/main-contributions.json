@@ -1,0 +1,722 @@
+{
+  "actions": [
+    {
+      "id": "relationships:list",
+      "handler": "relationships:list",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:providers",
+      "handler": "relationships:providers",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:recommendations",
+      "handler": "relationships:recommendations",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:search",
+      "handler": "relationships:search",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:versions",
+      "handler": "relationships:versions",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:installPlatform",
+      "handler": "relationships:installPlatform",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:beginMcmodDownload",
+      "handler": "relationships:beginMcmodDownload",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:refreshMcmodCaptcha",
+      "handler": "relationships:refreshMcmodCaptcha",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:submitMcmodCaptcha",
+      "handler": "relationships:submitMcmodCaptcha",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:prepare",
+      "handler": "relationships:prepare",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:beginImport",
+      "handler": "relationships:beginImport",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:confirmImport",
+      "handler": "relationships:confirmImport",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:cancelImport",
+      "handler": "relationships:cancelImport",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:linkProject",
+      "handler": "relationships:linkProject",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:importSource",
+      "handler": "relationships:importSource",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:setRole",
+      "handler": "relationships:setRole",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:remove",
+      "handler": "relationships:remove",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "relationships:audit",
+      "handler": "relationships:audit",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:search",
+      "handler": "dependencies:search",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:versions",
+      "handler": "dependencies:versions",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:list",
+      "handler": "dependencies:list",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:install",
+      "handler": "dependencies:install",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:installMaven",
+      "handler": "dependencies:installMaven",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:audit",
+      "handler": "dependencies:audit",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependencies:remove",
+      "handler": "dependencies:remove",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "dependency_search",
+      "handler": "dependency_search",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "id": "dependency_install",
+      "handler": "dependency_install",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId"
+        ]
+      }
+    },
+    {
+      "id": "maven_dependency_install",
+      "handler": "maven_dependency_install",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "configuration": {
+            "type": "string",
+            "enum": [
+              "implementation",
+              "modImplementation",
+              "compileOnly",
+              "runtimeOnly"
+            ]
+          }
+        },
+        "required": [
+          "coordinate"
+        ]
+      }
+    },
+    {
+      "id": "addon_relationships",
+      "handler": "addon_relationships",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "id": "addon_prepare",
+      "handler": "addon_prepare",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optional": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "modrinth",
+                "curseforge"
+              ]
+            }
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "id": "addon_import",
+      "handler": "addon_import",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "required",
+              "optional",
+              "test"
+            ]
+          }
+        },
+        "required": [
+          "paths"
+        ]
+      }
+    },
+    {
+      "id": "addon_link_project",
+      "handler": "addon_link_project",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectPath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectPath"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_dependency_search",
+      "action": "dependency_search",
+      "description": "Search Modrinth for projects compatible with the active Loader and Minecraft version."
+    },
+    {
+      "name": "modmind_dependency_install",
+      "action": "dependency_install",
+      "description": "Install a compatible Modrinth dependency through the managed Gradle and test-instance integration."
+    },
+    {
+      "name": "modmind_maven_dependency_install",
+      "action": "maven_dependency_install",
+      "description": "Register a Maven dependency through ModMind managed Gradle blocks. Use this instead of editing Gradle dependency or repository blocks directly when the requested library is available from Maven."
+    },
+    {
+      "name": "modmind_addon_relationships",
+      "action": "addon_relationships",
+      "description": "Read prepared add-on targets, exact versions, artifact/source paths, public package summaries, and license constraints."
+    },
+    {
+      "name": "modmind_addon_prepare",
+      "action": "addon_prepare",
+      "description": "Prepare one or more add-on target mods by exact name. Resolves compatible Modrinth/CurseForge projects and required transitive dependencies, downloads and verifies runtime JARs, obtains exact-version sources when available, updates Gradle and loader metadata, and synchronizes the test instance. Use this before implementing a request to extend another mod."
+    },
+    {
+      "name": "modmind_addon_import",
+      "action": "addon_import",
+      "description": "Import project-relative JAR files as add-on targets only when their hashes identify exact platform files. Ambiguous files are rejected for batch confirmation in the UI."
+    },
+    {
+      "name": "modmind_addon_link_project",
+      "action": "addon_link_project",
+      "description": "Build and link another existing ModMind Java mod project as a required add-on target. The path must point to a ModMind project with the same Minecraft version and Loader."
+    }
+  ]
+}

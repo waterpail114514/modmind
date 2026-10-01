@@ -21,6 +21,7 @@ ui-check*.jpg
 /modmind-mcp-open-source.zip
 /docs/*
 !/docs/design-spec.zh-CN.md
+!/docs/app-changelog.zh-CN.md
 !/docs/sidebar-layout.zh-CN.md
 !/docs/diagnostics-audit-2026-09-16.zh-CN.md
 !/docs/plugin-development.zh-CN.md
@@ -38,3 +39,11 @@ ui-check*.jpg
 /scripts/restore-timeline.py
 /scripts/smoke-loader-templates.ts
 /scripts/smoke-packaged-app.mjs
+
+# Application feature plugin build output
+/feature-plugin-dist/
+/test-results/feature-plugins-live/profile/
+/test-results/feature-plugins/*/profile/
+/test-results/build-temp-*/
+/test-results/test-temp-*/
+!/docs/feature-plugins.zh-CN.md

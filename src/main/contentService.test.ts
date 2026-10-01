@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildContentFile } from './contentService'
+import { buildContentFile } from "../../feature-plugins/publishing/src/main/contentService"
 import type { ProjectInfo } from '../shared/types'
 
 const project = (minecraftVersion: string): ProjectInfo => ({

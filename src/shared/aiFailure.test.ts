@@ -11,6 +11,11 @@ describe('describeAiFailureForUser', () => {
     expect(describeAiFailureForUser(message)).toBe(message)
     expect(message).not.toContain('切换模型')
   })
+  it('preserves model-side tool loss without implying the MCP service disconnected', () => {
+    const message = '模型回复称本轮没有可用的项目工具，且没有发起工具调用；当前任务未完成。已保留会话和项目改动。请重试；若持续出现，请切换模型或线路并导出诊断信息。'
+    expect(describeAiFailureForUser(new Error(message))).toBe(message)
+    expect(describeAiFailureForUser(message)).toBe(message)
+  })
   it('does not interpret numbers in request IDs or usage as HTTP statuses', () => {
     for (const message of ['request id: req-429-abc', 'input_tokens=500', 'received 404 tokens', 'request id: req-413-abc', 'input_tokens=413000']) {
       expect(describeAiFailureForUser(message)).not.toMatch(/线路繁忙|HTTP|模型不存在|请求内容过大/)
@@ -54,6 +59,10 @@ describe('describeAiFailureForUser', () => {
   })
 
   it('keeps authentication, quota, model, and connection causes distinct', () => {
+    expect(describeAiFailureForUser(`{"error":{"message":"Invalid value: 'ultra'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.","type":"invalid_request_error"}}`))
+      .toBe('模型线路不支持 ultra 思考强度。请选择自动或线路支持的档位后重试。')
+    expect(describeAiFailureForUser('401 Unauthorized: {"code":"API_KEY_DISABLED","message":"API key is disabled"}'))
+      .toContain('API Key 已被禁用')
     expect(describeAiFailureForUser('401 Unauthorized')).toContain('凭证无效')
     expect(describeAiFailureForUser('402 Payment Required')).toContain('额度不足')
     expect(describeAiFailureForUser('404 Not Found')).toContain('模型接口或所选模型不存在')

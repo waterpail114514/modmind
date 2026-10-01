@@ -23,7 +23,6 @@ import PagedSteps from './components/PagedSteps'
 import ChatWelcome from './components/ChatWelcome'
 import InspirationConversationPicker from './components/InspirationConversationPicker'
 import MinimalProjectStart from './components/MinimalProjectStart'
-import ItemEditorWorkspace from './components/ItemEditorWorkspace'
 import QuickGameTestDialog from './components/QuickGameTestDialog'
 import { discussionPrompt, engineeringHandoffPrompt, isWorkbenchDiscussion, workbenchFlowBackend, workbenchFlowOptions } from '../../shared/workbenchFlow'
 import { missingDraftDetails } from '../../shared/draftProject'
@@ -34,6 +33,8 @@ import { useSidebarLayout } from './useSidebarLayout'
 import { resolveSidebarGroups, moveSidebarEntry, moveSidebarCategory } from './sidebarLayout'
 import { buildNavigationDefinitions } from './navigationDefinitions'
 import AppMaintenanceSettings from './components/AppMaintenanceSettings'
+import AppChangelogDialog from './components/AppChangelogDialog'
+import type { AppChangelogSnapshot } from '../../shared/appChangelog'
 import AboutAuthors from './components/AboutAuthors'
 import ModelContextSetting from './components/ModelContextSetting'
 import ReasoningControl from './components/ReasoningControl'
@@ -115,10 +116,12 @@ import type {
   AppUpdateState,
   AppVersionCheckResult,
   ExternalAgentStatus,
+  LocalCodexScan,
   ExternalAgentConfiguration,
   ExternalAgentKind,
   ExistingProjectAdoptInput,
   ExistingProjectAnalysis,
+  ExistingProjectInspectionProgress,
   FileNode,
   DetectedJavaHome,
   JavaPreferences,
@@ -131,6 +134,7 @@ import type {
   ProjectKind,
   ProjectMigrationPreview,
   SnapshotInfo,
+  SnapshotStorageInfo,
   UiMode,
   BeginnerTaskState,
   BeginnerAiPreferences,
@@ -143,44 +147,26 @@ import type {
   SidebarViewId,
   DetachedWindowTarget
 } from '../../shared/types'
-import type { MappingClassDetail, MappingClassResult } from '../../shared/mappings'
-import { decompileTargetPlatforms, type DecompilePlatform, type DecompileInspectResult, type DecompileProgressEvent } from '../../shared/decompile'
-import type { DecompileTermsPayload } from '../../shared/decompileModuleExport'
 import type { GiteeBuildResult, GiteeBuildSettings, GiteeBuildValidation } from '../../shared/production'
-import type { ImageStudioSettings } from '../../shared/imageStudio'
 import { AI_CONTINUATION_PROMPT, aiPromptFingerprint, isRepeatedAiPrompt } from '../../shared/aiPrompt'
 import { describeAiFailureForUser } from '../../shared/aiFailure'
 import { AiNoticeDetails } from './components/AiNoticeDetails'
 import { appendMinecraftRuntimeEvent, type MinecraftRuntimeEvent } from '../../shared/minecraft'
 import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../../shared/projectPlatform'
-import { ServerPluginDependencies, ServerPluginMigration } from './components/ServerPluginTools'
-import ResourcePackWorkspace from './components/ResourcePackWorkspace'
 import { serverPluginContext } from '../../shared/serverPluginContext'
-import BlockbenchWorkspace from './components/BlockbenchWorkspace'
 import AiAttachmentPicker, { formatAiAttachmentContext } from './components/AiAttachmentPicker'
-import GitWorkspace from './components/GitWorkspace'
 import MinecraftTestWorkspace from './components/MinecraftTestWorkspace'
-import ModpackToolsWorkspace from './components/ModpackToolsWorkspace'
-import ModpackMigrationWorkspace from './components/ModpackMigrationWorkspace'
-import DecompileWorkspace from './components/DecompileWorkspace'
-import FtbQuestEditor from './components/FtbQuestEditor'
-import PatchouliBookEditor from './components/PatchouliBookEditor'
-import ModpackModListWorkspace from './components/ModpackModListWorkspace'
-import ModpackContentWorkspace from './components/ModpackContentWorkspace'
-import ModpackKeybindWorkspace from './components/ModpackKeybindWorkspace'
-import ThirdPartyModsWorkspace from './components/ThirdPartyModsWorkspace'
 import { useConfirmDialog, usePromptDialog } from './components/InteractionDialogs'
 import { CloseWindowDialog } from './components/CloseWindowDialog'
-import ProductionWorkspace from './components/ProductionWorkspace'
-import SoundWorkspace from './components/SoundWorkspace'
 import AutomatedTestsPane from './components/AutomatedTestsPane'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import BuildDeliverySettings from './components/BuildDeliverySettings'
-import ReleasePlatformSettings from './components/ReleasePlatformSettings'
 import { RELEASE_SETTINGS_CHANGED } from './components/releaseSettings'
 import GlobalDownloadIndicator from './components/GlobalDownloadIndicator'
-import AddonRelationshipsWorkspace from './components/AddonRelationshipsWorkspace'
-import ImageStudioWorkspace from './components/ImageStudioWorkspace'
+import { useFeaturePlugins, FeaturePluginRoutes, FeaturePluginBackgrounds, FeatureSettingsSection, featurePages, featureSettings } from './featurePlugins'
+import type { FeaturePageContext } from './featurePluginTypes'
+import ServerTestWorkspace from './components/ServerTestWorkspace'
+import FeaturePluginSettings from './components/FeaturePluginSettings'
 import AgentWorkbench from './components/AgentWorkbench'
 import { PluginPanelHost } from './components/PluginPanelHost'
 import { PluginsManager } from './components/PluginsManager'
@@ -469,7 +455,6 @@ function formatBalanceCents(value?: string): string {
 
 const EXTERNAL_AGENT_OPTIONS: Array<{kind: ExternalAgentKind; label: string; detail: string; managedService: boolean}> = [
   {kind: 'codex', label: 'Codex', detail: '使用 ModMind 托管的稳定版 Codex；需要时可在此配置中转服务', managedService: true},
-  {kind: 'claude', label: 'Claude Code', detail: '读取本机 Claude Code 配置；需要时可在此配置中转服务', managedService: true}
 ]
 
 function externalAgentLabel(kind: ExternalAgentKind): string {
@@ -478,7 +463,6 @@ function externalAgentLabel(kind: ExternalAgentKind): string {
 
 function externalAgentIcon(kind: ExternalAgentKind, size = 13): React.JSX.Element {
   if (kind === 'codex') return <Code2 size={size} />
-  if (kind === 'claude') return <Sparkles size={size} />
   return <Zap size={size} />
 }
 
@@ -530,6 +514,12 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
     new Date(value)
   )
+}
+
+function formatStorageBytes(value: number): string {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`
+  return `${Math.ceil(value / 1024)} KB`
 }
 
 function errorMessage(error: unknown): string {
@@ -646,7 +636,7 @@ function ProjectLauncher({
   onCreate,
   onOpen,
   onAdopt,
-  onImportModJar,
+  featureActions,
   onSelect,
   onRemove,
   onRename
@@ -655,7 +645,7 @@ function ProjectLauncher({
   onCreate: () => void
   onOpen: () => void
   onAdopt: () => void
-  onImportModJar: () => void
+  featureActions: ReactNode
   onSelect: (project: ProjectInfo) => void
   onRemove: (project: ProjectInfo) => void
   onRename: (project: ProjectInfo) => void
@@ -696,11 +686,7 @@ function ProjectLauncher({
           <span><strong>接管现有项目</strong><small>文件夹、ZIP、MRPack</small></span>
           <ChevronRight size={17} />
         </button>
-        <button className="project-launcher-action" type="button" onClick={onImportModJar}>
-          <span className="project-launcher-icon adopt"><Binary size={19} /></span>
-          <span><strong>接管模组或插件</strong><small>模组或服务端插件 JAR</small></span>
-          <ChevronRight size={17} />
-        </button>
+        {featureActions}
       </div>
         <section className="recent-projects">
           <div className="recent-projects-toolbar">
@@ -823,120 +809,6 @@ function AdoptProjectDialog({
   )
 }
 
-function AdoptModJarDialog({
-  inspection,
-  onClose,
-  onAdopted
-}: {
-  inspection: DecompileInspectResult
-  onClose: () => void
-  onAdopted: (project: ProjectInfo) => void
-}): React.JSX.Element {
-  const [name, setName] = useState(inspection.displayName?.trim() || inspection.fileName.replace(/\.jar$/i, ''))
-  const [loader, setLoader] = useState<DecompilePlatform>(inspection.loader ?? 'fabric')
-  const [minecraftVersion, setMinecraftVersion] = useState(inspection.minecraftVersions[0] ?? '')
-  const [stage, setStage] = useState<'confirm' | 'terms'>('confirm')
-  const [terms, setTerms] = useState<DecompileTermsPayload | null>(null)
-  const [sourceSha256, setSourceSha256] = useState(inspection.sha256)
-  const [progress, setProgress] = useState<DecompileProgressEvent | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const sizeLabel = inspection.size < 1024 * 1024
-    ? `${(inspection.size / 1024).toFixed(1)} KB`
-    : `${(inspection.size / 1024 / 1024).toFixed(1)} MB`
-
-  useEffect(() => window.modmind.decompile.onProgress(setProgress), [])
-
-  const startDecompile = async (): Promise<void> => {
-    if (!name.trim() || !minecraftVersion.trim()) return
-    setBusy(true)
-    setError('')
-    setProgress({ jarSha256: inspection.sha256, phase: 'hashing', message: '正在准备反编译' })
-    try {
-      const result = await window.modmind.decompile.start({
-        jarPath: inspection.filePath,
-        minecraftVersion: minecraftVersion.trim()
-      })
-      setSourceSha256(result.sha256)
-      setTerms(await window.modmind.decompile.getTerms(inspection.fileName))
-      setStage('terms')
-    } catch (reason) {
-      setError(errorMessage(reason))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const adopt = async (): Promise<void> => {
-    if (!terms) return
-    setBusy(true)
-    setError('')
-    try {
-      const project = await window.modmind.decompile.createProjectFromJar({
-        sourceSha256,
-        name,
-        loader,
-        minecraftVersion: minecraftVersion.trim(),
-        termsAcknowledgement: { termsVersion: terms.version, acknowledged: true, origin: 'user-workspace' }
-      })
-      if (project) onAdopted(project)
-      else setBusy(false)
-    } catch (reason) {
-      setError(errorMessage(reason))
-      setBusy(false)
-    }
-  }
-
-  const reasons = [
-    `已识别 ${platformLabel(loader)} ${inspection.plugin ? "插件" : "模组"}描述文件`,
-    !inspection.plugin && inspection.minecraftVersions.length
-      ? `已自动识别 Minecraft ${inspection.minecraftVersions.join(' / ')}`
-      : inspection.plugin ? '请确认目标 Minecraft / 代理 API 版本' : '未能自动识别 Minecraft 版本，请手动确认',
-    ...inspection.warnings
-  ]
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}>
-      <div className="dialog adopt-dialog mod-jar-adopt-dialog" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="dialog-header">
-          <div><h2>接管模组或插件</h2><p>{inspection.filePath}</p></div>
-          <button className="icon-button" title="关闭" disabled={busy} onClick={onClose}><X size={17} /></button>
-        </div>
-        <div className="adopt-detection">
-          <span className="adopt-kind complete">{inspection.plugin ? "JAR 服务端插件" : "JAR 模组"}</span>
-          <div><strong>{inspection.classCount} 个类</strong><small>{platformLabel(loader)} · {sizeLabel} · sha256 {inspection.sha256.slice(0, 12)}…</small></div>
-        </div>
-        {busy ? <div className="adapter-note"><LoaderCircle className="spin" size={16} /><p><strong>正在反编译</strong><span>{progress?.message ?? '正在准备受控反编译环境'}</span></p></div> : null}
-        {stage === 'confirm' ? <>
-          <div className="adopt-reasons">{reasons.map((reason) => <p key={reason}>{reason}</p>)}</div>
-          <div className="adopt-fields">
-            <label className="field-label">项目名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
-            <label className="field-label">{loader === 'velocity' ? '代理 API 版本' : 'Minecraft 版本'}
-              <input list={`decompile-versions-${inspection.sha256.slice(0, 8)}`} value={minecraftVersion} onChange={(event) => setMinecraftVersion(event.target.value)} placeholder={loader === 'velocity' ? '例如：3.4.0-SNAPSHOT' : '例如：1.21.1'} />
-              <datalist id={`decompile-versions-${inspection.sha256.slice(0, 8)}`}>{inspection.minecraftVersions.map((version) => <option key={version} value={version} />)}</datalist>
-            </label>
-            <label className="field-label">{inspection.plugin ? '插件平台' : '加载器'}<select value={loader} onChange={(event) => setLoader(event.target.value as DecompilePlatform)}>{decompileTargetPlatforms(inspection.plugin).map(platform => <option key={platform} value={platform}>{platformLabel(platform)}</option>)}</select></label>
-          </div>
-          <div className="adopt-files"><span>检测到的 JAR 文件</span><code>{inspection.fileName}</code></div>
-        </> : terms ? <>
-          <div className="decompile-terms-body">
-            {terms.sections.map((section) => <section key={section.heading}><h4>{section.heading}</h4>{section.body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</section>)}
-            <p className="decompile-terms-source">来源 JAR：{inspection.fileName}（sha256: {sourceSha256.slice(0, 16)}…）。接受记录会写入生成的项目目录。</p>
-          </div>
-        </> : null}
-        {error ? <div className="inline-error"><CircleAlert size={15} />{error}</div> : null}
-        <div className="dialog-footer">
-          <button className="secondary-button" disabled={busy} onClick={stage === 'terms' ? () => setStage('confirm') : onClose}>{stage === 'terms' ? '返回' : '取消'}</button>
-          {stage === 'confirm' ? <button className="primary-button" disabled={busy || !name.trim() || !minecraftVersion.trim()} onClick={() => void startDecompile()}>
-            {busy ? <LoaderCircle className="spin" size={16} /> : <Binary size={16} />}反编译并接管
-          </button> : <button className="primary-button decompile-danger-confirm" disabled={busy || !terms} onClick={() => void adopt()}>
-            {busy ? <LoaderCircle className="spin" size={16} /> : <PackageOpen size={16} />}我已阅读并同意，创建项目
-          </button>}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function ExistingImportPicker({ onClose, onSelect }: { onClose: () => void; onSelect: (sourceType: 'folder' | 'zip') => void }): React.JSX.Element {
   return (
@@ -963,21 +835,34 @@ function ExistingImportPicker({ onClose, onSelect }: { onClose: () => void; onSe
   )
 }
 
-function ProjectInspectionDialog({ kind }: { kind: 'project' | 'mod' }): React.JSX.Element {
+function ProjectInspectionDialog({ kind, progress, error, onClose, onRetry }: {
+  kind: 'project' | 'mod'
+  progress?: ExistingProjectInspectionProgress | null
+  error?: string
+  onClose?: () => void
+  onRetry?: () => void
+}): React.JSX.Element {
   const title = kind === 'mod' ? '接管模组或插件' : '接管现有项目'
-  const detail = kind === 'mod'
-    ? '正在读取 JAR 描述文件、识别模组或插件平台，请稍候…'
-    : '正在扫描文件、读取构建配置并识别项目类型，请稍候…'
+  const phase = progress?.phase === 'extracting' ? '正在解压项目' : '正在识别项目'
+  const detail = progress?.sourceName ?? (kind === 'mod' ? '正在读取 JAR 描述文件、识别模组或插件平台' : '正在读取项目')
+  const percent = progress?.phase === 'extracting' ? progress.percent : undefined
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="dialog adopt-dialog inspection-dialog" role="dialog" aria-modal="true" aria-busy="true">
+      <div className="dialog adopt-dialog inspection-dialog" role="dialog" aria-modal="true" aria-busy={!error}>
         <div className="dialog-header">
-          <div><h2>{title}</h2><p>正在识别</p></div>
+          <div><h2>{title}</h2></div>
         </div>
-        <div className="inspection-status" role="status">
-          <LoaderCircle className="spin" size={22} />
-          <div><strong>{kind === 'mod' ? '正在识别 JAR' : '正在识别项目'}</strong><span>{detail}</span></div>
+        <div className={`inspection-status${error ? ' failed' : ''}`} role={error ? 'alert' : 'status'}>
+          {error ? <CircleAlert size={22} /> : <LoaderCircle className="spin" size={22} />}
+          <div><strong>{error ? '识别失败' : kind === 'mod' ? '正在识别 JAR' : phase}</strong><span>{error || detail}</span></div>
         </div>
+        {kind === 'project' && !error ? <div className="inspection-progress">
+          {percent !== undefined ? <div className="inspection-progress-heading"><span>解压进度</span><strong>{percent}%</strong></div> : null}
+          <div className={`inspection-progress-track${percent === undefined ? ' indeterminate' : ''}`} role="progressbar" aria-label={phase} aria-valuemin={percent === undefined ? undefined : 0} aria-valuemax={percent === undefined ? undefined : 100} aria-valuenow={percent}>
+            <span style={percent === undefined ? undefined : { width: `${percent}%` }} />
+          </div>
+        </div> : null}
+        {error ? <div className="dialog-footer"><button className="secondary-button" onClick={onClose}>关闭</button><button className="primary-button" onClick={onRetry}><RotateCcw size={16} />重新选择</button></div> : null}
       </div>
     </div>
   )
@@ -1889,9 +1774,7 @@ export default function App(): React.JSX.Element {
   const { prompt: requestPrompt, dialog: promptDialog } = usePromptDialog()
   const [settingsInitialSection, setSettingsInitialSection] = useState('')
   const [view, setView] = useState<ViewId>(initialDetachedView ?? 'workspace')
-  const [resourceImageTarget, setResourceImageTarget] = useState<import('../../shared/resourcePack').ResourceImageTarget | null>(null)
-  const [resourceModelTarget, setResourceModelTarget] = useState<import('../../shared/modelSource').ResourceModelTarget | null>(null)
-  const [resourceSelection, setResourceSelection] = useState<{ projectPath: string; id: string; file: string } | null>(null)
+  const [featureRouteData, setFeatureRouteData] = useState<Record<string, unknown>>({})
   // 用户插件系统：注册表快照（零插件时为空，侧边栏不加任何分组）
   const [pluginSnapshot, setPluginSnapshot] = useState<PluginSnapshot>({ plugins: [] })
   useEffect(() => {
@@ -1975,9 +1858,9 @@ export default function App(): React.JSX.Element {
   const [existingAnalysis, setExistingAnalysis] = useState<ExistingProjectAnalysis | null>(null)
   const [existingImportPicker, setExistingImportPicker] = useState(false)
   const [existingInspecting, setExistingInspecting] = useState(false)
-  const [decompileJarHandoff, setDecompileJarHandoff] = useState<string | null>(null)
-  const [modJarInspection, setModJarInspection] = useState<DecompileInspectResult | null>(null)
-  const [modJarInspecting, setModJarInspecting] = useState(false)
+  const [existingInspectionProgress, setExistingInspectionProgress] = useState<ExistingProjectInspectionProgress | null>(null)
+  const [existingInspectionError, setExistingInspectionError] = useState('')
+  const [existingInspectionSource, setExistingInspectionSource] = useState<'folder' | 'zip'>('folder')
   const [showCreate, setShowCreate] = useState(false)
   const [renamingProject, setRenamingProject] = useState<ProjectInfo | null>(null)
   const [files, setFiles] = useState<FileNode[]>([])
@@ -2103,9 +1986,7 @@ export default function App(): React.JSX.Element {
       setActiveWorkbenchConversationId(fork.id)
       if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
       setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? view)
-      setNotice(fork.parent?.nativeMode === 'visible-history-rebuild' && settingsRef.current.codingBackend === 'claude'
-        ? '已从聊天记录重建分支；原对话仍保留，Claude 先前的工具执行上下文不会完整继承'
-        : '已从此处创建新的对话分支；原对话仍保留')
+      setNotice('已从此处创建新的对话分支；原对话仍保留')
     } catch (error) {
       setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
       sessionResetConversationIdsRef.current.add(conversationId)
@@ -2119,13 +2000,29 @@ export default function App(): React.JSX.Element {
   const [minecraftEvents, setMinecraftEvents] = useState<MinecraftRuntimeEvent[]>([])
   const [building, setBuilding] = useState(false)
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
+  const [snapshotStorage, setSnapshotStorage] = useState<SnapshotStorageInfo | null>(null)
+  const [snapshotStorageError, setSnapshotStorageError] = useState('')
   const [restoringSnapshotId, setRestoringSnapshotId] = useState('')
   const [deletingSnapshotId, setDeletingSnapshotId] = useState('')
-  const [loaderCatalog, setLoaderCatalog] = useState<LoaderVersionOption[]>([])
-  const [migrationLoader, setMigrationLoader] = useState<LoaderKind>('fabric')
-  const [migrationVersion, setMigrationVersion] = useState('')
-  const [migrationPreview, setMigrationPreview] = useState<ProjectMigrationPreview | null>(null)
-  const [migrationBusy, setMigrationBusy] = useState(false)
+  const currentSnapshotStorage = snapshotStorage && project && normalizeProjectPath(snapshotStorage.projectPath) === normalizeProjectPath(project.path) ? snapshotStorage : null
+  const snapshotStorageWarning = Boolean(currentSnapshotStorage?.warning)
+  useEffect(() => {
+    const projectPath = project?.path
+    setSnapshotStorage(null)
+    setSnapshotStorageError('')
+    if (!projectPath) return
+    let active = true
+    const unsubscribe = window.modmind.snapshots.onStorageChanged(status => {
+      if (!active || normalizeProjectPath(status.projectPath) !== normalizeProjectPath(projectPath)) return
+      setSnapshotStorage(status)
+      setSnapshotStorageError('')
+      void window.modmind.snapshots.list(projectPath).then(setSnapshots).catch(() => undefined)
+    })
+    void window.modmind.snapshots.storage(projectPath).then(status => {
+      if (active) { setSnapshotStorage(status); setSnapshotStorageError('') }
+    }).catch(error => { if (active) setSnapshotStorageError(errorMessage(error)) })
+    return () => { active = false; unsubscribe() }
+  }, [project?.path])
   const [settings, setSettings] = useState<AgentSettings>(initialSettings)
   const [workbenchFeatures, setWorkbenchFeatures] = useState<WorkbenchFeatures>(() => {
     try { return readWorkbenchFeatureSelection(localStorage.getItem('modmind.workbenchFeatures')) }
@@ -2166,14 +2063,17 @@ export default function App(): React.JSX.Element {
   const [detectedJavaHomes, setDetectedJavaHomes] = useState<DetectedJavaHome[]>([])
   const [javaScanState, setJavaScanState] = useState<'idle' | 'scanning' | 'done' | 'failed'>('idle')
   const javaScanRequestedRef = useRef(false)
-  const [imageStudioSettings, setImageStudioSettings] = useState<ImageStudioSettings>({ baseUrl: '', model: '', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true })
-  const [imageModels, setImageModels] = useState<string[]>([])
-  const [imageModelsLoading, setImageModelsLoading] = useState(false)
-  const [imageModelsError, setImageModelsError] = useState('')
-  const [imageApiKey, setImageApiKey] = useState('')
-  const [imageSettingsSaving, setImageSettingsSaving] = useState(false)
-  const imageSettingsSavingRef = useRef(false)
-  const [imageSettingsFeedback, setImageSettingsFeedback] = useState('')
+  const featurePlugins = useFeaturePlugins()
+  const installedPages = useMemo(() => featurePages(featurePlugins.modules), [featurePlugins.modules])
+  const installedSettings = useMemo(() => featureSettings(featurePlugins.modules), [featurePlugins.modules])
+  useEffect(() => {
+    const coreViews = new Set(['workspace', 'inspiration', 'minecraft', 'modpack-server', 'build', 'code', 'settings', 'plugins'])
+    if (!featurePlugins.ready || coreViews.has(view) || view.startsWith('plugin:')) return
+    if (!installedPages.some(page => page.id === view && (!page.supports || page.supports(project, uiMode)))) {
+      setView('settings'); setSettingsInitialSection('settings-feature-plugins')
+      setNotice('当前功能插件未安装、未启用或不支持此项目')
+    }
+  }, [featurePlugins.ready, installedPages, view, project?.path, uiMode])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('modmind-sidebar-collapsed') === 'true' } catch { return false }
   })
@@ -2518,9 +2418,8 @@ export default function App(): React.JSX.Element {
         // timeline and session pointer still live in the legacy single files.
         void window.modmind.project.deleteWorkbenchData('.modmind/workbench-timeline.json', projectPath).catch(() => undefined)
         void window.modmind.project.deleteWorkbenchData('.modmind/external-agents/session-codex.json', projectPath).catch(() => undefined)
-        void window.modmind.project.deleteWorkbenchData('.modmind/external-agents/session-claude.json', projectPath).catch(() => undefined)
         try {
-          for (const backend of ['quota', 'codex', 'claude']) localStorage.removeItem(`${projectPath}:${backend}`)
+          for (const backend of ['quota', 'codex']) localStorage.removeItem(`${projectPath}:${backend}`)
         } catch { /* storage is optional */ }
       } else {
         void window.modmind.project.deleteWorkbenchData(`.modmind/external-agents/sessions/workspace/${conversationId}`, projectPath).catch(() => undefined)
@@ -2590,22 +2489,46 @@ export default function App(): React.JSX.Element {
   const [beginnerAvailableModels, setBeginnerAvailableModels] = useState<AiModelInfo[]>([])
   const [scanningBeginnerModels, setScanningBeginnerModels] = useState(false)
   const [beginnerModelScanMessage, setBeginnerModelScanMessage] = useState('连接账号后扫描可用模型')
-  const [availableModels, setAvailableModels] = useState<AiModelInfo[]>([])
-  const [modelSearch, setModelSearch] = useState('')
-  const [scanningModels, setScanningModels] = useState(false)
   const [savingAiPreferences, setSavingAiPreferences] = useState(false)
   const [exportArtifactAvailable, setExportArtifactAvailable] = useState(false)
   const [diagnosticExporting, setDiagnosticExporting] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<AppVersionCheckResult | null>(null)
+  const [changelog, setChangelog] = useState<AppChangelogSnapshot | null>(null)
+  const [startupChangelogChecked, setStartupChangelogChecked] = useState(false)
+  useEffect(() => {
+    if (isDetachedWindow || bootstrapping) return
+    let live = true
+    let observer: MutationObserver | undefined
+    void window.modmind.app.getChangelog().then(snapshot => {
+      if (!live) return
+      const reveal = (): void => {
+        if (document.body.hasAttribute('data-loading-covered')) return
+        observer?.disconnect()
+        if (snapshot.automatic) setChangelog(snapshot)
+        setStartupChangelogChecked(true)
+      }
+      observer = new MutationObserver(reveal)
+      observer.observe(document.body, { attributes: true, attributeFilter: ['data-loading-covered'] })
+      reveal()
+    }).catch(() => { if (live) setStartupChangelogChecked(true) })
+    return () => { live = false; observer?.disconnect() }
+  }, [isDetachedWindow, bootstrapping])
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateState>({ phase: 'idle', currentVersion: '' })
   const [updateDownloadedOpen, setUpdateDownloadedOpen] = useState(false)
   const [updateActionBusy, setUpdateActionBusy] = useState(false)
-  const [modelScanMessage, setModelScanMessage] = useState('输入 API Key 后扫描')
   const [externalAgents, setExternalAgents] = useState<ExternalAgentStatus[]>([])
   const [externalAgentsReady, setExternalAgentsReady] = useState(false)
+  const [localCodexScan, setLocalCodexScan] = useState<LocalCodexScan | null>(null)
+  const [localCodexScanning, setLocalCodexScanning] = useState(false)
+  const [localCodexScanError, setLocalCodexScanError] = useState('')
+  const localCodexScanInFlight = useRef<Promise<LocalCodexScan | null> | null>(null)
+  const [aiSettingsBackend, setAiSettingsBackend] = useState<CodingBackend | null>(null)
+  const aiSettingsSelectionGeneration = useRef(0)
+  const visibleAiSettingsBackend = aiSettingsBackend ?? settings.codingBackend
+  const codexInstalled = localCodexScan?.status.installed ?? externalAgents.find(agent => agent.kind === 'codex')?.installed
+  const codexSettingsBlocked = codexInstalled !== true
   const [installingAgents, setInstallingAgents] = useState<Partial<Record<ExternalAgentKind, boolean>>>({})
   const [configuringAgents, setConfiguringAgents] = useState<Partial<Record<ExternalAgentKind, boolean>>>({})
-  const [editingAgent, setEditingAgent] = useState<ExternalAgentKind | null>(null)
   const [agentDraft, setAgentDraft] = useState<ExternalAgentConfiguration>({})
   const [aiHistoryLoadedKey, setAiHistoryLoadedKey] = useState('')
   const [workbenchPersistenceState, setWorkbenchPersistenceState] = useState<WorkbenchPersistenceState>('loading')
@@ -2796,7 +2719,7 @@ export default function App(): React.JSX.Element {
     .replaceAll('tool steps', '个操作')
     .replaceAll('Agent step', 'AI 操作')
     return uiMode === 'beginner'
-      ? humanized.replaceAll('Codex', '智能开发引擎').replaceAll('Claude Code', '智能开发引擎')
+      ? humanized.replaceAll('Codex', '智能开发引擎')
       : humanized
   }
 
@@ -2806,7 +2729,7 @@ export default function App(): React.JSX.Element {
       .replaceAll('The model failed the Agent protocol 3 times:', '上游连续 3 次没有按 Agent 协议返回可执行操作：')
       .replaceAll('The AI model did not respond within 10 minutes.', '上游模型在等待 10 分钟后没有返回任何内容，请稍后重试或切换线路')
       .replaceAll('Unable to connect to the AI service:', '无法连接 AI 服务：')
-    return /(?:上游模型|模型服务|Codex|Claude|AI 服务).*(?:失败|拒绝|不可用|超时|中断|参数|额度|凭证|没有返回|429|4\d\d|5\d\d)/i.test(humanized)
+    return /(?:上游模型|模型服务|Codex|AI 服务).*(?:失败|拒绝|不可用|超时|中断|参数|额度|凭证|没有返回|429|4\d\d|5\d\d)/i.test(humanized)
       ? describeAiFailureForUser(humanized)
       : humanized
   }
@@ -2923,12 +2846,6 @@ export default function App(): React.JSX.Element {
       beginnerTaskState: 'success'
     })
   }
-  const [mappingQuery, setMappingQuery] = useState('')
-  const [mappingResults, setMappingResults] = useState<MappingClassResult[]>([])
-  const [mappingDetail, setMappingDetail] = useState<MappingClassDetail | null>(null)
-  const [mappingMemberQuery, setMappingMemberQuery] = useState('')
-  const [mappingBusy, setMappingBusy] = useState(false)
-  const [mappingMessage, setMappingMessage] = useState('输入任意命名空间中的类名，例如 Item、class_1792 或 C_1381_')
 
   const refreshFilesFor = async (projectPath: string): Promise<void> => {
     const nextFiles = await window.modmind.project.listFiles(projectPath)
@@ -3101,7 +3018,7 @@ export default function App(): React.JSX.Element {
     const applyDeviceState = (state: DeviceConnectionState): void => {
       const generation = ++deviceStateGeneration
       setDeviceState(state)
-      void window.modmind.imageStudio.getSettings().then(setImageStudioSettings).catch(() => undefined)
+
       if (state.status !== 'connected') {
         setBeginnerAvailableModels([])
         return
@@ -3123,7 +3040,7 @@ export default function App(): React.JSX.Element {
       if (current) void window.modmind.project.hasExportArtifact(current.path).then(setExportArtifactAvailable).catch(() => setExportArtifactAvailable(false))
     }).catch(error => setNotice(`项目加载失败：${errorMessage(error)}`)).finally(() => setBootstrapping(false))
     void window.modmind.settings.getAgent().then((value) => { settingsRef.current = value; setSettings(value) })
-    void window.modmind.imageStudio.getSettings().then(setImageStudioSettings).catch(() => undefined)
+
     void window.modmind.device.getState().then(applyDeviceState).catch(() => undefined)
     void window.modmind.remote.getState().then(setRemoteState).catch(() => undefined)
     void window.modmind.mcpBridge.getState().then(setMcpBridgeState).catch(() => undefined)
@@ -3136,7 +3053,6 @@ export default function App(): React.JSX.Element {
       void window.modmind.app.checkForUpdates().then((result) => { if (result?.updateAvailable) setUpdateInfo(result) }).catch(() => undefined)
     }
     void window.modmind.production.remoteBuild.getGiteeSettings().then(setGiteeSettings).catch(() => undefined)
-    void window.modmind.project.listLoaderVersions().then(setLoaderCatalog).catch(() => undefined)
     void window.modmind.externalAgents.detect().then(setExternalAgents).catch(() => undefined).finally(() => setExternalAgentsReady(true))
     const removeOpenSettingsListener = window.modmind.app.onOpenSettings(() => {
       setProjectLauncherOpen(false)
@@ -3305,7 +3221,7 @@ export default function App(): React.JSX.Element {
       settingsRef.current = { ...settingsRef.current, codingBackend: event.backend }
       setSettings((current) => ({ ...current, codingBackend: event.backend }))
       setRunningBackend(event.backend)
-      setNotice(`已切换到 ${event.backend === 'quota' ? 'ModMind' : event.backend === 'codex' ? 'Codex' : 'Claude Code'}，正在继续当前任务`)
+      setNotice(`已切换到 ${event.backend === 'quota' ? 'ModMind' : 'Codex'}，正在继续当前任务`)
     })
     return () => {
       removeBuildListener()
@@ -3356,9 +3272,6 @@ export default function App(): React.JSX.Element {
       if (!cancelled) setNotice(`文件列表加载失败：${errorMessage(error)}`)
     }).finally(() => { if (!cancelled) setFilesLoadedProject(project.path) })
     void refreshSnapshots().catch(() => undefined)
-    setMigrationLoader(project.loader)
-    setMigrationVersion('')
-    setMigrationPreview(null)
     if ((!isJavaLoader(project.loader) && !isServerPluginPlatform(project.loader) && ['minecraft', 'mappings', 'production', 'relationships', 'sounds'].includes(view))
       || (project.kind === 'modpack' && ['build', 'mappings', 'sounds'].includes(view))
       || (project.kind === 'server-plugin' && view === 'sounds')) setView('workspace')
@@ -3371,10 +3284,6 @@ export default function App(): React.JSX.Element {
     return () => window.clearTimeout(timer)
   }, [notice])
   useEffect(() => { if (contentFeaturesError) setNotice(contentFeaturesError) }, [contentFeaturesError])
-
-  useEffect(() => {
-    if (view !== 'blockbench') void window.modmind.blockbench.hide()
-  }, [view])
 
   const openProject = async (): Promise<void> => {
     setOpeningProject(true)
@@ -3464,14 +3373,42 @@ export default function App(): React.JSX.Element {
   }, [aiRecovery?.conversationId, activeWorkbenchConversationId, aiRecovery?.contextRevision, aiRecovery?.lifecycle, aiRecovery?.pending, aiRecovery?.retry, planning, project?.path])
 
   const inspectExistingProject = async (sourceType: 'folder' | 'zip'): Promise<void> => {
+    setExistingInspectionSource(sourceType)
+    setExistingInspectionProgress(null)
+    setExistingInspectionError('')
     setExistingInspecting(true)
+    const stopProgress = window.modmind.project.onInspectionProgress(setExistingInspectionProgress)
+    let failed = false
     try {
-      const analysis = await window.modmind.project.inspectExisting(sourceType)
-      if (analysis) setExistingAnalysis(analysis)
+      const inspection = await window.modmind.project.inspectExisting(sourceType)
+      if (!inspection) return
+      if ('existingProject' in inspection) {
+        if (inspection.archive) {
+          failed = true
+          setExistingInspectionError('压缩包内已包含 ModMind 项目。请先解压，再通过“打开项目”选择项目文件夹。')
+          return
+        }
+        const selected = inspection.existingProject
+        if (project && normalizeProjectPath(project.path) === normalizeProjectPath(selected.path)) {
+          setView('workspace')
+          setProjectLauncherOpen(false)
+          return
+        }
+        await waitForAppLoadingCover()
+        const opened = await window.modmind.project.openRecent(selected.path)
+        setProject(opened)
+        setView('workspace')
+        setProjectLauncherOpen(false)
+        void refreshRecentProjects()
+      } else {
+        setExistingAnalysis(inspection)
+      }
     } catch (error) {
-      setErrorNotice(errorMessage(error))
+      failed = true
+      setExistingInspectionError(errorMessage(error))
     } finally {
-      setExistingInspecting(false)
+      stopProgress()
+      if (!failed) setExistingInspecting(false)
     }
   }
 
@@ -3620,39 +3557,6 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const searchMappings = async (): Promise<void> => {
-    if (!project || !mappingQuery.trim()) return
-    setMappingBusy(true)
-    setMappingDetail(null)
-    try {
-      const result = await window.modmind.mappings.search(project.minecraftVersion, mappingQuery)
-      setMappingResults(result.results)
-      setMappingMessage(result.results.length
-        ? `Minecraft ${result.version} · ${result.results.length} 个结果 · ${result.cached ? '本地缓存' : '已从 mappings.dev 下载并缓存'}`
-        : `Minecraft ${result.version} 中没有匹配的类`)
-    } catch (error) {
-      setMappingResults([])
-      setMappingMessage(errorMessage(error))
-    } finally {
-      setMappingBusy(false)
-    }
-  }
-
-  const openMapping = async (entry: MappingClassResult): Promise<void> => {
-    if (!project) return
-    setMappingBusy(true)
-    try {
-      const className = entry.names.Mojang ?? Object.values(entry.names)[0]
-      const detail = await window.modmind.mappings.getClass(project.minecraftVersion, className)
-      setMappingDetail(detail)
-      setMappingMemberQuery('')
-      setMappingMessage(`${detail.members.length} 个字段、构造器和方法 · ${detail.cached ? '本地缓存' : '已缓存供离线使用'}`)
-    } catch (error) {
-      setMappingMessage(errorMessage(error))
-    } finally {
-      setMappingBusy(false)
-    }
-  }
 
   const saveFile = async (): Promise<void> => {
     const editorProjectPath = project?.path
@@ -4080,7 +3984,7 @@ export default function App(): React.JSX.Element {
         id: `plan-${Date.now()}`,
         stage: 'planning',
         title: 'AI 正在分析请求',
-        detail: selectedBackend === 'quota' ? deviceState.provider === 'custom' ? '正在连接自定义 API' : '正在使用 ModMind 额度启动 Codex' : selectedBackend === 'codex' ? 'Codex 正在判断任务意图' : 'Claude Code 正在判断任务意图',
+        detail: selectedBackend === 'quota' ? deviceState.provider === 'custom' ? '正在连接自定义 API' : '正在使用 ModMind 额度启动 Codex' : 'Codex 正在判断任务意图',
         status: 'running',
         time: new Date().toISOString()
       },
@@ -4427,80 +4331,6 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const restoreSnapshot = async (snapshot: SnapshotInfo): Promise<void> => {
-    if (!project || restoringSnapshotId || building || planning || migrationBusy) return
-    const unsavedMessage = editorDirty
-      ? '\n\n当前代码编辑器有未保存内容；继续后会先保存，并包含在自动安全备份中'
-      : ''
-    if (!await requestConfirm({ title: `恢复快照“${snapshot.label}”？`, message: `当前项目状态会先自动备份，恢复失败时会自动回滚。${unsavedMessage}`, confirmLabel: '恢复快照', actionIcon: 'restore' })) return
-    setRestoringSnapshotId(snapshot.id)
-    try {
-      if (editorDirty && selectedFile) await window.modmind.project.writeFile(selectedFile, editorContent, project.path)
-      const projectPath = project.path
-      const result = await window.modmind.snapshots.restore(snapshot.id, projectPath)
-      setProject(result.project)
-      setSelectedFile('')
-      setEditorContent('')
-      setEditorDirty(false)
-      setBuildResult(null)
-      setBuildError('')
-      setEvents([])
-      setMinecraftEvents([])
-      setAiRecovery(null)
-      await Promise.all([refreshFilesFor(projectPath), refreshSnapshotsFor(projectPath)])
-      setNotice(`已恢复“${result.snapshot.label}”，恢复前状态已备份为 ${result.backup.id.slice(0, 19)}`)
-    } catch (error) {
-      setNotice(`恢复失败：${errorMessage(error)}`)
-    } finally {
-      setRestoringSnapshotId('')
-    }
-  }
-
-  const deleteSnapshot = async (snapshot: SnapshotInfo): Promise<void> => {
-    if (!project || restoringSnapshotId || deletingSnapshotId || building || planning || migrationBusy) return
-    if (!await requestConfirm({ title: `永久删除快照“${snapshot.label}”？`, message: '删除后无法从 ModMind 恢复', confirmLabel: '永久删除', tone: 'danger' })) return
-    setDeletingSnapshotId(snapshot.id)
-    try {
-      const projectPath = project.path
-      const nextSnapshots = await window.modmind.snapshots.delete(snapshot.id, projectPath)
-      if (isForegroundProject(projectPath)) setSnapshots(nextSnapshots)
-      setNotice(`已删除快照“${snapshot.label}”`)
-    } catch (error) {
-      setNotice(`删除快照失败：${errorMessage(error)}`)
-    } finally {
-      setDeletingSnapshotId('')
-    }
-  }
-
-  const previewMigration = async (): Promise<void> => {
-    if (!project || !selectedMigrationVersion) return
-    setMigrationBusy(true)
-    try {
-      setMigrationPreview(await window.modmind.project.previewMigration({ loader: migrationLoader, minecraftVersion: selectedMigrationVersion }))
-    } catch (error) {
-      setNotice(`迁移预检失败：${errorMessage(error)}`)
-    } finally {
-      setMigrationBusy(false)
-    }
-  }
-
-  const runMigration = async (): Promise<void> => {
-    if (!migrationPreview || migrationPreview.blockers.length) return
-    setMigrationBusy(true)
-    try {
-      const result = await window.modmind.project.migrate({ loader: migrationPreview.target.loader, minecraftVersion: migrationPreview.target.minecraftVersion })
-      if (result) {
-        setProject(result.project)
-        setMigrationPreview(null)
-        setNotice(`迁移项目已生成，报告：${result.reportPath}`)
-        void refreshRecentProjects()
-      }
-    } catch (error) {
-      setNotice(`迁移失败：${errorMessage(error)}`)
-    } finally {
-      setMigrationBusy(false)
-    }
-  }
 
   const saveSettingsPatch = async (patch: Partial<AgentSettings>): Promise<boolean> => {
     const previous = settingsRef.current
@@ -4568,29 +4398,29 @@ export default function App(): React.JSX.Element {
 
   const configureExternalAgent = async (kind: ExternalAgentKind): Promise<void> => {
     if (configuringAgents[kind]) return
-    const usesManagedService = kind === 'codex'
-    if (usesManagedService && (!agentDraft.baseUrl?.trim() || !agentDraft.model?.trim() || (!agentDraft.apiKey?.trim() && !settings.externalAgents?.[kind]?.hasStoredKey))) {
-      setNotice('请填写 Base URL、API Key 并选择模型')
+    const model = settings.externalAgents?.codex?.model?.trim() || localCodexScan?.model || ''
+    const configuration: ExternalAgentConfiguration = { ...settings.externalAgents?.codex, ...agentDraft, mode: 'hosted', model }
+    if (!configuration.baseUrl?.trim() || !model) {
+      setNotice('请填写 Base URL 并选择模型')
       return
     }
-    const contextLimit = agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? '']
+    const contextLimit = configuration.modelContextWindows?.[model]
     if (contextLimit !== undefined && (!Number.isSafeInteger(contextLimit) || contextLimit < 1024 || contextLimit > 100000000)) {
       setNotice('上下文窗口必须是 1,024–100,000,000 之间的整数')
       return
     }
-    const compactLimit = agentDraft.modelAutoCompactTokenLimits?.[agentDraft.model?.trim() ?? '']
+    const compactLimit = configuration.modelAutoCompactTokenLimits?.[model]
     if (compactLimit !== undefined && (!Number.isSafeInteger(compactLimit) || compactLimit < 1024 || compactLimit > 100000000 || contextLimit !== undefined && compactLimit > Math.floor(contextLimit * 0.9))) {
       setNotice('自动压缩阈值必须是有效整数，且不超过上下文窗口的 90%')
       return
     }
     setConfiguringAgents((current) => ({ ...current, [kind]: true }))
     try {
-      const result = await window.modmind.externalAgents.configure(kind, agentDraft)
+      const result = await window.modmind.externalAgents.configure(kind, configuration)
       const refreshedSettings = await window.modmind.settings.getAgent()
       settingsRef.current = refreshedSettings
       setSettings(refreshedSettings)
-      setEditingAgent(null)
-      setAgentDraft({})
+      setAgentDraft({ baseUrl: refreshedSettings.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
       setNotice(`${externalAgentLabel(kind)} 配置完成${result.configPath ? `：${result.configPath}` : ''}`)
     } catch (error) {
       setNotice(`自动配置失败：${errorMessage(error)}`)
@@ -4613,56 +4443,6 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const refreshImageModels = async (): Promise<void> => {
-    setImageModelsLoading(true)
-    setImageModelsError('')
-    try {
-      const capabilities = await window.modmind.imageStudio.capabilities()
-      setImageModels(capabilities.models)
-      if (!capabilities.models.length) setImageModelsError('服务未返回模型，请检查图像服务配置。')
-    } catch (error) {
-      setImageModels([])
-      setImageModelsError(`模型列表加载失败：${errorMessage(error)}`)
-    } finally {
-      setImageModelsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (view === 'settings') void refreshImageModels()
-  }, [view])
-
-  const saveImageSettings = async (patch: Partial<ImageStudioSettings> & { apiKey?: string; clearApiKey?: boolean }): Promise<void> => {
-    if (imageSettingsSavingRef.current) return
-    imageSettingsSavingRef.current = true
-    setImageSettingsSaving(true)
-    setImageSettingsFeedback('正在保存…')
-    const modelOnly = patch.model !== undefined && patch.apiKey === undefined && !patch.clearApiKey
-    try {
-      // A model change must not commit an unfinished API address or key.
-      const base = modelOnly || patch.clearApiKey ? await window.modmind.imageStudio.getSettings() : imageStudioSettings
-      const saved = await window.modmind.imageStudio.saveSettings({ ...base, ...patch, apiKey: modelOnly ? '' : patch.apiKey ?? imageApiKey })
-      setImageStudioSettings(current => modelOnly ? { ...current, model: saved.model, hasStoredKey: saved.hasStoredKey } : saved)
-      if (patch.apiKey !== undefined) setImageApiKey('')
-      const apiDraftPending = modelOnly && (imageStudioSettings.baseUrl !== base.baseUrl || Boolean(imageApiKey))
-      const message = modelOnly ? `图片模型已自动保存${apiDraftPending ? '；自定义 API 尚未保存' : ''}` : '图像服务配置已保存'
-      if (!modelOnly) setNotice(message)
-      setImageSettingsFeedback(message)
-      if (!modelOnly) void refreshImageModels()
-    } catch (error) {
-      setNotice(`图像服务设置保存失败：${errorMessage(error)}`)
-      setImageSettingsFeedback('保存失败，请重试；当前设置未更改')
-    } finally {
-      imageSettingsSavingRef.current = false
-      setImageSettingsSaving(false)
-    }
-  }
-
-  const clearImageApiKey = async (): Promise<void> => {
-    if (!await requestConfirm({ title: '删除已保存的图片 API Key？', message: '删除后图像服务将改用 ModMind 托管额度', confirmLabel: '删除 Key', tone: 'danger' })) return
-    await saveImageSettings({ apiKey: '', clearApiKey: true })
-  }
-
   const saveBeginnerAiPreference = async (patch: Partial<BeginnerAiPreferences>): Promise<void> => {
     if (savingAiPreferences) return
     const previous = beginnerAiPreferences
@@ -4682,6 +4462,55 @@ export default function App(): React.JSX.Element {
     } finally {
       setSavingAiPreferences(false)
     }
+  }
+
+  const scanLocalCodex = (): Promise<LocalCodexScan | null> => {
+    if (localCodexScanInFlight.current) return localCodexScanInFlight.current
+    setLocalCodexScanning(true)
+    setLocalCodexScanError('')
+    const request = window.modmind.externalAgents.scanLocal().then(result => {
+      setLocalCodexScan(result)
+      setExternalAgents(current => [...current.filter(agent => agent.kind !== 'codex'), result.status])
+      setExternalAgentsReady(true)
+      return result
+    }).catch(error => {
+      setLocalCodexScanError(errorMessage(error))
+      return null
+    }).finally(() => {
+      setLocalCodexScanning(false)
+      localCodexScanInFlight.current = null
+    })
+    localCodexScanInFlight.current = request
+    return request
+  }
+
+  const saveLocalCodexPreference = async (patch: Partial<ExternalAgentConfiguration>): Promise<void> => {
+    const current = settingsRef.current
+    await saveSettingsPatch({ externalAgents: { ...current.externalAgents, codex: { ...current.externalAgents?.codex, mode: current.externalAgents?.codex?.mode ?? 'local', ...patch } } })
+  }
+
+  useEffect(() => {
+    if (visibleAiSettingsBackend !== 'codex' || view !== 'settings') return
+    const storedUrl = settings.externalAgents?.codex?.baseUrl ?? ''
+    const preferredUrl = settings.externalAgents?.codex?.mode === 'hosted' ? storedUrl || localCodexScan?.baseUrl || '' : localCodexScan?.baseUrl || storedUrl
+    setAgentDraft(current => current.baseUrl?.trim() && current.baseUrl !== storedUrl ? current : {
+      ...current, baseUrl: preferredUrl
+    })
+  }, [visibleAiSettingsBackend, view, localCodexScan?.baseUrl, settings.externalAgents?.codex?.baseUrl, settings.externalAgents?.codex?.mode])
+
+  useEffect(() => {
+    if (visibleAiSettingsBackend === 'codex') void scanLocalCodex()
+  }, [visibleAiSettingsBackend, view === 'settings'])
+
+  const selectAiSettingsBackend = async (backend: CodingBackend): Promise<void> => {
+    // Opening settings must remain possible even when this engine cannot run.
+    setAiSettingsBackend(backend)
+    const generation = ++aiSettingsSelectionGeneration.current
+    if (backend === 'codex') {
+      const detected = await scanLocalCodex()
+      if (generation !== aiSettingsSelectionGeneration.current || !detected?.status.installed) return
+    }
+    selectCodingBackend(backend)
   }
 
   const selectCodingBackend = (backend: AgentSettings['codingBackend']): void => {
@@ -4757,7 +4586,7 @@ export default function App(): React.JSX.Element {
         }
         setAiRecovery(null)
         if (result.result) storeProjectPlan(taskProjectPath, result.result)
-        if (result.status === 'idle') setNotice(`已切换到 ${backend === 'quota' ? 'ModMind' : backend === 'codex' ? 'Codex' : 'Claude Code'}`)
+        if (result.status === 'idle') setNotice(`已切换到 ${backend === 'quota' ? 'ModMind' : 'Codex'}`)
       })
       .catch(async (error) => {
         const taskState = await window.modmind.ai.getProjectTaskState(taskProjectPath).catch(() => null)
@@ -4816,6 +4645,9 @@ export default function App(): React.JSX.Element {
     try {
       const status = await window.modmind.externalAgents.install(kind)
       setExternalAgents((current) => [...current.filter((item) => item.kind !== kind), status])
+      // A pre-install scan may still be finishing; always follow it with a new one.
+      await localCodexScanInFlight.current
+      await scanLocalCodex()
       setNotice(`${status.label} ${status.version ?? ''} 安装完成`)
     } catch (error) {
       setNotice(`安装失败：${errorMessage(error)}`)
@@ -4831,38 +4663,6 @@ export default function App(): React.JSX.Element {
       setNotice(`无法打开安装教程：${errorMessage(error)}`)
     }
   }
-
-  const scanModels = async (): Promise<void> => {
-    if (scanningModels || !editingAgent || !agentDraft.baseUrl?.trim()) return
-    setScanningModels(true)
-    setModelScanMessage('正在读取可用模型…')
-    try {
-      const models = await window.modmind.settings.listAgentModels(editingAgent, agentDraft)
-      setAvailableModels(models)
-      setModelScanMessage(models.length ? `发现 ${models.length} 个模型` : '接口没有返回可用模型，可手动填写 ID')
-      if (models.length === 1 && !agentDraft.model) setAgentDraft((current) => ({ ...current, model: models[0].id }))
-    } catch (error) {
-      setAvailableModels([])
-      setModelScanMessage(aiFailureMessage(error))
-    } finally {
-      setScanningModels(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!editingAgent || !agentDraft.baseUrl?.trim() || editingAgent === 'claude' && agentDraft.mode !== 'hosted') return
-    if (!agentDraft.apiKey?.trim() && !settings.externalAgents?.[editingAgent]?.hasStoredKey) return
-    let active = true
-    setScanningModels(true)
-    setModelScanMessage('正在读取模型和思考能力…')
-    void window.modmind.settings.listAgentModels(editingAgent, agentDraft).then(models => {
-      if (!active) return
-      setAvailableModels(models)
-      setModelScanMessage(`发现 ${models.length} 个模型，思考档位已同步`)
-    }).catch(error => { if (active) setModelScanMessage(aiFailureMessage(error)) })
-      .finally(() => { if (active) setScanningModels(false) })
-    return () => { active = false; setScanningModels(false) }
-  }, [editingAgent])
 
   const scanBeginnerModels = async (): Promise<void> => {
     if (scanningBeginnerModels) return
@@ -4943,16 +4743,9 @@ export default function App(): React.JSX.Element {
   const workspacePromptPlaceholder = pluginProject ? '例如：制作每日签到插件，包含权限、奖励、重复领取检查与数据保存…' : modpackProject
     ? '例如：加入一条新手任务线，并为每一步配置奖励'
     : '例如：制作一个可以储存经验值的水晶方块，右键存入，Shift 右键取出…'
-  const migrationVersions = loaderCatalog.filter((option) => option.loader === migrationLoader)
-  const selectedMigrationVersion = migrationVersion || migrationVersions[0]?.minecraftVersion || ''
-  const filteredModels = availableModels.filter((model) => model.id.toLowerCase().includes(modelSearch.trim().toLowerCase()))
-  const filteredMappingMembers = mappingDetail?.members.filter((member) => {
-    const query = mappingMemberQuery.trim().toLowerCase()
-    return !query || `${member.type} ${Object.values(member.names).join(' ')}`.toLowerCase().includes(query)
-  }) ?? []
   const { baseVisibleNavGroups, navLabelMap, navOrderStorageKey, sidebarLayoutStorageKey } = useMemo(
-    () => buildNavigationDefinitions({ project, uiMode, plugins: pluginSnapshot.plugins, contentFeatures }),
-    [project, uiMode, pluginSnapshot, contentFeatures]
+    () => buildNavigationDefinitions({ project, uiMode, plugins: pluginSnapshot.plugins, featurePages: installedPages }),
+    [project, uiMode, pluginSnapshot, installedPages]
   )
   const sidebarEditor = useSidebarLayout(sidebarLayoutStorageKey, navOrderStorageKey)
   const sidebarLayout = sidebarEditor.layout
@@ -5147,10 +4940,27 @@ export default function App(): React.JSX.Element {
 
   const advancedErrorsHidden = uiMode === 'advanced'
   const buildLogs = buildResult?.logs.filter((line) => !advancedErrorsHidden || !/(error|failed|failure|exception|fatal|fail|失败|错误|异常)/i.test(line)) ?? []
-  const projectIndependentView = view === 'settings'
-    || view === 'image-studio'
-    || view === 'decompile'
-    || view === 'plugins'
+  const featureContext: Omit<FeaturePageContext, 'visible'> = {
+    project, darkMode: settings.darkMode, uiMode, deviceState,
+    routeData: featureRouteData[view],
+    hasPage: id => installedPages.some(page => page.id === id && (!page.supports || page.supports(project, uiMode))),
+    navigate: (id, data) => { if (data !== undefined) setFeatureRouteData(current => ({ ...current, [id]: data })); navigateToView(id as ViewId); setProjectLauncherOpen(false) },
+    openSettings: section => { setSettingsInitialSection(section ?? ''); navigateToView('settings') },
+    filesChanged: () => { void refreshFiles(); void refreshSnapshots() },
+    openFile: openModpackContentEditor,
+    createFile: (path, content) => { void createModpackContentFile(path, content) },
+    openProject: created => { setProject(created); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() },
+    sendToWorkbench: value => { setPrompt(value); setView('workspace') },
+    setNotice,
+    projectBusy: building || planning,
+    saveBeforeRestore: async () => { if (editorDirty && selectedFile && project) await window.modmind.project.writeFile(selectedFile, editorContent, project.path) },
+    projectRestored: restored => {
+      setProject(restored); setSelectedFile(''); setEditorContent(''); setEditorDirty(false)
+      setBuildResult(null); setBuildError(''); setEvents([]); setMinecraftEvents([]); setAiRecovery(null)
+      void refreshFilesFor(restored.path); void refreshSnapshotsFor(restored.path)
+    }
+  }
+  const projectIndependentView = view === 'settings' || view === 'plugins' || installedPages.some(page => page.id === view && (!page.supports || page.supports(null, uiMode)))
     || view.startsWith('plugin:')
 
   if (false && initialDetachedGroup) {
@@ -5253,10 +5063,10 @@ export default function App(): React.JSX.Element {
                   key={item.id}
                   data-sidebar-drag-key={`item:${item.id}`}
                   draggable
-                  className={`sidebar-nav-item ${view === item.id ? 'active' : ''} ${sidebarDraggedId === item.id ? 'dragging' : ''} ${sidebarDropTargetId === item.id ? 'drop-target' : ''}`}
+                  className={`sidebar-nav-item ${view === item.id ? 'active' : ''} ${sidebarDraggedId === item.id ? 'dragging' : ''} ${sidebarDropTargetId === item.id ? 'drop-target' : ''} ${item.id === 'snapshots' && snapshotStorageWarning ? 'storage-warning' : ''}`}
                   aria-current={view === item.id ? 'page' : undefined}
-                  aria-label={item.label}
-                  title={sidebarCollapsed ? item.label : undefined}
+                  aria-label={`${item.label}${item.id === 'snapshots' && snapshotStorageWarning ? '，备份占用偏大' : ''}`}
+                  title={sidebarCollapsed || item.id === 'snapshots' && snapshotStorageWarning ? `${item.label}${item.id === 'snapshots' && snapshotStorageWarning ? '，备份占用偏大' : ''}` : undefined}
                   onClick={() => { navigateToView(item.id); if (project) setProjectLauncherOpen(false) }}
                   onDragStart={(event) => beginSidebarDrag(event, item, group.groupKey)}
                   onDragOver={(event) => {
@@ -5285,6 +5095,7 @@ export default function App(): React.JSX.Element {
                   type="button"
                 >
                   <item.icon size={sidebarCollapsed ? 19 : 16} /><span>{item.label}</span>
+                  {item.id === 'snapshots' && snapshotStorageWarning ? <CircleAlert className="snapshot-sidebar-warning" size={15} aria-hidden="true" /> : null}
                   {showFeatureBeta(item.id) ? <em className="agent-beta-tag feature-beta-tag">Beta</em> : null}
                   {item.id === 'build' && latestEvent ? <i className={`status-dot ${latestEvent.status}`} /> : null}
                 </button>
@@ -5314,61 +5125,15 @@ export default function App(): React.JSX.Element {
             onCreate={() => setShowCreate(true)}
             onOpen={() => void openProject()}
             onAdopt={() => setExistingImportPicker(true)}
-            onImportModJar={async () => {
-              const picked = await window.modmind.decompile.pickJar()
-              if (!picked) return
-              setModJarInspecting(true)
-              try {
-                setModJarInspection(await window.modmind.decompile.inspect(picked))
-              } catch (reason) {
-                setErrorNotice(errorMessage(reason))
-              } finally {
-                setModJarInspecting(false)
-              }
-            }}
+            featureActions={Object.values(featurePlugins.modules).flatMap(module => module.launcherActions ?? []).map((Action, index) => <Action key={index} {...featureContext} visible />)}
             onSelect={(recent) => void openRecentProject(recent)}
             onRemove={(recent) => void removeRecentProject(recent)}
             onRename={setRenamingProject}
           />
         ) : (
           <main ref={mainContentRef} className="main-content" data-view={view}>
-            {view === 'item-editor' && project && project.kind !== 'modpack' && project.kind !== 'server-plugin' && isJavaLoader(project.loader) ? <ItemEditorWorkspace project={project} onOpenImages={() => setView('image-studio')} onBuild={() => setView('build')} onTest={() => setView('minecraft')} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} /> : null}
-            {project && project.kind !== 'modpack' && project.kind !== 'server-plugin' && isJavaLoader(project.loader) ? <KeepAliveRoute key={`sounds:${project.path}`} active={view === 'sounds'}><div className="production-page"><SoundWorkspace projectPath={project.path} projectNamespace={project.namespace} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} /></div></KeepAliveRoute> : null}
-            {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-content:${project.path}`} active={view === 'modpack-content'}><ModpackToolsWorkspace project={project} section="content" /></KeepAliveRoute> : null}
-            {view === 'relationships' && project && project.kind !== 'modpack' && isJavaLoader(project.loader) ? <AddonRelationshipsWorkspace project={project} beginner={uiMode === 'beginner'} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /> : null}
-            {view === 'relationships' && project?.kind === 'server-plugin' ? <ServerPluginDependencies project={project} onOpenCode={() => setView('code')} /> : null}
-            {view === 'ftb-quests' && project?.kind === 'modpack' ? <div className="ftb-quest-host"><FtbQuestEditor project={project} /></div> : null}
-            {view === 'patchouli' && project?.kind === 'modpack' ? <PatchouliBookEditor /> : null}
-            {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-migration:${project.path}`} active={view === 'modpack-migration'}><ModpackMigrationWorkspace project={project} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /></KeepAliveRoute> : null}
-            <KeepAliveRoute key={`decompile:${project?.path ?? 'standalone'}`} active={view === 'decompile'}>
-              <DecompileWorkspace
-                key={decompileJarHandoff ?? 'none'}
-                initialJarPath={decompileJarHandoff}
-                projectContext={project}
-                darkMode={settings.darkMode}
-                onProjectCreated={(created) => {
-                  setProject(created)
-                  setProjectLauncherOpen(false)
-                  setView('workspace')
-                  void refreshRecentProjects()
-                }}
-              />
-            </KeepAliveRoute>
-            {project?.kind === 'modpack' ? <KeepAliveRoute key={`modpack-automation:${project.path}`} active={view === 'modpack-automation'}><ModpackToolsWorkspace project={project} section="automation" /></KeepAliveRoute> : null}
-            {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ModpackToolsWorkspace project={project} section="server" /></KeepAliveRoute> : null}
-            {view === 'modpack-mod-list' && project?.kind === 'modpack' ? <ModpackModListWorkspace project={project} onOpenModule={(module) => { setProject(module); setView('workspace') }} onDecompile={(jarPath) => { setDecompileJarHandoff(jarPath); setView('decompile') }} /> : null}
-            {view === 'modpack-manifest' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="other" inventoryMode onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-config' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="config" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-scripts' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="scripts" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-datapacks' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="datapacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-resourcepacks' && project ? <ResourcePackWorkspace key={project.path} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} project={project} darkMode={settings.darkMode} initialSelection={resourceSelection?.projectPath === project.path ? resourceSelection : undefined} onImages={target => { setResourceImageTarget(target ?? null); setResourceSelection(target ?? null); setView('image-studio') }} onModels={target => { setResourceModelTarget(target ?? null); setResourceSelection(target ?? null); setView('blockbench') }} onTest={() => setView(project.kind === 'server-plugin' ? 'modpack-server' : 'minecraft')} /> : null}
-            {view === 'modpack-shaders' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="shaderpacks" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-ui' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="ui" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-worlds' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="worlds" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-client' && project?.kind === 'modpack' ? <ModpackKeybindWorkspace project={project} onOpenRaw={(relativePath) => void openEditorFile(relativePath)} /> : null}
-            {view === 'modpack-server-content' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="server" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {view === 'modpack-files' && project?.kind === 'modpack' ? <ModpackContentWorkspace project={project} darkMode={settings.darkMode} section="other" onOpenEditor={openModpackContentEditor} onCreateFile={(contentPath, content) => void createModpackContentFile(contentPath, content)} /> : null}
-            {project?.kind === 'modpack' ? <div className="third-party-route" hidden={view !== 'third-party-mods'}><ThirdPartyModsWorkspace key={project.path} project={project} visible={view === 'third-party-mods'} /></div> : null}
+            <FeaturePluginRoutes pages={installedPages} view={view} context={featureContext} routeData={featureRouteData} />
+            {project && ['modpack', 'server-plugin'].includes(project.kind ?? '') ? <KeepAliveRoute key={`modpack-server:${project.path}`} active={view === 'modpack-server'}><ServerTestWorkspace project={project} /></KeepAliveRoute> : null}
 
             {view === 'workspace' && project && normalizeProjectPath(activeWorkbenchProjectRef.current) === normalizeProjectPath(project.path) ? <AgentWorkbench
               key={project.path}
@@ -5424,7 +5189,7 @@ export default function App(): React.JSX.Element {
               scanningBeginnerModels={scanningBeginnerModels}
               savingAiPreferences={savingAiPreferences || draftPreparing}
               beginnerModelScanMessage={beginnerModelScanMessage}
-              contextModel={settings.codingBackend === 'codex' || settings.codingBackend === 'claude' ? settings.externalAgents?.[settings.codingBackend]?.model : undefined}
+              contextModel={settings.codingBackend === 'codex' ? settings.externalAgents?.codex?.model : undefined}
               onScanBeginnerModels={() => void scanBeginnerModels()}
               onModelChange={model => setWorkbenchAiOverride({ ...workbenchAiSelection, model, reasoningLevel: 'auto' })}
               onReasoningLevelChange={reasoningLevel => setWorkbenchAiOverride({ ...workbenchAiSelection, reasoningLevel })}
@@ -5460,85 +5225,12 @@ export default function App(): React.JSX.Element {
               />
             ))}
 
-            {uiMode === 'advanced' || view === 'image-studio' ? <div className="image-studio-host" hidden={view !== 'image-studio'}><ImageStudioWorkspace visible={view === 'image-studio'} darkMode={settings.darkMode} onOpenSettings={() => setView('settings')} resourceTarget={resourceImageTarget?.projectPath === project?.path ? resourceImageTarget : null} onCloseResource={() => { setResourceImageTarget(null); setView('modpack-resourcepacks') }} /></div> : null}
-
-            {project ? (
-              <KeepAliveRoute key={`blockbench:${project.path}`} active={view === 'blockbench'}>
-                <div className="blockbench-page">
-                  <BlockbenchWorkspace visible={view === 'blockbench'} darkMode={settings.darkMode} project={project} resourceTarget={resourceModelTarget?.projectPath === project.path ? resourceModelTarget : null} onDetachResource={() => setResourceModelTarget(null)} onCloseResource={() => { setResourceModelTarget(null); setView('modpack-resourcepacks') }} />
-                </div>
-              </KeepAliveRoute>
-            ) : null}
 
             {project && project.kind !== 'server-plugin' ? <KeepAliveRoute key={`minecraft:${project.path}`} active={view === 'minecraft'}>{project.kind !== 'modpack' && isJavaLoader(project.loader) ? <WorkspaceTabs label="游戏测试" sections={[
                 { id: 'play', label: '游戏测试', render: () => <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} onManageRelationships={() => setView('relationships')} /> },
                 { id: 'checks', label: '自动检查', render: () => <AutomatedTestsPane /> }
               ]} /> : <MinecraftTestWorkspace projectPath={project.path} beginner={uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => setView('relationships')} />}</KeepAliveRoute> : null}
 
-            {view === 'mappings' && project ? (
-              <div className="mappings-page">
-                <div className="content-toolbar">
-                  <h1 className="visually-hidden">Minecraft Mappings</h1><span className="toolbar-context">Minecraft {project.minecraftVersion}</span>
-                  <div className="toolbar-actions">
-                    <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openLoaderDocs(project.loader)}><ExternalLink size={13} />{platformLabel(project.loader)} 文档</button>
-                    <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openSource(project.minecraftVersion)}><ExternalLink size={13} />mappings.dev</button>
-                  </div>
-                </div>
-                <div className="mapping-search-band">
-                  <div className="mapping-search-box">
-                    <Search size={16} />
-                    <input
-                      value={mappingQuery}
-                      onChange={(event) => setMappingQuery(event.target.value)}
-                      onKeyDown={(event) => { if (event.key === 'Enter') void searchMappings() }}
-                      placeholder="搜索类名或包名"
-                    />
-                    <button className="primary-button" disabled={mappingBusy || !mappingQuery.trim()} onClick={() => void searchMappings()}>
-                      {mappingBusy ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}查询
-                    </button>
-                  </div>
-                  <p>{mappingMessage}</p>
-                </div>
-                <div className="mapping-layout">
-                  <aside className="mapping-results">
-                    <div className="panel-title"><span>类列表</span><small>{mappingResults.length}</small></div>
-                    {mappingResults.map((entry) => {
-                      const primary = entry.names.Mojang ?? Object.values(entry.names)[0]
-                      return (
-                        <button key={entry.pagePath} className={mappingDetail?.pagePath === entry.pagePath ? 'selected' : ''} onClick={() => void openMapping(entry)}>
-                          <strong>{primary.split('/').at(-1)}</strong>
-                          <span>{primary.replaceAll('/', '.')}</span>
-                          <small>{Object.entries(entry.names).filter(([namespace]) => namespace !== 'Mojang').slice(0, 2).map(([namespace, name]) => `${namespace}: ${name.split('/').at(-1)}`).join(' · ')}</small>
-                        </button>
-                      )
-                    })}
-                    {!mappingResults.length ? <div className="mapping-empty"><LibraryBig size={24} /><span>查询结果会显示在这里</span></div> : null}
-                  </aside>
-                  <section className="mapping-detail">
-                    {mappingDetail ? (
-                      <>
-                        <div className="mapping-detail-head">
-                          <div><span>声明</span><h2>{mappingDetail.declaration}</h2></div>
-                          <input value={mappingMemberQuery} onChange={(event) => setMappingMemberQuery(event.target.value)} placeholder="筛选字段或方法" />
-                        </div>
-                        <div className="mapping-class-names">
-                          {Object.entries(mappingDetail.names).map(([namespace, name]) => <div key={namespace}><span>{namespace}</span><code>{name.replaceAll('/', '.')}</code></div>)}
-                        </div>
-                        <div className="mapping-member-heading"><strong>成员列表</strong><span>{filteredMappingMembers.length} 条</span></div>
-                        <div className="mapping-members">
-                          {filteredMappingMembers.map((member, index) => (
-                            <article key={`${member.kind}-${index}`}>
-                              <div><span className={`mapping-kind ${member.kind}`}>{member.kind}</span><code>{member.type}</code></div>
-                              <dl>{Object.entries(member.names).map(([namespace, name]) => <div key={namespace}><dt>{namespace}</dt><dd>{name}</dd></div>)}</dl>
-                            </article>
-                          ))}
-                        </div>
-                      </>
-                    ) : <div className="mapping-detail-empty"><LibraryBig size={30} /><h2>选择一个类查看完整映射</h2></div>}
-                  </section>
-                </div>
-              </div>
-            ) : null}
 
             {view === 'code' && project ? (
               <div className="code-layout">
@@ -5621,66 +5313,6 @@ export default function App(): React.JSX.Element {
               </div>
             ) : null}
 
-            {view === 'snapshots' && project ? (
-              <div className="standard-page">
-                <div className="content-toolbar">
-                  <h1 className="visually-hidden">版本与迁移</h1><span className="toolbar-context">{platformLabel(project.loader)} · {project.minecraftVersion}</span>
-                  <button className="primary-button" onClick={() => void createSnapshot()}><Plus size={16} />创建快照</button>
-                </div>
-                {project.kind === 'server-plugin' ? <ServerPluginMigration project={project} onPlan={value => { setPrompt(value); setView('workspace') }} /> : project.kind !== 'modpack' && (isJavaLoader(project.loader) ? <section className="migration-band">
-                  <div className="section-title-row"><h2>迁移目标</h2><span>生成到新目录</span></div>
-                  <div className="migration-controls">
-                    <div className="segmented-control">
-                      {(['fabric', 'quilt', 'forge', 'neoforge'] as const).map((loader) => <button key={loader} className={migrationLoader === loader ? 'active' : ''} onClick={() => { setMigrationLoader(loader); setMigrationVersion(''); setMigrationPreview(null) }}>{loader === 'fabric' ? 'Fabric' : loader === 'quilt' ? 'Quilt' : loader === 'forge' ? 'Forge' : 'NeoForge'}</button>)}
-                    </div>
-                    <select value={selectedMigrationVersion} onChange={(event) => { setMigrationVersion(event.target.value); setMigrationPreview(null) }}>
-                      {migrationVersions.map((option) => <option key={`${option.loader}-${option.minecraftVersion}`} value={option.minecraftVersion}>{option.minecraftVersion}</option>)}
-                    </select>
-                    <button className="secondary-button" disabled={migrationBusy || !selectedMigrationVersion} onClick={() => void previewMigration()}>{migrationBusy ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}预检</button>
-                  </div>
-                  {migrationPreview ? <div className="migration-preview">
-                    <div><strong>{migrationPreview.source.loader} {migrationPreview.source.minecraftVersion}</strong><ChevronRight size={15} /><strong>{migrationPreview.target.loader} {migrationPreview.target.minecraftVersion}</strong>{migrationPreview.target.supportTier === 'stable' ? <span className="migration-tier stable">稳定</span> : null}</div>
-                    {migrationPreview.warnings.map((warning) => <p key={warning}><CircleAlert size={14} />{warning}</p>)}
-                    {migrationPreview.blockers.map((blocker) => <p className="error" key={blocker}><X size={14} />{blocker}</p>)}
-                    <button className="primary-button" disabled={migrationBusy || Boolean(migrationPreview.blockers.length)} onClick={() => void runMigration()}>{migrationBusy ? <LoaderCircle className="spin" size={15} /> : <PackageOpen size={15} />}生成迁移项目</button>
-                  </div> : null}
-                </section> : <section className="migration-band"><div className="section-title-row"><h2>平台版本</h2><span>{platformLabel(project.loader)}</span></div><p>基岩与网易工程不执行 Java Loader 自动迁移。升级最低引擎或 Mod SDK 前请先创建快照，并按目标平台 API 逐项验证</p></section>)}
-                <GitWorkspace project={project} onFilesChanged={() => { void refreshFiles(); void refreshSnapshots() }} />
-                <div className="snapshot-list">
-                  {snapshots.length ? snapshots.map((snapshot) => (
-                    <article className="snapshot-row" key={snapshot.id}>
-                      <span className="snapshot-icon"><Archive size={18} /></span>
-                      <div><h3>{snapshot.label}</h3><p>{formatDate(snapshot.createdAt)} · {snapshot.fileCount} 个文件</p></div>
-                      <code>{snapshot.id.slice(0, 19)}</code>
-                      <div className="snapshot-actions">
-                        <button
-                          className="icon-button"
-                          title="恢复此快照"
-                          disabled={Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || building || planning || migrationBusy}
-                          onClick={() => void restoreSnapshot(snapshot)}
-                        >
-                          {restoringSnapshotId === snapshot.id ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          title="删除此快照"
-                          disabled={Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || building || planning || migrationBusy}
-                          onClick={() => void deleteSnapshot(snapshot)}
-                        >
-                          {deletingSnapshotId === snapshot.id ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
-                        </button>
-                      </div>
-                    </article>
-                  )) : <div className="large-empty"><History size={26} /><h3>还没有版本快照</h3></div>}
-                </div>
-              </div>
-            ) : null}
-
-            {project ? (
-              <KeepAliveRoute key={`production:${project.path}`} active={view === 'production'}>
-                <ProductionWorkspace project={project} active={view === 'production'} onOpenSettings={() => { setSettingsInitialSection('settings-release'); setView('settings') }} />
-              </KeepAliveRoute>
-            ) : null}
 
             {view === 'plugins' ? (
               <PluginsManager
@@ -5709,8 +5341,7 @@ export default function App(): React.JSX.Element {
             {view === 'settings' ? (
               <div className="settings-page">
                 <h1 className="visually-hidden">设置</h1>
-                <SettingsSections feedback={settingsFeedback} initialSection={settingsInitialSection}>
-                {project && javaProject && !modpackProject && !pluginProject ? <section id="settings-release" className="settings-section"><div className="settings-heading"><h2>发布平台</h2></div><ReleasePlatformSettings key={project.path} project={project} /></section> : null}
+                <SettingsSections feedback={settingsFeedback} initialSection={settingsInitialSection} extraSections={installedSettings}>
                 <section id="settings-approval" className="settings-section">
                   <div className="settings-heading"><h2>执行审批</h2></div>
                   <div className="settings-form"><label className="field-label" htmlFor="codex-approval-mode" style={{ gridColumn: '1 / -1' }}>工作台审批模式
@@ -5719,10 +5350,15 @@ export default function App(): React.JSX.Element {
                       <option value="manual">手动审批</option>
                       <option value="yolo">YOLO（默认，完全绕过审批与沙箱）</option>
                     </select>
-                  </label><p className="settings-note" style={{ gridColumn: '1 / -1' }}>仅对工作台生效，支持 Codex 与 Claude Code。默认 YOLO；自动审批不可用时，本次任务直接转为手动确认。新任务使用已保存的模式。</p></div>
+                  </label><p className="settings-note" style={{ gridColumn: '1 / -1' }}>仅对工作台生效，支持 Codex。默认 YOLO；自动审批不可用时，本次任务直接转为手动确认。新任务使用已保存的模式。</p></div>
                 </section>
                 <section id="settings-ai" className="settings-section">
                   <div className="settings-heading"><h2>AI 模型</h2></div>
+                  <div className="segmented-control" role="group" aria-label="模型来源">
+                    <button type="button" className={visibleAiSettingsBackend === 'quota' ? 'active' : ''} aria-pressed={visibleAiSettingsBackend === 'quota'} onClick={() => void selectAiSettingsBackend('quota')}>ModMind</button>
+                    <button type="button" className={visibleAiSettingsBackend === 'codex' ? 'active' : ''} aria-pressed={visibleAiSettingsBackend === 'codex'} onClick={() => void selectAiSettingsBackend('codex')}>本机 Codex</button>
+                  </div>
+                  {visibleAiSettingsBackend === 'quota' ? <>
                   <ProductionSettingsPanel
                     aiSettings={beginnerAiPreferences}
                     deviceState={deviceState}
@@ -5758,8 +5394,53 @@ export default function App(): React.JSX.Element {
                       void saveBeginnerAiPreference({ modelContextWindows, modelAutoCompactTokenLimits })
                     }}
                   />
+                  </> : <div className="codex-settings-gate">
+                  <fieldset className="codex-ai-settings" aria-label="本机 Codex 设置" disabled={codexSettingsBlocked} aria-hidden={codexSettingsBlocked || undefined}><div className="local-codex-settings">
+                    <div className="beginner-ai-preferences">
+                      <label className="beginner-model-control"><span>模型</span><div>{localCodexScan?.models.length ? <select value={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} disabled={localCodexScanning} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
+                        {[...new Set([settings.externalAgents?.codex?.model, localCodexScan?.model, ...localCodexScan.models].filter((value): value is string => Boolean(value)))].map(model => <option key={model} value={model}>{model}</option>)}
+                      </select> : <input key={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} defaultValue={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} placeholder="输入模型 ID" disabled={localCodexScanning} onBlur={event => { const model = event.target.value.trim(); if (model && model !== settings.externalAgents?.codex?.model) void saveLocalCodexPreference({ model, reasoningEffort: undefined }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />}<button type="button" className="icon-button" title="扫描本机 Codex 配置与模型" disabled={localCodexScanning} onClick={() => void scanLocalCodex()}>{localCodexScanning ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div></label>
+                      <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={settings.externalAgents?.codex?.reasoningEffort ?? 'auto'} allowedEfforts={selectedReasoningEfforts(settings.externalAgents?.codex?.model ?? '', settings.externalAgents?.codex?.reasoningEffortOptions)} disabled={localCodexScanning} onChange={value => void saveLocalCodexPreference({ reasoningEffort: value === 'auto' ? undefined : value })} /></div>
+                    </div>
+                    {localCodexScanError && !codexSettingsBlocked ? <p role="alert">{localCodexScanError} <button className="secondary-button compact" type="button" onClick={() => void scanLocalCodex()}>重试</button></p> : null}
+                    {settings.externalAgents?.codex?.mode === 'hosted' ? <div className="settings-actions"><span>当前使用 ModMind 配置的模型服务</span><button className="secondary-button compact" type="button" disabled={localCodexScanning || !localCodexScan?.status.installed} onClick={() => { setAgentDraft({ baseUrl: localCodexScan?.baseUrl ?? '', apiKey: '' }); void saveLocalCodexPreference({ mode: 'local', model: localCodexScan?.model ?? '', modelContextWindows: {}, modelAutoCompactTokenLimits: {}, reasoningEffort: undefined }) }}>使用本机配置</button></div> : null}
+                    <ModelContextSetting
+                      key={`codex:${settings.externalAgents?.codex?.mode}:${settings.externalAgents?.codex?.model}:${settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined) ?? 'auto'}:${settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined) ?? 'auto'}`}
+                      model={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''}
+                      value={settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined)}
+                      compactValue={settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined)}
+                      saving={localCodexScanning}
+                      onSave={(value, compactValue) => {
+                        const model = settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''
+                        const modelContextWindows = { ...settings.externalAgents?.codex?.modelContextWindows }
+                        const modelAutoCompactTokenLimits = { ...settings.externalAgents?.codex?.modelAutoCompactTokenLimits }
+                        if (value === undefined) delete modelContextWindows[model]; else modelContextWindows[model] = value
+                        if (compactValue === undefined) delete modelAutoCompactTokenLimits[model]; else modelAutoCompactTokenLimits[model] = compactValue
+                        void saveLocalCodexPreference({ modelContextWindows, modelAutoCompactTokenLimits })
+                      }}
+                    />
+                  </div>
+                  <div className="external-agent-settings">
+                    <div className="codex-connection-settings">
+                        <div className="external-agent-editor-form">
+                          <label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={event => setAgentDraft(current => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
+                          <label className="field-label">API Key<SecretInput secretKey="codex" stored={Boolean(settings.externalAgents?.codex?.hasStoredKey || agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey)} value={agentDraft.apiKey ?? ''} onChange={event => setAgentDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey || settings.externalAgents?.codex?.hasStoredKey ? '已发现凭证，留空保持不变' : '输入 API Key'} /></label>
+                        </div>
+                        <div className="settings-actions editor-actions"><span role="status">{agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey ? '已读取本机凭证' : settings.externalAgents?.codex?.hasStoredKey ? '已有加密凭证' : ''}</span><div className="settings-button-group"><button className="primary-button compact" type="button" disabled={configuringAgents.codex} onClick={() => void configureExternalAgent('codex')}>{configuringAgents.codex ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存连接</button></div></div>
+                    </div>
+                  </div></fieldset>
+                  {codexSettingsBlocked ? <div className="codex-install-overlay">
+                    <div role={localCodexScanError ? 'alert' : 'status'}>
+                      {localCodexScanning && codexInstalled === undefined ? <><LoaderCircle className="spin" size={20} aria-hidden="true" /><p>正在检测 Codex…</p></> : localCodexScanError ? <><strong>暂时无法检测 Codex</strong><p>{localCodexScanError}</p></> : <><strong>未检测到 Codex</strong><p>请先到“集成”下载 Codex</p></>}
+                    </div>
+                    <div className="settings-button-group">
+                      <button className="secondary-button compact" type="button" disabled={localCodexScanning} onClick={() => void scanLocalCodex()}>{localCodexScanning ? '正在检测…' : '重新检测'}</button>
+                      <button className="primary-button compact" type="button" data-settings-target="settings-agent-info">前往集成</button>
+                    </div>
+                  </div> : null}
+                  </div>}
                 </section>
-                <section id="settings-agents" className="settings-section">
+                <section id="settings-agent-info" className="settings-section">
                   <div className="settings-heading"><h2>外部 Agent</h2></div>
                   <div className="external-agent-settings">
                     <div className="external-agent-list">
@@ -5769,26 +5450,13 @@ export default function App(): React.JSX.Element {
                         return <div className="external-agent-row" key={agent.kind}>
                           <div className="external-agent-name"><span className={`status-dot ${status?.installed && status.compatible !== false ? 'success' : 'warning'}`} /><div><strong>{agent.label}</strong><p>{status?.compatible === false ? status.detail : status?.installed ? `${status.version ?? '已检测到'} · ${configured?.baseUrl && configured.mode !== 'local' ? '已设置 ModMind 服务' : '使用本机登录与用户配置'}` : externalAgentsReady ? '未检测到命令行工具' : '正在检测…'}</p></div></div>
                           <div className="external-agent-row-actions">
-                            <button className="secondary-button compact" type="button" onClick={() => { setEditingAgent(agent.kind); setAgentDraft({...configured, mode: configured?.mode ?? (agent.kind === 'claude' ? 'local' : 'hosted'), apiKey: ''}); setAvailableModels([]); setModelScanMessage('输入 API Key 后扫描') }}><Pencil size={14} />配置</button>
-                            {status?.installed || configured?.executable ? <button className="icon-button" type="button" title={`打开 ${agent.label}`} onClick={() => void launchExternalAgent(agent.kind)}><TerminalSquare size={15} /></button> : <button className="icon-button" type="button" title={`安装 ${agent.label}`} disabled={!externalAgentsReady || installingAgents[agent.kind]} onClick={() => void installExternalAgent(agent.kind)}>{installingAgents[agent.kind] ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}</button>}
+                            {status?.installed ? <button className="icon-button" type="button" title={`打开 ${agent.label}`} onClick={() => void launchExternalAgent(agent.kind)}><TerminalSquare size={15} /></button> : <button className="icon-button" type="button" title={`安装 ${agent.label}`} disabled={!externalAgentsReady || installingAgents[agent.kind]} onClick={() => void installExternalAgent(agent.kind)}>{installingAgents[agent.kind] ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}</button>}
                             <button className="icon-button" type="button" title={`${agent.label} 文档`} onClick={() => void openExternalAgentDocs(agent.kind)}><ExternalLink size={15} /></button>
                           </div>
                         </div>
                       })}
                     </div>
-                    {editingAgent ? (() => {
-                      const selectedAgent = EXTERNAL_AGENT_OPTIONS.find((item) => item.kind === editingAgent)!
-                      const agent = {...selectedAgent, managedService: selectedAgent.managedService && (editingAgent !== 'claude' || agentDraft.mode === 'hosted')}
-                      return <div className="external-agent-editor">
-                        <div className="external-agent-editor-heading"><div><strong>配置 {agent.label}</strong></div><button className="icon-button" type="button" title="关闭" onClick={() => { setEditingAgent(null); setAgentDraft({}) }}><X size={15} /></button></div>
-                        <div className="external-agent-editor-form">
-                          {editingAgent === 'claude' ? <label className="field-label">Claude Code 模式<select value={agentDraft.mode ?? 'local'} onChange={(event) => setAgentDraft((current) => ({...current, mode: event.target.value as ExternalAgentConfiguration['mode']}))}><option value="local">本机登录和配置</option><option value="hosted">ModMind 中转服务</option></select></label> : null}
-                          {editingAgent === 'claude' ? <label className="field-label">命令路径<input value={agentDraft.executable ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, executable: event.target.value}))} placeholder="留空则从 PATH 查找" /></label> : null}
-                          {agent.managedService ? <><label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, baseUrl: event.target.value, modelContextWindows: undefined, modelAutoCompactTokenLimits: undefined, reasoningEffortOptions: undefined, reasoningEffort: undefined}))} placeholder="https://api.example.com/v1" /></label><label className="field-label">API Key<SecretInput secretKey={editingAgent} stored={Boolean(settings.externalAgents?.[editingAgent]?.hasStoredKey)} value={agentDraft.apiKey ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, apiKey: event.target.value}))} placeholder={settings.externalAgents?.[editingAgent]?.hasStoredKey ? '已安全保存，留空保持不变' : '输入服务 API Key'} /></label><div className="model-picker-field"><div className="model-picker-heading"><span>模型</span><button type="button" onClick={() => void scanModels()} disabled={scanningModels || !agentDraft.baseUrl?.trim()}>{scanningModels ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{scanningModels ? '扫描中' : '扫描模型'}</button></div><label className="field-label"><input value={agentDraft.model ?? ''} onChange={(event) => setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined}))} placeholder="扫描后选择，或手动填写模型 ID" /><small>{modelScanMessage}</small></label>{availableModels.length ? <select className="external-agent-model-select" value={availableModels.some((item) => item.id === agentDraft.model) ? agentDraft.model : ''} onChange={(event) => { if (event.target.value) setAgentDraft((current) => ({...current, model: event.target.value, reasoningEffort: undefined})) }}><option value="">从已扫描模型中选择</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}{model.ownedBy ? ` (${model.ownedBy})` : ''}</option>)}</select> : null}</div>{editingAgent === 'codex' ? <><label className="field-label">当前模型上下文上限（Token，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelContextWindows?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="自动使用模型能力表" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const windows = { ...current.modelContextWindows }; const model = current.model?.trim() ?? ''; if (value === '') delete windows[model]; else windows[model] = Number(value); return { ...current, modelContextWindows: windows } }) }} /><small>填写服务商支持的上限，留空自动匹配</small></label><label className="field-label">自动压缩阈值（tokens，可选）<input type="number" min={1024} max={100000000} step={1} value={agentDraft.modelAutoCompactTokenLimits?.[agentDraft.model?.trim() ?? ''] ?? ''} disabled={!agentDraft.model?.trim()} placeholder="留空自动计算" onChange={(event) => { const value = event.target.value; setAgentDraft((current) => { const limits = { ...current.modelAutoCompactTokenLimits }; const model = current.model?.trim() ?? ''; if (value === '') delete limits[model]; else limits[model] = Number(value); return { ...current, modelAutoCompactTokenLimits: limits } }) }} /><small>最多为上下文窗口的 90%</small></label></> : null}<div className="external-agent-reasoning-control"><span>思考强度</span><ReasoningControl value={agentDraft.reasoningEffort ?? 'auto'} capabilities={availableModels.find(model => model.id === agentDraft.model)?.reasoning} allowedEfforts={editingAgent === 'codex' ? selectedReasoningEfforts(agentDraft.model?.trim() ?? '', agentDraft.reasoningEffortOptions) : undefined} disabled={scanningModels || configuringAgents[editingAgent]} onChange={value => setAgentDraft(current => ({ ...current, reasoningEffort: value === 'auto' ? undefined : value }))} /></div>{editingAgent === 'codex' ? <ReasoningEffortSettings value={selectedReasoningEfforts(agentDraft.model?.trim() ?? '', agentDraft.reasoningEffortOptions)} disabled={!agentDraft.model?.trim() || configuringAgents.codex} onChange={(efforts) => setAgentDraft(current => { const options = { ...current.reasoningEffortOptions }; const model = current.model?.trim() ?? ''; if (efforts.join(',') === DEFAULT_CODEX_REASONING_EFFORTS.join(',')) delete options[model]; else options[model] = efforts; return { ...current, reasoningEffortOptions: options, reasoningEffort: current.reasoningEffort && !efforts.includes(current.reasoningEffort) ? undefined : current.reasoningEffort } })} /> : null}</> : null}
-                        </div>
-                        <div className="settings-actions editor-actions"><span><ShieldCheck size={15} />凭证通过系统加密保存</span><button className="primary-button compact" type="button" disabled={configuringAgents[editingAgent]} onClick={() => void configureExternalAgent(editingAgent)}>{configuringAgents[editingAgent] ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存 {agent.label} 配置</button></div>
-                      </div>
-                    })() : null}
+                    <div className="settings-agent-info" role="note">配置请前往 <button type="button" data-settings-target="settings-ai">AI 与图像</button></div>
                   </div>
                 </section>
                 <section id="settings-mcp" className="settings-section">
@@ -5838,27 +5506,8 @@ export default function App(): React.JSX.Element {
                     </div>
                   ) : null}
                  </section>
-                 <section id="settings-image" className="settings-section image-settings-section">
-                    <div className="settings-heading"><h2>图像服务</h2></div>
-                    {imageStudioSettings.hasStoredKey && deviceState.provider !== 'custom' ? <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageSettingsSaving} onClick={() => void clearImageApiKey()}>切换为额度图像服务</button></div> : null}
-                    <div className="image-service-form">
-                      <label className="field-label">图片模型<select value={imageStudioSettings.model} disabled={imageModelsLoading || imageSettingsSaving || imageStudioSettings.syncedFromDevice} onChange={(event) => void saveImageSettings({ model: event.target.value })}>{!imageModels.includes(imageStudioSettings.model) && <option value={imageStudioSettings.model}>{imageStudioSettings.model ? imageStudioSettings.model + '（当前设置）' : '请选择图片模型'}</option>}{imageModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
-                      <div className="settings-actions"><button className="secondary-button compact" type="button" disabled={imageModelsLoading || imageSettingsSaving} onClick={() => void refreshImageModels()}>{imageModelsLoading ? '正在加载模型…' : '刷新模型列表'}</button></div>
-                    </div>
-                    <div className="settings-connection-status" role="status">{imageSettingsFeedback}</div>
-                    {imageModelsError && <p role="alert">{imageModelsError}</p>}
-                    {imageStudioSettings.syncedFromDevice ? <div className="settings-connection-status">图片 API 已由网页同步</div> : <details>
-                      <summary>自定义图像 API（可选）</summary>
-
-                      <div className="image-service-form">
-                        <label className="field-label">Base URL<input value={imageStudioSettings.baseUrl} disabled={imageSettingsSaving} onChange={(event) => { setImageStudioSettings({ ...imageStudioSettings, baseUrl: event.target.value }); setImageSettingsFeedback('自定义 API 有未保存的修改') }} /></label>
-                        <label className="field-label">图片 API Key<SecretInput aria-label="图片 API Key" secretKey="image" stored={imageStudioSettings.hasStoredKey} value={imageApiKey} disabled={imageSettingsSaving} onChange={(event) => { setImageApiKey(event.target.value); setImageSettingsFeedback('自定义 API 有未保存的修改') }} placeholder={imageStudioSettings.hasStoredKey ? '已安全保存，留空保持不变' : '输入自己的图片 API Key'} /></label>
-                        <div className="settings-actions"><span><ShieldCheck size={15} />{imageStudioSettings.hasStoredKey ? '已有加密凭证' : '当前未启用自定义 API'}</span><div className="settings-button-group">{imageStudioSettings.hasStoredKey ? <button className="secondary-button compact danger" type="button" disabled={imageSettingsSaving} onClick={() => void clearImageApiKey()}><Trash2 size={14} />删除已保存 Key</button> : null}<button className="primary-button compact" type="button" disabled={imageSettingsSaving} onClick={() => void saveImageSettings({ apiKey: imageApiKey })}><Save size={14} />{imageSettingsSaving ? '正在保存…' : '保存自定义 API'}</button></div></div>
-                      </div>
-
-                    </details>}
-                    <div className="settings-actions"><button className="secondary-button compact" type="button" onClick={() => setView('image-studio')}><WandSparkles size={14} />打开图像工坊</button></div>
-                 </section>
+                {installedSettings.filter(definition => !definition.supports || definition.supports(project)).map(definition => <FeatureSettingsSection key={definition.id} id={definition.id} definition={definition} context={{ ...featureContext, visible: true }} />)}
+                <section id="settings-feature-plugins" className="settings-section"><FeaturePluginSettings /></section>
                 <section id="settings-build" className="settings-section">
                   <div className="settings-heading"><h2>构建工具</h2></div>
                   <div className="appearance-row"><div><strong>项目 Gradle Wrapper</strong></div><span className="status-dot success" /></div>
@@ -5964,16 +5613,16 @@ export default function App(): React.JSX.Element {
       </div>
 
       <GlobalDownloadIndicator />
+      <FeaturePluginBackgrounds modules={featurePlugins.modules} context={{ ...featureContext, visible: false }} />
       {quickTestProject && project?.path === quickTestProject.path ? <QuickGameTestDialog key={quickTestProject.path} project={quickTestProject} onClose={() => setQuickTestProject(null)} onExport={() => void exportArtifact()} /> : null}
       {showCreate ? <CreateProjectDialog onClose={() => setShowCreate(false)} onCreated={(created) => { if (uiMode === 'beginner' && beginnerStartupDraft.trim()) pendingBeginnerStartRef.current = { projectPath: created.path, prompt: beginnerStartupDraft }; setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
       {existingImportPicker ? <ExistingImportPicker onClose={() => setExistingImportPicker(false)} onSelect={(sourceType) => { setExistingImportPicker(false); void inspectExistingProject(sourceType) }} /> : null}
-      {existingInspecting ? <ProjectInspectionDialog kind="project" /> : null}
-      {modJarInspecting ? <ProjectInspectionDialog kind="mod" /> : null}
+      {existingInspecting ? <ProjectInspectionDialog kind="project" progress={existingInspectionProgress} error={existingInspectionError} onClose={() => setExistingInspecting(false)} onRetry={() => void inspectExistingProject(existingInspectionSource)} /> : null}
       {existingAnalysis ? <AdoptProjectDialog analysis={existingAnalysis} onClose={() => setExistingAnalysis(null)} onAdopted={(adopted) => { setExistingAnalysis(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
-      {modJarInspection ? <AdoptModJarDialog inspection={modJarInspection} onClose={() => setModJarInspection(null)} onAdopted={(adopted) => { setModJarInspection(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
-      {updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudUpload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
-      {updateDownloadedOpen && appUpdateState.phase === 'downloaded' ? <div className="modal-backdrop"><div className="dialog update-dialog update-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="update-ready-dialog-title"><div className="dialog-header"><div><h2 id="update-ready-dialog-title">更新已下载</h2><p>ModMind {appUpdateState.latestVersion} 已准备好</p></div><PackageOpen size={21} /></div><p className="recovery-copy">安装包已经校验完成。可以立即重启安装；选择稍后时，下次启动 ModMind 会自动进入安装。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateDownloadedOpen(false)}>稍后</button><button className="primary-button" disabled={updateActionBusy} onClick={installAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />}重启并安装</button></div></div></div> : null}
+      {changelog && <AppChangelogDialog snapshot={changelog} onClose={() => setChangelog(null)} onPresented={() => { void window.modmind.app.markChangelogPresented().catch(error => console.warn('更新日志展示记录保存失败', error)) }} />}
+      {startupChangelogChecked && !changelog && updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudUpload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
+      {startupChangelogChecked && !changelog && updateDownloadedOpen && appUpdateState.phase === 'downloaded' ? <div className="modal-backdrop"><div className="dialog update-dialog update-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="update-ready-dialog-title"><div className="dialog-header"><div><h2 id="update-ready-dialog-title">更新已下载</h2><p>ModMind {appUpdateState.latestVersion} 已准备好</p></div><PackageOpen size={21} /></div><p className="recovery-copy">安装包已经校验完成。可以立即重启安装；选择稍后时，下次启动 ModMind 会自动进入安装。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateDownloadedOpen(false)}>稍后</button><button className="primary-button" disabled={updateActionBusy} onClick={installAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />}重启并安装</button></div></div></div> : null}
       {deviceAccountOpen ? <DeviceAccountDialog state={deviceState} remoteState={remoteState} busy={deviceBusy} remoteBusy={remoteBusy} onClose={() => setDeviceAccountOpen(false)} onAuthorize={() => void deviceAuthorize()} onCancel={() => void deviceCancel()} onDisconnect={() => void deviceDisconnect()} onRefresh={() => void deviceRefresh()} onOpenSite={deviceOpenSite} onRemoteToggle={() => void remoteToggle()} /> : null}
       {confirmDialog}
       {promptDialog}

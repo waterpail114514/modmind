@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Download, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react'
+import { Check, Download, History, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react'
 import type { AppUpdateState } from '../../../shared/types'
+import type { AppChangelogSnapshot } from '../../../shared/appChangelog'
+import AppChangelogDialog from './AppChangelogDialog'
 import './app-maintenance-settings.css'
 import ReinstallConfirmDialog from './ReinstallConfirmDialog'
 
@@ -9,6 +11,8 @@ export default function AppMaintenanceSettings(): React.JSX.Element {
   const [action, setAction] = useState<'check' | 'update' | 'reinstall' | null>(null)
   const [feedback, setFeedback] = useState('')
   const [confirmReinstall, setConfirmReinstall] = useState(false)
+  const [changelog, setChangelog] = useState<AppChangelogSnapshot | null>(null)
+  const [loadingChangelog, setLoadingChangelog] = useState(false)
   const running = useRef(false)
   const busy = action !== null || ['checking', 'downloading', 'installing'].includes(state.phase)
   const progress = state.totalBytes ? Math.min(100, Math.round((state.downloadedBytes ?? 0) / state.totalBytes * 100)) : null
@@ -57,6 +61,12 @@ export default function AppMaintenanceSettings(): React.JSX.Element {
       <div className="app-maintenance-row">
         <span className="app-maintenance-version">ModMind {state.currentVersion || '—'}</span>
         <div className="settings-button-group">
+          <button className="secondary-button compact" type="button" aria-busy={loadingChangelog} onClick={() => {
+            if (loadingChangelog) return
+            setLoadingChangelog(true)
+            void window.modmind.app.getChangelog().then(snapshot => setChangelog({ ...snapshot, automatic: false }))
+              .catch(() => setFeedback('更新日志暂时无法读取，请重试。')).finally(() => setLoadingChangelog(false))
+          }}><History size={14} />更新日志</button>
           <button className="secondary-button compact" type="button" disabled={busy} onClick={() => void run('check')}>{action === 'check' ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}检查更新</button>
           <button className="primary-button compact" type="button" disabled={busy} onClick={() => void run('update')}>{action === 'update' || (busy && state.operation !== 'reinstall' && action !== 'check') ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}一键更新</button>
           <button className="secondary-button compact" type="button" disabled={busy} onClick={() => setConfirmReinstall(true)}>{action === 'reinstall' || (busy && state.operation === 'reinstall') ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}重装</button>
@@ -66,5 +76,6 @@ export default function AppMaintenanceSettings(): React.JSX.Element {
       {state.phase === 'downloading' && <progress className="app-maintenance-progress" aria-label="安装包下载进度" max={100} value={progress ?? undefined} />}
     </div>
     {confirmReinstall && <ReinstallConfirmDialog onCancel={() => setConfirmReinstall(false)} onConfirm={() => { setConfirmReinstall(false); void run('reinstall') }} />}
+    {changelog && <AppChangelogDialog snapshot={changelog} onClose={() => setChangelog(null)} />}
   </>
 }

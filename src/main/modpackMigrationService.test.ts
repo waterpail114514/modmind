@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { LoaderVersionOption, ModpackMigrationModDecision, ProjectInfo } from '../shared/types'
 import { createEmptyModpackLock, writeModpackLock } from './modpackLockService'
-import { assessModpackMigration, createModpackMigration, inspectModpackMigrationJar } from './modpackMigrationService'
+import { assessModpackMigration, createModpackMigration, inspectModpackMigrationJar } from "../../feature-plugins/modpack-migration/src/main/modpackMigrationService"
 import type { ModFile, ModProviderRegistry } from './modProviderService'
 import { addModpackFiles, createModpackTemplate, readModpackManifest } from './modpackService'
 import { createStoredZip } from './bedrockAddon'

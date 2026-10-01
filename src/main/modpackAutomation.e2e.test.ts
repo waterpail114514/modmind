@@ -4,9 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { applyKeybindPreset, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
+import { applyKeybindPreset, writeFtbQuestChapter, writePatchouliBook } from "../../feature-plugins/modpack-content/src/main/modpackContentService"
 import { addModpackFiles, createModpackTemplate } from './modpackService'
-import { applyModpackPlan, planModpack } from './modpackPlanner'
+import { applyModpackPlan, planModpack } from "../../feature-plugins/modpack-mods/src/main/modpackPlanner"
 import type { ModFile, ModProviderRegistry } from './modProviderService'
 import { auditModpackLock } from './modpackLockService'
 import { buildServerPack } from './serverPackService'

@@ -61,6 +61,7 @@ import {
   resolveMinecraftVersionFromManifests
 } from './minecraftVersionManifest'
 import { runMinecraftTaskWithRecovery } from './minecraftTaskRecovery'
+import { forgeInstallerVersion } from './forgeInstallerVersion'
 import { getNetworkProxyUrl } from './networkRequest'
 import { detectToolchainRequirements, mergeToolchainJavaHomes } from './toolchainDetection'
 import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
@@ -2139,19 +2140,19 @@ export class MinecraftRuntimeManager {
           if (!selected) throw new Error(`Forge 没有返回 Minecraft ${project.minecraftVersion} 的版本`)
           loaderVersion = `${project.minecraftVersion}-${selected.version}`
         }
-        const forgeVersion = loaderVersion.startsWith(`${project.minecraftVersion}-`)
-          ? loaderVersion.slice(project.minecraftVersion.length + 1)
-          : loaderVersion
+        const forgeVersion = forgeInstallerVersion(project.minecraftVersion, loaderVersion)
         loaderVersionId = await runMinecraftTaskWithRecovery({
           signal,
           stallTimeoutMs: 120_000,
-          createTask: () => installForgeTask(
+          createTask: (attempt) => installForgeTask(
             { mcversion: project.minecraftVersion, version: forgeVersion },
             this.resourceRoot(),
-            { java: javaPath, side: 'client', mavenHost: FORGE_MAVEN_HOSTS, dispatcher }
+            { java: javaPath, side: 'client', mavenHost: attempt % 2 === 1 ? FORGE_MAVEN_HOSTS : [...FORGE_MAVEN_HOSTS].reverse(), dispatcher }
           ),
           onUpdate: (task) => this.emitProgress('installing-loader', `正在安装 Forge ${loaderVersion}`, task.progress, task.total, generation),
-          onRetry: (attempt, error) => this.emit('installing-loader', `${error.message}，正在重试 Forge 安装（${attempt}/3）`, 'warning')
+          onRetry: (attempt, error) => this.emit('installing-loader', `${error.message}，正在切换下载源重试 Forge 安装（${attempt}/3）`, 'warning'),
+          retryOnError: (error) => error instanceof AggregateError && error.errors.some((cause: unknown) =>
+            cause instanceof Error && /InvalidZipError|ResponseStatusCodeError|RequestError|SocketError|TimeoutError/.test(cause.name))
         })
       } else {
         if (!loaderVersion) throw new Error(`NeoForge ${project.minecraftVersion} 缺少加载器版本`)

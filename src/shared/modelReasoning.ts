@@ -1,7 +1,7 @@
 import type { BeginnerReasoningLevel, ModelReasoningCapabilities, ReasoningEffort } from './types'
 
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
-export const DEFAULT_CODEX_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'ultra']
+export const DEFAULT_CODEX_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 export const MAX_SELECTABLE_REASONING_EFFORTS = 5
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)

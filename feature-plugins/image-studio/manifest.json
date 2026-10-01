@@ -1,0 +1,271 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "image-studio",
+  "name": "图像工坊",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": [
+    "downloadActivities"
+  ],
+  "capabilities": [
+    {
+      "id": "image-generation",
+      "name": "图像生成与编辑",
+      "description": "ModMind 原生图像工坊支持账号额度或自定义图片 API 生图、参考图编辑、节点工作流、PerfectPixel 像素处理及去背景。安装并启用后可在工作台和灵感台调用；未安装时应引导安装，不能宣称工具已可用或自行寻找其他本地生图软件。"
+    }
+  ],
+  "views": [
+    {
+      "id": "image-studio",
+      "label": "图像工坊",
+      "component": "Workspace",
+      "icon": "WandSparkles",
+      "group": "资源",
+      "order": 20
+    }
+  ],
+  "settings": [
+    {
+      "id": "settings-image",
+      "label": "图像",
+      "component": "Settings",
+      "category": "ai",
+      "keywords": "图像工坊 图片 生图 像素 去背景"
+    }
+  ],
+  "actions": [
+    {
+      "id": "info",
+      "handler": "info",
+      "permission": "read",
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "includeModels": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "generate",
+      "handler": "generate",
+      "permission": "network",
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "maxLength": 32000
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Optional model override for this request only; otherwise uses the saved Image Studio model."
+          },
+          "presetId": {
+            "type": "string",
+            "description": "Preset ID from modmind_image_studio_info."
+          },
+          "presetPrompt": {
+            "type": "string",
+            "description": "Editable preset template. prompt supplies additional requirements."
+          },
+          "style": {
+            "type": "string",
+            "enum": [
+              "minecraft",
+              "free"
+            ],
+            "default": "free"
+          },
+          "size": {
+            "type": "string",
+            "default": "1024x1024"
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "auto"
+            ],
+            "default": "medium"
+          },
+          "moderation": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "low"
+            ],
+            "default": "auto"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 1
+          },
+          "background": {
+            "type": "string",
+            "enum": [
+              "solid",
+              "auto"
+            ],
+            "description": "solid adds a flat-background instruction to the prompt; auto leaves the background to the prompt."
+          },
+          "backgroundColor": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "default": "#ffffff"
+          },
+          "removeBackground": {
+            "type": "boolean",
+            "default": false,
+            "description": "Apply Image Studio local solid-background removal to generated pixels."
+          },
+          "referenceImage": {
+            "type": "string",
+            "description": "Image data URL for reference-guided editing."
+          }
+        }
+      },
+      "inspirationOutput": true,
+      "projectRequired": true
+    },
+    {
+      "id": "perfect-pixel",
+      "handler": "perfectPixel",
+      "permission": "write",
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "dataUrl": {
+            "type": "string"
+          },
+          "perfectPixel": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "sampleMethod": {
+                "type": "string",
+                "enum": [
+                  "majority",
+                  "center",
+                  "median"
+                ],
+                "default": "center"
+              },
+              "gridSize": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4096
+                },
+                "description": "Optional [width, height]; omit for automatic grid detection."
+              },
+              "minSize": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1000,
+                "default": 4
+              },
+              "peakWidth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 6
+              },
+              "refineIntensity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.5,
+                "default": 0.3
+              },
+              "fixSquare": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        },
+        "required": [
+          "dataUrl"
+        ]
+      },
+      "inspirationOutput": true,
+      "projectRequired": true
+    },
+    {
+      "id": "remove-background",
+      "handler": "removeBackground",
+      "permission": "write",
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dataUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataUrl"
+        ]
+      },
+      "inspirationOutput": true,
+      "projectRequired": true
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_image_studio_info",
+      "action": "info",
+      "description": "Read saved Image Studio settings (no secrets), credential source and all editable presets. Set includeModels=true to query available models; a lookup failure is returned separately and does not hide settings."
+    },
+    {
+      "name": "modmind_image_generate",
+      "action": "generate",
+      "description": "Generate or edit through the same Image Studio entry point, saved credentials and model as the UI. Read modmind_image_studio_info for presets and optionally models. Supports every generation parameter; model is a per-request override. Never requires separate agent credentials. Each output records a project path and, up to 8 MiB, a dataUrl for processing or Blockbench."
+    },
+    {
+      "name": "modmind_image_perfect_pixel",
+      "action": "perfect-pixel",
+      "description": "Run Image Studio PerfectPixel with the same adjustable parameters as the UI. Omit perfectPixel.gridSize for automatic detection."
+    },
+    {
+      "name": "modmind_image_remove_background",
+      "action": "remove-background",
+      "description": "Remove a detected solid background from an image data URL. Use the returned image as a transparent draft and inspect edges before saving."
+    }
+  ]
+}

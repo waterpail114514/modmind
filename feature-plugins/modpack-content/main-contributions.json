@@ -1,0 +1,330 @@
+{
+  "actions": [
+    {
+      "id": "modpack:get",
+      "handler": "modpack:get",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:removeMod",
+      "handler": "modpack:removeMod",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:sync",
+      "handler": "modpack:sync",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:listContent",
+      "handler": "modpack:listContent",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:importContent",
+      "handler": "modpack:importContent",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:downloadContent",
+      "handler": "modpack:downloadContent",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:removeContent",
+      "handler": "modpack:removeContent",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:configModIdentities",
+      "handler": "modpack:configModIdentities",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:contentFeatures",
+      "handler": "modpack:contentFeatures",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:contentProjectPath",
+      "handler": "modpack:contentProjectPath",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:getKeybinds",
+      "handler": "modpack:getKeybinds",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:applyKeybindPreset",
+      "handler": "modpack:applyKeybindPreset",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack_download_content",
+      "handler": "modpack_download_content",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "config",
+              "scripts",
+              "datapacks",
+              "quests",
+              "resourcepacks",
+              "shaderpacks",
+              "ui",
+              "worlds",
+              "client",
+              "server",
+              "other"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "common",
+              "client",
+              "server"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "targetPath": {
+            "type": "string"
+          },
+          "extract": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "url"
+        ]
+      }
+    },
+    {
+      "id": "modpack_apply_keybinds",
+      "handler": "modpack_apply_keybinds",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "preset": {
+            "type": "object"
+          },
+          "allowConflicts": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "preset"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_modpack_download_content",
+      "action": "modpack_download_content",
+      "description": "Download arbitrary HTTPS modpack content through ModMind verified download, size limits, hashing, inventory tracking, and safe world extraction. Covers config, scripts, datapacks, quests, resource packs, shader packs, UI files, worlds, client/server files, and other pack content."
+    },
+    {
+      "name": "modmind_modpack_apply_keybinds",
+      "action": "modpack_apply_keybinds",
+      "description": "Apply a keybind preset to pack options.txt and reject conflicts by default."
+    }
+  ]
+}

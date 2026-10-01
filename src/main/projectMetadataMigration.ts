@@ -80,7 +80,7 @@ async function migrateAgentContext(root: string, currentPath: string): Promise<b
 }
 
 async function clearPersistedExternalSessions(root: string): Promise<void> {
-  await Promise.all(['codex', 'claude'].map((kind) =>
+  await Promise.all(['codex'].map((kind) =>
     fs.rm(path.join(root, 'external-agents', `session-${kind}.json`), { force: true }).catch(() => undefined)
   ))
 }

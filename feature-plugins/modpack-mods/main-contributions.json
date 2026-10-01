@@ -1,0 +1,639 @@
+{
+  "actions": [
+    {
+      "id": "modpack:importStatus",
+      "handler": "modpack:importStatus",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:cancelImport",
+      "handler": "modpack:cancelImport",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:resumeImport",
+      "handler": "modpack:resumeImport",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:importMods",
+      "handler": "modpack:importMods",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:importModule",
+      "handler": "modpack:importModule",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:createModule",
+      "handler": "modpack:createModule",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:updateModuleSide",
+      "handler": "modpack:updateModuleSide",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:removeModule",
+      "handler": "modpack:removeModule",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:openModule",
+      "handler": "modpack:openModule",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:readLock",
+      "handler": "modpack:readLock",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:auditLock",
+      "handler": "modpack:auditLock",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:providers",
+      "handler": "modpack:providers",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:recommendProviders",
+      "handler": "modpack:recommendProviders",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:recommendMcmod",
+      "handler": "modpack:recommendMcmod",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:searchProviders",
+      "handler": "modpack:searchProviders",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:listProviderFiles",
+      "handler": "modpack:listProviderFiles",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:installProviderFile",
+      "handler": "modpack:installProviderFile",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:plan",
+      "handler": "modpack:plan",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:applyPlan",
+      "handler": "modpack:applyPlan",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:listManualMods",
+      "handler": "modpack:listManualMods",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:searchMcmod",
+      "handler": "modpack:searchMcmod",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:listMcmodFiles",
+      "handler": "modpack:listMcmodFiles",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:beginMcmodDownload",
+      "handler": "modpack:beginMcmodDownload",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:refreshMcmodCaptcha",
+      "handler": "modpack:refreshMcmodCaptcha",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:submitMcmodCaptcha",
+      "handler": "modpack:submitMcmodCaptcha",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack_plan",
+      "handler": "modpack_plan",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optional": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "modrinth",
+                "curseforge"
+              ]
+            }
+          },
+          "maxMods": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "required"
+        ]
+      }
+    },
+    {
+      "id": "modpack_apply_plan",
+      "handler": "modpack_apply_plan",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "plan"
+        ]
+      }
+    },
+    {
+      "id": "mcmod_search",
+      "handler": "mcmod_search",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "id": "mcmod_files",
+      "handler": "mcmod_files",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_modpack_plan",
+      "action": "modpack_plan",
+      "description": "Resolve a modpack concept into compatible Modrinth/CurseForge candidates, recursively resolve required dependencies, and return conflicts plus an install review without downloading files."
+    },
+    {
+      "name": "modmind_modpack_apply_plan",
+      "action": "modpack_apply_plan",
+      "description": "Download and hash-lock every resolved mod in a validated modpack plan."
+    },
+    {
+      "name": "modmind_mcmod_search",
+      "action": "mcmod_search",
+      "description": "Query MC百科 for China-only Mod metadata when Modrinth and CurseForge have no compatible replacement. This tool is read-only and cannot download files or request a captcha."
+    },
+    {
+      "name": "modmind_mcmod_files",
+      "action": "mcmod_files",
+      "description": "List public MC百科 file metadata for one numeric project ID. This tool excludes download tokens, cookies, captcha data, and download actions."
+    }
+  ]
+}

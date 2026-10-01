@@ -3,11 +3,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { createResourcePack, importResourcePack, previewResourcePackModel, resourcePackModelDocument, readResourcePackFile, resourcePackArchive, validateResourcePack, writeResourcePackFile } from './resourcePackService'
+import { createResourcePack, importResourcePack, previewResourcePackModel, resourcePackModelDocument, readResourcePackFile, resourcePackArchive, validateResourcePack, writeResourcePackFile } from "../../feature-plugins/resource-packs/src/main/resourcePackService"
 import sharp from 'sharp'
-import { archiveEntries } from './ftbResourceArchive'
+import { archiveEntries } from "./archiveInspection"
 import { createStoredZip } from './bedrockAddon'
-import { listResourcePacks, makeResourcePackEditable, removeResourcePackFile, importResourcePackAssets, deployResourcePack, resourcePackThumbnail } from './resourcePackService'
+import { listResourcePacks, makeResourcePackEditable, removeResourcePackFile, importResourcePackAssets, deployResourcePack, resourcePackThumbnail } from "../../feature-plugins/resource-packs/src/main/resourcePackService"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })

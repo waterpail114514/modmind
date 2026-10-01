@@ -18,7 +18,7 @@ export function readSurfaceAiSelection(value: string | null): SurfaceAiSelection
   try {
     const record = JSON.parse(value ?? 'null')
     const selection = normalizeAiModelSelection(record)
-    return selection && ['quota', 'codex', 'claude'].includes(record.backend) ? { ...selection, backend: record.backend } : undefined
+    return selection && ['quota', 'codex'].includes(record.backend) ? { ...selection, backend: record.backend } : undefined
   } catch { return undefined }
 }
 

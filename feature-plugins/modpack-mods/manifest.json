@@ -1,0 +1,36 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "modpack-mods",
+  "name": "模组列表",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "modpack-mod-list",
+      "label": "模组列表",
+      "component": "modpack-mod-list",
+      "icon": "List",
+      "group": "创作",
+      "order": 50
+    },
+    {
+      "id": "third-party-mods",
+      "label": "模组下载",
+      "component": "third-party-mods",
+      "icon": "PackagePlus",
+      "group": "创作",
+      "order": 60
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "modpack-mods",
+      "name": "模组列表",
+      "description": "浏览和管理整合包模组及自制模块，通过兼容平台搜索、下载和安装 Mod。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

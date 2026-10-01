@@ -1,0 +1,28 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "relationships",
+  "name": "前置与联动",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "relationships",
+      "label": "前置与联动",
+      "component": "relationships",
+      "icon": "Link2",
+      "group": "开发",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "relationships",
+      "name": "前置与联动",
+      "description": "浏览、下载和管理前置模组及开发依赖，处理服务端插件依赖与联动。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { parse } from 'yaml'
 import type { ProjectInfo } from '../shared/types'
 import type { PluginDescriptor, ServerPluginDependency } from '../shared/serverPlugin'
-import { archiveEntries, archiveRead } from './ftbResourceArchive'
+import { archiveEntries, archiveRead } from "./archiveInspection"
 import { fetchJsonWithRetry } from './networkRequest'
 import { verifiedDownload } from './downloadService'
 import type { PluginDownloadVersion } from '../shared/serverPlugin'

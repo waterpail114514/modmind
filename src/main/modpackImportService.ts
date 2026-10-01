@@ -4,7 +4,10 @@ import os from 'node:os'
 import path from 'node:path'
 import type { JavaLoaderKind, ModpackImportFormat, ModpackLayout, ModpackModuleSide } from '../shared/types'
 import { verifiedDownload } from './downloadService'
-import { installCurseForgePack, parseCurseForgeReferences, type CurseForgePackReference, type CurseForgePackInstallOptions } from './curseForgePackService'
+import { parseCurseForgeReferences, type CurseForgePackReference } from './curseForgePackMetadata'
+import type { CurseForgePackInstallOptions } from "../../feature-plugins/modpack-mods/src/main/curseForgePackService"
+import { nativeFeatureFunction } from './nativeFeatureServices'
+const installCurseForgePack = nativeFeatureFunction<typeof import('../../feature-plugins/modpack-mods/src/main/curseForgePackService').installCurseForgePack>('modpack-mods', 'installCurseForgePack')
 
 const PACK_CONTENT_DIRECTORIES = new Set([
   'mods', 'config', 'defaultconfigs', 'kubejs', 'scripts', 'resourcepacks', 'shaderpacks',

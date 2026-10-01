@@ -1,0 +1,350 @@
+{
+  "actions": [
+    {
+      "id": "resource-packs:list",
+      "handler": "resource-packs:list",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:makeEditable",
+      "handler": "resource-packs:makeEditable",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:create",
+      "handler": "resource-packs:create",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:read",
+      "handler": "resource-packs:read",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:previewModel",
+      "handler": "resource-packs:previewModel",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:thumbnail",
+      "handler": "resource-packs:thumbnail",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:openModel",
+      "handler": "resource-packs:openModel",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:saveModel",
+      "handler": "resource-packs:saveModel",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:write",
+      "handler": "resource-packs:write",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:removeFile",
+      "handler": "resource-packs:removeFile",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:validate",
+      "handler": "resource-packs:validate",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:deploy",
+      "handler": "resource-packs:deploy",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:import",
+      "handler": "resource-packs:import",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:importAssets",
+      "handler": "resource-packs:importAssets",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "resource-packs:export",
+      "handler": "resource-packs:export",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "operation",
+      "handler": "operation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "create",
+              "validate",
+              "export",
+              "deploy"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "packFormat": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_resource_pack",
+      "action": "operation",
+      "description": "Manage Java resource packs in the current project: list, create, validate, export, deploy. Source editing uses normal project file tools. All exports are validated."
+    }
+  ]
+}

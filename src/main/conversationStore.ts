@@ -237,9 +237,8 @@ export class ConversationStore {
     const mappedNativeTurn = branchTurnId && input.backend
       ? (input.beforeTurnId ? source.nativeTurnStarts?.[branchTurnId]?.[input.backend] : undefined) ?? source.nativeTurns[branchTurnId]?.[input.backend]
       : sourceNative?.lastTurnId
-    const claudeAtHead = Boolean(input.throughTurnId && !input.beforeTurnId && input.throughTurnId === sourceNative?.lastModmindTurnId)
     const nativeMode = Boolean(sourceNative?.sessionId)
-      && (input.backend === 'claude' ? !branchTurnId || claudeAtHead : !branchTurnId || Boolean(mappedNativeTurn))
+      && (!branchTurnId || Boolean(mappedNativeTurn))
       ? 'native'
       : 'visible-history-rebuild'
     const document: ConversationDocument = {

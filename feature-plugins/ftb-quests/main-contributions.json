@@ -1,0 +1,262 @@
+{
+  "actions": [
+    {
+      "id": "modpack:readFtbQuestBook",
+      "handler": "modpack:readFtbQuestBook",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:listFtbQuestBackups",
+      "handler": "modpack:listFtbQuestBackups",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:restoreFtbQuestBackup",
+      "handler": "modpack:restoreFtbQuestBackup",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:ftbQuestIcon",
+      "handler": "modpack:ftbQuestIcon",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:inspectFtbQuestIcon",
+      "handler": "modpack:inspectFtbQuestIcon",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:refreshFtbQuestResources",
+      "handler": "modpack:refreshFtbQuestResources",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:ftbQuestItemNames",
+      "handler": "modpack:ftbQuestItemNames",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:ftbQuestDependencyTexture",
+      "handler": "modpack:ftbQuestDependencyTexture",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:ftbQuestShapes",
+      "handler": "modpack:ftbQuestShapes",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:saveFtbQuestBook",
+      "handler": "modpack:saveFtbQuestBook",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:writeFtbQuest",
+      "handler": "modpack:writeFtbQuest",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack_write_ftb_quest",
+      "handler": "modpack_write_ftb_quest",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chapterId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "quests": {
+            "type": "array"
+          }
+        },
+        "required": [
+          "chapterId",
+          "title",
+          "quests"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_modpack_write_ftb_quest",
+      "action": "modpack_write_ftb_quest",
+      "description": "Write a validated FTB Quests chapter as SNBT into the modpack overrides."
+    }
+  ]
+}

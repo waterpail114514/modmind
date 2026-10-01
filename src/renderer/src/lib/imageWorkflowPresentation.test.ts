@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { planImageWorkflow, runImageWorkflow, type WorkflowNodeType, type WorkflowKind } from './imageWorkflow'
-import { createWorkflowOutputSlots, newWorkflowNodePosition, nextOutputColumn, OUTPUT_SIZE, workflowDisplayName, workflowOutputCounts } from './imageWorkflowPresentation'
+import { planImageWorkflow, runImageWorkflow, type WorkflowNodeType, type WorkflowKind } from '../../../../feature-plugins/image-studio/src/renderer/src/lib/imageWorkflow'
+import { createWorkflowOutputSlots, newWorkflowNodePosition, nextOutputColumn, OUTPUT_SIZE, workflowDisplayName, workflowOutputCounts } from '../../../../feature-plugins/image-studio/src/renderer/src/lib/imageWorkflowPresentation'
 
 const node = (id: string, kind: WorkflowKind, x = 0, y = 0, data: Partial<WorkflowNodeType['data']> = {}): WorkflowNodeType => ({ id, position: { x, y }, data: { kind, title: id, subtitle: '', ...data } })
 const edge = (source: string, target: string) => ({ id: `${source}-${target}`, source, target })

@@ -1,0 +1,100 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "modpack-content",
+  "name": "文件清单",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "modpack-manifest",
+      "label": "文件清单",
+      "component": "modpack-manifest",
+      "icon": "Archive",
+      "group": "内容",
+      "order": 10
+    },
+    {
+      "id": "modpack-config",
+      "label": "配置与默认项",
+      "component": "modpack-config",
+      "icon": "FileCog",
+      "group": "内容",
+      "order": 20
+    },
+    {
+      "id": "modpack-scripts",
+      "label": "脚本与 KubeJS",
+      "component": "modpack-scripts",
+      "icon": "Code2",
+      "group": "内容",
+      "order": 30
+    },
+    {
+      "id": "modpack-datapacks",
+      "label": "数据包",
+      "component": "modpack-datapacks",
+      "icon": "Archive",
+      "group": "内容",
+      "order": 40
+    },
+    {
+      "id": "modpack-shaders",
+      "label": "光影包",
+      "component": "modpack-shaders",
+      "icon": "Sparkles",
+      "group": "内容",
+      "order": 60
+    },
+    {
+      "id": "modpack-ui",
+      "label": "界面资源",
+      "component": "modpack-ui",
+      "icon": "WandSparkles",
+      "group": "内容",
+      "order": 70
+    },
+    {
+      "id": "modpack-worlds",
+      "label": "存档与世界",
+      "component": "modpack-worlds",
+      "icon": "Save",
+      "group": "内容",
+      "order": 80
+    },
+    {
+      "id": "modpack-client",
+      "label": "玩家预设",
+      "component": "modpack-client",
+      "icon": "SlidersHorizontal",
+      "group": "内容",
+      "order": 90
+    },
+    {
+      "id": "modpack-server-content",
+      "label": "服务端配置",
+      "component": "modpack-server-content",
+      "icon": "ServerCog",
+      "group": "内容",
+      "order": 100
+    },
+    {
+      "id": "modpack-files",
+      "label": "文件工作台",
+      "component": "modpack-files",
+      "icon": "FolderOpen",
+      "group": "内容",
+      "order": 110
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "modpack-content",
+      "name": "文件清单",
+      "description": "查看和编辑整合包清单、配置、脚本、数据包、光影、界面、世界、玩家预设与服务端内容。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { DEFAULT_CODEX_REASONING_EFFORTS, normalizeReasoningEffortOptions, reaso
 
 describe('configured Codex reasoning choices', () => {
   it('defaults to five manual levels plus auto and accepts an exact-model override', () => {
+    expect(DEFAULT_CODEX_REASONING_EFFORTS).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(reasoningOptions(undefined, selectedReasoningEfforts('unknown'))).toEqual(['auto', ...DEFAULT_CODEX_REASONING_EFFORTS])
     const configured = normalizeReasoningEffortOptions({ 'deepseek-v4.1-flash': ['ultra', 'high', 'medium', 'low', 'none'] })
     const efforts = selectedReasoningEfforts('deepseek-v4.1-flash', configured)

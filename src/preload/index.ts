@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSource } from '../shared/aiAttachments'
 import { diagnosticErrorPayload } from '../shared/diagnostics'
 import { presentClientResult } from '../shared/clientResult'
-import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface } from '../shared/types'
+import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
@@ -21,6 +21,15 @@ ipcRenderer.on('window:closeRequested', () => {
 })
 
 const rawInvoke = ipcRenderer.invoke.bind(ipcRenderer)
+let nativeFeatureRoutes: Promise<Map<string, string>> | undefined
+ipcRenderer.on('feature-plugins:changed', () => { nativeFeatureRoutes = undefined })
+function featureRoutes(): Promise<Map<string, string>> {
+  return nativeFeatureRoutes ??= rawInvoke('feature-plugins:catalog').then((catalog: import('../shared/featurePlugins').FeaturePluginCatalogEntry[]) => {
+    const routes = new Map<string, string>()
+    for (const plugin of catalog) for (const action of plugin.manifest?.actions ?? []) if (action.id.includes(':')) routes.set(action.id, plugin.id)
+    return routes
+  }).catch(() => new Map<string, string>())
+}
 
 const rendererError = diagnosticErrorPayload
 
@@ -41,7 +50,10 @@ function presentResult<T>(value: T, channel: string): T {
 
 // Main-process handlers own operation IDs and completion records, even if this renderer exits.
 const invoke: typeof ipcRenderer.invoke = async (channel, ...args) => {
-  try { return presentResult(await rawInvoke(channel, ...args), channel) }
+  try {
+    const pluginId = channel.startsWith('feature-plugins:') ? undefined : (await featureRoutes()).get(channel)
+    return presentResult(await (pluginId ? rawInvoke('feature-plugins:invoke', pluginId, channel, { args }) : rawInvoke(channel, ...args)), channel)
+  }
   catch (error) {
     // Main records the original exception before Electron strips its custom fields.
     // Also retain transport failures that never reached a main-process handler.
@@ -100,6 +112,8 @@ const api: ModMindApi = {
   app: {
     getPlatformInfo: () => platformInfo,
     getVersion: () => invoke('app:version'),
+    getChangelog: () => invoke('app:getChangelog'),
+    markChangelogPresented: () => invoke('app:markChangelogPresented'),
     checkForUpdates: () => invoke('app:checkForUpdates'),
     getUpdateState: () => invoke('app:getUpdateState'),
     downloadUpdate: () => invoke('app:downloadUpdate'),
@@ -169,6 +183,11 @@ const api: ModMindApi = {
     deleteProject: (projectPath: string) => invoke('project:delete', projectPath),
     deleteProjectPermanent: (projectPath: string) => invoke('project:deletePermanent', projectPath),
     inspectExisting: (sourceType?: 'folder' | 'zip') => invoke('project:inspectExisting', sourceType),
+    onInspectionProgress: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: ExistingProjectInspectionProgress): void => listener(presentResult(progress, 'project:inspectionProgress'))
+      ipcRenderer.on('project:inspectionProgress', handler)
+      return () => ipcRenderer.removeListener('project:inspectionProgress', handler)
+    },
     adoptExisting: (input: ExistingProjectAdoptInput) => invoke('project:adoptExisting', input),
     current: () => invoke('project:current'),
     listFiles: (projectPath?: string) => invoke('project:listFiles', projectPath),
@@ -301,6 +320,12 @@ const api: ModMindApi = {
   snapshots: {
     create: (label: string, projectPath?: string) => invoke('snapshots:create', label, projectPath),
     list: (projectPath?: string) => invoke('snapshots:list', projectPath),
+    storage: (projectPath?: string) => invoke('snapshots:storage', projectPath),
+    onStorageChanged: (listener: (status: SnapshotStorageInfo) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: SnapshotStorageInfo): void => listener(presentResult(status, 'snapshots:storageChanged'))
+      ipcRenderer.on('snapshots:storageChanged', handler)
+      return () => ipcRenderer.removeListener('snapshots:storageChanged', handler)
+    },
     restore: (id: string, projectPath?: string) => invoke('snapshots:restore', id, projectPath),
     delete: (id: string, projectPath?: string) => invoke('snapshots:delete', id, projectPath)
   },
@@ -428,6 +453,7 @@ const api: ModMindApi = {
   },
   externalAgents: {
     detect: () => invoke('external-agents:detect'),
+    scanLocal: () => invoke('external-agents:scanLocal'),
     configure: (kind: ExternalAgentKind, settings: ExternalAgentConfiguration) => invoke('external-agents:configure', kind, settings),
     history: (kind: ExternalAgentKind) => invoke('external-agents:history', kind),
     install: (kind: ExternalAgentKind) => invoke('external-agents:install', kind),
@@ -624,6 +650,26 @@ const api: ModMindApi = {
     }
   }
   ,
+  featurePlugins: {
+    list: () => invoke('feature-plugins:list'),
+    catalog: () => invoke('feature-plugins:catalog'),
+    invoke: (id: string, action: string, input: Record<string, unknown>) => invoke('feature-plugins:invoke', id, action, input),
+    onEvent: (id: string, name: string, callback: (value: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, pluginId: string, event: string, value: unknown): void => { if (pluginId === id && event === name) callback(presentResult(value, `feature-plugins:${id}:${name}`)) }
+      ipcRenderer.on('feature-plugins:event', listener)
+      return () => { ipcRenderer.removeListener('feature-plugins:event', listener) }
+    },
+    install: () => invoke('feature-plugins:install'),
+    onInstallPreview: (callback: (requestId: string, preview: import('../shared/featurePlugins').FeaturePluginInstallPreview) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, requestId: string, preview: import('../shared/featurePlugins').FeaturePluginInstallPreview): void => callback(requestId, preview)
+      ipcRenderer.on('feature-plugins:installPreview', listener)
+      return () => ipcRenderer.removeListener('feature-plugins:installPreview', listener)
+    },
+    confirmInstall: (requestId: string, accepted: boolean) => ipcRenderer.send('feature-plugins:confirmInstall', requestId, accepted),
+    setEnabled: (id: string, enabled: boolean) => invoke('feature-plugins:setEnabled', id, enabled),
+    uninstall: (id: string) => invoke('feature-plugins:uninstall', id),
+    onChanged: (callback: () => void) => { const listener = (): void => callback(); ipcRenderer.on('feature-plugins:changed', listener); return () => ipcRenderer.removeListener('feature-plugins:changed', listener) }
+  },
   imageStudio: {
     getSettings: () => invoke('image-studio:getSettings'),
     saveSettings: (settings: ImageStudioSettingsInput) => invoke('image-studio:saveSettings', settings),

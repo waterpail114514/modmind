@@ -1,9 +1,10 @@
 import { Children, isValidElement, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Search, X } from 'lucide-react'
 import { ScrollArea } from './AppScrollbars'
-import { settingsCategories as categories, settingsSections as sections, findSettingsSections } from '../settingsDefinitions'
+import { settingsCategories as categories, settingsSections, findSettingsSections, type SettingsSectionDefinition } from '../settingsDefinitions'
 
-export default function SettingsSections({ children, feedback = '', initialSection = '' }: { children: ReactNode; feedback?: string; initialSection?: string }): React.JSX.Element {
+export default function SettingsSections({ children, feedback = '', initialSection = '', extraSections = [] }: { children: ReactNode; feedback?: string; initialSection?: string; extraSections?: SettingsSectionDefinition[] }): React.JSX.Element {
+  const sections = [...settingsSections, ...extraSections]
   const [activeCategory, setActiveCategory] = useState<string>(() => sections.find(section => section.id === initialSection)?.category ?? 'general')
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -14,7 +15,7 @@ export default function SettingsSections({ children, feedback = '', initialSecti
   }, [activeCategory, query])
   const content = new Map(Children.toArray(children).flatMap(child =>
     isValidElement<{ id?: string }>(child) && child.props.id ? [[child.props.id, child] as const] : []))
-  const { searching, visibleSections } = findSettingsSections(new Set(content.keys()), activeCategory, query)
+  const { searching, visibleSections } = findSettingsSections(new Set(content.keys()), activeCategory, query, extraSections)
   const visibleIds = new Set<string>(visibleSections.map(section => section.id))
   const clearSearch = (): void => { setQuery(''); searchRef.current?.focus() }
   return <>
@@ -31,7 +32,11 @@ export default function SettingsSections({ children, feedback = '', initialSecti
         {categories.map(item => <button key={item.id} type="button" aria-current={!searching && activeCategory === item.id ? 'page' : undefined} onClick={() => { setActiveCategory(item.id); setQuery('') }}>{item.label}</button>)}
       </nav>
     </div>
-    <ScrollArea className="settings-scroll-area" ref={scrollRef}>
+    <ScrollArea className="settings-scroll-area" ref={scrollRef} onClickCapture={event => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>('[data-settings-target]')?.dataset.settingsTarget
+      const category = sections.find(section => section.id === target)?.category
+      if (category) { setActiveCategory(category); setQuery('') }
+    }}>
     {searching && <p className="settings-search-count" role="status">找到 {visibleSections.length} 个相关设置分区</p>}
     <div className="settings-category-content">
       {sections.map(section => <div key={section.id} hidden={!visibleIds.has(section.id)}>

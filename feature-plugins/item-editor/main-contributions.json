@@ -1,0 +1,178 @@
+{
+  "actions": [
+    {
+      "id": "itemEditor:list",
+      "handler": "itemEditor:list",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "itemEditor:catalog",
+      "handler": "itemEditor:catalog",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "itemEditor:save",
+      "handler": "itemEditor:save",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "itemEditor:remove",
+      "handler": "itemEditor:remove",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "itemEditor:importTexture",
+      "handler": "itemEditor:importTexture",
+      "permission": "write",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "catalog"
+            ]
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "manage",
+      "handler": "manage",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "save",
+              "remove"
+            ]
+          },
+          "definition": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_items_query",
+      "action": "query",
+      "description": "Read managed project items with their revision or the version-matched vanilla item catalog. Read the current revision before changing an item."
+    },
+    {
+      "name": "modmind_items_manage",
+      "action": "manage",
+      "description": "Save or remove a managed item through the same service as the item editor. Saving requires definition {item,revision}; removal requires id and the current revision. Existing generator validation, version support and rollback apply."
+    }
+  ]
+}

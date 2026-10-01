@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BlockbenchAction, BlockbenchProjectState } from '../shared/blockbench'
-import { validateAction, validateCaptureRequest, validateProjectState } from './blockbenchBridge'
+import { validateAction, validateCaptureRequest, validateProjectState } from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
 
 describe('Blockbench production actions', () => {
   it('accepts groups, animation keyframes, and model export', () => {

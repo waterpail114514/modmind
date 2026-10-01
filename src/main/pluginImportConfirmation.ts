@@ -3,10 +3,14 @@ import type { PluginImportPreview } from '../shared/plugins'
 
 /** Keep the decision tied to the requesting window; losing that window cancels. */
 export function requestPluginImportConfirmation(sender: WebContents, requestId: string, preview: PluginImportPreview): Promise<boolean> {
+  return requestWindowConfirmation(sender, requestId, preview, 'plugins:importPreview', 'plugins:confirmImport')
+}
+
+export function requestWindowConfirmation(sender: WebContents, requestId: string, preview: unknown, previewChannel: string, decisionChannel: string): Promise<boolean> {
   if (sender.isDestroyed()) return Promise.resolve(false)
   return new Promise((resolve, reject) => {
     const cleanup = (): void => {
-      ipcMain.removeListener('plugins:confirmImport', onDecision)
+      ipcMain.removeListener(decisionChannel, onDecision)
       sender.removeListener('destroyed', onCancel)
       sender.removeListener('render-process-gone', onCancel)
       sender.removeListener('did-start-navigation', onNavigate)
@@ -20,11 +24,11 @@ export function requestPluginImportConfirmation(sender: WebContents, requestId: 
       if (event.sender !== sender || id !== requestId) return
       finish(accepted === true)
     }
-    ipcMain.on('plugins:confirmImport', onDecision)
+    ipcMain.on(decisionChannel, onDecision)
     sender.once('destroyed', onCancel)
     sender.once('render-process-gone', onCancel)
     sender.on('did-start-navigation', onNavigate)
-    try { sender.send('plugins:importPreview', requestId, preview) }
+    try { sender.send(previewChannel, requestId, preview) }
     catch (error) { cleanup(); reject(error) }
   })
 }

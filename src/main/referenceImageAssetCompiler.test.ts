@@ -1,7 +1,7 @@
 import sharp from 'sharp'
 import {describe, expect, it} from 'vitest'
-import {validateAction} from './blockbenchBridge'
-import {analyzeReferenceImage, compileReferenceImageAsset} from './referenceImageAssetCompiler'
+import {validateAction} from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
+import {analyzeReferenceImage, compileReferenceImageAsset} from "../../feature-plugins/model-studio/src/main/referenceImageAssetCompiler"
 
 async function referencePng(): Promise<Buffer> {
   return sharp({create: {width: 64, height: 64, channels: 4, background: {r: 0, g: 0, b: 0, alpha: 0}}})

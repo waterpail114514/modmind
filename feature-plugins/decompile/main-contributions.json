@@ -1,0 +1,343 @@
+{
+  "actions": [
+    {
+      "id": "decompile:pickJar",
+      "handler": "decompile:pickJar",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:inspect",
+      "handler": "decompile:inspect",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:start",
+      "handler": "decompile:start",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:cancel",
+      "handler": "decompile:cancel",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:listFiles",
+      "handler": "decompile:listFiles",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:readFile",
+      "handler": "decompile:readFile",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:scanReferences",
+      "handler": "decompile:scanReferences",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:getTerms",
+      "handler": "decompile:getTerms",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:createModuleFromJar",
+      "handler": "decompile:createModuleFromJar",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "decompile:createProjectFromJar",
+      "handler": "decompile:createProjectFromJar",
+      "permission": "read",
+      "projectRequired": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "terms",
+              "inspect",
+              "files",
+              "read",
+              "references"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "sourcePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "sourceSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "knownPackages": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "modId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "packages": {
+                  "type": "array",
+                  "maxItems": 1000,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              },
+              "required": [
+                "modId",
+                "packages"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "enum": ["inspect", "files", "read", "references"]
+                }
+              }
+            },
+            "then": {
+              "required": ["sourcePath"]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": { "const": "read" }
+              }
+            },
+            "then": {
+              "required": ["path"]
+            }
+          }
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "run",
+      "handler": "run",
+      "permission": "process",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "termsVersionAcknowledged": {
+            "type": "string",
+            "minLength": 1
+          },
+          "skipRemap": {
+            "type": "boolean"
+          },
+          "minecraftVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "termsVersionAcknowledged"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_decompile_query",
+      "action": "query",
+      "description": "Inspect a project JAR, scan references, read its cached decompiled sources or obtain current controlled-decompilation terms. For inspect/files/read/references, sourcePath must identify the original JAR relative to the current project or its user attachments. For read, path identifies the file inside that JAR's decompiled sources. The cache key is computed from the original JAR; optional sourceSha256 only asserts the expected hash and cannot select a different cached JAR. terms needs no sourcePath."
+    },
+    {
+      "name": "modmind_decompile_run",
+      "action": "run",
+      "description": "Run controlled JAR decompilation into the application source cache after the user has acknowledged the exact current terms version. Never executes the input JAR or writes generated sources into the project."
+    }
+  ]
+}

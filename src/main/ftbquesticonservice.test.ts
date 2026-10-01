@@ -6,7 +6,7 @@ import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { ftbIconDescriptor, ftbIconKey } from '../shared/ftbIcon'
-import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestIcon } from './ftbquesticonservice'
+import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestIcon } from "../../feature-plugins/ftb-quests/src/main/ftbquesticonservice"
 import { httpTransport } from './networkRequest'
 
 const roots: string[] = []

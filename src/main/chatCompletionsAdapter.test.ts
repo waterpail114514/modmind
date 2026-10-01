@@ -1,7 +1,8 @@
 import { createServer } from 'node:http'
 import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, decompressRequest, normalizeHistoryMessageIds, normalizeResponsesTools, responsesRequestToChatCompletions, sanitizeTokenBudgets } from './chatCompletionsAdapter'
+import { ChatCompletionsAdapter, chatCompletionToResponsesEvents, decompressRequest, normalizeHistoryMessageIds, normalizeResponsesTools, responsesRequestToChatCompletions, sanitizeTokenBudgets, toolDeclarationSummary } from './chatCompletionsAdapter'
+import { diagnosticJournal } from './diagnosticLog'
 
 const adapters: ChatCompletionsAdapter[] = []
 
@@ -10,6 +11,12 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  it('summarizes tool declarations without inspecting their arguments', () => {
+    expect(toolDeclarationSummary([{ type: 'namespace', name: 'mcp__modmind', tools: [{ type: 'function', name: 'modmind_mcp_probe' }] }])).toEqual({ count: 1, probeDeclared: true, dispatcherDeclared: false })
+    expect(toolDeclarationSummary([{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }] }])).toEqual({ count: 1, probeDeclared: false, dispatcherDeclared: true })
+    expect(toolDeclarationSummary([{ type: 'function', name: 'functions__exec' }])).toEqual({ count: 1, probeDeclared: false, dispatcherDeclared: true })
+    expect(toolDeclarationSummary(undefined)).toEqual({ count: 0, probeDeclared: false, dispatcherDeclared: false })
+  })
   it.each(['responses', 'chat-completions'])('preserves literal effort choices through %s and isolates approval requests', async protocol => {
     const received: Record<string, any>[] = []
     const upstream = createServer(async (request, response) => {
@@ -93,6 +100,11 @@ describe('Chat Completions compatibility adapter', () => {
         expect(response.ok).toBe(true); await response.text()
       }
       expect(received).toHaveLength(2)
+      const routeId = base.match(/\/adapter\/([a-f0-9]{32})\/v1$/)?.[1]
+      const evidence = diagnosticJournal.snapshot().filter(event => event.operation === 'model-tool-catalog' && (event.data as { routeId?: string })?.routeId === routeId)
+      expect(evidence.filter(event => event.phase === 'request')).toHaveLength(2)
+      expect(evidence.some(event => event.phase === 'upstream' && (event.data as { status?: number }).status === 200)).toBe(true)
+      expect(JSON.stringify(evidence)).not.toContain('read a webpage')
       for (const body of received) {
         expect(body.tools).toEqual(expect.arrayContaining([protocol === 'responses'
           ? expect.objectContaining({ name: 'functions', tools: expect.arrayContaining([expect.objectContaining({ type: 'custom', name: 'exec' })]) })

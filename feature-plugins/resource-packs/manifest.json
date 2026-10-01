@@ -1,0 +1,28 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "resource-packs",
+  "name": "资源包",
+  "version": "1.5.0-plugintest",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "modpack-resourcepacks",
+      "label": "资源包",
+      "component": "modpack-resourcepacks",
+      "icon": "Image",
+      "group": "资源",
+      "order": 40
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "resource-packs",
+      "name": "资源包",
+      "description": "创建、导入、编辑、校验、部署和导出资源包，与已安装图像工坊、模型插件交接当前资源。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ]
+}

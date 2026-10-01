@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { createStoredZip } from './bedrockAddon'
-import { AddonRelationshipService, githubAcceleratedUrl } from './addonRelationshipService'
+import { AddonRelationshipService, githubAcceleratedUrl } from "../../feature-plugins/relationships/src/main/addonRelationshipService"
 import type { ModCandidate, ModFile, ModProviderRegistry } from './modProviderService'
 import type { McmodService } from './mcmodService'
 

@@ -1,0 +1,38 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "publishing",
+  "dependencies": ["media-runtime"],
+  "name": "发布",
+  "version": "1.5.0-plugintest-r7",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "views": [
+    {
+      "id": "production",
+      "label": "发布",
+      "component": "production",
+      "icon": "CloudUpload",
+      "group": "项目",
+      "order": 50
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "publishing",
+      "name": "发布",
+      "description": "配置发布平台、运行发布预检并发布项目，管理原发布工作流。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
+    }
+  ],
+  "settings": [
+    {
+      "id": "settings-release",
+      "label": "发布平台",
+      "component": "settings-release",
+      "category": "integrations",
+      "keywords": "发布平台 平台绑定 Modrinth CurseForge GitHub Token 令牌 项目 ID 仓库 release publish"
+    }
+  ]
+}

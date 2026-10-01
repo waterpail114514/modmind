@@ -547,6 +547,17 @@ export interface ExistingProjectAnalysis {
   modpack?: ExistingModpackAnalysis
 }
 
+export type ExistingProjectInspection = ExistingProjectAnalysis | {
+  existingProject: ProjectInfo
+  archive: boolean
+}
+
+export interface ExistingProjectInspectionProgress {
+  phase: 'extracting' | 'analyzing'
+  sourceName: string
+  percent?: number
+}
+
 export interface ExistingProjectAdoptInput extends ProjectCreateInput {
   sourcePath: string
   namespace: string
@@ -656,6 +667,15 @@ export interface SnapshotInfo {
   label: string
   createdAt: string
   fileCount: number
+}
+
+export interface SnapshotStorageInfo {
+  projectPath: string
+  snapshotCount: number
+  logicalBytes: number
+  uniqueBytes: number
+  incomplete: boolean
+  warning: boolean
 }
 
 export interface SnapshotRestoreResult {
@@ -791,7 +811,7 @@ export interface DeviceUsage {
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type BeginnerReasoningLevel = 'auto' | ReasoningEffort
 export type AiExecutionProfile = 'standard' | 'beginner-unlimited'
-export type ExternalAgentKind = 'codex' | 'claude'
+export type ExternalAgentKind = 'codex'
 export type CodingBackend = 'quota' | ExternalAgentKind
 export type ExternalAgentProvider = ExternalAgentKind
 
@@ -864,6 +884,18 @@ export interface ExternalAgentStatus {
   version?: string
   compatible?: boolean
   detail: string
+}
+
+export interface LocalCodexScan {
+  status: ExternalAgentStatus
+  home: string
+  model: string
+  baseUrl?: string
+  hasApiKey: boolean
+  contextWindow?: number
+  autoCompactTokenLimit?: number
+  reasoningEffort?: string
+  models: string[]
 }
 
 export interface ExternalAgentProviderSetup {
@@ -1035,7 +1067,6 @@ export interface ConversationBranchPoint {
   nativeTurnId?: string
   boundary?: 'before' | 'through'
   sequence?: number
-  /** Claude cannot fork at an arbitrary historical turn and uses this fallback. */
   nativeMode: 'native' | 'visible-history-rebuild'
 }
 
@@ -1240,7 +1271,7 @@ export type SidebarViewId =
   | `plugin:${string}`
   | 'decompile'
 
-export type DetachedWindowTarget = SidebarViewId | `group:${string}`
+export type DetachedWindowTarget = string
 
 export interface DetachedWindowState {
   alwaysOnTop: boolean
@@ -1275,6 +1306,8 @@ export interface ModMindApi {
   app: {
     getPlatformInfo: () => Readonly<import('./platform').RuntimePlatformInfo>
     getVersion: () => Promise<string>
+    getChangelog: () => Promise<import('./appChangelog').AppChangelogSnapshot>
+    markChangelogPresented: () => Promise<void>
     checkForUpdates: () => Promise<AppVersionCheckResult | null>
     getUpdateState: () => Promise<AppUpdateState>
     downloadUpdate: () => Promise<AppUpdateState>
@@ -1316,7 +1349,8 @@ export interface ModMindApi {
     removeRecent: (projectPath: string) => Promise<ProjectInfo[]>
     deleteProject: (projectPath: string) => Promise<ProjectInfo[]>
     deleteProjectPermanent: (projectPath: string) => Promise<ProjectInfo[]>
-    inspectExisting: (sourceType?: 'folder' | 'zip') => Promise<ExistingProjectAnalysis | null>
+    inspectExisting: (sourceType?: 'folder' | 'zip') => Promise<ExistingProjectInspection | null>
+    onInspectionProgress: (listener: (progress: ExistingProjectInspectionProgress) => void) => () => void
     adoptExisting: (input: ExistingProjectAdoptInput) => Promise<ProjectInfo | null>
     current: () => Promise<ProjectInfo | null>
     listFiles: (projectPath?: string) => Promise<FileNode[]>
@@ -1429,11 +1463,13 @@ export interface ModMindApi {
   snapshots: {
     create: (label: string, projectPath?: string) => Promise<SnapshotInfo>
     list: (projectPath?: string) => Promise<SnapshotInfo[]>
+    storage: (projectPath?: string) => Promise<SnapshotStorageInfo>
+    onStorageChanged: (listener: (status: SnapshotStorageInfo) => void) => () => void
     restore: (id: string, projectPath?: string) => Promise<SnapshotRestoreResult>
     delete: (id: string, projectPath?: string) => Promise<SnapshotInfo[]>
   }
   settings: {
-    revealSecret: (key: 'codex' | 'claude' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
+    revealSecret: (key: 'codex' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
     getAgent: () => Promise<AgentSettings>
     saveAgent: (settings: AgentSettings) => Promise<AgentSettings>
     onAppearanceChanged: (listener: (appearance: import('./appTheme').AppAppearance) => void) => () => void
@@ -1511,6 +1547,7 @@ export interface ModMindApi {
   }
   externalAgents: {
     detect: () => Promise<ExternalAgentStatus[]>
+    scanLocal: () => Promise<LocalCodexScan>
     configure: (kind: ExternalAgentProvider, settings: ExternalAgentConfiguration) => Promise<ExternalAgentProviderSetup>
     history: (kind: ExternalAgentKind) => Promise<string>
     install: (kind: ExternalAgentKind) => Promise<ExternalAgentStatus>
@@ -1585,6 +1622,7 @@ export interface ModMindApi {
     createModuleFromJar: (input: { sourceSha256: string; moduleName: string; termsAcknowledgement: { termsVersion: string; acknowledged: true; origin?: 'user-workspace' | 'ai-action' } }) => Promise<import('./decompileModuleExport').CreatedModuleFromDecompiled>
     createProjectFromJar: (input: import('./decompileModuleExport').CreateProjectFromDecompiledInput) => Promise<ProjectInfo | null>
   }
+  featurePlugins: import('./featurePlugins').FeaturePluginApi
   imageStudio: {
     getSettings: () => Promise<ImageStudioSettings>
     saveSettings: (settings: ImageStudioSettingsInput) => Promise<ImageStudioSettings>

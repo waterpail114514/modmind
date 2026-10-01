@@ -5,7 +5,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import type { ProjectInfo } from '../shared/types'
 import type { ManagedItem } from '../shared/itemEditor'
-import { importItemTexture, listManagedItems, removeManagedItem, saveManagedItem } from './itemEditorService'
+import { importItemTexture, listManagedItems, removeManagedItem, saveManagedItem } from "../../feature-plugins/item-editor/src/main/itemEditorService"
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })

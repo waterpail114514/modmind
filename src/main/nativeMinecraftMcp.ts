@@ -5,7 +5,7 @@ import { app } from 'electron'
 import catalog from './nativeMinecraftMcpCatalog.json'
 import screenshotHelper from './nativeMinecraftMcpHelper.json'
 import { verifiedDownload } from './downloadService'
-import { archiveFileInfo, archiveRead } from './ftbResourceArchive'
+import { archiveFileInfo, archiveRead } from "./archiveInspection"
 import { createStoredZip } from './bedrockAddon'
 
 export function nativeMcpFor(minecraft: string, loader: string) {

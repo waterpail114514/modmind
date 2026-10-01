@@ -1,16 +1,22 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import ffmpeg from 'ffmpeg-static'
+import { configureNativeFeatureServices } from './nativeFeatureServices'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { SoundLibraryService } from './soundLibraryService'
-import { SoundVanilla } from './soundVanilla'
-import { bundledSoundCatalog } from './soundCatalogBundled'
-import { ContentService } from './contentService'
+import { SoundLibraryService } from "../../feature-plugins/sound-studio/src/main/soundLibraryService"
+import { SoundVanilla } from "../../feature-plugins/sound-studio/src/main/soundVanilla"
+import { bundledSoundCatalog } from "../../feature-plugins/sound-studio/src/main/soundCatalogBundled"
+import { ContentService } from "../../feature-plugins/publishing/src/main/contentService"
 import type { ProjectInfo } from '../shared/types'
 import { newStudioDraft } from '../shared/soundStudio'
 
 const roots: string[] = []
+beforeEach(() => configureNativeFeatureServices(id => {
+  if (id !== 'media-runtime') throw new Error('Unexpected test feature: ' + id)
+  return { executable: () => ffmpeg }
+}))
 async function fixture(): Promise<{ service: SoundLibraryService; root: string; assets: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'modmind-sounds-'))
   roots.push(root)

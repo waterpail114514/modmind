@@ -1,7 +1,7 @@
 import {describe, expect, it} from 'vitest'
 import type {AdvancedAssetProgram} from '../shared/advancedAsset'
-import {compileAdvancedAsset, compileAdvancedAssetVariants, optimizeAdvancedProgram} from './advancedAssetCompiler'
-import {validateAction} from './blockbenchBridge'
+import {compileAdvancedAsset, compileAdvancedAssetVariants, optimizeAdvancedProgram} from "../../feature-plugins/model-studio/src/main/advancedAssetCompiler"
+import {validateAction} from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
 
 const advancedProgram: AdvancedAssetProgram = {
   version: 1,

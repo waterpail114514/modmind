@@ -3,14 +3,17 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState, parseCurseForgeReferences, type CurseForgePackFile } from './curseForgePackService'
+import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState, parseCurseForgeReferences, type CurseForgePackFile } from "../../feature-plugins/modpack-mods/src/main/curseForgePackService"
 import * as network from './networkRequest'
 import { verifiedDownload } from './downloadService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { adoptExternalModpack, addModpackFiles, assertModpackDependenciesReady, createModrinthPackArchive, readModpackManifest } from './modpackService'
 import { readModpackLock } from './modpackLockService'
-import { listModpackContent } from './modpackContentInventoryService'
+import { listModpackContent } from "../../feature-plugins/modpack-content/src/main/modpackContentInventoryService"
 import type { ProjectInfo } from '../shared/types'
+import { configureNativeFeatureServices } from './nativeFeatureServices'
+
+configureNativeFeatureServices(() => ({ installCurseForgePack }))
 
 const roots: string[] = []
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })

@@ -2,12 +2,11 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
 import { resolveReadablePath } from './projectTextRead'
-import { archiveFingerprintInfo, archiveRead } from './ftbResourceArchive'
-import { inspectDecompileJar } from './decompileJarInspection'
-import { readDecompileCacheEntry } from './decompileCache'
-import { listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar } from './decompilePipeline'
+import { archiveFingerprintInfo, archiveRead } from "./archiveInspection"
+export type ResearchBackend = Pick<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>, 'inspectDecompileJar' | 'readDecompileCacheEntry' | 'listCachedSourceFiles' | 'readCachedSourceFile' | 'runDecompilation' | 'scanReferencesForJar'>
 
 interface ResearchOptions {
+  backend?: () => ResearchBackend
   cacheRoot: string
   signal: AbortSignal
   ensureJava: () => Promise<string>
@@ -82,6 +81,9 @@ export async function runInspirationResearch(project: ProjectInfo, input: Record
     return { source: sourcePath, totalLines: evidence.totalLines, matches: evidence.matches, scanTruncated: evidence.scanTruncated,
       ...page(evidence.evidence, offset, Math.min(limit, 20)), note: '关键字筛选证据，不是已确认根因；无匹配时用文本工具阅读日志。' }
   }
+  const backend = options.backend?.()
+  if (!backend) throw new Error('JAR 分析与源码研究需要安装并启用反编译功能插件')
+  const { inspectDecompileJar, readDecompileCacheEntry, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar } = backend
   const inspect = async (file: string) => {
     if (path.extname(file).toLowerCase() !== '.jar') throw new Error('该操作需要 JAR 文件')
     const entries = await archiveFingerprintInfo(file)

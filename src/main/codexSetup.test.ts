@@ -15,6 +15,15 @@ const settings = {
 } satisfies CodexServerConfig
 
 describe('Codex beginner preparation', () => {
+  it('returns only the local adapter route id for diagnostic correlation', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-adapter-route-'))
+    try {
+      const routeId = 'a'.repeat(32)
+      const result = await prepareCodex({ rootDir: root, existingExecutable: 'C:\\codex.exe',
+        serverConfig: { ...settings, baseUrl: `http://127.0.0.1:12345/adapter/${routeId}/v1` } })
+      expect(result.adapterRouteId).toBe(routeId)
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
   it('passes manual and computed compaction thresholds through the same TOML setting', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-compaction-config-'))
     const setup = (overrides: Partial<CodexServerConfig> = {}) => prepareCodex({ rootDir: root, existingExecutable: 'C:\\codex.exe', serverConfig: { ...settings, contextWindow: 512000, ...overrides } })

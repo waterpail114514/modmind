@@ -1,11 +1,29 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { awaitWithAbort, throwIfAborted } from './asyncControl'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { StringDecoder } from 'node:string_decoder'
 import { AGENT_TOOL_RECOVERY_GUIDANCE } from '../shared/aiFailure'
 
+export const MCP_PROBE_TOOL = 'modmind_mcp_probe'
+export const MCP_PROBE_MARKER = 'modmind-mcp-ready-v1'
 export const CORE_AGENT_TOOLS = ['modmind_project_info', 'modmind_project_files', 'modmind_read_project_file'] as const
+
+export function agentProbeResultReady(value: unknown): boolean {
+  const response = record(value)
+  if (response.isError === true || !Array.isArray(response.content)) return false
+  return response.content.some(item => {
+    const block = record(item)
+    if (block.type !== 'text' || typeof block.text !== 'string') return false
+    try {
+      const payload = record(JSON.parse(block.text))
+      return payload.ok === true && payload.marker === MCP_PROBE_MARKER
+    } catch { return false }
+  })
+}
+
+export function agentReportsMissingTools(answer: string): boolean {
+  const unavailable = /(?:没有|缺少|未提供|无法使用|不可用|未连接|连接已中断|缺失).{0,24}(?:工具|接口)|(?:tools? (?:are |is )?(?:unavailable|missing|not provided|not connected))|(?:no (?:available|callable) tools?)/i
+  const taskBlocked = /(?:无法|不能|暂时无法|尚未|未能).{0,30}(?:读取|读写|修改|编辑|构建|执行|操作|访问)|(?:unable|cannot|can't).{0,40}(?:read|write|edit|build|access|execute|modify)/i
+  return unavailable.test(answer) && taskBlocked.test(answer)
+}
 
 /** Only preparation failures may restart automatically: no user turn has been sent. */
 export class AgentToolsNotReadyError extends Error {
@@ -17,9 +35,13 @@ export class AgentToolsNotReadyError extends Error {
 }
 
 export class AgentToolsDisconnectedError extends Error {
-  constructor() {
-    super(`ModMind 工具连接已中断，当前会话和已完成操作已保留。${AGENT_TOOL_RECOVERY_GUIDANCE}`)
+  readonly reportedByModel: boolean
+  constructor(reportedByModel = false) {
+    super(reportedByModel
+      ? '模型回复称本轮没有可用的项目工具，且没有发起工具调用；当前任务未完成。已保留会话和项目改动。请重试；若持续出现，请切换模型或线路并导出诊断信息。'
+      : `ModMind 工具连接已中断，当前会话和已完成操作已保留。${AGENT_TOOL_RECOVERY_GUIDANCE}`)
     this.name = 'AgentToolsDisconnectedError'
+    this.reportedByModel = reportedByModel
   }
 }
 
@@ -28,20 +50,27 @@ function record(value: unknown): RecordValue {
   return value && typeof value === 'object' ? value as RecordValue : {}
 }
 
-export function agentToolInventoryReady(value: unknown, kind: 'codex' | 'claude'): boolean {
+export function agentToolInventoryReady(value: unknown): boolean {
+  const summary = agentToolInventorySummary(value)
+  return summary.missing.length === 0 && (summary.status === 'connected' || summary.status === 'unknown')
+}
+
+export function agentToolInventorySummary(value: unknown): { status: string; count: number; missing: string[] } {
   const server = record(value)
-  const state = kind === 'codex' ? server.runtimeStatus : server.status
-  if (state != null && state !== 'connected') return false
-  if (server.toolsError || server.error) return false
+  const state = server.runtimeStatus
   const names = Array.isArray(server.tools)
     ? server.tools.map(tool => typeof tool === 'string' ? tool : record(tool).name)
     : Object.entries(record(server.tools)).flatMap(([key, tool]) => [key, record(tool).name])
-  return CORE_AGENT_TOOLS.every(name => names.includes(name) || names.includes(`mcp__modmind__${name}`))
+  const required = [MCP_PROBE_TOOL, ...CORE_AGENT_TOOLS]
+  return {
+    status: server.toolsError || server.error ? 'error' : state == null ? 'unknown' : String(state),
+    count: new Set(names.filter((name): name is string => typeof name === 'string')).size,
+    missing: required.filter(name => !names.includes(name) && !names.includes(`mcp__modmind__${name}`))
+  }
 }
 
 /** Query the client's actual catalog, including pagination; a host HTTP listener alone isn't readiness. */
 export async function waitForAgentTools(options: {
-  kind: 'codex' | 'claude'
   list: (cursor?: string) => Promise<unknown>
   signal: AbortSignal
   timeoutMs?: number
@@ -57,7 +86,7 @@ export async function waitForAgentTools(options: {
       let server: RecordValue | undefined
       do {
         const response = record(await awaitWithAbort(options.list(cursor), signal))
-        const servers = options.kind === 'codex' ? response.data : response.mcpServers
+        const servers = response.data
         if (!Array.isArray(servers)) throw new Error('客户端未返回有效工具目录，请检查 Agent 版本。')
         server = servers.map(record).find(item => item.name === 'modmind')
         if (server) break
@@ -65,7 +94,7 @@ export async function waitForAgentTools(options: {
         if (cursor && (cursors.has(cursor) || cursors.size >= 100)) throw new Error('工具目录分页无效。')
         if (cursor) cursors.add(cursor)
       } while (cursor)
-      if (server && agentToolInventoryReady(server, options.kind)) return
+      if (server && agentToolInventoryReady(server)) return
       const state = server?.runtimeStatus ?? server?.status
       if (['failed', 'cancelled', 'disabled', 'authenticationRequired', 'needs-auth'].includes(String(state))) {
         throw new Error(`ModMind 工具连接状态：${String(state)}。`)
@@ -76,56 +105,5 @@ export async function waitForAgentTools(options: {
   } catch (error) {
     throwIfAborted(options.signal)
     throw new AgentToolsNotReadyError(timeout.aborted ? '等待工具目录超时。' : error instanceof Error ? error.message : String(error))
-  }
-}
-
-/** Claude streaming-input control protocol; never send the user message during initialization. */
-export async function prepareClaudeTools(child: ChildProcessWithoutNullStreams, signal: AbortSignal, timeoutMs = 20_000): Promise<void> {
-  const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: unknown) => void }>()
-  const timeout = AbortSignal.timeout(timeoutMs)
-  const lifetime = AbortSignal.any([signal, timeout])
-  const decoder = new StringDecoder('utf8')
-  let buffer = ''
-  const consume = (chunk: Buffer): void => {
-    buffer += decoder.write(chunk)
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      let message: RecordValue
-      try { message = record(JSON.parse(line)) } catch { continue }
-      if (message.type !== 'control_response') continue
-      const response = record(message.response)
-      const waiter = pending.get(String(response.request_id))
-      if (!waiter) continue
-      pending.delete(String(response.request_id))
-      if (response.subtype === 'success') waiter.resolve(response.response)
-      else waiter.reject(new Error('Claude Code 无法确认工具状态，请检查 Agent 版本与工具配置。'))
-    }
-  }
-  const closed = (): void => {
-    for (const waiter of pending.values()) waiter.reject(new Error('Claude Code 在工具准备完成前退出。'))
-    pending.clear()
-  }
-  const request = (subtype: string): Promise<unknown> => awaitWithAbort(new Promise((resolve, reject) => {
-    const id = randomUUID()
-    pending.set(id, { resolve, reject })
-    child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: id, request: { subtype } })}\n`, error => {
-      if (error) { pending.delete(id); reject(error) }
-    })
-  }), lifetime)
-  child.stdout.on('data', consume)
-  child.once('close', closed)
-  child.once('error', closed)
-  try {
-    await request('initialize')
-    await waitForAgentTools({ kind: 'claude', signal: lifetime, timeoutMs, list: () => request('mcp_status') })
-  } catch (error) {
-    throwIfAborted(signal)
-    throw new AgentToolsNotReadyError(timeout.aborted ? '等待 Claude Code 工具目录超时。' : error instanceof Error ? error.message : String(error))
-  } finally {
-    child.stdout.off('data', consume)
-    child.off('close', closed)
-    child.off('error', closed)
-    pending.clear()
   }
 }

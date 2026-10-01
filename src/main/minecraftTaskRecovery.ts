@@ -10,6 +10,7 @@ export interface MinecraftTaskRecoveryOptions<T> {
   checkIntervalMs?: number
   onUpdate?: (root: Task<T>, active: Task<unknown>, chunkSize: number) => void
   onRetry?: (nextAttempt: number, error: Error) => void
+  retryOnError?: (error: unknown) => boolean
 }
 
 export class MinecraftDownloadStalledError extends Error {
@@ -60,10 +61,10 @@ export async function runMinecraftTaskWithRecovery<T>(options: MinecraftTaskReco
     } catch (error) {
       if (cancelPromise) await cancelPromise
       if (options.signal?.aborted) throw abortError()
-      if (!stalled) throw error
-      const stalledError = new MinecraftDownloadStalledError(stallTimeoutMs)
-      if (attempt >= maxAttempts) throw stalledError
-      options.onRetry?.(attempt + 1, stalledError)
+      const failure = stalled ? new MinecraftDownloadStalledError(stallTimeoutMs) : error
+      if (!stalled && !options.retryOnError?.(error)) throw error
+      if (attempt >= maxAttempts) throw failure
+      options.onRetry?.(attempt + 1, failure instanceof Error ? failure : new Error(String(failure)))
     } finally {
       clearInterval(watchdog)
       options.signal?.removeEventListener('abort', onAbort)

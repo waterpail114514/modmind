@@ -9,7 +9,9 @@ const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
 const nsis = process.env.MODMIND_MAKENSIS || path.join(os.homedir(), 'AppData/Local/electron-builder/Cache/nsis/nsis-3.0.4.1/Bin/makensis.exe')
 const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates/nsis')
-const work = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-installer-test-'))
+const evidenceRoot = path.join(root, 'test-results/installer-upgrade')
+await fs.mkdir(evidenceRoot, { recursive: true })
+const work = await fs.mkdtemp(path.join(evidenceRoot, 'nsis-'))
 const quote = value => value.replaceAll('$', '$$')
 
 function run(file, args, input) {
@@ -210,4 +212,104 @@ await uninstallCase('fresh', { fresh: true })
 await uninstallCase('uninstall-success')
 await uninstallCase('uninstall-failed', { exitCode: 7 })
 await uninstallCase('uninstaller-missing', { missing: true })
+
+// Reproduce the upstream --updated file staging with the real uninstaller
+// functions and a large sparse file. Only disposable files and a test key are used.
+async function legacyTemporaryDirectoryCase() {
+  const old = path.join(work, 'legacy-large-app', 'ModMind')
+  await fs.mkdir(path.join(old, 'resources'), { recursive: true })
+  await fs.writeFile(path.join(old, 'ModMind.exe'), 'fixture executable')
+  await fs.writeFile(path.join(old, 'resources/app.asar'), 'fixture app')
+  const largeFile = await fs.open(path.join(old, 'large-runtime.bin'), 'w')
+  await largeFile.truncate(512 * 1024 * 1024); await largeFile.close()
+  const template = await fs.readFile(path.join(templates, 'uninstaller.nsh'), 'utf8')
+  const functions = template.slice(template.indexOf('Function un.atomicRMDir'), template.indexOf('Section "un.install"'))
+  const child = path.join(old, 'Uninstall ModMind.exe'), generator = path.join(work, 'legacy-uninstaller-generator.exe')
+  const trace = path.join(work, 'legacy-uninstaller.trace')
+  run(nsis, ['-INPUTCHARSET', 'UTF8', '-V2', '-'], `
+Unicode true
+!include LogicLib.nsh
+!define UNINSTALL_FILENAME "Uninstall ModMind.exe"
+Name "Legacy temporary staging fixture"
+OutFile "${quote(generator)}"
+RequestExecutionLevel user
+SilentInstall silent
+SilentUnInstall silent
+${functions}
+Section
+  WriteUninstaller "${quote(child)}"
+SectionEnd
+Section "un.install"
+  InitPluginsDir
+  SetOutPath "$EXEDIR"
+  FileOpen $0 "${quote(trace)}" a
+  FileSeek $0 0 END
+  FileWriteUTF16LE $0 "$PLUGINSDIR$\\r$\\n"
+  FileClose $0
+  CreateDirectory "$PLUGINSDIR\\old-install"
+  Push ""
+  Call un.atomicRMDir
+  Pop $R0
+  ${'${If}'} $R0 != 0
+    Push ""
+    Call un.restoreFiles
+    Pop $R0
+    Abort "Legacy staging failed"
+  ${'${EndIf}'}
+  RMDir "$INSTDIR"
+SectionEnd
+`)
+  run(generator, ['/S'])
+  const registryKey = `Software\\ModMindInstallerSmokeTest\\${path.basename(work)}-legacy-large`
+  const savedTemp = process.env.TEMP ?? '', savedTmp = process.env.TMP ?? ''
+  const source = `
+Unicode true
+!include LogicLib.nsh
+!addincludedir "${quote(path.join(templates, 'include'))}"
+!include "${quote(path.join(root, 'resources/installer-upgrade.nsh'))}"
+!define VERSION "smoke-legacy-large"
+!define APP_EXECUTABLE_FILENAME "ModMind.exe"
+!define UNINSTALL_REGISTRY_KEY "${registryKey}"
+!define INSTALL_REGISTRY_KEY "${registryKey}"
+!define isUpdated '1 == 1'
+!define isDeleteAppData '0 == 1'
+!include StdUtils.nsh
+!addplugindir /x86-unicode "${quote(path.join(path.dirname(path.dirname(nsis)), '../nsis-resources-3.4.1/plugins/x86-unicode'))}"
+Var installMode
+Var appExe
+!insertmacro ModMindUpgradeFunctions
+!include installUtil.nsh
+!include "${quote(path.join(root, 'resources/installer-upgrade-hook.nsh'))}"
+Name "Legacy uninstall staging regression"
+OutFile "legacy-large-upgrade.exe"
+RequestExecutionLevel user
+SilentInstall silent
+Section
+  InitPluginsDir
+  SetShellVarContext current
+  StrCpy $installMode "CurrentUser"
+  StrCpy $INSTDIR "${quote(old)}"
+  StrCpy $appExe "$INSTDIR\\ModMind.exe"
+  WriteRegStr HKCU "${registryKey}" UninstallString '$\\"${quote(child)}$\\" /currentuser'
+  WriteRegStr HKCU "${registryKey}" InstallLocation "$INSTDIR"
+  !insertmacro uninstallOldVersion SHELL_CONTEXT
+  ReadEnvStr $0 "TEMP"
+  ReadEnvStr $1 "TMP"
+  FileOpen $2 "$EXEDIR\\legacy-large-upgrade.result" w
+  FileWriteUTF16LE $2 "$R0$\\r$\\n$0$\\r$\\n$1"
+  FileClose $2
+SectionEnd
+`
+  run(nsis, ['-INPUTCHARSET', 'UTF8', '-V2', '-'], source)
+  try { run(path.join(work, 'legacy-large-upgrade.exe'), ['/S']) }
+  finally { run('reg.exe', ['delete', `HKCU\\${registryKey}`, '/f']) }
+  const result = (await fs.readFile(path.join(work, 'legacy-large-upgrade.result'), 'utf16le')).split('\r\n')
+  assert.deepEqual(result, ['0', savedTemp, savedTmp], 'Installer process environment must be restored')
+  const childTemp = (await fs.readFile(trace, 'utf16le')).trim()
+  assert.equal(path.dirname(path.dirname(childTemp)), path.dirname(old), 'Legacy staging must use a sibling on the install volume')
+  assert.notEqual(path.parse(childTemp).root.toLowerCase(), path.parse(os.tmpdir()).root.toLowerCase(), 'Regression must cover distinct system and install volumes')
+  assert.equal(await fs.stat(path.dirname(childTemp)).then(() => true, () => false), false, 'Temporary staging must be cleaned after a successful uninstall')
+  console.log('PASS legacy-large-app-same-volume-temp-and-environment-restore')
+}
+await legacyTemporaryDirectoryCase()
 console.log(`Isolated evidence: ${work}`)

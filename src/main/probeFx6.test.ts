@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { inspectForDecompilation } from './decompilePipeline'
+import { inspectForDecompilation } from "../../feature-plugins/decompile/src/main/decompilePipeline"
 import { createStoredZip } from './bedrockAddon'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'

@@ -1,0 +1,23 @@
+.modal-backdrop.app-changelog-backdrop { z-index: 100; padding: 20px; }
+.dialog.app-changelog-dialog { display: flex; flex-direction: column; width: min(520px, 100%); max-height: calc(100dvh - 40px); padding: 0; overflow: hidden; color: var(--theme-text); background: var(--theme-surface); border: 1px solid var(--theme-line); border-radius: 14px; }
+.app-changelog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px 12px; }
+.app-changelog-header h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.app-changelog-body { min-height: 0; overflow-y: auto; padding: 0 24px 20px; overflow-wrap: anywhere; }
+.app-changelog-current { margin: 0 0 20px; color: var(--theme-muted); font-size: 13px; line-height: 1.6; }
+.app-changelog-release + .app-changelog-release { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--theme-line); }
+.app-changelog-release h3 { margin: 0 0 14px; font-size: 15px; font-weight: 650; }
+.app-changelog-section + .app-changelog-section { margin-top: 16px; }
+.app-changelog-section h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.app-changelog-section ul { display: grid; gap: 8px; margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.7; }
+.app-changelog-history { display: inline-flex; align-items: center; gap: 5px; margin-top: 20px; padding: 4px 0; border: 0; background: transparent; color: var(--theme-muted); font-size: 13px; cursor: pointer; }
+.app-changelog-history:hover { color: var(--theme-text); }
+.app-changelog-history[aria-expanded="true"] svg { transform: rotate(180deg); }
+.app-changelog-empty { color: var(--theme-muted); font-size: 14px; }
+.app-changelog-footer { display: flex; justify-content: flex-end; padding: 14px 24px; border-top: 1px solid var(--theme-line); }
+.app-changelog-footer button { min-width: 80px; }
+.app-changelog-dialog :focus-visible { outline: 2px solid var(--theme-accent); outline-offset: 2px; }
+@media (max-width: 420px) {
+  .app-changelog-header { padding: 18px 20px 12px; }
+  .app-changelog-body { padding: 0 20px 18px; }
+  .app-changelog-footer { padding: 12px 20px; }
+}

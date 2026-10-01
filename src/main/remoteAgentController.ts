@@ -116,7 +116,7 @@ export const REMOTE_APP_PAGES = [
 
 const ALLOWED_PAGES = new Set<string>(REMOTE_APP_PAGES)
 
-const ALLOWED_AGENTS = new Set<AgentSettings['codingBackend']>(['quota', 'codex', 'claude'])
+const ALLOWED_AGENTS = new Set<AgentSettings['codingBackend']>(['quota', 'codex'])
 
 const WORKBENCH_DIAGNOSTIC_PATTERN = /(诊断|排查|检查.*(?:哪里|哪儿|问题|错误|坏)|看看.*(?:问题|错误|坏)|哪里(?:坏|有问题)|查一下.*(?:问题|错误)|测试.*失败)/i
 const CONTINUATION_MARKER_PATTERN = /(然后|接着|继续|再试|再做|并且|并继续|做完|完成)/i
@@ -159,7 +159,7 @@ const REMOTE_APP_ACTION_CATALOG = [
   '{"type":"open_ide"}',
   '{"type":"minimize"}',
   '{"type":"close_app"}',
-  '{"type":"set_workbench_agent","agent":"quota|codex|claude"}',
+  '{"type":"set_workbench_agent","agent":"quota|codex"}',
   '{"type":"set_workbench_model","model":"<model id>"}',
   '{"type":"set_app_setting","key":"darkMode|notificationsEnabled|allowBuildScriptChanges|preferLocalGradle","value":true|false}',
   '{"type":"set_app_setting","key":"closeBehavior","value":"ask|tray|quit"}',

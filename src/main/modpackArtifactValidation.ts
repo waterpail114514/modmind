@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import type { LoaderKind } from '../shared/types'
-import { archiveEntries, archiveRead } from './ftbResourceArchive'
+import { archiveEntries, archiveRead } from "./archiveInspection"
 
 /** Match launcher-accepted archive shapes without unpacking every texture and sound. */
 export async function validateRuntimeModArtifact(filePath: string, loader: LoaderKind, displayPath = filePath, importedPack = false): Promise<string[]> {
