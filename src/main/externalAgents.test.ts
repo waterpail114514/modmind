@@ -31,6 +31,7 @@ describe('MC百科 MCP boundary', () => {
     const project = await createDraftProject(root, '按推荐的配置来')
     const projectSetup = vi.fn(async (input: Record<string, unknown>) => {
       const ready = await initializeDraftProject(project.path, {
+        suggestNamespace: async () => '{"namespace":"recommended_project"}',
         resolve: async () => ({ loader: 'fabric', minecraftVersion: '1.21.1', loaderVersion: '0.16.14', javaVersion: 21, channel: 'release', supportTier: 'stable', notes: [] }),
         scaffold: async target => { await fs.writeFile(path.join(target.path, 'build.gradle'), '// scaffold') }
       }, input as { kind: 'mod'; loader: 'fabric'; minecraftVersion: string })
@@ -57,6 +58,7 @@ describe('MC百科 MCP boundary', () => {
       expect(projectSetup).toHaveBeenCalledTimes(1)
       const info = await rpc(child, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'modmind_project_info', arguments: {} } })
       expect(JSON.stringify(info)).toContain('1.21.1')
+      expect(JSON.stringify(info)).toContain('recommended_project')
       expect(JSON.stringify(info)).not.toContain('draft')
       expect(await fs.readFile(contextPath, 'utf8')).toContain('Target version: 1.21.1')
       expect(await fs.readFile(contextPath, 'utf8')).not.toContain('conversation-only draft')

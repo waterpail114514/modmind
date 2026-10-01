@@ -3,6 +3,8 @@ import { readProjectModel } from './projectModels'
 import { readProjectTextFile } from './projectTextRead'
 import type { InspirationEvidenceRequest } from '../shared/inspirationEvidence'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
+import { assignDefaultProjectNamespace, projectNamespacePrompt } from './projectNamespace'
+import { requestAiName } from './aiNaming'
 import { importAiAttachmentSources } from './aiAttachmentImport'
 import { claudeHostedEnvironment, claudeSessionHome, fetchClaudeModels } from './claudeCompatibility'
 import type { AiAttachmentSource } from '../shared/aiAttachments'
@@ -251,6 +253,7 @@ import { DiagnosticSession } from './diagnosticSession'
 import { diagnosticHandle, diagnosticIpcOperations } from './diagnosticIpc'
 import { downloadActivities } from './downloadActivityService'
 import { AppUpdateService, normalizeAppUpdateUrl } from './appUpdateService'
+import { AppChangelogService } from './appChangelogService'
 import { prepareCleanReinstall } from './appReinstall'
 import { inspectForDecompilation, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar, type DecompileRunRequest } from './decompilePipeline'
 import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from './decompiledPluginProject'
@@ -298,6 +301,7 @@ let quitRequested = false
 let closeRequestInFlight = false
 let resolveCloseChoice: ((choice: { behavior: 'tray' | 'quit' | 'cancel'; remember: boolean }) => void) | null = null
 let appUpdateService: AppUpdateService | null = null
+let appChangelogService: AppChangelogService | null = null
 let currentProject: ProjectInfo | null = null
 const aiProjectContext = new AsyncLocalStorage<ProjectInfo>()
 const detachedWindows = new Map<DetachedWindowTarget, BrowserWindow>()
@@ -1487,6 +1491,7 @@ async function createProjectForRemote(input: ProjectCreateInput): Promise<Projec
     name,
     minecraftVersion,
     namespace,
+    namespaceSource: 'generated',
     path: projectPath,
     createdAt: new Date().toISOString(),
     loaderVersion: compatibility.loaderVersion,
@@ -1498,6 +1503,8 @@ async function createProjectForRemote(input: ProjectCreateInput): Promise<Projec
   }
   await fs.mkdir(projectPath)
   try {
+    await projectKnowledgeStore().clearProject(projectPath)
+    Object.assign(project, await assignDefaultProjectNamespace(project, candidate => suggestProjectNamespace(candidate)))
     if (kind === 'modpack') {
       await fs.writeFile(path.join(projectPath, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
       await createModpackTemplate(project)
@@ -2768,8 +2775,8 @@ async function renameProjectRecord(project: ProjectInfo, input: ProjectRenameInp
   const name = validateProjectNameInput(input.name)
   if (!input.namespace.trim()) throw new Error('命名空间不能为空')
   const namespace = slugify(input.namespace)
-  const nextProject: ProjectInfo = { ...project, name, namespace }
-  if (nextProject.name === project.name && nextProject.namespace === project.namespace) return project
+  const nextProject: ProjectInfo = { ...project, name, namespace, namespaceSource: 'manual' }
+  if (nextProject.name === project.name && nextProject.namespace === project.namespace && project.namespaceSource === 'manual') return project
 
   await renameProjectFiles(project, nextProject, [currentProjectManifest])
   const manifestPath = path.join(project.path, projectManifest(project))
@@ -3858,6 +3865,7 @@ async function deleteProjectDirectory(projectPath: string): Promise<ProjectInfo[
   await writeRecentProjects(remaining)
   if (currentProject && sameProjectPath(currentProject.path, resolved)) currentProject = null
   await workbenchDataStore.clearProjectMirror(resolved)
+  await projectKnowledgeStore().clearProject(resolved)
   return remaining
 }
 
@@ -4008,6 +4016,7 @@ async function permanentlyDeleteProjectDirectory(projectPath: string): Promise<P
   await writeRecentProjects(remaining)
   if (currentProject && sameProjectPath(currentProject.path, resolved)) currentProject = null
   await workbenchDataStore.clearProjectMirror(resolved)
+  await projectKnowledgeStore().clearProject(resolved)
   return remaining
 }
 
@@ -6067,6 +6076,38 @@ async function getAiReviewerConfig(
   }
 }
 
+async function requestProjectAiName(project: ProjectInfo, prompt: string, sessionScope: string, backend?: AgentSettings['codingBackend'], modelSelection?: AiModelSelection): Promise<string> {
+  const settings = await readSettings()
+  const selected = backend === 'quota' || backend === 'codex' || backend === 'claude' ? backend : settings.codingBackend
+  const config = selected === 'quota'
+    ? await readBeginnerAgentServerConfig(modelSelection).catch(() => null)
+    : await getAiReviewerConfig(false, selected, settings).catch(() => null)
+  return requestAiName({ prompt, config, model: modelSelection?.model, ...(selected !== 'quota' ? { runLocal: async () => {
+    const unavailable = async (): Promise<never> => { throw new Error('AI naming cannot modify the project') }
+    const bridge: ExternalAgentBridgeHandlers = {
+      projectInfo: { name: project.name },
+      projectFiles: async () => ({ files: [], truncated: false }),
+      projectSearch: async () => ({ matches: [], truncated: false }),
+      setIntent: unavailable, applyEdits: unavailable, updateTodo: unavailable,
+      mappingsSearch: unavailable, mappingsClass: unavailable, dependencySearch: unavailable,
+      dependencyInstall: unavailable, contentValidate: unavailable, testMatrix: unavailable,
+      releasePreflight: unavailable, build: unavailable, testMinecraft: unavailable,
+      blockbenchActions: unavailable, runtimeState: unavailable
+    }
+    const result = await runExternalAgent({
+      kind: selected, project, prompt, readOnly: true, resumeSession: false,
+      sessionScope, signal: AbortSignal.timeout(45_000),
+      onOutput: () => undefined, onProgress: () => undefined, bridge
+    })
+    if (result.sessionId) await deleteExternalAgentSession(project, selected, result.sessionId).catch(() => undefined)
+    return result.finalAnswer?.text ?? ''
+  } } : {}) })
+}
+
+function suggestProjectNamespace(project: ProjectInfo, backend?: AgentSettings['codingBackend'], modelSelection?: AiModelSelection): Promise<string> {
+  return requestProjectAiName(project, projectNamespacePrompt(project), `project-namespace/${randomUUID()}`, backend, modelSelection)
+}
+
 function parseReleaseSummary(content: string, fallback: ReleaseSummaryDraft): ReleaseSummaryDraft {
   const candidate = content.match(/\{[\s\S]*\}/)?.[0] ?? content
   try {
@@ -6713,6 +6754,7 @@ async function runExternalCodingAgent(
           signal.throwIfAborted()
           const wasDraft = Boolean(project.draft)
           const updated = await initializeDraftProject(project.path, {
+            suggestNamespace: candidate => suggestProjectNamespace(candidate, backend, modelSelection),
             resolve: (loader, version) => requireLoaderCatalog().resolve(loader, version),
             scaffold: async candidate => {
               signal.throwIfAborted()
@@ -7539,6 +7581,14 @@ function registerIpc(): void {
   })
   ipcMain.on('app:platformInfo', (event) => { event.returnValue = runtimePlatformInfo(process.platform, process.arch, app.isPackaged) })
   diagnosticHandle('app:version', () => app.getVersion())
+  diagnosticHandle('app:getChangelog', (event) => {
+    const snapshot = appChangelogService?.snapshot() ?? { currentVersion: app.getVersion(), automatic: false, releases: [] }
+    return { ...snapshot, automatic: event.sender === mainWindow?.webContents && snapshot.automatic }
+  })
+  diagnosticHandle('app:markChangelogPresented', (event) => {
+    if (event.sender !== mainWindow?.webContents) return
+    return appChangelogService?.markPresented()
+  })
   diagnosticHandle('app:checkForUpdates', () => {
     if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
     return appUpdateService.checkForUpdates(checkForAppUpdates)
@@ -7972,12 +8022,13 @@ function registerIpc(): void {
     await rememberRecentProject(updated)
     return updated
   })
-  diagnosticHandle('project:initializeDraft', async (_event, projectPath: string) => {
+  diagnosticHandle('project:initializeDraft', async (_event, projectPath: string, backend?: AgentSettings['codingBackend'], modelSelection?: AiModelSelection) => {
     if (typeof projectPath !== 'string' || !projectPath.trim()) throw new Error('项目路径无效')
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在')
     assertProjectMutationAllowed(project.path, '创建完整工程')
     const updated = await initializeDraftProject(project.path, {
+      suggestNamespace: candidate => suggestProjectNamespace(candidate, backend, modelSelection),
       resolve: (loader, version) => requireLoaderCatalog().resolve(loader, version),
       scaffold: async project => {
         if (project.kind === 'modpack') await createModpackTemplate(project)
@@ -8008,6 +8059,7 @@ function registerIpc(): void {
       name,
       minecraftVersion,
       namespace,
+      namespaceSource: 'generated',
       path: projectPath,
       createdAt: new Date().toISOString(),
       loaderVersion: compatibility.loaderVersion,
@@ -8019,6 +8071,8 @@ function registerIpc(): void {
     }
     await fs.mkdir(projectPath)
     try {
+      await projectKnowledgeStore().clearProject(projectPath)
+      Object.assign(project, await assignDefaultProjectNamespace(project, candidate => suggestProjectNamespace(candidate)))
       if (kind === 'modpack') {
         await fs.writeFile(path.join(projectPath, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
         await createModpackTemplate(project)
@@ -8760,47 +8814,12 @@ function registerIpc(): void {
     if (!document) throw new Error('对话不存在')
     if (document.titleSource) return document
     if (typeof userText !== 'string' || !userText.trim() || typeof answer !== 'string' || !answer.trim()) throw new Error('首轮问答内容不完整')
-    const settings = await readSettings()
-    const selected = backend === 'quota' || backend === 'codex' || backend === 'claude' ? backend : settings.codingBackend
-    const config = selected === 'quota'
-      ? await readBeginnerAgentServerConfig(modelSelection).catch(() => null)
-      : await getAiReviewerConfig(false, selected, settings).catch(() => null)
+    const selected = backend === 'quota' || backend === 'codex' || backend === 'claude' ? backend : (await readSettings()).codingBackend
     const titlePrompt = `根据首轮对话给这段聊天起一个简短、具体的中文标题，最多 20 个汉字。只输出标题，不要引号、解释或标点。\n用户：${userText.slice(0, 1200)}\nAI：${answer.slice(0, 1800)}`
     let title = selected === 'quota' ? '' : answer.replaceAll(/```[\s\S]*?```/gu, '').replaceAll(/[#>*`_]/gu, '').split(/\r?\n|[。！？!?]/u).map(item => item.trim()).find(Boolean) ?? ''
-    if (config?.baseUrl && config.apiKey && config.model) {
-      try {
-        const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: modelSelection?.model || config.model, messages: [{ role: 'user', content: titlePrompt }] }),
-          signal: AbortSignal.timeout(20_000)
-        })
-        if (!response.ok) throw new Error('对话命名请求失败')
-        const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
-        title = typeof body.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : title
-      } catch (error) { if (selected === 'quota') throw error }
-    } else if (selected !== 'quota') {
-      const unavailable = async (): Promise<never> => { throw new Error('对话命名不能操作项目') }
-      const bridge: ExternalAgentBridgeHandlers = {
-        projectInfo: { name: project.name },
-        projectFiles: async () => ({ files: [], truncated: false }),
-        projectSearch: async () => ({ matches: [], truncated: false }),
-        setIntent: unavailable, applyEdits: unavailable, updateTodo: unavailable,
-        mappingsSearch: unavailable, mappingsClass: unavailable, dependencySearch: unavailable,
-        dependencyInstall: unavailable, contentValidate: unavailable, testMatrix: unavailable,
-        releasePreflight: unavailable, build: unavailable, testMinecraft: unavailable,
-        blockbenchActions: unavailable, runtimeState: unavailable
-      }
-      try {
-        const result = await runExternalAgent({
-          kind: selected, project, prompt: titlePrompt, readOnly: true, resumeSession: false,
-          sessionScope: `conversation-title/${conversationId}`, signal: AbortSignal.timeout(45_000),
-          onOutput: () => undefined, onProgress: () => undefined, bridge
-        })
-        title = result.finalAnswer?.text ?? title
-        if (result.sessionId) await deleteExternalAgentSession(project, selected, result.sessionId).catch(() => undefined)
-      } catch { /* Keep the short phrase from the completed first answer. */ }
-    }
+    try {
+      title = await requestProjectAiName(project, titlePrompt, `conversation-title/${conversationId}`, selected, modelSelection)
+    } catch (error) { if (selected === 'quota') throw error }
     const clean = title.replaceAll(/<[^>]*>/gu, '').replaceAll(/^[\s"'“”「」《》#*`]+|[\s"'“”「」《》。.!！?？#*`]+$/gu, '').split(/\r?\n/u)[0]?.trim() ?? ''
     if (!clean) throw new Error('AI 未返回有效对话名称')
     return conversationStore.setGeneratedTitle(project.path, conversationId, clean)
@@ -10051,6 +10070,13 @@ app.whenReady().then(async () => {
   })
   if (await appUpdateService.installPendingUpdateOnStartup()) return
   await migrateLegacyUserData()
+  appChangelogService = new AppChangelogService({
+    currentVersion: app.getVersion(),
+    userDataPath: app.getPath('userData'),
+    isPackaged: app.isPackaged,
+    installMarkerPath: process.platform === 'win32' ? path.join(process.resourcesPath, 'modmind-install-versions.txt') : undefined
+  })
+  await appChangelogService.initialize()
   electronApp.setAppUserModelId('dev.modmind.desktop')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc()

@@ -7,6 +7,23 @@ import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 
+it('clears deleted project knowledge after pending saves without affecting other projects', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-knowledge-')); roots.push(root)
+  const changed = vi.fn()
+  const store = new InspirationKnowledgeStore(root, changed)
+  const project = path.join(root, 'project')
+  const other = path.join(root, 'other')
+  const retained = await store.save(other, { title: 'Keep', content: 'Other project' })
+  const pending = store.save(project, { title: 'Old', content: 'Old project knowledge' })
+  await store.clearProject(project)
+  await pending
+  expect(changed).toHaveBeenLastCalledWith(project, [])
+  expect(await new InspirationKnowledgeStore(root).read(project)).toEqual([])
+  expect(await store.read(other)).toEqual([retained])
+  const fresh = await store.save(project, { title: 'New', content: 'Recreated project' })
+  expect(await store.read(project)).toEqual([fresh])
+})
+
 it('serializes repeated agent saves, updates by title or id, and notifies only after persistence', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-knowledge-')); roots.push(root)
   const changed = vi.fn()

@@ -80,6 +80,15 @@ Function DesktopShortcutPageLeave
 FunctionEnd
 
 !macro customInstall
+  ; ASCII semver lines: installed version, then previous version (empty on fresh install).
+  ; Keep this in the installation so elevation never writes another user's profile.
+  ClearErrors
+  FileOpen $0 "$INSTDIR\resources\modmind-install-versions.txt" w
+  ${IfNot} ${Errors}
+    FileWrite $0 "${VERSION}$\r$\n$ModMindPreviousVersion$\r$\n"
+    FileClose $0
+  ${EndIf}
+  ClearErrors
   ${If} $installMode == "all"
     SetShellVarContext all
     WinShell::UninstShortcut "$newDesktopLink"

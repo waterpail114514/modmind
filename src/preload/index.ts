@@ -100,6 +100,8 @@ const api: ModMindApi = {
   app: {
     getPlatformInfo: () => platformInfo,
     getVersion: () => invoke('app:version'),
+    getChangelog: () => invoke('app:getChangelog'),
+    markChangelogPresented: () => invoke('app:markChangelogPresented'),
     checkForUpdates: () => invoke('app:checkForUpdates'),
     getUpdateState: () => invoke('app:getUpdateState'),
     downloadUpdate: () => invoke('app:downloadUpdate'),
@@ -160,7 +162,7 @@ const api: ModMindApi = {
     create: (input: ProjectCreateInput) => invoke('project:create', input),
     createDraft: (message: string) => invoke('project:createDraft', message),
     recordDraftMessage: (message: string, projectPath: string) => invoke('project:recordDraftMessage', message, projectPath),
-    initializeDraft: (projectPath: string) => invoke('project:initializeDraft', projectPath),
+    initializeDraft: (projectPath: string, backend?: AgentSettings['codingBackend'], modelSelection?: import('../shared/aiSelection').AiModelSelection) => invoke('project:initializeDraft', projectPath, backend, modelSelection),
     rename: (input: ProjectRenameInput) => invoke('project:rename', input),
     open: () => invoke('project:open'),
     openRecent: (projectPath: string) => invoke('project:openRecent', projectPath),

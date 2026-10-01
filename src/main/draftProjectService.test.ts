@@ -20,6 +20,43 @@ const scaffold = async (project: ProjectInfo): Promise<void> => {
 }
 
 describe('conversation-only projects', () => {
+  it('names the default namespace before scaffolding and keeps it stable after initialization', async () => {
+    const draft = await createDraftProject(await documents(), 'Fabric 1.21.1 \u95ea\u7535\u5251\u6a21\u7ec4')
+    const history = path.join(draft.path, '.modmind', 'history.json')
+    await fs.writeFile(history, '["existing conversation"]')
+    const suggestNamespace = vi.fn(async () => '{"namespace":"lightning_sword"}')
+    const services = { resolve: async () => compatibility, scaffold, suggestNamespace }
+    const ready = await initializeDraftProject(draft.path, services)
+    expect(ready.namespace).toBe('lightning_sword')
+    expect(ready.path).toBe(draft.path)
+    expect(ready.namespaceSource).toBe('ai')
+    expect(await fs.readFile(path.join(ready.path, 'gradle.properties'), 'utf8')).toContain('mod_id=lightning_sword')
+    expect(await fs.readFile(history, 'utf8')).toBe('["existing conversation"]')
+    expect((await initializeDraftProject(draft.path, services)).namespace).toBe('lightning_sword')
+    expect(suggestNamespace).toHaveBeenCalledTimes(1)
+  })
+
+  it('can initialize offline without discarding the generated namespace', async () => {
+    const draft = await createDraftProject(await documents(), 'Fabric 1.21.1 \u6a21\u7ec4')
+    const ready = await initializeDraftProject(draft.path, { resolve: async () => compatibility, scaffold, suggestNamespace: async () => { throw new Error('offline') } })
+    expect(ready.namespace).toBe(draft.namespace)
+    expect(ready.draft).toBeUndefined()
+  })
+
+  it('does not overwrite a manual rename that arrives while AI naming is pending', async () => {
+    const draft = await createDraftProject(await documents(), 'Fabric 1.21.1 \u6a21\u7ec4')
+    const generate = vi.fn(scaffold)
+    await expect(initializeDraftProject(draft.path, {
+      resolve: async () => compatibility, scaffold: generate,
+      suggestNamespace: async () => {
+        await fs.writeFile(path.join(draft.path, 'modmind.project.json'), JSON.stringify({ ...draft, namespace: 'manual_name', namespaceSource: 'manual' }))
+        return '{"namespace":"late_ai_name"}'
+      }
+    })).rejects.toThrow('\u5df2\u53d8\u5316')
+    expect(generate).not.toHaveBeenCalled()
+    expect(JSON.parse(await fs.readFile(path.join(draft.path, 'modmind.project.json'), 'utf8')).namespace).toBe('manual_name')
+  })
+
   it('creates from the agent structured selection without keyword routing and does not reinitialize', async () => {
     const draft = await createDraftProject(await documents(), '按推荐的来')
     const selection = { kind: 'mod' as const, loader: 'fabric' as const, minecraftVersion: '1.21.1' }

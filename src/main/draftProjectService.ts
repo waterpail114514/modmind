@@ -5,6 +5,7 @@ import type { LoaderVersionOption, ProjectCreateInput, ProjectInfo } from '../sh
 import { draftTargetFromMessage, missingDraftDetails } from '../shared/draftProject'
 import { isJavaLoader, isServerPluginPlatform, PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { CURRENT_PROJECT_VERSION } from './projectVersion'
+import { assignDefaultProjectNamespace } from './projectNamespace'
 
 const manifest = 'modmind.project.json'
 const pending = new Map<string, Promise<unknown>>()
@@ -36,7 +37,7 @@ export async function createDraftProject(documentsDirectory: string, message: st
   const id = randomUUID().replaceAll('-', '').slice(0, 12)
   const root = path.join(parent, `project-${id}`)
   const name = message.trim().split(/\r?\n/)[0].replace(/[\x00-\x1f]/g, '').slice(0, 32) || '新作品'
-  const project: ProjectInfo = { name, path: root, namespace: `mod_${id}`, createdAt: new Date().toISOString(), loader: 'fabric', minecraftVersion: '', draft: { target: draftTargetFromMessage({}, message) }, projectVersion: CURRENT_PROJECT_VERSION, toolDataDirectory: '.modmind' }
+  const project: ProjectInfo = { name, path: root, namespace: `mod_${id}`, namespaceSource: 'generated', createdAt: new Date().toISOString(), loader: 'fabric', minecraftVersion: '', draft: { target: draftTargetFromMessage({}, message) }, projectVersion: CURRENT_PROJECT_VERSION, toolDataDirectory: '.modmind' }
   await fs.mkdir(root)
   try {
     await fs.mkdir(path.join(root, '.modmind'))
@@ -73,9 +74,11 @@ async function templateFiles(root: string, relative = ''): Promise<string[]> {
 export async function initializeDraftProject(root: string, services: {
   resolve: (loader: ProjectCreateInput['loader'], version: string) => Promise<LoaderVersionOption>
   scaffold: (project: ProjectInfo) => Promise<void>
+  suggestNamespace?: (project: ProjectInfo) => Promise<string>
 }, selection?: Pick<Required<ProjectCreateInput>, 'kind' | 'loader' | 'minecraftVersion'>): Promise<ProjectInfo> {
   return serial(root, async () => {
     const original = await readProject(root)
+    const initialManifest = JSON.stringify(original)
     if (!original.draft) {
       if (selection && (selection.kind !== original.kind || selection.loader !== original.loader || selection.minecraftVersion !== original.minecraftVersion)) throw new Error('项目已经创建；更换平台或版本需要迁移，不能重新初始化')
       return original
@@ -91,7 +94,9 @@ export async function initializeDraftProject(root: string, services: {
     if (target.kind === 'modpack' && !isJavaLoader(target.loader)) throw new Error('整合包目前仅支持 Java 版平台')
     if ((target.kind === 'server-plugin') !== isServerPluginPlatform(target.loader)) throw new Error('服务端插件需要 Paper、Spigot、Folia 或 Velocity 平台；模组需要对应的模组平台')
     const compatibility = await services.resolve(target.loader, target.minecraftVersion)
-    const project: ProjectInfo = { ...original, kind: target.kind, loader: target.loader, minecraftVersion: target.minecraftVersion, loaderVersion: compatibility.loaderVersion, apiVersion: compatibility.apiVersion, qslVersion: compatibility.qslVersion, javaVersion: compatibility.javaVersion }
+    const named = services.suggestNamespace ? await assignDefaultProjectNamespace(original, services.suggestNamespace) : original
+    if (JSON.stringify(await readProject(root)) !== initialManifest) throw new Error('项目信息已变化，请重试创建工程')
+    const project: ProjectInfo = { ...named, kind: target.kind, loader: target.loader, minecraftVersion: target.minecraftVersion, loaderVersion: compatibility.loaderVersion, apiVersion: compatibility.apiVersion, qslVersion: compatibility.qslVersion, javaVersion: compatibility.javaVersion }
     delete project.draft
     // Generate away from the live conversation; publish new files exclusively and commit metadata last.
     const stage = await fs.mkdtemp(path.join(path.dirname(root), '.modmind-init-'))
@@ -123,6 +128,7 @@ export async function initializeDraftProject(root: string, services: {
           await fs.mkdir(target, { recursive: true })
         }
       }
+      if (JSON.stringify(await readProject(root)) !== initialManifest) throw new Error('项目信息已变化，请重试创建工程')
       await writeManifest(project)
       return project
     } catch (error) {

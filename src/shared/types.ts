@@ -37,6 +37,8 @@ export interface ProjectInfo {
   loader: LoaderKind
   minecraftVersion: string
   namespace: string
+  /** Origin of the namespace; explicit user choices are never automatically replaced. */
+  namespaceSource?: 'generated' | 'ai' | 'manual'
   createdAt: string
   loaderVersion?: string
   apiVersion?: string
@@ -1275,6 +1277,8 @@ export interface ModMindApi {
   app: {
     getPlatformInfo: () => Readonly<import('./platform').RuntimePlatformInfo>
     getVersion: () => Promise<string>
+    getChangelog: () => Promise<import('./appChangelog').AppChangelogSnapshot>
+    markChangelogPresented: () => Promise<void>
     checkForUpdates: () => Promise<AppVersionCheckResult | null>
     getUpdateState: () => Promise<AppUpdateState>
     downloadUpdate: () => Promise<AppUpdateState>
@@ -1308,7 +1312,7 @@ export interface ModMindApi {
     create: (input: ProjectCreateInput) => Promise<ProjectInfo | null>
     createDraft: (message: string) => Promise<ProjectInfo>
     recordDraftMessage: (message: string, projectPath: string) => Promise<ProjectInfo>
-    initializeDraft: (projectPath: string) => Promise<ProjectInfo>
+    initializeDraft: (projectPath: string, backend?: AgentSettings['codingBackend'], modelSelection?: import('./aiSelection').AiModelSelection) => Promise<ProjectInfo>
     rename: (input: ProjectRenameInput) => Promise<ProjectInfo>
     open: () => Promise<ProjectInfo | null>
     openRecent: (projectPath: string) => Promise<ProjectInfo>

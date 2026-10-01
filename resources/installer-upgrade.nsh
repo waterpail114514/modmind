@@ -26,6 +26,7 @@ Var ModMindUpgradeMessage
 Var ModMindUpgradeResult
 Var ModMindUpgradeAttempt
 Var ModMindUpgradeFinished
+Var ModMindPreviousVersion
 
 !macro ModMindReadUpgradeRegistry OUTPUT KEY VALUE
   ${If} $ModMindUpgradeRoot == "HKEY_CURRENT_USER"
@@ -73,6 +74,14 @@ Function ModMindUninstallOldVersion
     Call uninstallOldVersion
     Return
   ${EndIf}
+
+  ; Capture this before the old uninstaller removes its registry values.
+  !insertmacro ModMindReadUpgradeRegistry $ModMindPreviousVersion "${UNINSTALL_REGISTRY_KEY}" DisplayVersion
+  !ifdef UNINSTALL_REGISTRY_KEY_2
+    ${If} $ModMindPreviousVersion == ""
+      !insertmacro ModMindReadUpgradeRegistry $ModMindPreviousVersion "${UNINSTALL_REGISTRY_KEY_2}" DisplayVersion
+    ${EndIf}
+  !endif
 
   Push $ModMindUpgradeCommand
   Call GetInQuotes

@@ -34,6 +34,8 @@ import { useSidebarLayout } from './useSidebarLayout'
 import { resolveSidebarGroups, moveSidebarEntry, moveSidebarCategory } from './sidebarLayout'
 import { buildNavigationDefinitions } from './navigationDefinitions'
 import AppMaintenanceSettings from './components/AppMaintenanceSettings'
+import AppChangelogDialog from './components/AppChangelogDialog'
+import type { AppChangelogSnapshot } from '../../shared/appChangelog'
 import AboutAuthors from './components/AboutAuthors'
 import ModelContextSetting from './components/ModelContextSetting'
 import ReasoningControl from './components/ReasoningControl'
@@ -2597,6 +2599,26 @@ export default function App(): React.JSX.Element {
   const [exportArtifactAvailable, setExportArtifactAvailable] = useState(false)
   const [diagnosticExporting, setDiagnosticExporting] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<AppVersionCheckResult | null>(null)
+  const [changelog, setChangelog] = useState<AppChangelogSnapshot | null>(null)
+  const [startupChangelogChecked, setStartupChangelogChecked] = useState(false)
+  useEffect(() => {
+    if (isDetachedWindow || bootstrapping) return
+    let live = true
+    let observer: MutationObserver | undefined
+    void window.modmind.app.getChangelog().then(snapshot => {
+      if (!live) return
+      const reveal = (): void => {
+        if (document.body.hasAttribute('data-loading-covered')) return
+        observer?.disconnect()
+        if (snapshot.automatic) setChangelog(snapshot)
+        setStartupChangelogChecked(true)
+      }
+      observer = new MutationObserver(reveal)
+      observer.observe(document.body, { attributes: true, attributeFilter: ['data-loading-covered'] })
+      reveal()
+    }).catch(() => { if (live) setStartupChangelogChecked(true) })
+    return () => { live = false; observer?.disconnect() }
+  }, [isDetachedWindow, bootstrapping])
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateState>({ phase: 'idle', currentVersion: '' })
   const [updateDownloadedOpen, setUpdateDownloadedOpen] = useState(false)
   const [updateActionBusy, setUpdateActionBusy] = useState(false)
@@ -3899,7 +3921,7 @@ export default function App(): React.JSX.Element {
         if (phase === 'engineering') {
           if (missingDraftDetails(taskProject).length) discussion = true
           else {
-            taskProject = await window.modmind.project.initializeDraft(taskProjectPath)
+            taskProject = await window.modmind.project.initializeDraft(taskProjectPath, selectedBackend, workbenchAiOverride?.backend === selectedBackend ? workbenchAiOverride : undefined)
             discussion = false
           }
         }
@@ -5964,6 +5986,7 @@ export default function App(): React.JSX.Element {
       </div>
 
       <GlobalDownloadIndicator />
+      {changelog && <AppChangelogDialog snapshot={changelog} onClose={() => setChangelog(null)} onPresented={() => { void window.modmind.app.markChangelogPresented().catch(() => undefined) }} />}
       {quickTestProject && project?.path === quickTestProject.path ? <QuickGameTestDialog key={quickTestProject.path} project={quickTestProject} onClose={() => setQuickTestProject(null)} onExport={() => void exportArtifact()} /> : null}
       {showCreate ? <CreateProjectDialog onClose={() => setShowCreate(false)} onCreated={(created) => { if (uiMode === 'beginner' && beginnerStartupDraft.trim()) pendingBeginnerStartRef.current = { projectPath: created.path, prompt: beginnerStartupDraft }; setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
@@ -5972,8 +5995,8 @@ export default function App(): React.JSX.Element {
       {modJarInspecting ? <ProjectInspectionDialog kind="mod" /> : null}
       {existingAnalysis ? <AdoptProjectDialog analysis={existingAnalysis} onClose={() => setExistingAnalysis(null)} onAdopted={(adopted) => { setExistingAnalysis(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {modJarInspection ? <AdoptModJarDialog inspection={modJarInspection} onClose={() => setModJarInspection(null)} onAdopted={(adopted) => { setModJarInspection(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
-      {updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudUpload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
-      {updateDownloadedOpen && appUpdateState.phase === 'downloaded' ? <div className="modal-backdrop"><div className="dialog update-dialog update-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="update-ready-dialog-title"><div className="dialog-header"><div><h2 id="update-ready-dialog-title">更新已下载</h2><p>ModMind {appUpdateState.latestVersion} 已准备好</p></div><PackageOpen size={21} /></div><p className="recovery-copy">安装包已经校验完成。可以立即重启安装；选择稍后时，下次启动 ModMind 会自动进入安装。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateDownloadedOpen(false)}>稍后</button><button className="primary-button" disabled={updateActionBusy} onClick={installAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />}重启并安装</button></div></div></div> : null}
+      {startupChangelogChecked && !changelog && updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudUpload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
+      {startupChangelogChecked && !changelog && updateDownloadedOpen && appUpdateState.phase === 'downloaded' ? <div className="modal-backdrop"><div className="dialog update-dialog update-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="update-ready-dialog-title"><div className="dialog-header"><div><h2 id="update-ready-dialog-title">更新已下载</h2><p>ModMind {appUpdateState.latestVersion} 已准备好</p></div><PackageOpen size={21} /></div><p className="recovery-copy">安装包已经校验完成。可以立即重启安装；选择稍后时，下次启动 ModMind 会自动进入安装。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateDownloadedOpen(false)}>稍后</button><button className="primary-button" disabled={updateActionBusy} onClick={installAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />}重启并安装</button></div></div></div> : null}
       {deviceAccountOpen ? <DeviceAccountDialog state={deviceState} remoteState={remoteState} busy={deviceBusy} remoteBusy={remoteBusy} onClose={() => setDeviceAccountOpen(false)} onAuthorize={() => void deviceAuthorize()} onCancel={() => void deviceCancel()} onDisconnect={() => void deviceDisconnect()} onRefresh={() => void deviceRefresh()} onOpenSite={deviceOpenSite} onRemoteToggle={() => void remoteToggle()} /> : null}
       {confirmDialog}
       {promptDialog}

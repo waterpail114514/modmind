@@ -22,6 +22,16 @@ export class InspirationKnowledgeStore {
       throw error
     }
   }
+  async clearProject(projectPath: string): Promise<void> {
+    const key = this.key(projectPath)
+    const task = (this.queues.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+      await fs.rm(path.join(this.root, `${key}.json`), { force: true })
+      this.onChanged?.(projectPath, [])
+    })
+    this.queues.set(key, task)
+    try { await task }
+    finally { if (this.queues.get(key) === task) this.queues.delete(key) }
+  }
   async update(projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }): Promise<InspirationNote[]> {
     return this.write(projectPath, input, false)
   }
