@@ -11,6 +11,19 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  it('preserves output exhaustion and never executes truncated modern or legacy tool arguments', () => {
+    const translation = responsesRequestToChatCompletions({ model: 'test', input: [], tools: [{ type: 'function', name: 'write_file', parameters: {} }] })
+    for (const message of [
+      { content: 'partial', tool_calls: [{ id: 'write', function: { name: 'write_file', arguments: '{"path":' } }] },
+      { content: 'partial', function_call: { name: 'write_file', arguments: '{"path":' } }
+    ]) {
+      const events = chatCompletionToResponsesEvents({ choices: [{ finish_reason: 'length', message }], usage: { completion_tokens: 8192 } }, translation.tools)
+      expect(events.at(-1)).toMatchObject({ type: 'response.incomplete', response: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, usage: { output_tokens: 8192 } } })
+      expect(events.some(event => event.type === 'response.completed')).toBe(false)
+      expect(events.filter(event => event.type === 'response.output_item.done')).toEqual([expect.objectContaining({ item: expect.objectContaining({ type: 'message' }) })])
+    }
+  })
+
   it('summarizes tool declarations without inspecting their arguments', () => {
     expect(toolDeclarationSummary([{ type: 'namespace', name: 'mcp__modmind', tools: [{ type: 'function', name: 'modmind_mcp_probe' }] }])).toEqual({ count: 1, probeDeclared: true, dispatcherDeclared: false })
     expect(toolDeclarationSummary([{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }] }])).toEqual({ count: 1, probeDeclared: false, dispatcherDeclared: true })
