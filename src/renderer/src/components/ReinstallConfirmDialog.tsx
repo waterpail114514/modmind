@@ -36,8 +36,9 @@ export default function ReinstallConfirmDialog({ onCancel, onConfirm }: { onCanc
           <button className="reinstall-confirm-close" type="button" aria-label="关闭" onClick={onCancel}><X size={18} /></button>
         </div>
         <div id={id + '-description'} className="reinstall-confirm-copy">
-          <p>下载最新版后，清除应用数据并重新安装。</p>
+          <p>下载最新版后，优先清除应用数据并重新安装。</p>
           <p>设置、登录信息、插件和缓存将被清除，Gradle 等工具需重新下载。<strong>项目文件和项目列表保留。</strong></p>
+          <p>清理重装无法启动时，自动改为覆盖安装，保留现有应用数据。</p>
         </div>
         <div className="reinstall-confirm-footer">
           <button className="secondary-button reinstall-confirm-action" type="button" onClick={onConfirm}><RotateCcw size={15} />下载并重装</button>

@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.14",
+  "version": "1.4.16",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -9,12 +9,19 @@
   "sourceFingerprint": "sha256:235b5b247370dc5069a627962c848fb0d80f557114a51f51ebf5610db303f504",
   "scripts": {
     "models:sync": "node scripts/sync-model-context-registry.mjs && node scripts/sync-model-reasoning-registry.mjs",
+    "verify:workspace": "node scripts/verify-workspace.mjs --mcp",
+    "setup:tests": "node scripts/setup-mcp-tests.mjs",
+    "predev": "node scripts/verify-workspace.mjs",
     "dev": "electron-vite dev",
-    "prebuild": "npm run theme:check && node scripts/clean-build-output.mjs",
+    "prebuild": "node scripts/verify-workspace.mjs && node scripts/verify-gradle-wrapper.mjs && npm run theme:check && node scripts/clean-build-output.mjs",
     "build": "electron-vite build",
+    "prepreview": "node scripts/verify-workspace.mjs",
     "preview": "electron-vite preview",
-    "test": "vitest run src && npm run test:mcp && npm run test:mac-policy",
+    "pretest": "node scripts/verify-workspace.mjs --mcp",
+    "test": "vitest run src && npm run test:mcp && npm run test:mac-policy && npm run test:update-artifacts && npm run test:gradle-wrapper && npm run test:workspace",
+    "pretest:mcp": "node scripts/verify-workspace.mjs --mcp",
     "test:mcp": "npm --prefix modmind-mcp-open-source test",
+    "test:workspace": "node --test scripts/verify-workspace.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.web.json --pretty false",
     "assets:icons": "node scripts/generate-icons.mjs && node scripts/generate-macos-assets.mjs && node scripts/generate-installer-assets.mjs && node android-twa/scripts/generate-icons.mjs",
     "assets:installer": "node scripts/generate-installer-assets.mjs",
@@ -31,6 +38,8 @@
     "assets:mac": "node scripts/generate-macos-assets.mjs",
     "verify:mac": "node scripts/verify-macos-release.mjs",
     "test:mac-policy": "node --test scripts/macos-release-policy.test.mjs",
+    "test:update-artifacts": "node --test scripts/prepare-update-artifacts.test.mjs scripts/verify-update-config.test.mjs",
+    "test:gradle-wrapper": "node --test scripts/verify-gradle-wrapper.test.mjs",
     "theme:generate": "node scripts/generate-theme-tokens.mjs",
     "theme:check": "node scripts/generate-theme-tokens.mjs --check && node scripts/check-theme-colors.mjs && npm run plugins:check",
     "plugins:generate": "node scripts/generate-plugin-templates.mjs",
@@ -221,7 +230,11 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "resources/icon.ico"
+      "icon": "resources/icon.ico",
+      "publish": {
+        "provider": "generic",
+        "url": "https://etherup.cn-nb1.rains3.com/"
+      }
     },
     "nsis": {
       "oneClick": false,

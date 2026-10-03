@@ -38,7 +38,7 @@ export function newWorkflowNodePosition(nodes: WorkflowNodeType[], center: XYPos
   return { x: Math.max(origin.x, ...nodes.map(node => node.position.x + workflowNodeSize(node).width + GAP)), y: origin.y }
 }
 
-/** Presentation-only counts: match the existing runner, including reference fan-out and processing. */
+/** References share each generation request; processing still runs on each input image. */
 export function workflowOutputCounts(plan: ImageWorkflowPlan): Map<string, number> {
   const counts = new Map<string, number>()
   const outputs = new Map<string, number>()
@@ -46,7 +46,7 @@ export function workflowOutputCounts(plan: ImageWorkflowPlan): Map<string, numbe
     const inputCount = plan.edges.filter(edge => edge.target === node.id).reduce((sum, edge) => sum + (counts.get(edge.source) ?? 0), 0)
     if (node.data.kind === 'reference' || node.data.kind === 'output') counts.set(node.id, 1)
     if (node.data.kind === 'generate') {
-      const count = (node.data.count ?? 1) * Math.max(1, inputCount)
+      const count = node.data.count ?? 1
       counts.set(node.id, count); outputs.set(node.id, count)
     }
     if (node.data.kind === 'process') {

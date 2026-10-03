@@ -155,6 +155,51 @@ describe('AppUpdateService', () => {
     expect(() => normalizeAppUpdateUrl('https://user:secret@updates.example.com/')).toThrow(/HTTPS/)
   })
 
+  it.each(['prepare', 'launch'])('falls back after clean %s fails and shuts down only after overwrite launches', async failure => {
+    const { service, quit, beforeInstall, result } = await maintenanceFixture()
+    const states: unknown[] = []
+    service.subscribe(state => states.push(state))
+    let release!: () => void
+    const ready = new Promise<void>(resolve => { release = resolve })
+    const clean = vi.fn(async () => {
+      if (failure === 'prepare') throw new Error('missing resources')
+      return async () => { throw new Error('helper blocked') }
+    })
+    const overwriteLaunch = vi.fn(async () => ready)
+    const overwrite = vi.fn(async () => overwriteLaunch)
+    const pending = service.reinstallLatest(async () => true, clean, overwrite)
+    await vi.waitFor(() => expect(overwriteLaunch).toHaveBeenCalledOnce())
+    expect(quit).not.toHaveBeenCalled()
+    expect(beforeInstall).not.toHaveBeenCalled()
+    await expect(service.updateNow(async () => result)).rejects.toThrow('正在进行')
+    release()
+    await expect(pending).resolves.toMatchObject({ phase: 'installing', operation: 'reinstall', message: expect.stringContaining('覆盖安装') })
+    expect(quit).toHaveBeenCalledOnce()
+    expect(beforeInstall).toHaveBeenCalledOnce()
+    expect(states).toContainEqual(expect.objectContaining({ phase: 'downloading', message: expect.stringContaining('保留现有数据') }))
+  })
+
+  it('reports both errors and stays open when overwrite fallback fails', async () => {
+    const { service, quit, beforeInstall } = await maintenanceFixture()
+    const overwrite = vi.fn(async () => async () => { throw new Error('installer blocked') })
+    await expect(service.reinstallLatest(async () => true, async () => { throw new Error('missing resources') }, overwrite))
+      .rejects.toThrow('清理重装失败：missing resources；覆盖安装也失败：installer blocked')
+    expect(quit).not.toHaveBeenCalled()
+    expect(beforeInstall).not.toHaveBeenCalled()
+    expect(service.snapshot()).toMatchObject({ phase: 'error', operation: 'reinstall' })
+  })
+
+  it('does not fall back after cancellation or successful clean preparation', async () => {
+    const { service } = await maintenanceFixture()
+    const clean = vi.fn(async () => async () => undefined)
+    const overwrite = vi.fn()
+    await service.reinstallLatest(async () => false, clean, overwrite)
+    expect(clean).not.toHaveBeenCalled()
+    await service.reinstallLatest(async () => true, clean, overwrite)
+    expect(overwrite).not.toHaveBeenCalled()
+    expect(service.snapshot().message).toContain('清理重装')
+  })
+
   it('downloads a stable release, reports progress, and persists the verified metadata', async () => {
     const files = await fixture('1.3.12')
     const updateInfo = {

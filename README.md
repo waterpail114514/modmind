@@ -85,9 +85,11 @@ npm ci
 npm run dev
 ```
 
+每个源码工作区独立运行 `npm ci`，不要把 `node_modules` 链接到其他分支。开发启动、构建和测试会检查依赖目录与锁文件。`npm run dev` 和 `npm run preview` 默认将设置、会话、日志和 Chromium 缓存放在当前目录的 `.modmind-dev/userData`，不会读取正式版的数据。需要指定测试配置目录时，使用绝对路径的 `MODMIND_DEV_USER_DATA_DIR` 或 `--user-data-dir`；命令行参数优先。正式安装版的数据目录保持原规则。
+
 ### 检查与测试
 
-`npm test` 包含独立 MCP 仓库的测试，因此首次运行前还需检出该仓库。下面的提交与当前 macOS CI 固定版本一致：
+`npm test` 包含独立 MCP 仓库的测试。首次运行 `npm run setup:tests` 会检出与 macOS CI 一致的固定版本；已有目录不会被重置或覆盖。也可手动检出：
 
 ```sh
 git clone https://github.com/waterpail114514/ModMind-MCP.git modmind-mcp-open-source
@@ -99,6 +101,8 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+`npm run verify:workspace` 检查独立依赖和 MCP 固定提交。测试默认最多使用 4 个 worker，避免大量子进程和文件日志写入争抢磁盘。`node scripts/development-profile-smoke.mjs` 使用真实 Electron 进程验证两个工作区的数据与单实例锁隔离，不启动主界面。
 
 构建前会自动检查主题颜色与插件模板是否和源码一致。部分集成测试需要 Java 或额外运行环境，请同时查看测试输出中的跳过项。
 
@@ -122,6 +126,16 @@ npm run build
 Windows 更新地址由 `MODMIND_UPDATE_URL` 或同一文件中的 `updateUrl` 指定，必须使用 HTTPS。**GitHub 发布附件与应用配置的更新源是两个位置**；使用对象存储时，还需单独同步更新文件。
 
 Windows 更新文件位于 `release/update`。稳定版使用 `latest.yml`，预发布版使用 `beta.yml`。上传顺序为安装包、blockmap、最后 YAML；不要用预发布元数据覆盖稳定版。保留旧安装包和 blockmap，以便跨版本差分更新。
+
+更新整理脚本直接从当前版本安装包计算大小和 SHA-512，生成对应渠道的 YAML，不依赖 electron-builder 自动生成的元数据。安装包与 blockmap 已生成并通过校验后，可运行 `node scripts/prepare-update-artifacts.mjs` 重新整理更新目录，无需重新打包。
+
+Windows 的 `build.win.publish` 明确指定更新源，让普通仓库、Git worktree 和源码压缩包构建都生成安装目录内的 `resources/app-update.yml`。修改默认更新源时，同时修改 `resources/service-config.json` 和该打包配置。发布校验与更新整理都会直接检查安装包内的更新配置、缓存目录名及地址一致性；缺少文件时禁止整理发布，不能用服务器端 `latest.yml` 替代。
+
+更新配置回归检查运行 `npm run test:update-artifacts`；Windows 打包后运行 `npx electron scripts/app-update-download-smoke.cjs`，使用包内配置与真实下载器验证本机模拟下载、校验和错误及缺文件错误，不启动安装程序。
+
+已安装的 1.4.15/1.4.16 若报缺少 `resources/app-update.yml`，需要退出应用后用修复后的完整安装包覆盖安装，再启动重试更新。无需使用会清理设置与登录信息的“重装”功能；仅替换服务器更新清单无法修复旧客户端缺失的文件。
+
+构建前会校验内置 Gradle Wrapper 的原始 SHA-256，Windows 发布校验还会直接检查安装包中的同一组资源。`vendor/gradle-wrapper/gradlew` 和 `gradlew.bat` 都必须保留上游 LF 换行；仓库已通过 `.gitattributes` 固定规则，不能因 Windows 检出转换为 CRLF。
 
 `npm run version:patch` 会同步更新 `package.json` 与 `package-lock.json`，不会自动创建 Git 标签。
 

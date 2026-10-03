@@ -48,7 +48,10 @@ export interface ImageGenerationRequest {
   backgroundColor: string
   removeBackground: boolean
   source: ImageStudioSource
+  /** Legacy single reference; when both fields are set, this precedes referenceImages. */
   referenceImage?: string
+  /** Ordered references supplied together for every requested output. */
+  referenceImages?: string[]
 }
 
 export interface ImageAsset {

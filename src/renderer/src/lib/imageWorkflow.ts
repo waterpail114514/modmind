@@ -1,5 +1,6 @@
 import type { Connection, Edge, Node } from '@xyflow/react'
 import { findImageStudioPreset, imageWorkflowPrompt } from './imageStudioPresets'
+import { normalizeImageReference } from '../../../shared/imageStudioRequest'
 import type { ImageAsset, ImageGenerationRequest, ImageGenerationResult, ImageProcessingOptions, ImageProcessingResult, ImageStudioStyle, ImageStudioQuality, PerfectPixelOptions } from '../../../shared/imageStudio'
 
 export type WorkflowKind = 'prompt' | 'reference' | 'generate' | 'process' | 'output'
@@ -114,6 +115,7 @@ export function planImageWorkflow(nodes: WorkflowNodeType[], edges: Edge[], targ
     if (node.data.kind === 'reference' || node.data.kind === 'output') {
       const image = node.data.kind === 'reference' ? node.data.referenceImage : node.data.outputAsset?.dataUrl
       if (!image?.startsWith('data:image/')) throw new Error(`“${node.data.title}”没有可用参考图片`)
+      normalizeImageReference(image)
       counts.set(node.id, 1)
     }
     if (node.data.kind === 'generate') {
@@ -127,10 +129,11 @@ export function planImageWorkflow(nodes: WorkflowNodeType[], edges: Edge[], targ
       if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error('每个生图节点的数量必须是 1～10 的整数')
       const inputCount = incoming.filter(item => imageProducingKind(item.data.kind)).reduce((sum, item) => sum + (counts.get(item.id) ?? 0), 0)
       if (preset?.requiresReference && !inputCount) throw new Error(`“${preset.label}”需要参考图，请连接参考图、已有结果或上游图片节点`)
-      const outputCount = count * Math.max(1, inputCount)
+      // All image inputs are references for the same generation, not separate jobs.
+      const outputCount = count
       counts.set(node.id, outputCount)
       totalCount += outputCount
-      if (totalCount > 100) throw new Error('工作流级联生成超过 100 张，请减少节点数量或批量数量')
+      if (totalCount > 100) throw new Error('工作流生成超过 100 张，请减少节点数量或批量数量')
     }
     if (node.data.kind === 'process') {
       const count = incoming.filter(item => imageProducingKind(item.data.kind)).reduce((sum, item) => sum + (counts.get(item.id) ?? 0), 0)
@@ -163,16 +166,15 @@ export async function runImageWorkflow(plan: ImageWorkflowPlan, api: {
       const prompt = imageWorkflowPrompt(node.data, incoming.find(item => item.data.kind === 'prompt')?.data.prompt)
       const images = incoming.filter(item => imageProducingKind(item.data.kind)).flatMap(item => values.get(item.id) ?? [])
       const output: ImageAsset[] = []
-      for (const reference of images.length ? images : [null]) {
-        for (let index = 0; index < (node.data.count ?? 1); index += 1) {
-          checkStopped()
-          const result = await api.generate({ prompt, style: node.data.presetId ? 'free' : node.data.style ?? 'free', size: node.data.size ?? '1024x1024', quality: node.data.quality ?? 'medium', moderation: node.data.moderation ?? 'auto', count: 1, background: !node.data.presetId && node.data.style === 'minecraft' ? 'solid' : 'auto', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...(reference ? { referenceImage: reference.dataUrl } : {}) })
-          for (const asset of result.assets) { output.push(asset); options.onAsset(asset, node.id) }
-          if (result.error) throw new Error(result.error)
-          if (!result.assets.length) throw new Error('图片服务没有返回图片，已停止后续生成')
-          completed += 1
-          options.onProgress?.(completed, plan.totalCount)
-        }
+      const referenceImages = images.map(image => image.dataUrl)
+      for (let index = 0; index < (node.data.count ?? 1); index += 1) {
+        checkStopped()
+        const result = await api.generate({ prompt, style: node.data.presetId ? 'free' : node.data.style ?? 'free', size: node.data.size ?? '1024x1024', quality: node.data.quality ?? 'medium', moderation: node.data.moderation ?? 'auto', count: 1, background: !node.data.presetId && node.data.style === 'minecraft' ? 'solid' : 'auto', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...(referenceImages.length ? { referenceImages } : {}) })
+        for (const asset of result.assets) { output.push(asset); options.onAsset(asset, node.id) }
+        if (result.error) throw new Error(result.error)
+        if (!result.assets.length) throw new Error('图片服务没有返回图片，已停止后续生成')
+        completed += 1
+        options.onProgress?.(completed, plan.totalCount)
       }
       values.set(node.id, output)
     }

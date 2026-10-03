@@ -21,7 +21,7 @@ describe('image workflow execution safety', () => {
     const calls = api()
     await runImageWorkflow(plan, calls, { onAsset: vi.fn() })
     expect(calls.generate).toHaveBeenCalledTimes(2)
-    expect(calls.generate).toHaveBeenCalledWith(expect.objectContaining({ referenceImage: image.dataUrl, prompt: 'edit', count: 1 }))
+    expect(calls.generate).toHaveBeenCalledWith(expect.objectContaining({ referenceImages: [image.dataUrl], prompt: 'edit', count: 1 }))
     const saved = parseWorkflowGraph(JSON.parse(JSON.stringify(snapshotImageWorkflow(graph))))
     expect(planImageWorkflow(saved.nodes, saved.edges).nodes.map(n => n.id)).not.toContain('g')
     expect(saved.nodes.find(n => n.id === 'o')?.data.outputAsset?.dataUrl).toBe(image.dataUrl)
@@ -55,11 +55,61 @@ describe('image workflow execution safety', () => {
     expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('整数')
   })
 
-  it('bounds cascading requests before starting generation', () => {
+  it('bounds total requests before starting generation', () => {
     const graph = basic(); graph.nodes[1].data.count = 10
-    graph.nodes.push(node('p2', 'prompt', { prompt: 'edit' }), node('g2', 'generate', { count: 10 }))
-    graph.edges.push(edge('g', 'g2'), edge('p2', 'g2'))
+    for (let index = 0; index < 10; index += 1) {
+      graph.nodes.push(node(`extra-${index}`, 'generate', { count: 10 }))
+      graph.edges.push(edge('p', `extra-${index}`))
+    }
     expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('超过 100 张')
+  })
+
+  it.each([1, 3])('sends both references together for each of %s outputs, including after reload', async count => {
+    const graph = basic(); graph.nodes[1].data.count = count
+    const references = [image.dataUrl, 'data:image/jpeg;base64,AQ==']
+    graph.nodes.push(...references.map((referenceImage, index) => node(`r${index}`, 'reference', { referenceImage })))
+    graph.edges.push(edge('r0', 'g'), edge('r1', 'g'))
+    const saved = parseWorkflowGraph(JSON.parse(JSON.stringify(snapshotImageWorkflow(graph))))
+    const plan = planImageWorkflow(saved.nodes, saved.edges)
+    expect(plan.totalCount).toBe(count)
+    const calls = api(); const progress = vi.fn()
+    await runImageWorkflow(plan, calls, { onAsset: vi.fn(), onProgress: progress })
+    expect(calls.generate).toHaveBeenCalledTimes(count)
+    for (let index = 1; index <= count; index += 1) {
+      expect(calls.generate).toHaveBeenNthCalledWith(index, expect.objectContaining({ referenceImages: references, count: 1 }))
+      expect(progress).toHaveBeenNthCalledWith(index, index, count)
+    }
+  })
+
+  it('merges generated, processed, local and saved inputs without multiplying downstream requests', async () => {
+    const graph = basic()
+    const savedImage = { ...image, id: 'saved', dataUrl: 'data:image/png;base64,Ag==' }
+    graph.nodes.push(node('process', 'process', { operation: 'perfect-pixel' }), node('saved', 'output', { outputStatus: 'done', outputAsset: savedImage }),
+      node('local', 'reference', { referenceImage: 'data:image/png;base64,Aw==' }), node('g2', 'generate', { count: 2, presetId: 'material-variant' }))
+    graph.edges.push(edge('g', 'process'), edge('process', 'g2'), edge('g', 'g2'), edge('saved', 'g2'), edge('local', 'g2'))
+    const plan = planImageWorkflow(graph.nodes, graph.edges)
+    expect(plan.totalCount).toBe(5)
+    const calls = api()
+    await runImageWorkflow(plan, calls, { onAsset: vi.fn() })
+    expect(calls.generate).toHaveBeenCalledTimes(5)
+    expect(calls.process).toHaveBeenCalledTimes(3)
+    for (const index of [4, 5]) expect(calls.generate).toHaveBeenNthCalledWith(index, expect.objectContaining({ referenceImages: [
+      ...Array(3).fill('data:image/png;base64,AQ=='), ...Array(3).fill(image.dataUrl), savedImage.dataUrl, 'data:image/png;base64,Aw=='
+    ] }))
+  })
+
+  it('keeps a ten-by-ten chain to twenty requests instead of multiplying it to 110', () => {
+    const graph = basic(); graph.nodes[1].data.count = 10
+    graph.nodes.push(node('next', 'generate', { count: 10, presetId: 'material-variant' }))
+    graph.edges.push(edge('g', 'next'))
+    expect(planImageWorkflow(graph.nodes, graph.edges).totalCount).toBe(20)
+  })
+
+  it('rejects a malformed downstream reference during preflight', () => {
+    const graph = basic()
+    graph.nodes.push(node('bad', 'reference', { referenceImage: 'data:image/png;base64,not-an-image' }), node('next', 'generate', { presetId: 'material-variant' }))
+    graph.edges.push(edge('g', 'next'), edge('bad', 'next'))
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('data URL')
   })
 
   it('publishes every completed image immediately, preserves it on later failure and makes no further requests', async () => {
@@ -126,7 +176,7 @@ describe('image generation presets', () => {
     }
     const calls = api()
     await runImageWorkflow(planImageWorkflow(nodes, edges), calls, { onAsset: vi.fn() })
-    expect(calls.generate).toHaveBeenCalledWith(expect.objectContaining({ prompt: expect.stringContaining(preset.prompt), style: 'free', ...(preset.requiresReference ? { referenceImage: image.dataUrl } : {}) }))
+    expect(calls.generate).toHaveBeenCalledWith(expect.objectContaining({ prompt: expect.stringContaining(preset.prompt), style: 'free', ...(preset.requiresReference ? { referenceImages: [image.dataUrl] } : {}) }))
   })
 
   it('keeps edited templates per generator without changing shared user prompts, including after reload', async () => {
@@ -153,7 +203,7 @@ describe('image generation presets', () => {
     graph.edges.push(edge('g', 'variant'))
     const calls = api()
     await runImageWorkflow(planImageWorkflow(graph.nodes, graph.edges), calls, { onAsset: vi.fn() })
-    expect(calls.generate).toHaveBeenNthCalledWith(2, expect.objectContaining({ referenceImage: image.dataUrl, prompt: expect.stringContaining('钻石等级') }))
+    expect(calls.generate).toHaveBeenNthCalledWith(2, expect.objectContaining({ referenceImages: [image.dataUrl], prompt: expect.stringContaining('钻石等级') }))
   })
 
   it('validates missing, emptied and oversized templates and malformed saved fields', () => {

@@ -5,7 +5,7 @@ import { safeStorage } from 'electron'
 import sharp from 'sharp'
 import { downloadActivities } from './downloadActivityService'
 import { runEmbeddedPerfectPixel } from './perfectPixel'
-import { normalizeImageGenerationRequest, normalizePerfectPixelOptions } from '../shared/imageStudioRequest'
+import { imageGenerationReferences, normalizeImageGenerationRequest, normalizePerfectPixelOptions } from '../shared/imageStudioRequest'
 import { imageStudioPresets } from '../shared/imageStudioPresets'
 import type {
   ImageGenerationRequest,
@@ -322,11 +322,11 @@ export class ImageStudioService {
       quality: clampQuality(request.quality),
       moderation: clampModeration(request.moderation)
     }
-    const reference = request.referenceImage ? parseReferenceImage(request.referenceImage) : null
+    const references = imageGenerationReferences(request).map(parseReferenceImage)
     let requestBody: BodyInit = JSON.stringify(body)
     const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` }
-    const endpoint = reference ? 'images/edits' : 'images/generations'
-    if (reference) {
+    const endpoint = references.length ? 'images/edits' : 'images/generations'
+    if (references.length) {
       const form = new FormData()
       form.append('model', body.model)
       form.append('prompt', body.prompt)
@@ -334,7 +334,9 @@ export class ImageStudioService {
       form.append('size', body.size)
       form.append('quality', body.quality)
       form.append('moderation', body.moderation)
-      form.append('image', new Blob([new Uint8Array(reference.buffer)], { type: reference.mime }), `reference.${reference.extension}`)
+      references.forEach((reference, index) => {
+        form.append(references.length === 1 ? 'image' : 'image[]', new Blob([new Uint8Array(reference.buffer)], { type: reference.mime }), `reference-${index + 1}.${reference.extension}`)
+      })
       requestBody = form
     } else {
       headers['Content-Type'] = 'application/json'

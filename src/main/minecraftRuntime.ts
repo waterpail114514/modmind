@@ -8,7 +8,7 @@ import { createReadStream, createWriteStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Agent, interceptors } from 'undici'
-import { LaunchPrecheck, MinecraftFolder, Version, launch } from '@xmcl/core'
+import { diagnoseAssets, LaunchPrecheck, MinecraftFolder, Version, launch } from '@xmcl/core'
 import {
   fetchJavaRuntimeManifest,
   getFabricLoaders,
@@ -62,6 +62,7 @@ import {
 } from './minecraftVersionManifest'
 import { runMinecraftTaskWithRecovery } from './minecraftTaskRecovery'
 import { forgeInstallerVersion } from './forgeInstallerVersion'
+import { installedRuntimeCandidates } from './minecraftRuntimeCache'
 import { getNetworkProxyUrl } from './networkRequest'
 import { detectToolchainRequirements, mergeToolchainJavaHomes } from './toolchainDetection'
 import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
@@ -112,6 +113,23 @@ async function validAssetIndex(filePath: string, expectedSha1: string): Promise<
   }
 }
 
+/** XMCL stores the verified index under its hash; launches use the named alias. */
+async function reuseAssetIndex(version: { assets?: string; assetIndex?: { sha1?: string } }, resourceRoot: string): Promise<boolean> {
+  const expectedSha1 = version.assetIndex?.sha1?.trim().toLowerCase()
+  const destination = assetIndexPath(resourceRoot, version)
+  if (!expectedSha1 || !destination) return false
+  const hashedDestination = hashedAssetIndexPath(resourceRoot, expectedSha1)
+  if (await validAssetIndex(destination, expectedSha1)) {
+    if (!(await validAssetIndex(hashedDestination, expectedSha1))) await fs.copyFile(destination, hashedDestination)
+    return true
+  }
+  if (await validAssetIndex(hashedDestination, expectedSha1)) {
+    await fs.copyFile(hashedDestination, destination)
+    return true
+  }
+  return false
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -133,16 +151,7 @@ async function ensureAssetIndex(
   const destination = assetIndexPath(resourceRoot, version)
   if (!expectedSha1 || !destination) return
   const hashedDestination = hashedAssetIndexPath(resourceRoot, expectedSha1)
-  if (await validAssetIndex(destination, expectedSha1)) {
-    if (!(await validAssetIndex(hashedDestination, expectedSha1))) {
-      await fs.copyFile(destination, hashedDestination).catch(() => undefined)
-    }
-    return
-  }
-  if (await validAssetIndex(hashedDestination, expectedSha1)) {
-    await fs.copyFile(hashedDestination, destination).catch(() => undefined)
-    return
-  }
+  if (await reuseAssetIndex(version, resourceRoot)) return
 
   await fs.rm(destination, { force: true }).catch(() => undefined)
   await fs.rm(hashedDestination, { force: true }).catch(() => undefined)
@@ -1967,23 +1976,44 @@ export class MinecraftRuntimeManager {
     await fs.mkdir(this.instanceRoot(project), { recursive: true })
     await fs.mkdir(this.resourceRoot(), { recursive: true })
     if (signal?.aborted) throw abortError()
+    this.emit('preparing', `正在检查本地 Minecraft ${project.minecraftVersion}`)
     if (!this.vanillaClient && project.kind !== 'modpack' && (project.loader === 'fabric' || project.loader === 'quilt')) await this.ensureManagedLoaderApi(project)
-    const cached = await this.readMetadata(project)
-    const cachedVersionJson = cached
-      ? path.join(this.resourceRoot(), 'versions', cached.loaderVersionId, `${cached.loaderVersionId}.json`)
-      : ''
-    const cachedJavaReady = cached
-      ? await probeJavaHome(path.dirname(path.dirname(cached.javaPath)), javaVersionForMinecraft(project.minecraftVersion), false)
-      : false
-    const cachedDependenciesReady = cached && cachedJavaReady && await this.verifyCachedRuntime(cached.loaderVersionId)
+    let cached = await this.readMetadata(project)
+    const cachedVersionId = cached?.loaderVersionId
+    const matchingMetadata = cached && (!configuredLoaderVersion || cached.loaderVersion === configuredLoaderVersion)
+    const cachedDependenciesReady = cached && matchingMetadata && await this.verifyCachedRuntime(cached.loaderVersionId)
     if (cached && !cachedDependenciesReady) await this.removeInvalidCachedAssetIndex(cached.loaderVersionId)
-    if (
-      cached &&
-      (!configuredLoaderVersion || cached.loaderVersion === configuredLoaderVersion) &&
-      cachedJavaReady &&
-      cachedDependenciesReady &&
-      (await exists(cachedVersionJson))
-    ) {
+    if (!cachedDependenciesReady) {
+      cached = null
+      // Player tests use a new isolated game directory on every run. Its missing
+      // runtime.json does not mean the shared Minecraft/loader needs reinstalling.
+      const candidates = await installedRuntimeCandidates(this.resourceRoot(), project.minecraftVersion, project.loader, configuredLoaderVersion, this.vanillaClient)
+      for (const versionId of candidates) {
+        if (matchingMetadata && versionId === cachedVersionId) continue
+        if (signal?.aborted) throw abortError()
+        if (!await this.verifyCachedRuntime(versionId, true, signal)) continue
+        const java = await this.ensureJava(project, signal, generation)
+        if (signal?.aborted) throw abortError()
+        cached = {
+          minecraftVersion: project.minecraftVersion, loader: project.loader,
+          loaderVersionId: versionId, loaderVersion: configuredLoaderVersion!,
+          fabricVersionId: project.loader === 'fabric' ? versionId : undefined,
+          javaPath: java.javaPath, javaTarget: java.target, javaSource: java.source,
+          preparedAt: new Date().toISOString()
+        }
+        await fs.writeFile(this.metadataPath(project), JSON.stringify(cached, null, 2), 'utf8')
+        diagnosticJournal.record({ subsystem: 'minecraft-download', operation: 'runtime-cache', phase: 'reused', message: 'Reused installed Minecraft runtime for this instance', data: { versionId, instancePath: this.instanceRoot(project) } })
+        break
+      }
+    } else if (cached && !await probeJavaHome(path.dirname(path.dirname(cached.javaPath)), javaVersionForMinecraft(project.minecraftVersion), false)) {
+      // Repair Java independently; it must not invalidate a verified game install.
+      const java = await this.ensureJava(project, signal, generation)
+      if (signal?.aborted) throw abortError()
+      cached = { ...cached, javaPath: java.javaPath, javaTarget: java.target, javaSource: java.source }
+      await fs.writeFile(this.metadataPath(project), JSON.stringify(cached, null, 2), 'utf8')
+    }
+    if (signal?.aborted) throw abortError()
+    if (cached) {
       this.updateState({
         stage: 'idle',
         minecraftVersion: project.minecraftVersion,
@@ -2004,7 +2034,7 @@ export class MinecraftRuntimeManager {
     const { target, javaPath, source: javaSource } = await this.ensureJava(project, signal, generation)
     if (signal?.aborted) throw abortError()
 
-    this.emit('downloading-game', `正在下载 Minecraft ${project.minecraftVersion}`)
+    this.emit('downloading-game', `正在检查并补全 Minecraft ${project.minecraftVersion}`)
     diagnosticJournal.record({
       subsystem: 'minecraft-download',
       operation: 'install-client',
@@ -2012,6 +2042,8 @@ export class MinecraftRuntimeManager {
       message: `Installing Minecraft ${project.minecraftVersion}`,
       data: {
         resourceRoot: this.resourceRoot(),
+        instancePath: this.instanceRoot(project),
+        cacheMiss: !cachedVersionId ? 'instance-metadata-missing' : matchingMetadata ? 'runtime-invalid' : 'loader-version-changed',
         versionManifest: MINECRAFT_VERSION_MANIFEST_SOURCES[0].url,
         versionManifestFallbacks: MINECRAFT_VERSION_MANIFEST_SOURCES.slice(1).map((source) => source.url),
         assetHosts: MINECRAFT_ASSET_HOSTS,
@@ -2083,7 +2115,7 @@ export class MinecraftRuntimeManager {
           mavenHost: minecraftMavenHosts(attempt),
           fetch: domesticMinecraftFetch
         }),
-        onUpdate: (task) => this.emitProgress('downloading-game', `正在下载 Minecraft ${project.minecraftVersion}`, task.progress, task.total, generation),
+        onUpdate: (task) => this.emitProgress('downloading-game', `正在检查并补全 Minecraft ${project.minecraftVersion}`, task.progress, task.total, generation),
         onRetry: (attempt, error) => {
           const source = attempt % 2 === 0 ? 'Mojang 官方源' : 'BMCLAPI'
           this.emit('downloading-game', `${error.message}，正在切换到 ${source} 自动重试（${attempt}/3）`, 'warning')
@@ -2233,20 +2265,36 @@ export class MinecraftRuntimeManager {
    * cache before treating it as ready so launch can repair it through the
    * normal installer path instead of surfacing an opaque AggregateError.
    */
-  private async verifyCachedRuntime(versionId: string): Promise<boolean> {
+  private async verifyCachedRuntime(versionId: string, verifyAssets = false, signal?: AbortSignal): Promise<boolean> {
+    let check = 'version-json'
     try {
       const folder = MinecraftFolder.from(this.resourceRoot())
       const version = await Version.parse(folder, versionId)
       const precheckOptions = { gamePath: this.resourceRoot(), javaPath: '', version: version.id }
+      check = 'client-jar'
       await LaunchPrecheck.checkVersion(folder, version, precheckOptions)
+      check = 'libraries'
       await LaunchPrecheck.checkLibraries(folder, version, precheckOptions)
+      check = 'natives'
       await LaunchPrecheck.checkNatives(folder, version, precheckOptions)
-      const assetIndex = version.assetIndex
-      if (!assetIndex?.sha1) return false
-      const assetIndexPath = folder.getPath('assets', 'indexes', `${version.assets}.json`)
-      if (await sha1File(assetIndexPath) !== assetIndex.sha1) return false
+      check = 'asset-index'
+      if (!await reuseAssetIndex(version, this.resourceRoot())) throw new Error('Minecraft asset index is missing or invalid')
+      // A profile may have been written by an interrupted installation. Without
+      // a completed instance record, verify its objects before adopting it.
+      if (verifyAssets) {
+        check = 'assets'
+        const index = JSON.parse(await fs.readFile(folder.getAssetsIndex(version.assets), 'utf8')) as { objects: Record<string, { hash: string; size: number }> }
+        const entries = Object.entries(index.objects)
+        for (let offset = 0; offset < entries.length; offset += 16) {
+          if (signal?.aborted) throw abortError()
+          const issues = await diagnoseAssets(Object.fromEntries(entries.slice(offset, offset + 16)), folder, { strict: true, signal })
+          if (issues.length) throw new Error(`Minecraft asset is missing or invalid: ${issues[0].asset.name}`)
+        }
+      }
       return true
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw abortError()
+      diagnosticJournal.record({ subsystem: 'minecraft-download', operation: 'runtime-cache', phase: 'invalid', level: 'warning', message: 'Installed Minecraft runtime failed cache verification', data: { versionId, check }, error })
       return false
     }
   }

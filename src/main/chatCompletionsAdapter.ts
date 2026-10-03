@@ -309,6 +309,7 @@ export function sanitizeTokenBudgets(body: Buffer): Buffer {
 export function chatCompletionToResponsesEvents(value: unknown, tools: Map<string, ChatToolDescriptor>): JsonRecord[] {
   if (!isRecord(value) || !Array.isArray(value.choices) || !isRecord(value.choices[0])) throw new Error('Chat Completions 上游返回了无效响应')
   const choice = value.choices[0]
+  const outputLimited = choice.finish_reason === 'length'
   const message = isRecord(choice.message) ? choice.message : {}
   const responseId = typeof value.id === 'string' && value.id ? value.id : `resp_${randomUUID().replaceAll('-', '')}`
   const events: JsonRecord[] = [{ type: 'response.created', response: { id: responseId } }]
@@ -321,6 +322,8 @@ export function chatCompletionToResponsesEvents(value: unknown, tools: Map<strin
   }
   const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : []
   for (const rawCall of toolCalls) {
+    // A capped tool argument may be invalid or incomplete. Never execute it.
+    if (outputLimited) break
     if (!isRecord(rawCall) || !isRecord(rawCall.function) || typeof rawCall.function.name !== 'string') continue
     const descriptor = tools.get(rawCall.function.name)
     if (!descriptor) continue
@@ -346,7 +349,7 @@ export function chatCompletionToResponsesEvents(value: unknown, tools: Map<strin
       })
     }
   }
-  if (!toolCalls.length && isRecord(message.function_call) && typeof message.function_call.name === 'string') {
+  if (!outputLimited && !toolCalls.length && isRecord(message.function_call) && typeof message.function_call.name === 'string') {
     const descriptor = tools.get(message.function_call.name)
     if (descriptor) {
       events.push({
@@ -368,9 +371,10 @@ export function chatCompletionToResponsesEvents(value: unknown, tools: Map<strin
   const promptDetails = isRecord(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {}
   const completionDetails = isRecord(usage.completion_tokens_details) ? usage.completion_tokens_details : {}
   events.push({
-    type: 'response.completed',
+    type: outputLimited ? 'response.incomplete' : 'response.completed',
     response: {
       id: responseId,
+      ...(outputLimited ? { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } } : {}),
       end_turn: choice.finish_reason !== 'tool_calls' && choice.finish_reason !== 'function_call',
       usage: {
         input_tokens: inputTokens,

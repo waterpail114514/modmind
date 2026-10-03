@@ -45,21 +45,21 @@ describe('workflow presentation', () => {
     expect(nextOutputColumn(source, [source, old, obstacle], [edge('g', 'old')], 3)).toEqual({ x: 868, y: 0 })
   })
 
-  it('matches existing generation fan-out and processing without changing requests', async () => {
+  it('allocates slots by output count, combining references and processing each result', async () => {
     const nodes = [node('p', 'prompt', 0, 0, { prompt: 'cat' }), node('g', 'generate', 300, 0, { count: 3 }),
       node('r', 'reference', 0, 100, { referenceImage: asset.dataUrl }), node('o', 'output', 0, 200, { outputAsset: asset, outputStatus: 'done' }),
       node('process', 'process', 600, 0, { operation: 'perfect-pixel' }), node('none', 'process', 900, 0, { operation: 'none' })]
     const edges = [edge('p', 'g'), edge('r', 'g'), edge('o', 'g'), edge('g', 'process'), edge('process', 'none')]
     const plan = planImageWorkflow(nodes, edges)
-    expect([...workflowOutputCounts(plan)]).toEqual([['g', 6], ['process', 6]])
+    expect([...workflowOutputCounts(plan)]).toEqual([['g', 3], ['process', 3]])
     const generate = vi.fn(async () => ({ jobId: 'test', assets: [asset], hosted: false, credits: 0 }))
     const process = vi.fn(async () => ({ dataUrl: asset.dataUrl, operation: 'perfect-pixel' as const, detail: '' }))
     const onAsset = vi.fn()
     const slots = createWorkflowOutputSlots(plan, nodes, edges, 'test')
     await runImageWorkflow(plan, { generate, process }, { onAsset })
-    expect(generate).toHaveBeenCalledTimes(6)
-    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ count: 1, prompt: 'cat', referenceImage: asset.dataUrl }))
-    expect(process).toHaveBeenCalledTimes(6)
+    expect(generate).toHaveBeenCalledTimes(3)
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ count: 1, prompt: 'cat', referenceImages: [asset.dataUrl, asset.dataUrl] }))
+    expect(process).toHaveBeenCalledTimes(3)
     expect(onAsset).toHaveBeenCalledTimes(slots.length)
   })
 })

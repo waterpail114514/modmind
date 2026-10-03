@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { verifyInstallerGradleWrapper } from './verify-gradle-wrapper.mjs'
+import { verifyInstallerUpdateConfig } from './verify-update-config.mjs'
 
 const platformIndex = process.argv.indexOf('--platform')
 if (process.platform === 'darwin' || (platformIndex >= 0 && process.argv[platformIndex + 1] === 'mac')) {
@@ -11,6 +13,7 @@ if (process.platform === 'darwin' || (platformIndex >= 0 && process.argv[platfor
 
 const root = path.resolve(import.meta.dirname, '..')
 const packageJson = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'))
+const serviceConfig = JSON.parse(await fs.readFile(path.join(root, 'resources/service-config.json'), 'utf8'))
 const version = packageJson.version
 const releaseRoot = path.join(root, 'release')
 const allowUnsigned = process.argv.includes('--allow-unsigned')
@@ -30,7 +33,9 @@ for (const file of artifacts) {
   if (!stat?.isFile() || stat.size < 10 * 1024 * 1024) {
     throw new Error(`Missing or implausibly small release artifact: ${file}`)
   }
-  results.push({ file, size: stat.size, hash: await sha256(file) })
+  const updateConfig = verifyInstallerUpdateConfig(file, serviceConfig.updateUrl)
+  const gradleWrapper = verifyInstallerGradleWrapper(file)
+  results.push({ file, size: stat.size, hash: await sha256(file), updateConfig, gradleWrapper })
 }
 
 if (process.platform === 'win32') {

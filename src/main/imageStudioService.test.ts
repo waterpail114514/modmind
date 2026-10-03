@@ -320,6 +320,134 @@ describe('ImageStudioService settings', () => {
 
 
 describe('Image Studio workbench and UI parity', () => {
+  it.each([
+    { hosted: false, source: 'manual' as const }, { hosted: true, source: 'manual' as const },
+    { hosted: false, source: 'agent' as const }, { hosted: true, source: 'agent' as const }
+  ])('sends all references in each edit request (hosted=$hosted, source=$source)', async ({ hosted, source }) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-references-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'hosted-key', jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings(hosted ? '' : 'own-key'))
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ data: [{ b64_json: 'Aw==' }] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = await service.generate(generationRequest({ count: 2, referenceImages: ['data:image/png;base64,AA==', 'data:image/jpeg;base64,AQI='] }), source)
+    expect(result.assets).toHaveLength(2)
+    expect(result.credits).toBe(hosted ? 2 : 0)
+    expect(await service.history()).toHaveLength(2)
+    expect(getHostedLease).toHaveBeenCalledTimes(hosted ? 2 : 0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toMatch(/\/images\/edits$/)
+      const form = init.body as FormData
+      expect(form.get('n')).toBe('1')
+      expect(form.get('image')).toBeNull()
+      const files = form.getAll('image[]') as File[]
+      expect(files.map(file => [file.name, file.type])).toEqual([['reference-1.png', 'image/png'], ['reference-2.jpg', 'image/jpeg']])
+      expect(await Promise.all(files.map(async file => [...new Uint8Array(await file.arrayBuffer())]))).toEqual([[0], [1, 2]])
+    }
+  })
+
+  it('rejects a bad second reference before acquiring a lease or contacting the provider', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-invalid-reference-')); roots.push(root)
+    const getHostedLease = vi.fn(); const fetchMock = vi.fn()
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings(''))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(service.generate(generationRequest({ referenceImages: ['data:image/png;base64,AA==', 'invalid'] }))).rejects.toThrow('data URL')
+    expect(getHostedLease).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('discovers and executes multi-reference edits through the live workbench MCP bridge', async () => {
+    const { ModMindBridge } = await import('./externalAgents')
+    const { spawn } = await import('node:child_process')
+    const { createInterface } = await import('node:readline')
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-mcp-')); roots.push(root)
+    const project = { name: 'Image references', path: root, loader: 'fabric' as const, minecraftVersion: '1.21.1', namespace: 'images', createdAt: '' }
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => root, getHostedLease: vi.fn() })
+    await service.saveSettings(settings('local-test-key'))
+    const originalFetch = globalThis.fetch
+    const requests: FormData[] = []
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) !== 'https://images.example.test/v1/images/edits') return originalFetch(input, init)
+      requests.push(init!.body as FormData)
+      return new Response(JSON.stringify({ data: [{ b64_json: 'Aw==' }] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const noop = async () => ({})
+    const handlers = {
+      projectInfo: project, projectFiles: async () => ({ files: [], truncated: false }), setIntent: noop, applyEdits: noop, updateTodo: noop,
+      mappingsSearch: noop, mappingsClass: noop, dependencySearch: noop, dependencyInstall: noop, contentValidate: noop,
+      testMatrix: noop, releasePreflight: noop, build: noop, testMinecraft: noop, blockbenchActions: noop, runtimeState: noop,
+      imageGenerate: (input: Record<string, unknown>) => service.generate(input, 'agent')
+    }
+    const references = ['data:image/png;base64,AA==', 'data:image/jpeg;base64,AQI=']
+    for (const readOnly of [false, true]) {
+      const bridge = new ModMindBridge(project, handlers, 'test', undefined, readOnly)
+      const { mcpConfigPath } = await bridge.start()
+      await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+      const lines = createInterface({ input: child.stdout })
+      let requestId = 0
+      const rpc = (method: string, params = {}): Promise<{ result: { isError?: boolean; tools?: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>; content?: Array<{ type: string; text?: string }> } }> => new Promise(resolve => {
+        lines.once('line', line => resolve(JSON.parse(line)))
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params })}\n`)
+      })
+      try {
+        const listed = await rpc('tools/list')
+        if (!readOnly) expect(listed.result.tools?.find(tool => tool.name === 'modmind_image_generate')?.inputSchema.properties.referenceImages).toMatchObject({ type: 'array', minItems: 1 })
+        const result = await rpc('tools/call', { name: 'modmind_image_generate', arguments: { prompt: 'combine both', referenceImages: references } })
+        if (readOnly) {
+          expect(result.result.isError).toBe(true)
+          expect(requests).toHaveLength(1)
+        } else {
+          expect(result.result.isError).not.toBe(true)
+          expect(result.result.content).toContainEqual({ type: 'image', mimeType: 'image/png', data: 'Aw==' })
+          expect(requests).toHaveLength(1)
+          const files = requests[0].getAll('image[]') as File[]
+          expect(await Promise.all(files.map(async file => [...new Uint8Array(await file.arrayBuffer())]))).toEqual([[0], [1, 2]])
+          expect(await service.history()).toHaveLength(1)
+          const invalid = await rpc('tools/call', { name: 'modmind_image_generate', arguments: { prompt: 'invalid', referenceImages: [references[0], 'bad'] } })
+          expect(invalid.result.isError).toBe(true)
+          expect(requests).toHaveLength(1)
+        }
+      } finally { lines.close(); child.kill(); await bridge.stop() }
+    }
+  }, 30000)
+
+  it('takes two references through the service to one real multipart HTTP request', async () => {
+    const { createServer } = await import('node:http')
+    const sharp = (await import('sharp')).default
+    const references = await Promise.all(['#ff0000', '#0000ff'].map(async background =>
+      await sharp({ create: { width: 2, height: 2, channels: 3, background } }).png().toBuffer()))
+    const received: Array<{ url?: string; form: FormData }> = []
+    const server = createServer(async (req, res) => {
+      try {
+        const chunks: Buffer[] = []
+        for await (const chunk of req) chunks.push(Buffer.from(chunk))
+        const request = new Request('http://localhost', { method: 'POST', headers: { 'Content-Type': req.headers['content-type']! }, body: Buffer.concat(chunks) })
+        received.push({ url: req.url, form: await request.formData() })
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ data: [{ b64_json: references[0].toString('base64') }] }))
+      } catch (error) { res.writeHead(500); res.end(String(error)) }
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-http-')); roots.push(root)
+      const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: vi.fn() })
+      const address = server.address() as import('node:net').AddressInfo
+      await service.saveSettings({ ...settings('local-test-key'), baseUrl: `http://127.0.0.1:${address.port}/v1` })
+      const result = await service.generate(generationRequest({ presetId: 'material-variant', referenceImages: references.map(buffer => `data:image/png;base64,${buffer.toString('base64')}`) }))
+      expect(result.assets).toHaveLength(1)
+      expect(received).toHaveLength(1)
+      expect(received[0].url).toBe('/v1/images/edits')
+      const files = received[0].form.getAll('image[]') as File[]
+      expect(await Promise.all(files.map(async file => Buffer.from(await file.arrayBuffer())))).toEqual(references)
+      expect(await service.history()).toHaveLength(1)
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
+  })
+
   it.each([false, true])('uses the same configuration and parameters for both sources (hosted=%s)', async hosted => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-parity-')); roots.push(root)
     const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'hosted-key', jobId: 'job', reservedCredits: 1 }))

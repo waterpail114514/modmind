@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parseReinstallManifest, prepareCleanReinstall, reinstallCleanupDirectories, type ReinstallPaths } from './appReinstall'
+import { parseReinstallManifest, prepareCleanReinstall, prepareOverwriteReinstall, reinstallCleanupDirectories, type ReinstallPaths } from './appReinstall'
 import type { DownloadRequest, DownloadResult } from './downloadService'
 
 const roots: string[] = []
@@ -99,5 +99,46 @@ describe.skipIf(process.platform !== 'win32')('staging a clean reinstall', () =>
     await expect(prepareCleanReinstall(options)).rejects.toThrow('offline')
     expect(launchHelper).not.toHaveBeenCalled()
     expect(await fs.readFile(options.executablePath, 'utf8')).toBe('fake installed file')
+  })
+  it('prepares a same-version overwrite even with missing resources and custom data, without a cleanup plan', async () => {
+    const { options, launchHelper, fetchManifest, download } = await setup()
+    await fs.rm(path.join(path.dirname(options.executablePath), 'resources', 'app.asar'))
+    await fs.rm(path.join(path.dirname(options.executablePath), 'Uninstall ModMind.exe'))
+    const userDataPath = path.join(options.homePath, 'CustomData')
+    await fs.mkdir(userDataPath)
+    await fs.writeFile(path.join(userDataPath, 'settings.json'), 'preserve')
+    const launchInstaller = vi.fn(async () => undefined)
+    const launch = await prepareOverwriteReinstall({ ...options, userDataPath, helperScriptPath: 'missing.ps1', launchInstaller })
+    expect(fetchManifest).toHaveBeenCalledWith(base + 'latest.yml')
+    expect(launchInstaller).not.toHaveBeenCalled()
+    const installer = download.mock.calls[0][0].destination
+    await expect(fs.stat(path.join(path.dirname(installer), 'plan.json'))).rejects.toThrow()
+    await launch()
+    expect(launchInstaller).toHaveBeenCalledWith(installer, path.dirname(options.executablePath))
+    expect(launchHelper).not.toHaveBeenCalled()
+    expect(await fs.readFile(path.join(userDataPath, 'settings.json'), 'utf8')).toBe('preserve')
+  })
+  it('refuses a corrupt overwrite installer and keeps existing data', async () => {
+    const { options, download } = await setup()
+    const launchInstaller = vi.fn(async () => undefined)
+    download.mockImplementation(async request => {
+      await fs.writeFile(request.destination, Buffer.alloc(bytes.length, 8))
+      return { destination: request.destination, source: request.sources[0], bytes: bytes.length, attempts: 1, failures: [] }
+    })
+    await expect(prepareOverwriteReinstall({ ...options, launchInstaller })).rejects.toThrow('SHA-512')
+    expect(launchInstaller).not.toHaveBeenCalled()
+    expect(await fs.readFile(path.join(options.userDataPath, 'settings.json'), 'utf8')).toContain('keep until')
+  })
+  it('retains the verified overwrite package if launching the installer fails', async () => {
+    const { options, download } = await setup()
+    const launch = await prepareOverwriteReinstall({ ...options, launchInstaller: async () => { throw new Error('blocked') } })
+    await expect(launch()).rejects.toThrow('blocked')
+    expect(await fs.stat(download.mock.calls[0][0].destination)).toMatchObject({ size: bytes.length })
+  })
+  it('does not let overwrite bypass installation boundaries or destroy a project in the installation', async () => {
+    const { options, fetchManifest } = await setup()
+    await expect(prepareOverwriteReinstall({ ...options, protectedPaths: [path.join(path.dirname(options.executablePath), 'MyProject')] })).rejects.toThrow('项目')
+    await expect(prepareOverwriteReinstall({ ...options, executablePath: path.join(options.homePath, 'ModMind.exe') })).rejects.toThrow('共享目录')
+    expect(fetchManifest).not.toHaveBeenCalled()
   })
 })

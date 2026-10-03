@@ -33,6 +33,7 @@ import { diagnosticJournal } from './diagnosticLog'
 import { describeAiFailureForUser } from '../shared/aiFailure'
 import { aiNoticeDetails, describeAiNotice } from '../shared/aiNotice'
 import { AgentCompactionGuard, ExternalAgentContextStallError } from './agentCompactionGuard'
+import { AgentOutputLimitRecovery, ExternalAgentOutputLimitError, isOutputLimitFailure, looksLikeCappedReply, outputLimitContinuationPrompt } from './agentOutputLimit'
 import { AgentToolsDisconnectedError, AgentToolsNotReadyError, MCP_PROBE_MARKER, MCP_PROBE_TOOL, agentProbeResultReady, agentReportsMissingTools, agentToolInventorySummary, waitForAgentTools } from './agentToolReadiness'
 import { listProjectDirectory, readProjectTextFile } from './projectTextRead'
 import { readProjectDocument } from './documentRead'
@@ -404,6 +405,7 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
   let toolsDisconnected = false
   let modelReportedToolLoss = false
   let terminalErrorInfo: unknown
+  let lastOutputTokens: number | undefined
   let approvalUnavailable = false
   let completion: Record<string, unknown> | undefined
   let inputBuffer = ''
@@ -688,6 +690,7 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     if (method === 'thread/tokenUsage/updated' && params.tokenUsage && typeof params.tokenUsage === 'object') {
       const usage = params.tokenUsage as Record<string, unknown>
       const last = usage.last && typeof usage.last === 'object' ? usage.last as Record<string, unknown> : {}
+      lastOutputTokens = typeof last.outputTokens === 'number' ? last.outputTokens : undefined
       const window = typeof usage.modelContextWindow === 'number' ? usage.modelContextWindow : undefined
       options.onUsage?.({ inputTokens: typeof last.inputTokens === 'number' ? last.inputTokens : undefined, cachedInputTokens: typeof last.cachedInputTokens === 'number' ? last.cachedInputTokens : undefined, outputTokens: typeof last.outputTokens === 'number' ? last.outputTokens : undefined, contextWindow: window, contextTokens: typeof last.inputTokens === 'number' ? last.inputTokens : undefined })
       return
@@ -913,6 +916,17 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
   }
   if (contextStall) throw contextStall
   if (approvalUnavailable || isAutomaticApprovalFailure(terminalFailure)) throw new AutomaticApprovalUnavailableError()
+  const replies = [...completedReplies.values()].reverse()
+  const finalAnswer = replies.find(reply => reply.phase === 'final_answer')
+    ?? replies.find(reply => reply.phase === undefined)
+  finalMessage = finalAnswer?.text.trim() ?? ''
+  const outputLimitReason = isOutputLimitFailure(terminalFailure) ? 'max-output-tokens'
+    : !terminalFailure && completion?.status === 'completed' && looksLikeCappedReply(finalMessage, lastOutputTokens) ? 'suspected-output-limit' : undefined
+  if (outputLimitReason) {
+    recordToolState('output-limit', { reason: outputLimitReason, outputTokens: lastOutputTokens, pendingOperations: nativeOperations.size }, 'warning')
+    if (nativeOperations.size) throw Object.assign(new Error('输出中断时仍有工具结果未确认，已保留任务，请检查后继续，避免重复执行。'), { name: 'ExternalAgentUnsafeInterruptionError' })
+    throw new ExternalAgentOutputLimitError(outputLimitReason, finalMessage, lastOutputTokens)
+  }
   if (terminalFailure) {
     // Classify after cleanup so the retry layer receives the typed recovery error.
     const resumedSessionId = persistedSessionId || options.forkFrom?.sessionId
@@ -932,10 +946,6 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     error.name = 'ExternalAgentProcessError'
     throw error
   }
-  const replies = [...completedReplies.values()].reverse()
-  const finalAnswer = replies.find(reply => reply.phase === 'final_answer')
-    ?? replies.find(reply => reply.phase === undefined)
-  finalMessage = finalAnswer?.text.trim() ?? ''
   if (!finalMessage) {
     const error = new Error('本轮已结束，但未收到完整回复。已保留当前修改和会话，请检查后再继续。')
     // A completed turn without a deliverable is not a transport retry. Do not
@@ -2080,7 +2090,7 @@ export function externalAgentContextText(project: ProjectInfo): string {
     '',
     PROJECT_REPLY_IMAGES_PROMPT,
     PROJECT_REPLY_MODELS_PROMPT,
-    'Use modmind_image_studio_info and modmind_image_generate for Image Studio. The UI and workbench share saved credentials and generation settings. Select model per request, presetId/presetPrompt, style, size, quality, moderation, count, background/backgroundColor, removeBackground and referenceImage. PerfectPixel exposes sampleMethod, gridSize, minSize, peakWidth, refineIntensity and fixSquare through perfectPixel. Do not inspect credential files or call image-lease yourself.',
+    'Use modmind_image_studio_info and modmind_image_generate for Image Studio. The UI and workbench share saved credentials and generation settings. Select model per request, presetId/presetPrompt, style, size, quality, moderation, count, background/backgroundColor, removeBackground and referenceImages (ordered image data URLs sent together for each output; legacy referenceImage is also accepted). count controls outputs, not references. PerfectPixel exposes sampleMethod, gridSize, minSize, peakWidth, refineIntensity and fixSquare through perfectPixel. Do not inspect credential files or call image-lease yourself.',
     '',
     'Available ModMind integrations:',
     '- modmind_project_info / modmind_project_files / modmind_project_search / modmind_list_project_directory / modmind_read_project_file / modmind_read_document / modmind_set_intent',
@@ -2922,6 +2932,7 @@ function fallbackToManual(options: ExternalAgentRunOptions, reason: string): voi
 }
 
 export async function runExternalAgent(options: ExternalAgentRunOptions): Promise<ExternalAgentRunResult> {
+  const outputLimitRecovery = new AgentOutputLimitRecovery()
   options = { ...options, approvalState: { mode: normalizeAgentApprovalMode(options.approvalMode) } }
   const output = options.onOutput
   const noticeCounts = new Map<string, number>()
@@ -2932,7 +2943,7 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
     noticeCounts.set(notice.key, occurrences)
     output(kind, content, { ...identity, notice: { ...notice, occurrences } })
   } }
-  if (!options.liveConfiguration || !options.refreshConfiguration) return runExternalAgentWithRetry(options)
+  if (!options.liveConfiguration || !options.refreshConfiguration) return runExternalAgentWithRetry(options, outputLimitRecovery)
   let sessionId = options.sessionId
   let switched = false
   let attemptSignal = options.signal
@@ -2994,7 +3005,7 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
         onOutput: (kind, text, identity) => { if (!signal.aborted) options.onOutput(kind, text, identity) },
         onProgress: (...args) => { if (!signal.aborted) options.onProgress(...args) },
         onStarted: () => { if (!signal.aborted) options.onStarted?.() }
-      })
+      }, outputLimitRecovery)
       throwIfAborted(signal)
       return result
     } catch (error) {
@@ -3022,7 +3033,7 @@ export async function runExternalAgent(options: ExternalAgentRunOptions): Promis
   }
 }
 
-async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Promise<ExternalAgentRunResult> {
+async function runExternalAgentWithRetry(options: ExternalAgentRunOptions, outputLimitRecovery: AgentOutputLimitRecovery): Promise<ExternalAgentRunResult> {
   if (options.signal.aborted) throw Object.assign(new Error('外部代理任务已停止'), { name: 'AbortError' })
   const historyLabel = externalAgentLabel(options.kind)
   const attemptsPerBatch = options.maxAttempts === undefined
@@ -3143,7 +3154,30 @@ async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Prom
 
       let recoverable: ExternalAgentTransientFailureError | ExternalAgentCompatibilityFailureError | undefined
       let immediateRecovery = false
-      if (caught instanceof AgentToolsDisconnectedError) {
+      if (caught instanceof ExternalAgentOutputLimitError) {
+        if (!resumableSessionId) {
+          options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'failure', error: detail })
+          throw caught
+        }
+        let continuation: number
+        try { continuation = outputLimitRecovery.next(caught) } catch (error) {
+          options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'failure', error: String(error) })
+          throw error
+        }
+        nextPrompt = outputLimitContinuationPrompt(options.prompt)
+        batchAttempt = 0
+        options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'retry', error: detail })
+        diagnosticJournal.record({ subsystem: 'ai', operation: 'output-limit-recovery', phase: 'continuing', level: 'warning',
+          message: 'Continuing the same task after capped output', data: { runId: options.runId, sessionId: resumableSessionId, continuation, reason: caught.reason, outputTokens: caught.outputTokens } })
+        options.onProgress('正在继续任务', '上一段回复未完成，已保留进度并自动继续', 'running')
+        options.onOutput('retry', caught.reason === 'max-output-tokens'
+          ? '上一段回复达到输出上限，正在自动继续，无需重复发送。'
+          : '上一段回复疑似达到输出上限，正在自动继续，无需重复发送。')
+        // Honor cancellation from the notice callback before another process can start.
+        if (options.signal.aborted) options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'cancelled', error: '用户停止了自动继续' })
+        throwIfAborted(options.signal, 'Agent 任务已停止')
+        continue
+      } else if (caught instanceof AgentToolsDisconnectedError) {
         if (toolPreparationRetries++ >= 1 || !resumableSessionId) throw caught
         nextPrompt = caught.reportedByModel
           ? `上轮回复称没有可用工具。宿主已确认 ModMind 工具目录并成功调用 modmind_mcp_probe。先按 MCP 恢复 Plan A/B/C 实际调用探针，确认后继续原任务：${options.prompt}\n保留已完成的步骤与结果，不要重复已完成的写入、构建或下载。`
@@ -3169,6 +3203,13 @@ async function runExternalAgentWithRetry(options: ExternalAgentRunOptions): Prom
         nextPrompt = '自动审批服务发生故障，宿主已切换为手动审批。继续原任务中被阻塞的操作，权限请求将交由用户确认。先检查已有结果，不要重复已完成的工作。'
         continue
       } else if (caught instanceof ResumedPromptRejectionError) {
+        // Output recovery must retain the partial reply and previous tool receipts.
+        // Rebuilding a new thread from just the original request could replay writes.
+        if (outputLimitRecovery.active) {
+          const error = Object.assign(new Error('输出中断后无法恢复原会话，已保留当前修改与恢复记录，请检查后继续。'), { name: 'ExternalAgentOutputRecoveryError' })
+          options.onAttemptAudit?.({ attempt: totalAttempt, maxAttempts: auditMaxAttempts, outcome: 'failure', error: error.message })
+          throw error
+        }
         options.onContextRecovery?.({ method: 'thread/start', phase: 'fallback-selected', reason: caught.message.slice(0, 1000) })
         const file = sessionFilePath(options.project, options.kind, options.sessionScope, options.sessionLane)
         const saved = await fs.readFile(file, 'utf8').then(text => JSON.parse(text) as PersistedExternalSession).catch(() => null)

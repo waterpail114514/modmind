@@ -33,6 +33,7 @@ import { configureAgentProtection, assertAgentWriteAllowed } from './agentProtec
 import { nativeToolDiagnostics } from './nativeToolDiagnostics'
 import { platformWindowOptions } from './platformWindow'
 import { installApplicationMenu } from './applicationMenu'
+import { configureDevelopmentPaths } from './developmentPaths'
 import { DeviceDeepLinkQueue } from './deviceDeepLinkQueue'
 import { beginProcessShutdown, shutdownProcessTrees } from './processTree'
 import { cleanupTerminalScripts } from './nativeTerminal'
@@ -257,7 +258,7 @@ import { diagnosticHandle, diagnosticIpcOperations } from './diagnosticIpc'
 import { downloadActivities } from './downloadActivityService'
 import { AppUpdateService, normalizeAppUpdateUrl } from './appUpdateService'
 import { AppChangelogService } from './appChangelogService'
-import { prepareCleanReinstall } from './appReinstall'
+import { prepareCleanReinstall, prepareOverwriteReinstall } from './appReinstall'
 import { inspectForDecompilation, listCachedSourceFiles, readCachedSourceFile, runDecompilation, scanReferencesForJar, type DecompileRunRequest } from './decompilePipeline'
 import { restoreDecompiledPluginProject, validateDecompiledProjectTarget } from './decompiledPluginProject'
 import { DECOMPILE_MIN_JAVA } from './jarDecompileService'
@@ -268,6 +269,8 @@ import type { DecompileInspectResult } from '../shared/decompile'
 
 if (process.argv.includes('--macos-smoke-check') && process.env.MODMIND_SMOKE_ROOT && path.isAbsolute(process.env.MODMIND_SMOKE_ROOT)) {
   app.setPath('userData', path.join(process.env.MODMIND_SMOKE_ROOT, 'userData'))
+} else {
+  configureDevelopmentPaths(app)
 }
 
 configureAgentProtection([
@@ -7668,14 +7671,17 @@ function registerIpc(): void {
   diagnosticHandle('app:reinstallLatest', async (_event, confirmed: unknown) => {
     if (confirmed !== true) throw new Error('请先确认重装')
     if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
-    return appUpdateService.reinstallLatest(async () => confirmed === true, async report => prepareCleanReinstall({
-        executablePath: process.execPath,
-        userDataPath: app.getPath('userData'), appDataPath: app.getPath('appData'),
-        localAppDataPath: process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
-        homePath: app.getPath('home'), tempPath: app.getPath('temp'),
-        protectedPaths: [...(await readRecentProjects()).map(project => project.path), ...(currentProject ? [currentProject.path] : []), app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')],
-        updateUrl: configuredAppUpdateUrl(), helperScriptPath: path.join(process.resourcesPath, 'reinstall-app.ps1'), report
-    }))
+    const options = {
+      executablePath: process.execPath,
+      userDataPath: app.getPath('userData'), appDataPath: app.getPath('appData'),
+      localAppDataPath: process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
+      homePath: app.getPath('home'), tempPath: app.getPath('temp'),
+      protectedPaths: [...(await readRecentProjects()).map(project => project.path), ...(currentProject ? [currentProject.path] : []), app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')],
+      updateUrl: configuredAppUpdateUrl(), helperScriptPath: path.join(process.resourcesPath, 'reinstall-app.ps1')
+    }
+    return appUpdateService.reinstallLatest(async () => confirmed === true,
+      report => prepareCleanReinstall({ ...options, report }),
+      report => prepareOverwriteReinstall({ ...options, report }))
   })
   diagnosticHandle('downloads:list', () => downloadActivities.snapshot())
   diagnosticHandle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))

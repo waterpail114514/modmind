@@ -14,6 +14,23 @@ export interface AppChangelogSnapshot {
 // These notes ship with the app so the first launch works fully offline.
 export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
+    version: '1.4.16',
+    sections: [
+      { title: '修复', items: [
+        '修复 Windows 版创建 Mod 项目时内置 Gradle Wrapper 校验失败的问题。'
+      ] }
+    ]
+  },
+  {
+    version: '1.4.15',
+    sections: [
+      { title: '修复', items: [
+        '修复 AI 回复达到输出上限后任务意外结束的问题，现在会保留进度并自动继续。',
+        '修复 AI 玩家测试未复用已有缓存，导致反复下载 Minecraft 和安装加载器的问题。'
+      ] }
+    ]
+  },
+  {
     // Draft from the working-tree diff against 34bdbbd, including new source files.
     version: '1.4.14',
     sections: [

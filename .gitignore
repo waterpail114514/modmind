@@ -11,6 +11,7 @@ output/
 *.recovery-backup
 *.log
 *.tsbuildinfo
+/.modmind-dev/
 ui-check*.png
 ui-check*.jpg
 .DS_Store

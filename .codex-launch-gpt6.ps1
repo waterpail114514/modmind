@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
-$root = 'E:\waterpail\桌面\新建文件夹\modmind'
+$root = $PSScriptRoot
 $codex = 'E:\waterpail\AppData\Roaming\npm\codex.ps1'
 Set-Location -LiteralPath $root
+Write-Host "Workspace: $root"
 $Host.UI.RawUI.WindowTitle = 'Codex YOLO - gpt-6-astra'
 $env:TERM = 'xterm-256color'
 $codexArgs = @(

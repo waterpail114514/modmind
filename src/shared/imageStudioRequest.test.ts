@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeImageGenerationRequest, normalizePerfectPixelOptions } from './imageStudioRequest'
+import { imageGenerationReferences, normalizeImageGenerationRequest, normalizePerfectPixelOptions } from './imageStudioRequest'
 import { imageStudioPresets, imageWorkflowPrompt } from './imageStudioPresets'
 
 describe('shared Image Studio parameters', () => {
@@ -12,9 +12,27 @@ describe('shared Image Studio parameters', () => {
   it.each([
     { count: 1.5 }, { count: 11 }, { size: 'bad' }, { quality: 'ultra' }, { moderation: 'off' },
     { removeBackground: 'false' }, { backgroundColor: 'white' }, { presetId: 'unknown' },
-    { presetId: 'material-variant' }, { referenceImage: '/some/path.png' }, { presetPrompt: 'missing id' }
+    { presetId: 'material-variant' }, { referenceImage: '/some/path.png' }, { presetPrompt: 'missing id' },
+    { referenceImages: 'data:image/png;base64,AA==' }, { referenceImages: [] }, { referenceImages: [''] },
+    { referenceImages: ['data:image/png;base64,AA==', '/some/path.png'] }, { referenceImages: [null] }
   ])('rejects invalid parameters instead of silently dropping them: %j', patch => {
     expect(() => normalizeImageGenerationRequest({ prompt: 'cat', ...patch }, 'agent')).toThrow()
+  })
+
+  it('preserves all references in order, including the legacy single field, without changing count', () => {
+    const references = ['data:image/png;base64,AQ==', 'data:image/jpeg;base64,Ag==']
+    const input = { prompt: 'cat', presetId: 'material-variant', referenceImage: 'data:image/png;base64,AA==', referenceImages: references, count: 2 }
+    const request = normalizeImageGenerationRequest(input, 'agent')
+    expect(imageGenerationReferences(request)).toEqual([input.referenceImage, ...references])
+    expect(request.count).toBe(2)
+    const again = normalizeImageGenerationRequest(request, 'agent')
+    expect(imageGenerationReferences(again)).toEqual(imageGenerationReferences(request))
+    expect(normalizeImageGenerationRequest({ ...input, referenceImage: undefined }, 'manual').referenceImages).toEqual(references)
+  })
+
+  it('rejects an oversized reference before service execution', () => {
+    const reference = `data:image/png;base64,${'A'.repeat(Math.ceil((20 * 1024 * 1024 + 1) / 3) * 4)}`
+    expect(() => normalizeImageGenerationRequest({ prompt: 'cat', referenceImages: [reference] }, 'manual')).toThrow('20 MB')
   })
 
   it('keeps edited presets and source under host control', () => {

@@ -185,7 +185,8 @@ export class AppUpdateService {
 
   async reinstallLatest(
     confirm: () => Promise<boolean>,
-    prepare: (report: (state: Partial<AppUpdateState>) => void) => Promise<() => Promise<void>>
+    prepare: (report: (state: Partial<AppUpdateState>) => void) => Promise<() => Promise<void>>,
+    prepareOverwrite?: (report: (state: Partial<AppUpdateState>) => void) => Promise<() => Promise<void>>
   ): Promise<AppUpdateState | null> {
     this.assertIdle()
     this.actionInProgress = true
@@ -193,11 +194,21 @@ export class AppUpdateService {
       if (!await confirm()) return null
       if (!this.options.isPackaged || (this.options.platform ?? process.platform) !== 'win32') throw new Error('当前程序没有可用的 Windows 安装记录，无法执行清理重装')
       this.setState({ phase: 'downloading', operation: 'reinstall', currentVersion: this.options.currentVersion, message: '正在读取最新版安装清单' })
-      const launch = await prepare(patch => this.setState({ ...this.state, ...patch, operation: 'reinstall', currentVersion: this.options.currentVersion }))
-      // The helper acknowledges readiness before we close. No files are removed
-      // until this process has finished its normal shutdown and released locks.
-      await launch()
-      this.setState({ ...this.state, phase: 'installing', message: '安装包已校验，正在退出并清理重装…' })
+      const report = (patch: Partial<AppUpdateState>): void => this.setState({ ...this.state, ...patch, operation: 'reinstall', currentVersion: this.options.currentVersion })
+      let overwrite = false
+      try {
+        const launch = await prepare(report)
+        // The helper acknowledges readiness before shutdown and cleanup.
+        await launch()
+      } catch (cleanError) {
+        if (!prepareOverwrite) throw cleanError
+        overwrite = true
+        console.warn('[reinstall] clean preparation failed; using overwrite installer', cleanError)
+        report({ phase: 'downloading', message: '清理重装未能启动，正在准备最新版覆盖安装（保留现有数据）', downloadedBytes: 0, totalBytes: undefined })
+        try { await (await prepareOverwrite(report))() }
+        catch (overwriteError) { throw new Error('清理重装失败：' + describeError(cleanError) + '；覆盖安装也失败：' + describeError(overwriteError)) }
+      }
+      this.setState({ ...this.state, phase: 'installing', message: overwrite ? '正在退出并覆盖安装，现有数据保留…' : '安装包已校验，正在退出并清理重装…' })
       this.options.beforeInstall()
       this.options.quit()
       return this.snapshot()

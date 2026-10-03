@@ -531,7 +531,7 @@ describe('ModMind external agent MCP bridge', () => {
       "    const request = JSON.parse(line); if (log) appendFileSync(log, JSON.stringify(request) + '\\n')",
       "    if (!request.method) continue",
       "    if (request.method === 'turn/interrupt' && process.env.FAKE_REVIEW_HANG) { send({id:request.id,result:{}}); send({method:'turn/completed',params:{threadId:request.params.threadId,turn:{id:request.params.turnId,status:'interrupted'}}}); continue }",
-      "    if (request.method === process.env.FAKE_REJECT_METHOD && request.params.threadId === 'broken-thread' && (!request.params.path || process.env.FAKE_REJECT_PATH)) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_REJECT_MESSAGE}}); continue }",
+      "    if (request.method === process.env.FAKE_REJECT_METHOD && request.params.threadId === (process.env.FAKE_REJECT_THREAD || 'broken-thread') && (!request.params.path || process.env.FAKE_REJECT_PATH)) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_REJECT_MESSAGE}}); continue }",
       "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
       "    else if (request.method === 'initialized') {}",
@@ -541,7 +541,8 @@ describe('ModMind external agent MCP bridge', () => {
       "    else if (request.method === 'thread/fork') send({id:request.id,result:{thread:{id:'thread-fork'}}})",
       "    else if (request.method === 'thread/resume') send({id:request.id,result:{thread:{id:request.params.threadId}}})",
       "    else if (request.method === 'turn/start') {",
-      "      if (process.env.FAKE_TURN_EVENTS) { const ack=()=>send({id:request.id,result:{turn:{id:'native-turn-new'}}}); if(process.env.FAKE_LATE_TURN_ACK) setTimeout(ack,40); else ack(); for(const {delayMs=0,...event} of JSON.parse(process.env.FAKE_TURN_EVENTS)) setTimeout(()=>send(event),delayMs); continue }",
+      "      const batches = process.env.FAKE_TURN_EVENT_BATCHES ? JSON.parse(process.env.FAKE_TURN_EVENT_BATCHES) : null; const turnCount = batches ? readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length : 0; const events = batches ? batches[Math.min(turnCount-1,batches.length-1)] : process.env.FAKE_TURN_EVENTS ? JSON.parse(process.env.FAKE_TURN_EVENTS) : null",
+      "      if (events) { const ack=()=>send({id:request.id,result:{turn:{id:'native-turn-new'}}}); if(process.env.FAKE_LATE_TURN_ACK) setTimeout(ack,40); else ack(); for(const {delayMs=0,...event} of events) setTimeout(()=>send(event),delayMs); continue }",
       "      send({id:request.id,result:{turn:{id:'native-turn-new'}}}); send({method:'turn/started',params:{threadId:request.params.threadId,turn:{id:'native-turn-new'}}})",
       "      if (process.env.FAKE_REVIEW_HANG && readFileSync(log,'utf8').trim().split('\\n').map(JSON.parse).filter(r=>r.method==='turn/start').length === 1) { send({method:'item/autoApprovalReview/started',params:{threadId:request.params.threadId,turnId:'native-turn-new',reviewId:'hung-review'}}); continue }",
       "      if (process.env.FAKE_WARNINGS) for (const message of JSON.parse(process.env.FAKE_WARNINGS)) send({method:'warning',params:{threadId:request.params.threadId,message}})",
@@ -563,6 +564,71 @@ describe('ModMind external agent MCP bridge', () => {
     else await fs.chmod(executable, 0o755)
     return { executable, log }
   }
+
+  function cappedTurnEvents(explicit = false, suffix = '', pendingTool = false) {
+    const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
+    return [
+      ...(pendingTool ? [{ method: 'item/started', params: { ...owner, item: { id: 'pending-write', type: 'fileChange' } } }] : []),
+      { method: 'thread/tokenUsage/updated', params: { ...owner, tokenUsage: { last: { outputTokens: 8192 } } } },
+      { method: 'item/completed', params: { ...owner, item: { id: 'partial', type: 'agentMessage', phase: 'final_answer', text: '已检查当前代码。'.repeat(150) + suffix + '\n- 0' } } },
+      { method: 'turn/completed', params: { threadId: owner.threadId, turn: { id: owner.turnId, status: explicit ? 'failed' : 'completed',
+        ...(explicit ? { error: { message: 'stream disconnected before completion: Incomplete response returned, reason: max_output_tokens', codexErrorInfo: 'other' } } : {}) } } }
+    ]
+  }
+
+  it.each([false, true])('continues capped output in the same native session (explicit=%s)', async explicit => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-output-limit-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Limit', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'limit', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const onOutput = vi.fn(), onProgress = vi.fn(), onAttemptAudit = vi.fn()
+    const result = await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: '修复代码并验证', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENT_BATCHES: JSON.stringify([cappedTurnEvents(explicit), null]) },
+      signal: AbortSignal.timeout(10000), onOutput, onProgress, onAttemptAudit, bridge: stubBridgeHandlers(project) })
+    expect(result.summary).toBe('完成')
+    expect(onAttemptAudit.mock.calls.map(([audit]) => audit.outcome)).toEqual(['retry', 'complete'])
+    expect(onOutput.mock.calls.some(([kind, text]) => kind === 'retry' && text.includes('输出上限'))).toBe(true)
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(request => request.method === 'thread/start')).toHaveLength(1)
+    expect(requests.find(request => request.method === 'thread/resume')?.params.threadId).toBe('thread-new')
+    const turns = requests.filter(request => request.method === 'turn/start')
+    expect(turns).toHaveLength(2)
+    expect(turns[1].params.input[0].text).toContain('修复代码并验证')
+    expect(turns[1].params.input[0].text).toContain('不要重新执行已完成')
+  })
+
+  it.each(['repeat', 'budget', 'pending', 'cancel'] as const)('stops capped-output recovery safely: %s', async mode => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-output-limit-stop-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Limit', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'limit', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const controller = new AbortController()
+    const batches = mode === 'budget' ? [0, 1, 2, 3].map(i => cappedTurnEvents(true, String(i))) : [cappedTurnEvents(false, '', mode === 'pending')]
+    const onAttemptAudit = vi.fn()
+    await expect(runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'task', persistentRetry: true,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENT_BATCHES: JSON.stringify(batches) },
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]),
+      onOutput: kind => { if (kind === 'retry' && mode === 'cancel') controller.abort() }, onProgress: vi.fn(), onAttemptAudit, bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: mode === 'cancel' ? 'AbortError' : mode === 'pending' ? 'ExternalAgentUnsafeInterruptionError' : 'ExternalAgentOutputLimitExhaustedError' })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(mode === 'budget' ? 4 : mode === 'repeat' ? 2 : 1)
+    expect(onAttemptAudit.mock.calls.every(([audit]) => audit.outcome !== 'complete')).toBe(true)
+  })
+
+  it('does not rebuild a new thread when the output continuation loses its original history', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-output-limit-history-'))
+    temporaryRoots.push(root)
+    const project = { name: 'Limit', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'limit', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    await expect(runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: 'task', persistentRetry: true,
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENT_BATCHES: JSON.stringify([cappedTurnEvents(), null]),
+        FAKE_REJECT_METHOD: 'thread/resume', FAKE_REJECT_THREAD: 'thread-new', FAKE_REJECT_MESSAGE: 'no rollout found for thread id thread-new', FAKE_REJECT_PATH: 'true' },
+      signal: AbortSignal.timeout(10000), onOutput: vi.fn(), onProgress: vi.fn(), bridge: stubBridgeHandlers(project)
+    })).rejects.toMatchObject({ name: 'ExternalAgentOutputRecoveryError' })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.filter(request => request.method === 'thread/start')).toHaveLength(1)
+    expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1)
+  })
 
   it.each([
     { label: 'explicit final with later commentary', phase: 'final_answer', text: '我会先检查项目——这是你要求翻译的句子。', laterCommentary: true },
@@ -2127,7 +2193,7 @@ describe('ModMind external agent MCP bridge', () => {
     const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
     const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
     const tools = (listed.result as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> }).tools
-    const input = { prompt: 'cat', model: 'selected', presetId: 'item-icon', presetPrompt: 'edited template', style: 'free', size: '2048x1152', quality: 'high', moderation: 'low', count: 2, background: 'auto', backgroundColor: '#123456', removeBackground: true, referenceImage: 'data:image/png;base64,AA==' }
+    const input = { prompt: 'cat', model: 'selected', presetId: 'item-icon', presetPrompt: 'edited template', style: 'free', size: '2048x1152', quality: 'high', moderation: 'low', count: 2, background: 'auto', backgroundColor: '#123456', removeBackground: true, referenceImage: 'data:image/png;base64,AA==', referenceImages: ['data:image/png;base64,AQ==', 'data:image/png;base64,Ag=='] }
     expect(Object.keys(tools.find(tool => tool.name === 'modmind_image_generate')!.inputSchema.properties).sort()).toEqual(Object.keys(input).sort())
     const perfectPixel = { sampleMethod: 'median', gridSize: [32, 16], minSize: 0.1, peakWidth: 9, refineIntensity: 0, fixSquare: false }
     expect(tools.find(tool => tool.name === 'modmind_image_perfect_pixel')!.inputSchema.properties).toHaveProperty('perfectPixel')
