@@ -3870,21 +3870,97 @@ function normalizeApiBaseUrl(value: string): string {
 async function listAvailableAgentModels(kind: ExternalAgentKind, input: ExternalAgentConfiguration): Promise<AiModelInfo[]> {
   if (kind === 'codex' && input.mode !== 'hosted') {
     const local = await readLocalCodexConfig()
+    // A custom provider's /models is authoritative. The CLI catalog contains
+    // OpenAI defaults even when config.toml points at a different provider.
+    if (local.baseUrl) {
+      const apiKey = await readLocalCodexApiKey()
+      return fetchAvailableModels(normalizeApiBaseUrl(local.baseUrl), apiKey, '无法读取当前服务的模型列表')
+    }
     const detected = await detectInstalledCodex(input)
     const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
     return modelReasoningCatalog.enrich([...new Set([...models, ...local.models, ...(input.model ? [input.model] : [])])].map(id => ({ id })), '')
   }
-  await modelReasoningCatalog.refresh(true)
   const stored = await readSettings()
   const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
   const storedEntry = stored.externalAgents?.[kind]
   const storedBaseUrl = storedEntry?.baseUrl ? normalizeApiBaseUrl(storedEntry.baseUrl) : ''
-  const native = await readLocalCodexConfig()
-  const nativeBaseUrl = native.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const native = await readLocalCodexConfig().catch(() => null)
+  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
   const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '') || (baseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
+}
+
+async function configureExternalAgentConnection(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) {
+  if (kind !== 'codex') throw new Error('不支持的外部代理')
+  const settings = await readSettings()
+  const existingConfiguration = settings.externalAgents?.[kind]
+  const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
+  const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
+  const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && targetBaseUrl !== existingBaseUrl ? await readLocalCodexConfig().catch(() => null) : null
+  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const apiKey = configuration?.apiKey?.trim()
+    || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
+    || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
+  const nextConfiguration = {
+    ...existingConfiguration,
+    ...configuration,
+    executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
+    apiKey: apiKey || ''
+  }
+  if (nextConfiguration.mode === 'hosted') {
+    if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
+    nextConfiguration.baseUrl = targetBaseUrl
+    try {
+      const discovered = await discoverAvailableModels(targetBaseUrl, nextConfiguration.apiKey, '无法读取当前服务的模型列表')
+      nextConfiguration.baseUrl = discovered.baseUrl
+      if (discovered.models.length && (targetBaseUrl !== existingBaseUrl || !discovered.models.some(model => model.id === nextConfiguration.model))) {
+        nextConfiguration.model = discovered.models[0].id
+        nextConfiguration.reasoningEffort = undefined
+      }
+    } catch (error) {
+      // Model-list support is optional; keep manually supplied IDs usable offline.
+      if (!nextConfiguration.model?.trim()) throw error
+    }
+    if (!nextConfiguration.model?.trim()) throw new Error('服务没有返回可用模型，请手动输入模型 ID')
+    const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
+    reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
+  }
+  const current = await readSettings()
+  const next: AgentSettings = {
+    ...current,
+    codingBackend: kind,
+    externalAgents: { ...current.externalAgents, [kind]: nextConfiguration }
+  }
+  const saved = await saveAgentSettings(next)
+  return configureExternalAgentProvider(kind, saved)
+}
+
+async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {
+  const configured = (await readSettings()).externalAgents?.codex ?? {}
+  const status = await detectInstalledCodex(configured)
+  const local = configured.mode === 'hosted' ? null : await readLocalCodexConfig()
+  const connection = local ?? {
+    home: app.getPath('userData'), model: configured.model ?? '',
+    baseUrl: configured.baseUrl, hasApiKey: Boolean(configured.apiKey),
+    contextWindow: configured.modelContextWindows?.[configured.model ?? ''],
+    autoCompactTokenLimit: configured.modelAutoCompactTokenLimits?.[configured.model ?? ''],
+    reasoningEffort: configured.reasoningEffort
+  }
+  try {
+    if (configured.mode === 'hosted') {
+      if (!configured.apiKey?.trim()) throw new Error('无法读取已保存的 API Key，请重新填写并保存')
+      const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表')
+      return { ...connection, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
+    }
+    const models = await listAvailableAgentModels('codex', configured)
+    return { ...connection, status, models: models.map(model => model.id) }
+  } catch (error) {
+    // Detection and editing stay available offline. Never disguise a failed
+    // provider lookup by falling back to the unrelated built-in GPT catalog.
+    return { ...connection, status, models: [], modelsError: error instanceof Error ? error.message : '无法读取模型列表' }
+  }
 }
 
 async function permanentlyDeleteProjectDirectory(projectPath: string): Promise<ProjectInfo[]> {
@@ -3920,31 +3996,49 @@ async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
   return models
 }
 
-async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
+async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<{ baseUrl: string; models: AiModelInfo[] }> {
   await modelReasoningCatalog.refresh()
-  const endpoints = [`${baseUrl}/models`, `${baseUrl}/model`]
-  for (const [index, endpoint] of endpoints.entries()) {
-    let response: Response
-    try {
-      response = await fetch(endpoint, {
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        signal: AbortSignal.timeout(20_000)
-      })
-    } catch {
-      throw new Error(errorMessage)
-    }
-    if (!response.ok) {
-      if (response.status === 404 && index < endpoints.length - 1) continue
-      throw new Error(errorMessage)
-    }
-    let payload: unknown
-    try { payload = await response.json() as unknown } catch { throw new Error('模型服务返回了无效数据') }
-    const models = modelReasoningCatalog.enrich(parseModelPayload(payload), baseUrl)
-    scannedModelCapabilities.set(quotaPreferenceKey(baseUrl, apiKey), { checkedAt: Date.now(), models })
-    if (models.length) return models
-    if (index === endpoints.length - 1) return []
+  const normalized = normalizeApiBaseUrl(baseUrl)
+  const url = new URL(normalized)
+  const bases = [normalized]
+  if (!/\/v\d+(?:beta\d*)?$/i.test(url.pathname.replace(/\/$/, ''))) {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/v1`
+    bases.push(url.toString().replace(/\/$/, ''))
   }
-  return []
+  let empty: { baseUrl: string; models: AiModelInfo[] } | undefined
+  let invalidPayload = false
+  for (const candidate of bases) {
+    for (const suffix of ['models', 'model']) {
+      const endpoint = new URL(candidate)
+      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/${suffix}`
+      let response: Response
+      try {
+        response = await fetch(endpoint.toString(), {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+          signal: AbortSignal.timeout(20_000)
+        })
+      } catch { throw new Error(errorMessage) }
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 405) continue
+        // Authentication, quota and server failures are not missing route errors.
+        throw new Error(`${errorMessage}（HTTP ${response.status}）`)
+      }
+      let payload: unknown
+      try { payload = await response.json() as unknown } catch { invalidPayload = true; continue }
+      const models = modelReasoningCatalog.enrich(parseModelPayload(payload), candidate)
+      if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
+      for (const keyBase of new Set([normalized, candidate])) {
+        scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
+      }
+      return { baseUrl: candidate, models }
+    }
+  }
+  if (empty) return empty
+  throw new Error(invalidPayload ? '模型服务返回了无效数据' : errorMessage)
+}
+
+async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
+  return (await discoverAvailableModels(baseUrl, apiKey, errorMessage)).models
 }
 
 function normalizeCodingPath(value: string, _allowBuildScriptChanges = true, _allowWrapperConfiguration = true, project: ProjectInfo = requireProject()): string {
@@ -7479,44 +7573,8 @@ function registerIpc(): void {
       detectInstalledCodex(configured)
     ])
   })
-  diagnosticHandle('external-agents:scanLocal', async () => {
-    const settings = await readSettings()
-    const configured = settings.externalAgents?.codex
-    const detected = await detectInstalledCodex(configured)
-    const local = await readLocalCodexConfig()
-    const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
-    return { status: detected, ...local, models: [...new Set([...models, ...local.models, ...(configured?.mode !== 'hosted' && configured?.model ? [configured.model] : [])])] }
-  })
-  diagnosticHandle('external-agents:configure', async (_event, kind: ExternalAgentKind, configuration: NonNullable<AgentSettings['externalAgents']>[ExternalAgentKind]) => {
-    if (kind !== 'codex') throw new Error('不支持的外部代理')
-    const settings = await readSettings()
-    const existingConfiguration = settings.externalAgents?.[kind]
-    const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
-    const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
-    const native = configuration?.mode === 'hosted' ? await readLocalCodexConfig() : null
-    const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
-    const apiKey = configuration?.apiKey?.trim()
-      || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
-      || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
-    const nextConfiguration = {
-      ...existingConfiguration,
-      ...configuration,
-      executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
-      apiKey: apiKey || ''
-    }
-    const next: AgentSettings = {
-      ...settings,
-      externalAgents: {...settings.externalAgents, [kind]: nextConfiguration}
-    }
-    if (nextConfiguration.mode === 'hosted') {
-      if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
-      await refreshConfiguredReasoning(kind, nextConfiguration)
-      const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
-      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
-    }
-    const saved = await saveAgentSettings(next)
-    return configureExternalAgentProvider(kind, saved)
-  })
+  diagnosticHandle('external-agents:scanLocal', () => scanConfiguredCodex())
+  diagnosticHandle('external-agents:configure', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => configureExternalAgentConnection(kind, configuration))
   diagnosticHandle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
     if (kind !== 'codex') throw new Error('不支持的外部代理')
     const project = aiProjectContext.getStore() ?? currentProject

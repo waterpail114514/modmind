@@ -4410,10 +4410,11 @@ export default function App(): React.JSX.Element {
 
   const configureExternalAgent = async (kind: ExternalAgentKind): Promise<void> => {
     if (configuringAgents[kind]) return
-    const model = settings.externalAgents?.codex?.model?.trim() || localCodexScan?.model || ''
-    const configuration: ExternalAgentConfiguration = { ...settings.externalAgents?.codex, ...agentDraft, mode: 'hosted', model }
-    if (!configuration.baseUrl?.trim() || !model) {
-      setNotice('请填写 Base URL 并选择模型')
+    const current = settingsRef.current.externalAgents?.codex
+    const model = current?.model?.trim() || ''
+    const configuration: ExternalAgentConfiguration = { ...current, ...agentDraft, mode: 'hosted', model }
+    if (!configuration.baseUrl?.trim()) {
+      setNotice('请填写 Base URL')
       return
     }
     const contextLimit = configuration.modelContextWindows?.[model]
@@ -4428,12 +4429,18 @@ export default function App(): React.JSX.Element {
     }
     setConfiguringAgents((current) => ({ ...current, [kind]: true }))
     try {
-      const result = await window.modmind.externalAgents.configure(kind, configuration)
+      // Finish older scans/writes before committing the connection and backend
+      // together, so an old full-settings snapshot cannot revert the new API.
+      ++aiSettingsSelectionGeneration.current
+      await localCodexScanInFlight.current
+      await settingsSaveTailRef.current
+      await window.modmind.externalAgents.configure(kind, configuration)
       const refreshedSettings = await window.modmind.settings.getAgent()
       settingsRef.current = refreshedSettings
       setSettings(refreshedSettings)
       setAgentDraft({ baseUrl: refreshedSettings.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
-      setNotice(`${externalAgentLabel(kind)} 配置完成${result.configPath ? `：${result.configPath}` : ''}`)
+      setNotice('连接已保存到本地设置')
+      await scanLocalCodex()
     } catch (error) {
       setNotice(`自动配置失败：${errorMessage(error)}`)
     } finally {
@@ -4480,12 +4487,23 @@ export default function App(): React.JSX.Element {
     if (localCodexScanInFlight.current) return localCodexScanInFlight.current
     setLocalCodexScanning(true)
     setLocalCodexScanError('')
-    const request = window.modmind.externalAgents.scanLocal().then(result => {
+    const scannedConnection = settingsRef.current.externalAgents?.codex
+    const request = window.modmind.externalAgents.scanLocal().then(async result => {
       setLocalCodexScan(result)
+      setLocalCodexScanError(result.modelsError ?? (result.models.length ? '' : '服务没有返回可用模型，可手动输入模型 ID'))
       setExternalAgents(current => [...current.filter(agent => agent.kind !== 'codex'), result.status])
       setExternalAgentsReady(true)
+      const current = settingsRef.current.externalAgents?.codex
+      if (scannedConnection?.mode === 'hosted' && current?.mode === 'hosted' && current.baseUrl === scannedConnection.baseUrl && result.models.length) {
+        const model = result.models.includes(current.model ?? '') ? current.model! : result.models[0]
+        if (model !== current.model || result.baseUrl !== current.baseUrl) {
+          await saveLocalCodexPreference({ mode: 'hosted', model, baseUrl: result.baseUrl,
+            ...(model !== current.model ? { reasoningEffort: undefined } : {}) })
+        }
+      }
       return result
     }).catch(error => {
+      setLocalCodexScan(current => current ? { ...current, models: [] } : null)
       setLocalCodexScanError(errorMessage(error))
       return null
     }).finally(() => {
@@ -5405,13 +5423,13 @@ export default function App(): React.JSX.Element {
                   </> : <div className="codex-settings-gate">
                   <fieldset className="codex-ai-settings" aria-label="本机 Codex 设置" disabled={codexSettingsBlocked} aria-hidden={codexSettingsBlocked || undefined}><div className="local-codex-settings">
                     <div className="beginner-ai-preferences">
-                      <label className="beginner-model-control"><span>模型</span><div>{localCodexScan?.models.length ? <select value={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} disabled={localCodexScanning} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
-                        {[...new Set([settings.externalAgents?.codex?.model, localCodexScan?.model, ...localCodexScan.models].filter((value): value is string => Boolean(value)))].map(model => <option key={model} value={model}>{model}</option>)}
-                      </select> : <input key={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} defaultValue={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} placeholder="输入模型 ID" disabled={localCodexScanning} onBlur={event => { const model = event.target.value.trim(); if (model && model !== settings.externalAgents?.codex?.model) void saveLocalCodexPreference({ model, reasoningEffort: undefined }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />}<button type="button" className="icon-button" title="扫描本机 Codex 配置与模型" disabled={localCodexScanning} onClick={() => void scanLocalCodex()}>{localCodexScanning ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div></label>
+                      <label className="beginner-model-control"><span>模型</span><div>{localCodexScan?.models.length ? <select value={localCodexScan.models.includes(settings.externalAgents?.codex?.model ?? localCodexScan.model) ? settings.externalAgents?.codex?.model ?? localCodexScan.model : ''} disabled={localCodexScanning} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
+                        <option value="" disabled>请选择当前服务的模型</option>
+                        {localCodexScan.models.map(model => <option key={model} value={model}>{model}</option>)}
+                      </select> : <input key={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} defaultValue={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} placeholder="输入模型 ID" disabled={localCodexScanning} onBlur={event => { const model = event.target.value.trim(); if (model && model !== settings.externalAgents?.codex?.model) void saveLocalCodexPreference({ model, reasoningEffort: undefined }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />}<button type="button" className="icon-button" title="刷新当前服务的模型" disabled={localCodexScanning} onClick={() => void scanLocalCodex()}>{localCodexScanning ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div></label>
                       <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={settings.externalAgents?.codex?.reasoningEffort ?? 'auto'} allowedEfforts={selectedReasoningEfforts(settings.externalAgents?.codex?.model ?? '', settings.externalAgents?.codex?.reasoningEffortOptions)} disabled={localCodexScanning} onChange={value => void saveLocalCodexPreference({ reasoningEffort: value === 'auto' ? undefined : value })} /></div>
                     </div>
                     {localCodexScanError && !codexSettingsBlocked ? <p role="alert">{localCodexScanError} <button className="secondary-button compact" type="button" onClick={() => void scanLocalCodex()}>重试</button></p> : null}
-                    {settings.externalAgents?.codex?.mode === 'hosted' ? <div className="settings-actions"><span>当前使用 ModMind 配置的模型服务</span><button className="secondary-button compact" type="button" disabled={localCodexScanning || !localCodexScan?.status.installed} onClick={() => { setAgentDraft({ baseUrl: localCodexScan?.baseUrl ?? '', apiKey: '' }); void saveLocalCodexPreference({ mode: 'local', model: localCodexScan?.model ?? '', modelContextWindows: {}, modelAutoCompactTokenLimits: {}, reasoningEffort: undefined }) }}>使用本机配置</button></div> : null}
                     <ModelContextSetting
                       key={`codex:${settings.externalAgents?.codex?.mode}:${settings.externalAgents?.codex?.model}:${settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined) ?? 'auto'}:${settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined) ?? 'auto'}`}
                       model={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''}
@@ -5434,7 +5452,7 @@ export default function App(): React.JSX.Element {
                           <label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={event => setAgentDraft(current => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
                           <label className="field-label">API Key<SecretInput secretKey="codex" stored={Boolean(settings.externalAgents?.codex?.hasStoredKey || agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey)} value={agentDraft.apiKey ?? ''} onChange={event => setAgentDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey || settings.externalAgents?.codex?.hasStoredKey ? '已发现凭证，留空保持不变' : '输入 API Key'} /></label>
                         </div>
-                        <div className="settings-actions editor-actions"><span role="status">{agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey ? '已读取本机凭证' : settings.externalAgents?.codex?.hasStoredKey ? '已有加密凭证' : ''}</span><div className="settings-button-group"><button className="primary-button compact" type="button" disabled={configuringAgents.codex} onClick={() => void configureExternalAgent('codex')}>{configuringAgents.codex ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存连接</button></div></div>
+                        <div className="settings-actions editor-actions"><span role="status">{agentDraft.baseUrl?.trim() === localCodexScan?.baseUrl && localCodexScan?.hasApiKey ? '凭证已保存' : settings.externalAgents?.codex?.hasStoredKey ? '凭证已保存' : ''}</span><div className="settings-button-group"><button className="primary-button compact" type="button" disabled={configuringAgents.codex} onClick={() => void configureExternalAgent('codex')}>{configuringAgents.codex ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存连接</button></div></div>
                     </div>
                   </div></fieldset>
                   {codexSettingsBlocked ? <div className="codex-install-overlay">

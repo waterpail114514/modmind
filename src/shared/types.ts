@@ -898,6 +898,7 @@ export interface LocalCodexScan {
   autoCompactTokenLimit?: number
   reasoningEffort?: string
   models: string[]
+  modelsError?: string
 }
 
 export interface ExternalAgentProviderSetup {
