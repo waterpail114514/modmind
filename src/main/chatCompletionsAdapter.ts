@@ -221,8 +221,14 @@ function translateInput(input: unknown, descriptors: Map<string, ChatToolDescrip
   if (typeof input === 'string') return [...messages, { role: 'user', content: input }]
   if (!Array.isArray(input)) return messages
 
+  let toolImages: JsonRecord[] = []
+  const flushToolImages = (): void => {
+    if (toolImages.length) messages.push({ role: 'user', content: toolImages })
+    toolImages = []
+  }
   for (const entry of input) {
     if (!isRecord(entry)) continue
+    if (entry.type !== 'function_call_output' && entry.type !== 'custom_tool_call_output') flushToolImages()
     if (entry.type === 'message') {
       const role = entry.role === 'assistant' ? 'assistant' : entry.role === 'system' || entry.role === 'developer' ? 'system' : 'user'
       messages.push({ role, content: messageContent(entry.content) })
@@ -235,9 +241,25 @@ function translateInput(input: unknown, descriptors: Map<string, ChatToolDescrip
     }
     if (entry.type === 'function_call_output' || entry.type === 'custom_tool_call_output') {
       const callId = typeof entry.call_id === 'string' ? entry.call_id : ''
-      if (callId) messages.push({ role: 'tool', tool_call_id: callId, content: stringValue(entry.output) })
+      if (!callId) continue
+      const images = Array.isArray(entry.output)
+        ? entry.output.filter(part => isRecord(part) && part.type === 'input_image' && typeof part.image_url === 'string')
+        : []
+      if (!images.length) {
+        messages.push({ role: 'tool', tool_call_id: callId, content: stringValue(entry.output) })
+        continue
+      }
+      // Chat Completions tool messages only support text. Keep the call result
+      // paired with its call, then supply its images as actual user image parts.
+      const text = (entry.output as unknown[]).filter(part => !images.includes(part))
+      messages.push({ role: 'tool', tool_call_id: callId, content: stringValue(text) })
+      toolImages.push(
+        { type: 'text', text: `Images returned by tool call ${callId}:` },
+        ...(messageContent(images) as JsonRecord[])
+      )
     }
   }
+  flushToolImages()
   return messages
 }
 

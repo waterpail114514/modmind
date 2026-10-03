@@ -1417,9 +1417,6 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     setBusy(true)
     onBusyChange(true)
     try {
-      if (usesQuota && deviceState.keyStatus === 'FROZEN') {
-        throw new Error('当前账号暂不可用，请前往网站查看账号状态后再继续')
-      }
       let conversationGeneration: number | undefined
       try {
         const conversationTitle = inspirationConversationTitle(conversations.find((entry) => entry.id === conversationId)?.title, pendingMessages)
@@ -3808,10 +3805,6 @@ export default function App(): React.JSX.Element {
     const usesQuota = selectedBackend === 'quota'
     if (usesQuota && deviceState.status !== 'connected') {
       setNotice('请先连接 ModMind 账号')
-      return
-    }
-    if (usesQuota && deviceState.keyStatus === 'FROZEN') {
-      setNotice('当前账号暂不可用，请前往网站查看账号状态')
       return
     }
     if (project.draft && !beginnerAgent) {

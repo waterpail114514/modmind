@@ -13,6 +13,12 @@ describe('toolchain requirement detection', () => {
     expect(result.gradleVersions).toEqual(['9.5.0'])
   })
 
+  it('extracts the required Java version from a missing Gradle compiler toolchain error', () => {
+    const result = detectToolchainRequirements("Cannot find a Java installation on your machine matching this tasks requirements: {languageVersion=17, vendor=any vendor, implementation=vendor-specific} for WINDOWS on x86_64.")
+
+    expect(result.javaMajors).toEqual([17])
+  })
+
   it('does not treat ordinary dependency versions as JDK requirements', () => {
     const result = detectToolchainRequirements('Could not download foo-21.1.jar (com.example:foo:21.1)')
     expect(result.javaMajors).toEqual([])

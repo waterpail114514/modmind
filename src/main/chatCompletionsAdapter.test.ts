@@ -11,6 +11,67 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  it('keeps direct and tool-result images as image parts, with all tool replies before the image message', () => {
+    const image = { type: 'input_image', image_url: 'data:image/png;base64,AQID', detail: 'original' }
+    const input = [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Inspect attachment' }, image] },
+      { type: 'function_call', name: 'preview', call_id: 'first', arguments: '{}' },
+      { type: 'custom_tool_call', name: 'exec', namespace: 'functions', call_id: 'second', input: 'image(result)' },
+      { type: 'function_call_output', call_id: 'first', output: [{ type: 'input_text', text: 'Preview' }, image] },
+      { type: 'custom_tool_call_output', call_id: 'second', output: [image] },
+      { type: 'message', role: 'user', content: 'Continue' }
+    ]
+    const request = { model: 'private-multimodal', tools: [
+      { type: 'function', name: 'preview', parameters: {} },
+      { type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }] }
+    ], input }
+    const { body } = responsesRequestToChatCompletions(request)
+    const imagePart = { type: 'image_url', image_url: { url: image.image_url, detail: 'original' } }
+    expect(body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Inspect attachment' }, imagePart] },
+      expect.objectContaining({ role: 'assistant', tool_calls: expect.any(Array) }),
+      { role: 'tool', tool_call_id: 'first', content: JSON.stringify([{ type: 'input_text', text: 'Preview' }]) },
+      { role: 'tool', tool_call_id: 'second', content: '[]' },
+      { role: 'user', content: [
+        { type: 'text', text: 'Images returned by tool call first:' }, imagePart,
+        { type: 'text', text: 'Images returned by tool call second:' }, imagePart
+      ] },
+      { role: 'user', content: 'Continue' }
+    ])
+    expect(input[3].output).toEqual([{ type: 'input_text', text: 'Preview' }, image])
+  })
+
+  it.each(['responses', 'chat-completions'])('delivers tool-result image bytes through the actual %s route', async protocol => {
+    const received: Record<string, any>[] = []
+    const upstream = createServer(async (request, response) => {
+      let raw = ''; for await (const chunk of request) raw += chunk
+      if (protocol === 'chat-completions' && request.url === '/responses') {
+        response.writeHead(404).end('{"error":{"message":"responses endpoint not found"}}'); return
+      }
+      received.push(JSON.parse(raw))
+      response.setHeader('Content-Type', 'application/json')
+      response.end(protocol === 'responses' ? '{"output":[]}' : '{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}')
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const adapter = new ChatCompletionsAdapter(); adapters.push(adapter)
+      const base = await adapter.baseUrl(`http://127.0.0.1:${(upstream.address() as { port: number }).port}`)
+      const image = { type: 'input_image', image_url: 'data:image/png;base64,AQID' }
+      const response = await fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify({ model: 'private',
+        tools: [{ type: 'function', name: 'preview', parameters: {} }], input: [
+          { type: 'function_call', name: 'preview', call_id: 'capture', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'capture', output: [{ type: 'input_text', text: 'Screenshot' }, image] }
+        ] }) })
+      await response.text(); expect(response.ok).toBe(true)
+      const sent = received.at(-1)!
+      if (protocol === 'responses') expect(sent.input[1].output).toContainEqual(image)
+      else {
+        expect(sent.messages.at(-1).content).toContainEqual({ type: 'image_url', image_url: { url: image.image_url } })
+        expect(sent.messages.find((message: any) => message.role === 'tool').content).not.toContain(image.image_url)
+      }
+    } finally { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())) }
+  })
+
   it('preserves output exhaustion and never executes truncated modern or legacy tool arguments', () => {
     const translation = responsesRequestToChatCompletions({ model: 'test', input: [], tools: [{ type: 'function', name: 'write_file', parameters: {} }] })
     for (const message of [

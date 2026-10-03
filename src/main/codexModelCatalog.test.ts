@@ -82,11 +82,12 @@ describe('managed Codex model metadata', () => {
   })
 
   it.each([
-    ['gemini-2.5-pro', true], ['google/gemini-2.5-flash', true], ['grok-4', true],
-    ['grok-3', false], ['deepseek-chat', false], ['qwen3-coder', false],
-    ['qwen/qwen2.5-vl-72b-instruct', true], ['unknown-model', false]
-  ])('does not infer vision from text-only family names: %s', (model, image) => {
-    expect(buildCodexModelCatalog(model)!.models.at(-1)!.input_modalities).toEqual(image ? ['text', 'image'] : ['text'])
+    'gpt-6-sol', 'gpt-6-luna', 'claude-opus-5-5', 'anthropic/claude-sonnet-4.6',
+    'gemini-2.5-pro', 'google/gemini-2.5-flash', 'grok-4',
+    'grok-3', 'deepseek-chat', 'qwen3-coder',
+    'qwen/qwen2.5-vl-72b-instruct', 'unknown-model'
+  ])('allows image transport without guessing third-party capabilities from %s', model => {
+    expect(buildCodexModelCatalog(model)!.models.at(-1)!.input_modalities).toEqual(['text', 'image'])
   })
 
   it('isolates model switches, skips identical writes and repairs corrupted catalogs', async () => {

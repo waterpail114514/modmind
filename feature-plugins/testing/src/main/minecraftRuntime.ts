@@ -1,3 +1,5 @@
+import { isGradleNetworkFailure } from '../../../../src/main/gradleFailure'
+import { gradleRunDirectory, normalizeProcessExitCode } from '../../../../src/main/gradleProcess'
 import { diagnoseAssets,launch,LaunchPrecheck,MinecraftFolder,Version } from '@xmcl/core'
 import {
 fetchJavaRuntimeManifest,
@@ -615,22 +617,46 @@ async testGradleTask(candidates: string[], stableWindowMs = 0, signal?: AbortSig
     if (project.kind === 'modpack') return { skipped: true, success: true, summary: '整合包没有统一的 Gradle 运行任务；请使用客户端启动测试' }
     if (this.process || this.verificationProcess || this.buildPromise) throw new Error('已有 Minecraft、构建或验证任务正在运行')
     await this.authorizeBuild?.(project)
+    return this.testGradleTaskAttempt(project, candidates, stableWindowMs, signal, 0, 0)
+  }
+
+  private async testGradleTaskAttempt(project: ProjectInfo, candidates: string[], stableWindowMs: number, signal: AbortSignal | undefined, toolchainRetryAttempt: number, distributionRetryAttempt: number): Promise<GradleVerificationResult> {
+    if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
+    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project)
     const env = this.gradleEnvironment(runtime)
+    if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
     const taskList = this.spawnGradle(runtime, project, ['tasks', '--all', '--console=plain', '--no-daemon'], env)
+    this.verificationProcess = taskList
+    const abortTaskList = (): void => this.killProcessTree(taskList)
+    signal?.addEventListener('abort', abortTaskList, { once: true })
+    if (signal?.aborted) abortTaskList()
     let taskOutput = ''
     taskList.stdout.on('data', (chunk: Buffer) => { if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
     taskList.stderr.on('data', (chunk: Buffer) => { if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
-    const taskExit = await new Promise<number>((resolve, reject) => {
-      taskList.once('error', reject)
-      taskList.once('exit', (code) => resolve(code ?? 1))
+    let taskSpawnError = ''
+    taskList.once('error', (error) => { taskSpawnError = `${error.name}: ${error.message}` })
+    const taskExit = await new Promise<number>((resolve) => {
+      taskList.once('close', (code) => resolve(normalizeProcessExitCode(code) ?? 1))
     })
-    if (taskExit !== 0) throw new Error(`无法读取 Gradle 任务：${summarizeGradleFailure(taskOutput)}`)
+    signal?.removeEventListener('abort', abortTaskList)
+    this.verificationProcess = null
+    if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
+    if (taskExit !== 0) {
+      const recovered = await this.retryGradleVerification(project, taskOutput, signal, toolchainRetryAttempt, distributionRetryAttempt)
+      if (recovered) return this.testGradleTaskAttempt(project, candidates, stableWindowMs, signal, recovered.toolchainRetryAttempt, recovered.distributionRetryAttempt)
+      throw new Error(`无法读取 Gradle 任务${taskSpawnError ? `：Wrapper 启动失败：${taskSpawnError}` : `：${summarizeGradleFailure(taskOutput)}`}`)
+    }
     const task = candidates.find((candidate) => new RegExp(`^${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'm').test(taskOutput))
     if (!task) return { skipped: true, success: true, summary: `项目没有提供 ${candidates.join(' / ')} 任务` }
 
-    await fs.mkdir(path.join(project.path, 'run'), { recursive: true })
-    await fs.writeFile(path.join(project.path, 'run', 'eula.txt'), 'eula=true\n', 'utf8')
+    // Loom uses run for both sides; Forge/NeoForge templates use separate directories.
+    for (const directory of new Set(['run', gradleRunDirectory(task)])) {
+      const runDirectory = path.join(project.path, directory)
+      await fs.mkdir(runDirectory, { recursive: true })
+      await fs.writeFile(path.join(runDirectory, 'eula.txt'), 'eula=true\n', 'utf8')
+    }
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     await fs.mkdir(logDirectory, { recursive: true })
     const logPath = path.join(logDirectory, `${task}-${Date.now()}.log`)
@@ -647,14 +673,16 @@ async testGradleTask(candidates: string[], stableWindowMs = 0, signal?: AbortSig
       const text = chunk.toString('utf8')
       log.write(text)
       output = `${output}${text}`.slice(-200_000)
-      if (/Done \([\d.]+s\)!|For help, type "help"|Server started|Dedicated server took/i.test(text)) readyAt ||= Date.now()
+      if (/Done \([\d.]+s\)!|For help, type "help"|Server started|Dedicated server took/i.test(output)) readyAt ||= Date.now()
       const line = text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean).at(-1)
       if (line) this.emit('testing-server', line, level, false)
     }
     child.stdout.on('data', (chunk: Buffer) => capture(chunk, 'info'))
     child.stderr.on('data', (chunk: Buffer) => capture(chunk, 'warning'))
     let exitCode: number | null = null
-    child.once('exit', (code) => { exitCode = code ?? 1 })
+    let spawnError = ''
+    child.once('error', (error) => { spawnError = `${error.name}: ${error.message}` })
+    child.once('close', (code) => { exitCode = normalizeProcessExitCode(code) ?? 1 })
     const abort = (): void => this.killProcessTree(child)
     signal?.addEventListener('abort', abort, { once: true })
     const deadline = Date.now() + (stableWindowMs ? 150_000 : 10 * 60_000)
@@ -663,7 +691,7 @@ async testGradleTask(candidates: string[], stableWindowMs = 0, signal?: AbortSig
       if (stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs) break
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
-    const reachedStableWindow = Boolean(stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs)
+    const reachedStableWindow = Boolean(exitCode === null && stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs)
     if (exitCode === null) this.killProcessTree(child)
     const stopDeadline = Date.now() + 5_000
     while (exitCode === null && Date.now() < stopDeadline) await new Promise((resolve) => setTimeout(resolve, 100))
@@ -675,9 +703,27 @@ async testGradleTask(candidates: string[], stableWindowMs = 0, signal?: AbortSig
       this.emit('idle', `${task} 验证通过`)
       return { task, skipped: false, success: true, summary: reachedStableWindow ? `服务端就绪后稳定运行 ${Math.round(stableWindowMs / 1000)} 秒` : `${task} 执行成功`, logPath }
     }
-    const detail = summarizeGradleFailure(output)
+    if (exitCode !== null && exitCode !== 0) {
+      const recovered = await this.retryGradleVerification(project, output, signal, toolchainRetryAttempt, distributionRetryAttempt)
+      if (recovered) return this.testGradleTaskAttempt(project, candidates, stableWindowMs, signal, recovered.toolchainRetryAttempt, recovered.distributionRetryAttempt)
+    }
+    const detail = spawnError ? `无法启动 Gradle Wrapper：${spawnError}` : summarizeGradleFailure(output)
     this.emit('error', `${task} 验证失败`, 'error')
     return { task, skipped: false, success: false, summary: detail || (exitCode === null ? `${task} 超时` : `${task} 退出代码 ${exitCode}`), logPath }
+  }
+
+  private async retryGradleVerification(project: ProjectInfo, logText: string, signal: AbortSignal | undefined, toolchainRetryAttempt: number, distributionRetryAttempt: number): Promise<{ toolchainRetryAttempt: number; distributionRetryAttempt: number } | null> {
+    if (signal?.aborted) return null
+    if (toolchainRetryAttempt < 4 && await this.ensureDetectedBuildToolchains(logText, project)) {
+      this.emit('testing-server', '已根据验证日志补齐工具链，正在重试 Gradle 任务', 'warning')
+      return { toolchainRetryAttempt: toolchainRetryAttempt + 1, distributionRetryAttempt }
+    }
+    if (distributionRetryAttempt < 2 && isGradleNetworkFailure(logText)) {
+      this.emit('testing-server', 'Gradle 分发包下载源暂时不可用，正在切换备用源重试', 'warning')
+      await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+      return { toolchainRetryAttempt, distributionRetryAttempt: distributionRetryAttempt + 1 }
+    }
+    return null
   }
 
 async syncProjectMod(): Promise<MinecraftManagedMod | null> {

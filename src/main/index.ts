@@ -1311,12 +1311,12 @@ async function ensureQuotaAccountReady(): Promise<void> {
   if (!credentials) throw new Error('请先连接 ModMind 账号')
   if (credentials.provider === 'custom') return
 
-  let usage = credentials.usage
+  const usage = credentials.usage
   const checkedAt = usage ? Date.parse(usage.checkedAt) : Number.NaN
   if (!usage || !Number.isFinite(checkedAt) || Date.now() - checkedAt > QUOTA_USAGE_MAX_AGE_MS) {
     try {
-      usage = await queryDeviceUsage(credentials.siteUrl, credentials.apiKey, AbortSignal.timeout(20_000))
-      const updated = await updateCurrentDeviceUsage(credentials, usage)
+      const refreshedUsage = await queryDeviceUsage(credentials.siteUrl, credentials.apiKey, AbortSignal.timeout(20_000))
+      const updated = await updateCurrentDeviceUsage(credentials, refreshedUsage)
       if (!updated) return ensureQuotaAccountReady()
       credentials = updated
       await updateDeviceState(publicDeviceState(credentials))
@@ -1326,20 +1326,12 @@ async function ensureQuotaAccountReady(): Promise<void> {
         await updateDeviceState(disconnectedDeviceState('接入 Key 已失效，请重新连接账号'))
         throw new Error('接入 Key 已失效，请重新连接账号')
       }
-      // A persisted balance is still useful when the usage health check is
-      // rate-limited or temporarily unavailable.
-      if (!usage && credentials.balanceCents === '0') {
-        throw new Error('账号余额不足，请充值后再开始制作')
-      }
+      // Usage is informational. A failed health check must not block a free route.
     }
   }
 
-  if (usage?.keyStatus === 'FROZEN') {
-    throw new Error(`当前接入 Key 已冻结${usage.frozenReason ? `：${usage.frozenReason}` : ''}，请处理账号状态后重试`)
-  }
-  if (usage && BigInt(usage.balanceCents) <= 0n && BigInt(usage.remainQuota) <= 0n) {
-    throw new Error('账号余额和可用额度均不足，请充值后再开始制作')
-  }
+  // Zero balance/quota and account freeze snapshots do not describe access to
+  // the selected route. Let the actual model request enforce upstream policy.
 
   try {
     const models = await quotaModelsForCredentials(credentials)

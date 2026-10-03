@@ -82,9 +82,9 @@ export function buildCodexModelCatalog(model: string, options: CatalogOptions = 
     max_context_window: budget.contextWindow,
     auto_compact_token_limit: budget.autoCompactTokenLimit,
     truncation_policy: { mode: 'tokens', limit: 10_000 },
-    // Family names alone do not imply vision (e.g. deepseek-chat, qwen-coder).
-    input_modalities: /(?:^|\/)(?:gemini-|grok-(?:4|2-vision)|qwen[^/]*-vl(?:-|:|$))/i.test(model)
-      ? ['text', 'image'] : ['text']
+    // This enables transport, not a provider capability claim. Names and aliases
+    // cannot establish lack of vision; let the upstream validate image support.
+    input_modalities: ['text', 'image']
   }
   const reasoningMetadata = options.reasoning ? {
     default_reasoning_level: null,
