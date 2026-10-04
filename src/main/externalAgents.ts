@@ -3373,15 +3373,20 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
     if (options.signal.aborted || terminationRequested) return
     try { options.onStarted?.() } catch { /* Lifecycle notifications must not stop the Agent. */ }
   })
-  if (plan.acceptsPromptOnStdin) {
-    child.stdin.end(prompt)
-  }
   let transcript = ''
   let lastMessage = ''
   let activeSessionId = persistedSessionId
   let sessionPersistence = Promise.resolve()
   let terminalEventSeen = false
   let terminalFailureMessage = ''
+  // A short-lived Agent can close its input before the prompt write completes.
+  // Its exit status and output below still decide whether the task succeeded.
+  child.stdin.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED') return
+    terminalFailureMessage = error.message
+    terminate()
+  })
+  if (plan.acceptsPromptOnStdin) child.stdin.end(prompt)
   let approvalUnavailable = false
   let streamFailureMessage = ''
   let firstStreamErrorShown = false
