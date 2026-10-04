@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import registry from './modelContextRegistry.json'
-import { resolveModelContextBudget } from './modelContextRegistry'
+import { resolveModelContextBudget, STANDARD_AUTO_COMPACT_LIMIT } from './modelContextRegistry'
 import { normalizeModelContextWindows } from '../shared/modelContext'
 
 describe('offline model context registry', () => {
@@ -21,7 +21,7 @@ describe('offline model context registry', () => {
 
   it('recognizes manufacturer namespaces and keeps unknown suffixes and series separate', () => {
     for (const model of ['gpt-7-sol-mini', 'gpt-7-sol:free', 'gpt-7-sol-private', 'custom/gpt-7-sol', 'anthropic/gpt-7-sol', 'my-gpt-7-sol', 'gpt-7-sol-2099-01-01', 'gpt-1-sol', 'claude-invented-6']) {
-      expect(resolveModelContextBudget(model), model).toMatchObject({ source: 'fallback', contextWindow: 524288, autoCompactTokenLimit: 448266 })
+      expect(resolveModelContextBudget(model), model).toMatchObject({ source: 'fallback', contextWindow: 524288, autoCompactTokenLimit: STANDARD_AUTO_COMPACT_LIMIT })
     }
     expect(resolveModelContextBudget('qwen4-max-prime')).toMatchObject({ source: 'inferred', contextWindow: 1000000 })
     expect(resolveModelContextBudget('glm-6-prime')).toMatchObject({ source: 'inferred', contextWindow: 1000000 })
@@ -43,7 +43,9 @@ describe('offline model context registry', () => {
     expect(resolveModelContextBudget('gpt-4-0314').contextWindow).toBe(8192)
     expect(resolveModelContextBudget('deepseek-v4-flash').contextWindow).toBe(1_000_000)
     expect(resolveModelContextBudget('google/gemini-2.5-pro').contextWindow).toBeGreaterThanOrEqual(1_000_000)
-    expect(resolveModelContextBudget('deepseek-v4-flash').autoCompactTokenLimit).toBeGreaterThan(400_000)
+    expect(resolveModelContextBudget('deepseek-v4-flash').autoCompactTokenLimit).toBe(STANDARD_AUTO_COMPACT_LIMIT)
+    expect(resolveModelContextBudget('deepseek-v4-flash', { allowLongerContext: true }).autoCompactTokenLimit).toBeGreaterThan(400_000)
+    expect(resolveModelContextBudget('gpt-4-0314').autoCompactTokenLimit).toBeLessThan(STANDARD_AUTO_COMPACT_LIMIT)
   })
 
   it('uses endpoint-specific limits and never matches a lookalike hostname', () => {

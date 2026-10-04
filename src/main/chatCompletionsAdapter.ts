@@ -7,6 +7,7 @@ import { fetchWithApprovalModelFallback } from './agentApproval'
 import { diagnosticJournal } from './diagnosticLog'
 import { MCP_PROBE_TOOL } from './agentToolReadiness'
 import type { ReasoningEffort } from '../shared/types'
+import type { ImageRequestObservation } from './modelImageCapabilities'
 
 type JsonRecord = Record<string, unknown>
 type UpstreamProtocol = 'unknown' | 'responses' | 'chat-completions'
@@ -221,8 +222,14 @@ function translateInput(input: unknown, descriptors: Map<string, ChatToolDescrip
   if (typeof input === 'string') return [...messages, { role: 'user', content: input }]
   if (!Array.isArray(input)) return messages
 
+  let toolImages: JsonRecord[] = []
+  const flushToolImages = (): void => {
+    if (toolImages.length) messages.push({ role: 'user', content: toolImages })
+    toolImages = []
+  }
   for (const entry of input) {
     if (!isRecord(entry)) continue
+    if (entry.type !== 'function_call_output' && entry.type !== 'custom_tool_call_output') flushToolImages()
     if (entry.type === 'message') {
       const role = entry.role === 'assistant' ? 'assistant' : entry.role === 'system' || entry.role === 'developer' ? 'system' : 'user'
       messages.push({ role, content: messageContent(entry.content) })
@@ -235,9 +242,25 @@ function translateInput(input: unknown, descriptors: Map<string, ChatToolDescrip
     }
     if (entry.type === 'function_call_output' || entry.type === 'custom_tool_call_output') {
       const callId = typeof entry.call_id === 'string' ? entry.call_id : ''
-      if (callId) messages.push({ role: 'tool', tool_call_id: callId, content: stringValue(entry.output) })
+      if (!callId) continue
+      const images = Array.isArray(entry.output)
+        ? entry.output.filter(part => isRecord(part) && part.type === 'input_image' && typeof part.image_url === 'string')
+        : []
+      if (!images.length) {
+        messages.push({ role: 'tool', tool_call_id: callId, content: stringValue(entry.output) })
+        continue
+      }
+      // Chat Completions tool messages only support text. Keep the call result
+      // paired with its call, then supply its images as actual user image parts.
+      const text = (entry.output as unknown[]).filter(part => !images.includes(part))
+      messages.push({ role: 'tool', tool_call_id: callId, content: stringValue(text) })
+      toolImages.push(
+        { type: 'text', text: `Images returned by tool call ${callId}:` },
+        ...(messageContent(images) as JsonRecord[])
+      )
     }
   }
+  flushToolImages()
   return messages
 }
 
@@ -470,7 +493,7 @@ function copyResponseHeaders(upstream: Response, response: ServerResponse): void
   }
 }
 
-async function relayResponse(upstream: Response, response: ServerResponse): Promise<void> {
+async function relayResponse(upstream: Response, response: ServerResponse, onChunk?: (chunk: Uint8Array) => void): Promise<void> {
   response.statusCode = upstream.status
   copyResponseHeaders(upstream, response)
   if (!upstream.body) {
@@ -478,10 +501,52 @@ async function relayResponse(upstream: Response, response: ServerResponse): Prom
     return
   }
   try {
-    for await (const chunk of upstream.body) response.write(Buffer.from(chunk))
+    for await (const chunk of upstream.body) { onChunk?.(chunk); response.write(Buffer.from(chunk)) }
     response.end()
   } catch (error) {
     response.destroy(error instanceof Error ? error : new Error(String(error)))
+  }
+}
+
+function hasImageInput(payload: JsonRecord): boolean {
+  if (!Array.isArray(payload.input)) return false
+  return payload.input.some(item => isRecord(item) && [item.content, item.output].some(parts => Array.isArray(parts)
+    && parts.some(part => isRecord(part) && part.type === 'input_image' && typeof part.image_url === 'string')))
+}
+
+class ImageResponseCompletion {
+  completed = false
+  errorBody?: string
+  private decoder = new TextDecoder()
+  private buffer = ''
+  private oversized = false
+  finish(): void {
+    if (this.oversized || this.buffer.length > 256 * 1024) return
+    try {
+      const payload = JSON.parse(this.buffer + this.decoder.decode())
+      if (payload.status === 'completed' && !payload.error) this.completed = true
+    } catch { /* Streaming responses are handled event by event. */ }
+  }
+  push(chunk: Uint8Array): void {
+    this.buffer += this.decoder.decode(chunk, { stream: true })
+    let match: RegExpExecArray | null
+    while ((match = /\r?\n\r?\n/.exec(this.buffer))) {
+      const block = this.buffer.slice(0, match.index)
+      this.buffer = this.buffer.slice(match.index + match[0].length)
+      if (!this.oversized && block.length <= 256 * 1024) {
+        const data = block.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+        try {
+          const event = JSON.parse(data)
+          if (event.type === 'response.completed' && event.response?.status === 'completed') this.completed = true
+          if (event.type === 'response.failed' || event.type === 'error') {
+            this.completed = false
+            this.errorBody = JSON.stringify({ error: event.response?.error ?? event.error ?? event })
+          }
+        } catch { /* Keep passthrough behavior for non-JSON and DONE frames. */ }
+      }
+      this.oversized = false
+    }
+    if (this.buffer.length > 256 * 1024) { this.buffer = this.buffer.slice(-2); this.oversized = true }
   }
 }
 
@@ -537,6 +602,8 @@ export class ChatCompletionsAdapter {
   private port = 0
   private readonly routesByIdentity = new Map<string, AdapterRoute>()
   private readonly routesById = new Map<string, AdapterRoute>()
+
+  constructor(private imageObserver?: (observation: ImageRequestObservation) => Promise<void>) {}
 
   async baseUrl(upstreamBaseUrl: string, providerIdentity = '', signal?: AbortSignal, approvalFallbackModel?: string, executionModel?: string, reasoningEffort?: ReasoningEffort | null): Promise<string> {
     const normalized = normalizedBaseUrl(upstreamBaseUrl)
@@ -631,11 +698,29 @@ export class ChatCompletionsAdapter {
         if (Object.keys(reasoning).length) outgoingPayload.reasoning = reasoning
         else delete outgoingPayload.reasoning
       }
+      const imageRequest = hasImageInput(outgoingPayload)
+      const observeImage = async (protocol: 'responses' | 'chat-completions', status: number, completed?: boolean, errorBody?: string): Promise<void> => {
+        if (!imageRequest || !this.imageObserver || typeof outgoingPayload.model !== 'string') return
+        const authorization = request.headers.authorization ?? ''
+        try {
+          await this.imageObserver({ baseUrl: route.upstreamBaseUrl, apiKey: authorization.replace(/^Bearer\s+/i, ''), model: outgoingPayload.model, protocol, status, completed, errorBody })
+        } catch { /* Capability storage must never break the actual model request. */ }
+      }
+      const recordImageError = async (upstream: Response, protocol: 'responses' | 'chat-completions'): Promise<Response> => {
+        if (imageRequest && !upstream.ok && this.imageObserver) await observeImage(protocol, upstream.status, false, await upstream.clone().text())
+        return upstream
+      }
+      const relayResponses = async (upstream: Response): Promise<void> => {
+        const tracker = new ImageResponseCompletion()
+        await relayResponse(upstream, response, imageRequest && upstream.ok ? chunk => tracker.push(chunk) : undefined)
+        tracker.finish()
+        if (upstream.ok) await observeImage('responses', tracker.errorBody ? 400 : upstream.status, tracker.completed, tracker.errorBody)
+      }
       const requestUpstreamResponses = (): Promise<Response> => fetchWithApprovalModelFallback(endpoint(route.upstreamBaseUrl, 'responses'), {
         method: 'POST',
         headers: requestHeaders(request.headers),
         signal: upstreamSignal(300_000)
-      }, outgoingPayload, route.approvalFallbackModel)
+      }, outgoingPayload, route.approvalFallbackModel).then(upstream => recordImageError(upstream, 'responses'))
       let translated: ChatCompletionTranslation | undefined
       const requestUpstreamChat = (): Promise<Response> => {
         translated ??= responsesRequestToChatCompletions(outgoingPayload)
@@ -645,7 +730,7 @@ export class ChatCompletionsAdapter {
           method: 'POST',
           headers: requestHeaders(request.headers),
           signal: upstreamSignal(300_000)
-        }, translated.body, route.approvalFallbackModel)
+        }, translated.body, route.approvalFallbackModel).then(upstream => recordImageError(upstream, 'chat-completions'))
       }
 
       // Prefer the last successful protocol, but re-probe the alternative when
@@ -658,6 +743,7 @@ export class ChatCompletionsAdapter {
         if (chat.ok) {
           const payload = await chat.json() as unknown
           const output = sseBody(chatCompletionToResponsesEvents(payload, translated!.tools))
+          await observeImage('chat-completions', chat.status, true)
           response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
           response.end(output)
           return
@@ -674,9 +760,9 @@ export class ChatCompletionsAdapter {
           data: { routeId: route.id, requestId, protocol: 'responses', status: upstream.status } })
         if (upstream.ok) {
           route.protocol = 'responses'
-          return void await relayResponse(upstream, response)
+          return void await relayResponses(upstream)
         }
-        await relayResponse(upstream, response)
+        await relayResponses(upstream)
         return
       }
 
@@ -685,7 +771,7 @@ export class ChatCompletionsAdapter {
         data: { routeId: route.id, requestId, protocol: 'responses', status: upstreamResponses.status } })
       if (upstreamResponses.ok) {
         route.protocol = 'responses'
-        return void await relayResponse(upstreamResponses, response)
+        return void await relayResponses(upstreamResponses)
       }
       const errorBody = await upstreamResponses.text()
       if (!shouldFallbackToChat(upstreamResponses.status, errorBody)) {
@@ -705,6 +791,7 @@ export class ChatCompletionsAdapter {
       route.protocol = 'chat-completions'
       const payload = await upstream.json() as unknown
       const output = sseBody(chatCompletionToResponsesEvents(payload, translated!.tools))
+      await observeImage('chat-completions', upstream.status, true)
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
       response.end(output)
     } catch (error) {

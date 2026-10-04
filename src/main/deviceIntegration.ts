@@ -1,5 +1,6 @@
 import type { AiModelInfo, AppVersionCheckResult, DeviceKeyStatus, DeviceUsage } from '../shared/types'
 import { parseReasoningCapabilities } from '../shared/modelReasoning'
+import { parseModelImageCapability } from '../shared/modelImageCapability'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
 
@@ -334,7 +335,8 @@ export function parseModelPayload(payload: unknown): AiModelInfo[] {
     if (typeof id !== 'string' || id.length > 256) return null
     const ownedBy = typeof record.owned_by === 'string' ? record.owned_by : typeof record.ownedBy === 'string' ? record.ownedBy : undefined
     const reasoning = parseReasoningCapabilities(entry)
-    return { id: id.trim(), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}) }
+    const imageInput = parseModelImageCapability(entry)
+    return { id: id.trim(), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}), ...(imageInput ? { imageInput } : {}) }
   }).filter((entry): entry is AiModelInfo => Boolean(entry))
   return [...new Map(models.map((model) => [model.id, model])).values()]
     .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }))

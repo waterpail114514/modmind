@@ -43,12 +43,31 @@ try {
     throw error
   })
   const originalSettings = await page.evaluate(() => window.modmind.settings.getAgent())
+  assert.equal(originalSettings.allowLongerContext, false)
+  await page.evaluate(async () => window.modmind.settings.saveAgent({ ...await window.modmind.settings.getAgent(), allowLongerContext: true }))
+  assert.equal((await page.evaluate(() => window.modmind.settings.getAgent())).allowLongerContext, true)
+  await page.evaluate(async () => window.modmind.settings.saveAgent({ ...await window.modmind.settings.getAgent(), allowLongerContext: false }))
+  assert.equal((await page.evaluate(() => window.modmind.settings.getAgent())).allowLongerContext, false)
   await app.evaluate(({ ipcMain }, initial) => {
     const state = globalThis.settingsSmoke = {
       settings: initial, failSettings: false, failImage: false, writes: [],
       image: { baseUrl: 'https://saved.example/v1', model: 'image-a', hasStoredKey: false, allowAgentImages: true, autoApproveAgentImages: true, manualHostedConsent: true }
     }
     const handle = (name, fn) => { ipcMain.removeHandler(name); ipcMain.handle(name, fn) }
+    state.settings.externalAgents = { codex: { mode: 'hosted', baseUrl: 'https://api.deepseek.com/v1', model: 'gpt-stale', hasStoredKey: true } }
+    state.failModels = false
+    state.modelScans = 0
+    const codexStatus = { kind: 'codex', label: 'Codex', installed: true, executable: 'fixture-codex', detail: '' }
+    handle('external-agents:detect', () => [codexStatus])
+    handle('external-agents:scanLocal', () => {
+      state.modelScans++
+      return { status: codexStatus, home: '/fixture', ...state.settings.externalAgents.codex, hasApiKey: true,
+        models: state.failModels ? [] : ['deepseek-chat', 'deepseek-reasoner'], modelsError: state.failModels ? '模型服务暂时不可用' : undefined }
+    })
+    handle('external-agents:configure', (_, kind, configuration) => {
+      state.settings.externalAgents[kind] = { ...configuration, apiKey: '', hasStoredKey: true }
+      return { kind, detail: 'saved locally' }
+    })
     handle('settings:getAgent', () => state.settings)
     handle('settings:saveAgent', async (_, input) => {
       if (state.failSettings) throw new Error('模拟保存失败')
@@ -91,7 +110,7 @@ try {
 
   const search = page.getByRole('searchbox', { name: '搜索设置' })
   await search.fill('模型')
-  assert.deepEqual(await visibleIds(), ['settings-ai', 'settings-image', 'settings-agents'])
+  assert.deepEqual(await visibleIds(), ['settings-ai', 'settings-image', 'settings-agent-info'])
   assert.equal(await nav.locator('[aria-current]').count(), 0)
   await search.fill('JAVA jdk')
   assert.deepEqual(await visibleIds(), ['settings-java'])
@@ -122,6 +141,13 @@ try {
   assert.equal(await page.evaluate(async () => (await window.modmind.settings.getAgent()).networkProxyUrl), 'http://127.0.0.1:8899')
 
   await category('AI 与图像')
+  const longerContext = page.getByRole('switch', { name: '允许更长上下文（可能造成更多消费）' })
+  assert.equal(await longerContext.evaluate(node => Boolean(node.closest('.model-context-setting')?.querySelector('input[id$="-compact"]'))), true)
+  assert.equal(await longerContext.getAttribute('aria-checked'), 'false')
+  await longerContext.click()
+  assert.equal(await page.evaluate(async () => (await window.modmind.settings.getAgent()).allowLongerContext), true)
+  await longerContext.click()
+  assert.equal(await page.evaluate(async () => (await window.modmind.settings.getAgent()).allowLongerContext), false)
   const imageSection = page.locator('#settings-image')
   await imageSection.locator('summary').click()
   const url = imageSection.getByRole('textbox', { name: 'Base URL', exact: true })
@@ -148,12 +174,46 @@ try {
   assert.equal(await model.inputValue(), 'image-b')
   await app.evaluate(() => { globalThis.settingsSmoke.failImage = false })
 
+  const aiSection = page.locator('#settings-ai')
+  await aiSection.getByRole('button', { name: '本机 Codex', exact: true }).click()
+  const codexModel = aiSection.getByRole('combobox', { name: '模型', exact: true })
+  await codexModel.waitFor()
+  await page.waitForFunction(() => document.querySelector('#settings-ai .beginner-model-control select')?.value === 'deepseek-chat')
+  assert.equal(await codexModel.inputValue(), 'deepseek-chat', 'first provider model must replace a stale GPT selection')
+  assert.deepEqual(await codexModel.locator('option').evaluateAll(nodes => nodes.map(node => node.value)), ['', 'deepseek-chat', 'deepseek-reasoner'])
+  assert.equal(await aiSection.getByText('使用本机配置', { exact: true }).count(), 0)
+  assert.equal(await aiSection.getByText('当前使用 ModMind 配置的模型服务', { exact: true }).count(), 0)
+  await codexModel.selectOption('deepseek-chat')
+  await page.waitForFunction(() => window.modmind.settings.getAgent().then(settings => settings.externalAgents.codex.model === 'deepseek-chat'))
+  await app.evaluate(() => { globalThis.settingsSmoke.failModels = true })
+  await aiSection.getByRole('button', { name: '刷新当前服务的模型' }).click()
+  await aiSection.getByRole('alert').filter({ hasText: '模型服务暂时不可用' }).waitFor()
+  const manualModel = aiSection.getByRole('textbox', { name: '模型', exact: true })
+  assert.equal(await manualModel.isEnabled(), true)
+  await manualModel.fill('deepseek-reasoner')
+  await manualModel.press('Enter')
+  await page.waitForFunction(() => window.modmind.settings.getAgent().then(settings => settings.externalAgents.codex.model === 'deepseek-reasoner'))
+  await app.evaluate(() => { globalThis.settingsSmoke.failModels = false })
+  await aiSection.getByRole('button', { name: '重试', exact: true }).click()
+  await codexModel.waitFor()
+  assert.equal(await codexModel.inputValue(), 'deepseek-reasoner')
+  const scansBeforeSave = await app.evaluate(() => globalThis.settingsSmoke.modelScans)
+  await aiSection.getByRole('textbox', { name: 'Base URL', exact: true }).fill('https://new-provider.example/v1')
+  await aiSection.getByRole('button', { name: '保存连接', exact: true }).click()
+  await page.getByText('连接已保存到本地设置', { exact: true }).waitFor()
+  await page.waitForFunction(count => window.modmind.settings.getAgent().then(settings => settings.externalAgents.codex.baseUrl === 'https://new-provider.example/v1'), scansBeforeSave)
+  await page.waitForFunction(() => document.querySelector('#settings-ai .beginner-model-control select:not(:disabled)'))
+  for (let attempt = 0; attempt < 50 && !await app.evaluate((_, count) => globalThis.settingsSmoke.modelScans > count, scansBeforeSave); attempt++) await new Promise(resolve => setTimeout(resolve, 100))
+  assert.ok(await app.evaluate((_, count) => globalThis.settingsSmoke.modelScans > count, scansBeforeSave), 'saving a connection must refresh its models')
+  const modelPanelWidth = await aiSection.locator('.local-codex-settings').evaluate(node => ({ panel: node.clientWidth, controls: node.querySelector('.beginner-ai-preferences').getBoundingClientRect().width }))
+  assert.ok(modelPanelWidth.panel - modelPanelWidth.controls < 2, 'model controls must fill the panel without a reserved side column')
+
   const allIds = new Set()
   for (const name of ['通用', 'AI 与图像', '开发与构建', '集成', '关于']) {
     await category(name)
     for (const id of await visibleIds()) allIds.add(id)
   }
-  assert.equal(allIds.size, 14, 'all existing sections must remain reachable')
+  assert.equal(allIds.size, 16, 'all existing sections must remain reachable')
   for (const dark of [false, true]) {
     await category('通用')
     if (dark) {
@@ -173,6 +233,11 @@ try {
       }
       await category('通用')
       await page.screenshot({ path: path.join(work, `${dark ? 'dark' : 'light'}-${width}.png`) })
+      if (width === 390 || width === 1440) {
+        await category('AI 与图像')
+        await longerContext.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: path.join(work, `ai-context-${dark ? 'dark' : 'light'}-${width}.png`) })
+      }
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -182,7 +247,7 @@ try {
   await imageSection.locator('summary').click()
   await page.screenshot({ path: path.join(work, 'ai-desktop.png') })
   assert.deepEqual(errors, [])
-  await writeFile(path.join(work, 'report.json'), JSON.stringify({ work, checked: ['five categories / all 14 sections', 'cross-category search and empty state', 'Escape and focus', 'drafts preserved across categories', 'proxy explicit save and failure retry', 'image autosave excludes API drafts', 'image failure preserves selected model', '40 category/theme/width overflow checks'], errors }, null, 2))
+  await writeFile(path.join(work, 'report.json'), JSON.stringify({ work, checked: ['five categories / all 16 sections', 'cross-category search and empty state', 'Escape and focus', 'drafts preserved across categories', 'proxy explicit save and failure retry', 'long-context switch persistence', 'image autosave excludes API drafts', 'image failure preserves selected model', 'provider models exclude stale GPT selection', 'model lookup failure, manual entry and retry', 'connection save refreshes models', 'no provider switch notice or reserved column', '40 category/theme/width overflow checks'], errors }, null, 2))
   console.log(`PASS: settings navigation, search, save semantics and responsive layouts. Artifacts: ${work}`)
 } finally {
   await app?.close()

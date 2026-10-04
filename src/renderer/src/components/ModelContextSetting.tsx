@@ -5,11 +5,13 @@ interface Props {
   model: string
   value?: number
   compactValue?: number
+  allowLongerContext: boolean
   saving: boolean
   onSave: (value: number | undefined, compactValue: number | undefined) => void
+  onAllowLongerContextChange: (value: boolean) => void
 }
 
-export default function ModelContextSetting({ model, value, compactValue, saving, onSave }: Props): React.JSX.Element {
+export default function ModelContextSetting({ model, value, compactValue, allowLongerContext, saving, onSave, onAllowLongerContextChange }: Props): React.JSX.Element {
   const id = useId()
   const [draft, setDraft] = useState(value === undefined ? '' : String(value))
   const [compactDraft, setCompactDraft] = useState(compactValue === undefined ? '' : String(compactValue))
@@ -45,6 +47,7 @@ export default function ModelContextSetting({ model, value, compactValue, saving
       <input id={`${id}-compact`} type="text" inputMode="numeric" value={compactDraft} disabled={saving || !model}
         placeholder="自动计算" aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined}
         onChange={event => { setCompactDraft(event.target.value); setError('') }} />
+      <div className="appearance-row model-context-longer"><div><strong>允许更长上下文</strong><p>可能造成更多消费</p></div><button className={`toggle ${allowLongerContext ? 'on' : ''}`} type="button" role="switch" title="默认在 256K 自动压缩，为 272K 计费线留出余量；开启后按模型预算计算。手动阈值优先。" aria-label="允许更长上下文（可能造成更多消费）" aria-checked={allowLongerContext} disabled={saving} onClick={() => onAllowLongerContextChange(!allowLongerContext)}><span /></button></div>
     </div>
     <div className="settings-actions">
       <div className="settings-button-group">

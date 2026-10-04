@@ -100,11 +100,13 @@ import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from
 import { clearPreparedCodexCredentials, ensureManagedCodexRuntime, isManagedCodexVersion, managedCodexExecutablePath, prepareCodex, type CodexServerConfig, type CodexSetupProgress } from './codexSetup'
 import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows, validModelContext } from '../shared/modelContext'
 import { resolveModelContextBudget } from './modelContextRegistry'
-import { validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
+import { resolveCodexAutoCompactTokenLimit, validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { normalizeAiModelSelection, settingsForAiSelection, type AiModelSelection } from '../shared/aiSelection'
 import { codexReasoningCapabilities, isReasoningEffort, normalizeReasoningEffortOptions, reasoningSelectionEffort, selectedReasoningEfforts } from '../shared/modelReasoning'
 import { ChatCompletionsAdapter } from './chatCompletionsAdapter'
+import { ModelImageCapabilities } from './modelImageCapabilities'
+import { verifyModelImageInput } from './modelImageVerification'
 import { BackendSwitchCoordinator } from './backendSwitchCoordinator'
 import { LiveConfiguration, SerialState, type ConfigurationRevision } from './liveConfiguration'
 import { awaitWithAbort, throwIfAborted, waitForCondition } from './asyncControl'
@@ -227,7 +229,7 @@ import type {
 } from '../shared/types'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 import { ImageStudioService } from './imageStudioService'
-import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from './modpackService'
+import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts, readModpackImportStatus } from './modpackService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { importModpackModule } from './modpackModuleImport'
 import { readModpackModuleProject } from './modpackService'
@@ -419,7 +421,9 @@ let publicMcpBridgeStartedAt: string | null = null
 let publicMcpBridgeAbort: AbortController | null = null
 // 用户在设置页开启「MCP 接入」后缓存到内存；项目打开/切换时据此自动跟随启动桥接。
 let mcpBridgePreferenceEnabled = false
-const chatCompletionsAdapter = new ChatCompletionsAdapter()
+const modelImageCapabilities = new ModelImageCapabilities(() => path.join(app.getPath('userData'), 'model-image-capabilities.json'))
+const chatCompletionsAdapter = new ChatCompletionsAdapter(observation => modelImageCapabilities.observe(observation))
+const imageVerifications = new Map<string, ReturnType<typeof verifyModelImageInput>>()
 let publicMcpIntent: 'engineering' | 'informational' = 'informational'
 let curseForgeProviderKey = process.env.MODMIND_CURSEFORGE_API_KEY ?? '$2a$10$BB17.sSejQebcTN01XAqmeXbucdfzq/nIKXylaKLpQHtHLrREVPku'
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -916,7 +920,7 @@ async function quotaModelsForCredentials(credentials: DeviceCredentials, force =
   const key = quotaModelCacheKey(credentials)
   const cached = quotaModelAvailabilityCache.get(key)
   if (!force && cached && Date.now() - cached.checkedAt <= QUOTA_MODEL_MAX_AGE_MS) {
-    return cached.models
+    return cached.models.map(model => ({ ...model, imageInput: modelImageCapabilities.resolve(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, model.id) }))
   }
   const models = await fetchAvailableModels(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
   quotaModelAvailabilityCache.set(key, { checkedAt: Date.now(), models })
@@ -1304,12 +1308,12 @@ async function ensureQuotaAccountReady(): Promise<void> {
   if (!credentials) throw new Error('请先连接 ModMind 账号')
   if (credentials.provider === 'custom') return
 
-  let usage = credentials.usage
+  const usage = credentials.usage
   const checkedAt = usage ? Date.parse(usage.checkedAt) : Number.NaN
   if (!usage || !Number.isFinite(checkedAt) || Date.now() - checkedAt > QUOTA_USAGE_MAX_AGE_MS) {
     try {
-      usage = await queryDeviceUsage(credentials.siteUrl, credentials.apiKey, AbortSignal.timeout(20_000))
-      const updated = await updateCurrentDeviceUsage(credentials, usage)
+      const refreshedUsage = await queryDeviceUsage(credentials.siteUrl, credentials.apiKey, AbortSignal.timeout(20_000))
+      const updated = await updateCurrentDeviceUsage(credentials, refreshedUsage)
       if (!updated) return ensureQuotaAccountReady()
       credentials = updated
       await updateDeviceState(publicDeviceState(credentials))
@@ -1319,20 +1323,12 @@ async function ensureQuotaAccountReady(): Promise<void> {
         await updateDeviceState(disconnectedDeviceState('接入 Key 已失效，请重新连接账号'))
         throw new Error('接入 Key 已失效，请重新连接账号')
       }
-      // A persisted balance is still useful when the usage health check is
-      // rate-limited or temporarily unavailable.
-      if (!usage && credentials.balanceCents === '0') {
-        throw new Error('账号余额不足，请充值后再开始制作')
-      }
+      // Usage is informational. A failed health check must not block a free route.
     }
   }
 
-  if (usage?.keyStatus === 'FROZEN') {
-    throw new Error(`当前接入 Key 已冻结${usage.frozenReason ? `：${usage.frozenReason}` : ''}，请处理账号状态后重试`)
-  }
-  if (usage && BigInt(usage.balanceCents) <= 0n && BigInt(usage.remainQuota) <= 0n) {
-    throw new Error('账号余额和可用额度均不足，请充值后再开始制作')
-  }
+  // Zero balance/quota and account freeze snapshots do not describe access to
+  // the selected route. Let the actual model request enforce upstream policy.
 
   try {
     const models = await quotaModelsForCredentials(credentials)
@@ -1701,7 +1697,7 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
       const result = await applyAppSettingWrite({ key: action.key, value: action.value })
       return { success: true, key: action.key, value: result[action.key] }
     }
-    case 'get_app_settings': return publicAgentSettings(await readSettings())
+    case 'get_app_settings': return readAgentSettingsWithCapabilities()
     case 'scan_java_homes': return scanConfiguredJavaHomes()
     case 'probe_java_home': {
       const home = action.home.trim()
@@ -1712,11 +1708,11 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
 }
 
 type AppSettingKey =
-  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowBuildScriptChanges'
+  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'allowLongerContext'
   | 'preferLocalGradle' | 'closeBehavior' | 'gradleDownloadSource'
 
 const APP_SETTING_KEYS: readonly AppSettingKey[] = [
-  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowBuildScriptChanges',
+  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowBuildScriptChanges', 'allowLongerContext',
   'preferLocalGradle', 'closeBehavior', 'gradleDownloadSource'
 ]
 
@@ -1729,7 +1725,7 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
   if (key === 'javaPreferences') {
     if (typeof value !== 'object' || value === null) throw new Error('Java 偏好需要对象值')
     next.javaPreferences = normalizeJavaPreferences(value)
-  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowBuildScriptChanges' || key === 'preferLocalGradle') {
+  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowBuildScriptChanges' || key === 'allowLongerContext' || key === 'preferLocalGradle') {
     if (typeof value !== 'boolean') throw new Error(`应用设置 ${key} 需要布尔值`)
     next[key] = value
   } else if (key === 'closeBehavior') {
@@ -1889,6 +1885,7 @@ async function reconcileQuotaModelPreferences(credentials: DeviceCredentials, fo
 async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Promise<CodexServerConfig> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
+  const allowLongerContext = (await readSettings()).allowLongerContext === true
   if (credentials.provider === 'custom') {
     const preferences = selection ? { ...await readBeginnerAiPreferences(), ...selection } : await readBeginnerAiPreferences()
     if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig(selection)
@@ -1901,7 +1898,8 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
       reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities, efforts),
       reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts),
       contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[model],
-      autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[model]
+      autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[model],
+      allowLongerContext
     }
   }
   // Upstream groups may change without rotating the key or changing the URL.
@@ -1920,7 +1918,8 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
     reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities, efforts),
     reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts),
     contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[preferences.model],
-    autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[preferences.model]
+    autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[preferences.model],
+    allowLongerContext
   }
 }
 
@@ -1959,7 +1958,40 @@ async function configuredCodexServerConfig(configuration: ExternalAgentConfigura
   await refreshConfiguredReasoning('codex', configuration)
   const reasoningCapabilities = modelReasoningFor(baseUrl, apiKey, model)
   const efforts = selectedReasoningEfforts(model, configuration.reasoningEffortOptions)
-  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model] }
+  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model], allowLongerContext: (await readSettings()).allowLongerContext === true }
+}
+
+async function modelImageCapabilityOperation(backend: AgentSettings['codingBackend'], model: unknown, verify = false): Promise<import('../shared/types').ModelImageVerification> {
+  if (!['quota', 'codex'].includes(backend) || typeof model !== 'string' || !model.trim() || model.length > 256 || /[\x00-\x1f]/.test(model)) throw new Error('AI 线路或模型 ID 无效')
+  const selected = model.trim()
+  if (!verify) {
+    const settings = await readAgentSettingsWithCapabilities(selected) as { modelCapabilities: Array<{ connection: string; imageInput: import('../shared/types').ModelImageCapability }> }
+    const imageInput = settings.modelCapabilities.find(entry => entry.connection === (backend === 'quota' ? 'modmind' : 'codex'))?.imageInput ?? { status: 'unknown' as const, source: 'unknown' as const }
+    return { model: selected, imageInput, verified: imageInput.source === 'probe' }
+  }
+  let config: CodexServerConfig
+  if (backend === 'quota') config = await readBeginnerAgentServerConfig({ model: selected, reasoningLevel: 'auto' })
+  else {
+    const settings = await readSettings(), configuration = settings.externalAgents?.codex ?? {}
+    if (configuration.mode === 'hosted') config = await configuredCodexServerConfig({ ...configuration, model: selected, reasoningEffort: undefined })
+    else {
+      const local = await readLocalCodexConfig(), apiKey = await readLocalCodexApiKey()
+      if (!local.baseUrl || !apiKey) throw new Error('当前本机 Codex 连接未提供可用于独立验证的 API 地址和 Key')
+      config = { baseUrl: normalizeApiBaseUrl(local.baseUrl), apiKey, model: selected }
+    }
+  }
+  await modelImageCapabilities.load()
+  const key = `${quotaPreferenceKey(config.baseUrl, config.apiKey)}:${config.model}`
+  let pending = imageVerifications.get(key)
+  if (!pending) {
+    pending = verifyModelImageInput(config, modelImageCapabilities, async (body, signal) => {
+      const adapterUrl = await chatCompletionsAdapter.baseUrl(config.baseUrl, `image-verification:${key}`, undefined, config.model, config.model, null)
+      return fetch(`${adapterUrl}/responses`, { method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
+    })
+    imageVerifications.set(key, pending)
+    void pending.finally(() => { if (imageVerifications.get(key) === pending) imageVerifications.delete(key) }).catch(() => undefined)
+  }
+  return pending
 }
 
 async function prepareManagedCodex(
@@ -3575,6 +3607,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   const kinds = ['codex'] as const
   const normalized: AgentSettings = {
     ...value,
+    allowLongerContext: value.allowLongerContext === true,
     codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
     codexApprovalMode: normalizeAgentApprovalMode(value.codexApprovalMode),
     allowBuildScriptChanges: value.allowBuildScriptChanges !== false,
@@ -3955,6 +3988,7 @@ async function migrateLegacyUserData(): Promise<void> {
 async function readSettings(): Promise<AgentSettings> {
   const defaults: AgentSettings = {
     codingBackend: 'quota',
+    allowLongerContext: false,
     codexApprovalMode: 'yolo',
     allowBuildScriptChanges: true,
     preferLocalGradle: false,
@@ -4012,6 +4046,7 @@ async function readSettings(): Promise<AgentSettings> {
     }
     settings = {
       externalAgents,
+      allowLongerContext: stored.allowLongerContext === true,
       codexApprovalMode: normalizeAgentApprovalMode(stored.codexApprovalMode),
       codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
@@ -4045,24 +4080,122 @@ function normalizeApiBaseUrl(value: string): string {
   return url.toString().replace(/\/$/, '')
 }
 
+async function readAgentSettingsWithCapabilities(requestedModel?: string): Promise<unknown> {
+  if (requestedModel !== undefined && (typeof requestedModel !== 'string' || !requestedModel.trim() || requestedModel.length > 256 || /[\x00-\x1f]/.test(requestedModel))) throw new Error('模型 ID 无效')
+  const settings = await readSettings(), credentials = await readDeviceCredentials()
+  await modelImageCapabilities.load()
+  const modelCapabilities: Array<{ connection: string; model: string; imageInput: import('../shared/types').ModelImageCapability }> = []
+  if (credentials) {
+    const model = requestedModel ?? (await readBeginnerAiPreferences()).model
+    modelCapabilities.push({ connection: 'modmind', model, imageInput: modelImageCapabilities.resolve(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, model) })
+  }
+  const codex = settings.externalAgents?.codex
+  if (codex?.model || requestedModel) {
+    const model = requestedModel ?? codex!.model!
+    const local = codex?.mode !== 'hosted' ? await readLocalCodexConfig().catch(() => null) : null
+    const baseUrl = local?.baseUrl ?? codex?.baseUrl
+    const apiKey = local?.baseUrl ? await readLocalCodexApiKey().catch(() => '') : codex?.apiKey
+    modelCapabilities.push({ connection: 'codex', model, imageInput: baseUrl && apiKey
+      ? modelImageCapabilities.resolve(normalizeApiBaseUrl(baseUrl), apiKey, model)
+      : { status: 'unknown', source: 'unknown' } })
+  }
+  return { ...publicAgentSettings(settings), modelCapabilities }
+}
+
 async function listAvailableAgentModels(kind: ExternalAgentKind, input: ExternalAgentConfiguration): Promise<AiModelInfo[]> {
   if (kind === 'codex' && input.mode !== 'hosted') {
     const local = await readLocalCodexConfig()
+    // A custom provider's /models is authoritative. The CLI catalog contains
+    // OpenAI defaults even when config.toml points at a different provider.
+    if (local.baseUrl) {
+      const apiKey = await readLocalCodexApiKey()
+      return fetchAvailableModels(normalizeApiBaseUrl(local.baseUrl), apiKey, '无法读取当前服务的模型列表')
+    }
     const detected = await detectInstalledCodex(input)
     const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
     return modelReasoningCatalog.enrich([...new Set([...models, ...local.models, ...(input.model ? [input.model] : [])])].map(id => ({ id })), '')
   }
-  await modelReasoningCatalog.refresh(true)
   const stored = await readSettings()
   const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
   const storedEntry = stored.externalAgents?.[kind]
   const storedBaseUrl = storedEntry?.baseUrl ? normalizeApiBaseUrl(storedEntry.baseUrl) : ''
-  const native = await readLocalCodexConfig()
-  const nativeBaseUrl = native.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const native = await readLocalCodexConfig().catch(() => null)
+  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
   const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '') || (baseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
+}
+
+async function configureExternalAgentConnection(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) {
+  if (kind !== 'codex') throw new Error('不支持的外部代理')
+  const settings = await readSettings()
+  const existingConfiguration = settings.externalAgents?.[kind]
+  const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
+  const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
+  const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && targetBaseUrl !== existingBaseUrl ? await readLocalCodexConfig().catch(() => null) : null
+  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const apiKey = configuration?.apiKey?.trim()
+    || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
+    || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
+  const nextConfiguration = {
+    ...existingConfiguration,
+    ...configuration,
+    executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
+    apiKey: apiKey || ''
+  }
+  if (nextConfiguration.mode === 'hosted') {
+    if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
+    nextConfiguration.baseUrl = targetBaseUrl
+    try {
+      const discovered = await discoverAvailableModels(targetBaseUrl, nextConfiguration.apiKey, '无法读取当前服务的模型列表')
+      nextConfiguration.baseUrl = discovered.baseUrl
+      if (discovered.models.length && (targetBaseUrl !== existingBaseUrl || !discovered.models.some(model => model.id === nextConfiguration.model))) {
+        nextConfiguration.model = discovered.models[0].id
+        nextConfiguration.reasoningEffort = undefined
+      }
+    } catch (error) {
+      // Model-list support is optional; keep manually supplied IDs usable offline.
+      if (!nextConfiguration.model?.trim()) throw error
+    }
+    if (!nextConfiguration.model?.trim()) throw new Error('服务没有返回可用模型，请手动输入模型 ID')
+    const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
+    reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
+  }
+  const current = await readSettings()
+  const next: AgentSettings = {
+    ...current,
+    codingBackend: kind,
+    externalAgents: { ...current.externalAgents, [kind]: nextConfiguration }
+  }
+  const saved = await saveAgentSettings(next)
+  return configureExternalAgentProvider(kind, saved)
+}
+
+async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {
+  const configured = (await readSettings()).externalAgents?.codex ?? {}
+  const status = await detectInstalledCodex(configured)
+  const local = configured.mode === 'hosted' ? null : await readLocalCodexConfig()
+  const connection = local ?? {
+    home: app.getPath('userData'), model: configured.model ?? '',
+    baseUrl: configured.baseUrl, hasApiKey: Boolean(configured.apiKey),
+    contextWindow: configured.modelContextWindows?.[configured.model ?? ''],
+    autoCompactTokenLimit: configured.modelAutoCompactTokenLimits?.[configured.model ?? ''],
+    reasoningEffort: configured.reasoningEffort
+  }
+  try {
+    if (configured.mode === 'hosted') {
+      if (!configured.apiKey?.trim()) throw new Error('无法读取已保存的 API Key，请重新填写并保存')
+      const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表')
+      return { ...connection, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
+    }
+    const models = await listAvailableAgentModels('codex', configured)
+    return { ...connection, status, models: models.map(model => model.id) }
+  } catch (error) {
+    // Detection and editing stay available offline. Never disguise a failed
+    // provider lookup by falling back to the unrelated built-in GPT catalog.
+    return { ...connection, status, models: [], modelsError: error instanceof Error ? error.message : '无法读取模型列表' }
+  }
 }
 
 async function permanentlyDeleteProjectDirectory(projectPath: string): Promise<ProjectInfo[]> {
@@ -4092,37 +4225,58 @@ async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
   if (credentials.provider === 'custom') {
     try { models = await quotaModelsForCredentials(credentials, force) }
     catch { models = [] }
-    if (!models.some((entry) => entry.id === credentials.model)) models = [{ id: credentials.model! }, ...models]
+    if (!models.some((entry) => entry.id === credentials.model)) {
+      await modelImageCapabilities.load()
+      models = [{ id: credentials.model!, imageInput: modelImageCapabilities.resolve(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, credentials.model!) }, ...models]
+    }
   } else models = await quotaModelsForCredentials(credentials, force)
   if (models.length) await reconcileQuotaModelPreferences(credentials, false, models)
   return models
 }
 
-async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
+async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<{ baseUrl: string; models: AiModelInfo[] }> {
   await modelReasoningCatalog.refresh()
-  const endpoints = [`${baseUrl}/models`, `${baseUrl}/model`]
-  for (const [index, endpoint] of endpoints.entries()) {
-    let response: Response
-    try {
-      response = await fetch(endpoint, {
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-        signal: AbortSignal.timeout(20_000)
-      })
-    } catch {
-      throw new Error(errorMessage)
-    }
-    if (!response.ok) {
-      if (response.status === 404 && index < endpoints.length - 1) continue
-      throw new Error(errorMessage)
-    }
-    let payload: unknown
-    try { payload = await response.json() as unknown } catch { throw new Error('模型服务返回了无效数据') }
-    const models = modelReasoningCatalog.enrich(parseModelPayload(payload), baseUrl)
-    scannedModelCapabilities.set(quotaPreferenceKey(baseUrl, apiKey), { checkedAt: Date.now(), models })
-    if (models.length) return models
-    if (index === endpoints.length - 1) return []
+  const normalized = normalizeApiBaseUrl(baseUrl)
+  const url = new URL(normalized)
+  const bases = [normalized]
+  if (!/\/v\d+(?:beta\d*)?$/i.test(url.pathname.replace(/\/$/, ''))) {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/v1`
+    bases.push(url.toString().replace(/\/$/, ''))
   }
-  return []
+  let empty: { baseUrl: string; models: AiModelInfo[] } | undefined
+  let invalidPayload = false
+  for (const candidate of bases) {
+    for (const suffix of ['models', 'model']) {
+      const endpoint = new URL(candidate)
+      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/${suffix}`
+      let response: Response
+      try {
+        response = await fetch(endpoint.toString(), {
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+          signal: AbortSignal.timeout(20_000)
+        })
+      } catch { throw new Error(errorMessage) }
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 405) continue
+        // Authentication, quota and server failures are not missing route errors.
+        throw new Error(`${errorMessage}（HTTP ${response.status}）`)
+      }
+      let payload: unknown
+      try { payload = await response.json() as unknown } catch { invalidPayload = true; continue }
+      const models = await modelImageCapabilities.enrich(modelReasoningCatalog.enrich(parseModelPayload(payload), candidate), candidate, apiKey)
+      if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
+      for (const keyBase of new Set([normalized, candidate])) {
+        scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
+      }
+      return { baseUrl: candidate, models }
+    }
+  }
+  if (empty) return empty
+  throw new Error(invalidPayload ? '模型服务返回了无效数据' : errorMessage)
+}
+
+async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
+  return (await discoverAvailableModels(baseUrl, apiKey, errorMessage)).models
 }
 
 function normalizeCodingPath(value: string, _allowBuildScriptChanges = true, _allowWrapperConfiguration = true, project: ProjectInfo = requireProject()): string {
@@ -5775,10 +5929,11 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const captures = await requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest)
       return {...captures, review: await reviewAssetCaptures(captures.captures, input.referenceHeightToWidth as number | undefined)}
     },
-    runtimeState: async () => requireMinecraftRuntime().getState(),
+    runtimeState: async () => ({ ...requireMinecraftRuntime().getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
     javaHomeScan: () => scanConfiguredJavaHomes(),
     javaHomeProbe: (home) => probeJavaHomeInfo(home),
-    appSettingsRead: async () => publicAgentSettings(await readSettings()),
+    appSettingsRead: readAgentSettingsWithCapabilities,
+    modelImageCapability: async input => modelImageCapabilityOperation((await readSettings()).codingBackend, input.model, input.verify === true),
     appSettingsWrite: (input) => applyAppSettingWrite(input),
     modpackPlan: async (concept) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
@@ -6419,6 +6574,16 @@ async function runExternalCodingAgent(
   const inspirationFeatures = surface === 'inspiration' ? normalizeInspirationFeatures(context.inspirationFeatures) : undefined
   const savedExternalConfiguration = settings.externalAgents?.[externalBackend] ?? {}
   const runExternalConfiguration = savedExternalConfiguration
+  const localCodexConfig = !usesQuota && runExternalConfiguration.mode !== 'hosted'
+    ? await readLocalCodexConfig().catch(() => null) : null
+  const localCodexModel = runExternalConfiguration.model || localCodexConfig?.model
+  const localCodexContextWindow = runExternalConfiguration.modelContextWindows?.[localCodexModel ?? '']
+    ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.contextWindow : undefined)
+  const localCodexManualCompactLimit = runExternalConfiguration.modelAutoCompactTokenLimits?.[localCodexModel ?? '']
+    ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.autoCompactTokenLimit : undefined)
+  const localCodexAutoCompactLimit = localCodexModel
+    ? resolveCodexAutoCompactTokenLimit(localCodexModel, { baseUrl: localCodexConfig?.baseUrl, contextWindow: localCodexContextWindow, allowLongerContext: settings.allowLongerContext }, localCodexManualCompactLimit)
+    : undefined
   let executionUsage: import('../shared/types').AiTokenUsage | undefined
   const safetyReviewerConfig: AiReviewerConfig = { reviewMode: 'codex-auto' }
   let codexSetup: Awaited<ReturnType<typeof prepareCodex>> | undefined
@@ -6647,7 +6812,7 @@ async function runExternalCodingAgent(
       ...(!usesQuota && runExternalConfiguration.model ? { model: runExternalConfiguration.model, reasoningEffort: runExternalConfiguration.reasoningEffort, ...(runExternalConfiguration.mode === 'hosted' ? { modelProvider: 'thirdparty' } : {}) } : {}),
       ...(!usesQuota && runExternalConfiguration.mode !== 'hosted' ? { providerConfig: {
         ...(runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ? { model_context_window: runExternalConfiguration.modelContextWindows[runExternalConfiguration.model ?? ''] } : {}),
-        ...(runExternalConfiguration.modelAutoCompactTokenLimits?.[runExternalConfiguration.model ?? ''] ? { model_auto_compact_token_limit: runExternalConfiguration.modelAutoCompactTokenLimits[runExternalConfiguration.model ?? ''] } : {})
+        ...(localCodexAutoCompactLimit !== undefined ? { model_auto_compact_token_limit: localCodexAutoCompactLimit } : {})
       } } : {}),
       ...(usesQuota ? {
         liveConfiguration: quotaConfiguration,
@@ -7292,10 +7457,11 @@ async function runExternalCodingAgent(
           const captures = await requireBlockbenchForProject(project).captureViews(input as unknown as BlockbenchCaptureRequest)
           return {...captures, review: await reviewAssetCaptures(captures.captures, input.referenceHeightToWidth as number | undefined)}
         },
-        runtimeState: async () => runtime.getState(),
+        runtimeState: async () => ({ ...runtime.getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
         javaHomeScan: () => scanConfiguredJavaHomes(),
         javaHomeProbe: (home) => probeJavaHomeInfo(home),
-        appSettingsRead: async () => publicAgentSettings(await readSettings()),
+        appSettingsRead: readAgentSettingsWithCapabilities,
+        modelImageCapability: input => modelImageCapabilityOperation(backend, input.model, input.verify === true),
         appSettingsWrite: (input) => applyAppSettingWrite(input)
         ,imageGenerate: async (input) => {
           const generated = await generateStudioImage(input, 'agent')
@@ -8213,14 +8379,7 @@ function registerIpc(): void {
   diagnosticHandle('project:current', () => currentProject)
   diagnosticHandle('modpack:get', () => readModpackManifest(requireProject()))
   const packImportControllers = new Map<string, AbortController>()
-  diagnosticHandle('modpack:importStatus', async () => {
-    const state = await readCurseForgePackState(requireProject().path)
-    const report = await fs.readFile(path.join(requireProject().path, '.modmind/import/artifact-report.json'), 'utf8').then(text => JSON.parse(text) as { warnings: string[] }).catch(() => ({ warnings: [] }))
-    return state ? { total: state.files.length, installed: state.files.filter(file => file.status === 'installed').length,
-      compatibilityWarnings: report.warnings,
-      requiredPending: state.files.filter(file => file.required && file.status !== 'installed').length,
-      failures: state.files.filter(file => file.status !== 'installed').map(file => ({ projectId: file.projectID, fileId: file.fileID, path: file.file?.path, required: file.required, error: file.error })) } : null
-  })
+  diagnosticHandle('modpack:importStatus', () => readModpackImportStatus(requireProject()))
   diagnosticHandle('modpack:cancelImport', () => { packImportControllers.get(requireProject().path)?.abort(); return undefined })
   diagnosticHandle('modpack:resumeImport', async () => {
     const project = requireProject()
@@ -9318,6 +9477,7 @@ function registerIpc(): void {
     const configuration = settings.externalAgents?.[backend] ?? {}
     return listAvailableAgentModels(backend, configuration)
   })
+  diagnosticHandle('ai:verifyImageInput', (_event, backend: AgentSettings['codingBackend'], model: string) => modelImageCapabilityOperation(backend, model, true))
   diagnosticHandle('inspiration:readKnowledge', async (_event, projectPath: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在')
@@ -9598,44 +9758,8 @@ function registerIpc(): void {
       detectInstalledCodex(configured)
     ])
   })
-  diagnosticHandle('external-agents:scanLocal', async () => {
-    const settings = await readSettings()
-    const configured = settings.externalAgents?.codex
-    const detected = await detectInstalledCodex(configured)
-    const local = await readLocalCodexConfig()
-    const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
-    return { status: detected, ...local, models: [...new Set([...models, ...local.models, ...(configured?.mode !== 'hosted' && configured?.model ? [configured.model] : [])])] }
-  })
-  diagnosticHandle('external-agents:configure', async (_event, kind: ExternalAgentKind, configuration: NonNullable<AgentSettings['externalAgents']>[ExternalAgentKind]) => {
-    if (kind !== 'codex') throw new Error('不支持的外部代理')
-    const settings = await readSettings()
-    const existingConfiguration = settings.externalAgents?.[kind]
-    const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
-    const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
-    const native = configuration?.mode === 'hosted' ? await readLocalCodexConfig() : null
-    const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
-    const apiKey = configuration?.apiKey?.trim()
-      || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
-      || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
-    const nextConfiguration = {
-      ...existingConfiguration,
-      ...configuration,
-      executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
-      apiKey: apiKey || ''
-    }
-    const next: AgentSettings = {
-      ...settings,
-      externalAgents: {...settings.externalAgents, [kind]: nextConfiguration}
-    }
-    if (nextConfiguration.mode === 'hosted') {
-      if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
-      await refreshConfiguredReasoning(kind, nextConfiguration)
-      const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
-      reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
-    }
-    const saved = await saveAgentSettings(next)
-    return configureExternalAgentProvider(kind, saved)
-  })
+  diagnosticHandle('external-agents:scanLocal', () => scanConfiguredCodex())
+  diagnosticHandle('external-agents:configure', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => configureExternalAgentConnection(kind, configuration))
   diagnosticHandle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
     if (kind !== 'codex') throw new Error('不支持的外部代理')
     const project = aiProjectContext.getStore() ?? currentProject

@@ -38,7 +38,7 @@ import type { JavaPreferences, DetectedJavaHome, LoaderKind, ProjectInfo } from 
 import { isJavaLoader, isServerPluginPlatform, platformLabel } from '../shared/projectPlatform'
 import { findPluginArtifact } from './serverPluginService'
 import { buildMavenPlugin } from './mavenBuild'
-import { isForgeJavaProvisioningFailure, isGradleNetworkFailure } from './gradleFailure'
+import { isForgeJavaProvisioningFailure, isGradleBuildStarted, isGradleDistributionFailure, isGradleJavaToolchainFailure, isGradleNetworkFailure } from './gradleFailure'
 import { readModpackManifest, readModpackModuleProject, syncModpackOverrides, syncReloadableKubeJsScripts, assertModpackDependenciesReady } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { buildJavaRangeForProject, gradleVersionForProject, javaRuntimeTargetForJavaVersion, javaRuntimeTargetForMinecraft, javaVersionForMinecraft } from './loaderCompatibility'
@@ -53,7 +53,7 @@ import { prepareLoaderApiTestPolicy } from './loaderApiTestPolicy'
 import { diagnosticJournal } from './diagnosticLog'
 import { verifiedDownload } from './downloadService'
 import { downloadActivities } from './downloadActivityService'
-import { describeProcessTermination, MANAGED_GRADLE_BUILD_ARGUMENTS, normalizeProcessExitCode } from './gradleProcess'
+import { describeProcessTermination, gradleDistributionDownloadUrl, gradleRunDirectory, MANAGED_GRADLE_BUILD_ARGUMENTS, normalizeProcessExitCode } from './gradleProcess'
 import { isMissingFileError, isTransientFileLockError, lockedFileReadError, retryTransientFileLock } from './fileLockRetry'
 import {
   BMCLAPI_BASE_URL,
@@ -306,6 +306,11 @@ function summarizeGradleFailure(logText: string): string {
     const requirements = detectToolchainRequirements(logText)
     const requested = requirements.javaMajors.length ? `（日志要求 Java ${requirements.javaMajors.join('、')}）` : ''
     return `Forge/Mavenizer 无法准备项目所需的 JDK${requested}。ModMind 已尝试自动下载并配置；请检查网络代理或下载源\n${lines.filter(Boolean).slice(-8).join('\n')}`
+  }
+  if (isGradleJavaToolchainFailure(logText)) {
+    const requirements = detectToolchainRequirements(logText)
+    const requested = requirements.javaMajors.length ? `JDK ${requirements.javaMajors.join('、')}` : '项目要求的 JDK'
+    return `Gradle 找不到可用于编译的${requested}。请在 ModMind 的 Java 设置中选择包含 javac 的 JDK，或检查自动配置的 JDK 是否可用。\n${lines.filter(Boolean).slice(-8).join('\n')}`
   }
   if (isGradleNetworkFailure(logText)) {
     return '项目 Gradle Wrapper 无法取得配置的 Gradle 分发包。请检查 gradle/wrapper/gradle-wrapper.properties、网络或代理设置'
@@ -1363,22 +1368,46 @@ export class MinecraftRuntimeManager {
     if (project.kind === 'modpack') return { skipped: true, success: true, summary: '整合包没有统一的 Gradle 运行任务；请使用客户端启动测试' }
     if (this.process || this.verificationProcess || this.buildPromise) throw new Error('已有 Minecraft、构建或验证任务正在运行')
     await this.authorizeBuild?.(project)
+    return this.testGradleTaskAttempt(project, candidates, stableWindowMs, signal, 0, 0)
+  }
+
+  private async testGradleTaskAttempt(project: ProjectInfo, candidates: string[], stableWindowMs: number, signal: AbortSignal | undefined, toolchainRetryAttempt: number, distributionRetryAttempt: number): Promise<GradleVerificationResult> {
+    if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
+    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project)
     const env = this.gradleEnvironment(runtime)
+    if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
     const taskList = this.spawnGradle(runtime, project, ['tasks', '--all', '--console=plain', '--no-daemon'], env)
+    this.verificationProcess = taskList
+    const abortTaskList = (): void => this.killProcessTree(taskList)
+    signal?.addEventListener('abort', abortTaskList, { once: true })
+    if (signal?.aborted) abortTaskList()
     let taskOutput = ''
     taskList.stdout.on('data', (chunk: Buffer) => { if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
     taskList.stderr.on('data', (chunk: Buffer) => { if (taskOutput.length < 2_000_000) taskOutput += chunk.toString('utf8') })
-    const taskExit = await new Promise<number>((resolve, reject) => {
-      taskList.once('error', reject)
-      taskList.once('exit', (code) => resolve(code ?? 1))
+    let taskSpawnError = ''
+    taskList.once('error', (error) => { taskSpawnError = `${error.name}: ${error.message}` })
+    const taskExit = await new Promise<number>((resolve) => {
+      taskList.once('close', (code) => resolve(normalizeProcessExitCode(code) ?? 1))
     })
-    if (taskExit !== 0) throw new Error(`无法读取 Gradle 任务：${summarizeGradleFailure(taskOutput)}`)
+    signal?.removeEventListener('abort', abortTaskList)
+    this.verificationProcess = null
+    if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
+    if (taskExit !== 0) {
+      const recovered = await this.retryGradleVerification(project, taskOutput, signal, toolchainRetryAttempt, distributionRetryAttempt)
+      if (recovered) return this.testGradleTaskAttempt(project, candidates, stableWindowMs, signal, recovered.toolchainRetryAttempt, recovered.distributionRetryAttempt)
+      throw new Error(`无法读取 Gradle 任务${taskSpawnError ? `：Wrapper 启动失败：${taskSpawnError}` : `：${summarizeGradleFailure(taskOutput)}`}`)
+    }
     const task = candidates.find((candidate) => new RegExp(`^${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'm').test(taskOutput))
     if (!task) return { skipped: true, success: true, summary: `项目没有提供 ${candidates.join(' / ')} 任务` }
 
-    await fs.mkdir(path.join(project.path, 'run'), { recursive: true })
-    await fs.writeFile(path.join(project.path, 'run', 'eula.txt'), 'eula=true\n', 'utf8')
+    // Loom uses run for both sides; Forge/NeoForge templates use separate directories.
+    for (const directory of new Set(['run', gradleRunDirectory(task)])) {
+      const runDirectory = path.join(project.path, directory)
+      await fs.mkdir(runDirectory, { recursive: true })
+      await fs.writeFile(path.join(runDirectory, 'eula.txt'), 'eula=true\n', 'utf8')
+    }
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     await fs.mkdir(logDirectory, { recursive: true })
     const logPath = path.join(logDirectory, `${task}-${Date.now()}.log`)
@@ -1395,14 +1424,16 @@ export class MinecraftRuntimeManager {
       const text = chunk.toString('utf8')
       log.write(text)
       output = `${output}${text}`.slice(-200_000)
-      if (/Done \([\d.]+s\)!|For help, type "help"|Server started|Dedicated server took/i.test(text)) readyAt ||= Date.now()
+      if (/Done \([\d.]+s\)!|For help, type "help"|Server started|Dedicated server took/i.test(output)) readyAt ||= Date.now()
       const line = text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean).at(-1)
       if (line) this.emit('testing-server', line, level, false)
     }
     child.stdout.on('data', (chunk: Buffer) => capture(chunk, 'info'))
     child.stderr.on('data', (chunk: Buffer) => capture(chunk, 'warning'))
     let exitCode: number | null = null
-    child.once('exit', (code) => { exitCode = code ?? 1 })
+    let spawnError = ''
+    child.once('error', (error) => { spawnError = `${error.name}: ${error.message}` })
+    child.once('close', (code) => { exitCode = normalizeProcessExitCode(code) ?? 1 })
     const abort = (): void => this.killProcessTree(child)
     signal?.addEventListener('abort', abort, { once: true })
     const deadline = Date.now() + (stableWindowMs ? 150_000 : 10 * 60_000)
@@ -1411,7 +1442,7 @@ export class MinecraftRuntimeManager {
       if (stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs) break
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
-    const reachedStableWindow = Boolean(stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs)
+    const reachedStableWindow = Boolean(exitCode === null && stableWindowMs && readyAt && Date.now() - readyAt >= stableWindowMs)
     if (exitCode === null) this.killProcessTree(child)
     const stopDeadline = Date.now() + 5_000
     while (exitCode === null && Date.now() < stopDeadline) await new Promise((resolve) => setTimeout(resolve, 100))
@@ -1423,9 +1454,27 @@ export class MinecraftRuntimeManager {
       this.emit('idle', `${task} 验证通过`)
       return { task, skipped: false, success: true, summary: reachedStableWindow ? `服务端就绪后稳定运行 ${Math.round(stableWindowMs / 1000)} 秒` : `${task} 执行成功`, logPath }
     }
-    const detail = summarizeGradleFailure(output)
+    if (exitCode !== null && exitCode !== 0) {
+      const recovered = await this.retryGradleVerification(project, output, signal, toolchainRetryAttempt, distributionRetryAttempt)
+      if (recovered) return this.testGradleTaskAttempt(project, candidates, stableWindowMs, signal, recovered.toolchainRetryAttempt, recovered.distributionRetryAttempt)
+    }
+    const detail = spawnError ? `无法启动 Gradle Wrapper：${spawnError}` : summarizeGradleFailure(output)
     this.emit('error', `${task} 验证失败`, 'error')
     return { task, skipped: false, success: false, summary: detail || (exitCode === null ? `${task} 超时` : `${task} 退出代码 ${exitCode}`), logPath }
+  }
+
+  private async retryGradleVerification(project: ProjectInfo, logText: string, signal: AbortSignal | undefined, toolchainRetryAttempt: number, distributionRetryAttempt: number): Promise<{ toolchainRetryAttempt: number; distributionRetryAttempt: number } | null> {
+    if (signal?.aborted) return null
+    if (toolchainRetryAttempt < 4 && await this.ensureDetectedBuildToolchains(logText, project)) {
+      this.emit('testing-server', '已根据验证日志补齐工具链，正在重试 Gradle 任务', 'warning')
+      return { toolchainRetryAttempt: toolchainRetryAttempt + 1, distributionRetryAttempt }
+    }
+    if (distributionRetryAttempt < 2 && isGradleNetworkFailure(logText)) {
+      this.emit('testing-server', 'Gradle 分发包下载源暂时不可用，正在切换备用源重试', 'warning')
+      await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+      return { toolchainRetryAttempt, distributionRetryAttempt: distributionRetryAttempt + 1 }
+    }
+    return null
   }
 
   async syncProjectMod(): Promise<MinecraftManagedMod | null> {
@@ -1623,7 +1672,7 @@ export class MinecraftRuntimeManager {
     return this.buildPromise
   }
 
-  private async buildProjectInternal(signal?: AbortSignal, retryAttempt = 0): Promise<MinecraftManagedMod> {
+  private async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt = 0, distributionRetryAttempt = 0): Promise<MinecraftManagedMod> {
     const project = this.requireProject()
     if (this.process && this.state.running) {
       throw new Error('Minecraft 测试实例正在运行。请先停止测试再构建，避免覆盖正在加载的项目 JAR')
@@ -1659,7 +1708,7 @@ export class MinecraftRuntimeManager {
     }
     await this.prepareProjectDependencies?.(project, signal)
     await this.prepareGradleMavenFallback(project)
-    await this.prepareGradleWrapperDownload(project, retryAttempt)
+    await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
@@ -1695,7 +1744,7 @@ export class MinecraftRuntimeManager {
       if (recentLines.length > 60) recentLines.splice(0, recentLines.length - 60)
       const visible = lines.at(-1)
       if (visible) this.emit('building-mod', visible, level, false)
-      const downloadUrl = text.match(/Downloading\s+(https?:\/\/[^\s\r\n]+)/i)?.[1]
+      const downloadUrl = gradleDistributionDownloadUrl(text)
       if (downloadUrl && !gradleDownloadActivityId) {
         const fileName = decodeURIComponent(new URL(downloadUrl).pathname.split('/').at(-1) || 'Gradle distribution')
         gradleDownloadActivityId = downloadActivities.start({ label: fileName, detail: 'Gradle Wrapper' })
@@ -1709,25 +1758,28 @@ export class MinecraftRuntimeManager {
     this.buildProcess = null
     signal?.removeEventListener('abort', abortBuild)
     await new Promise<void>((resolve) => log.end(resolve))
+    const fullLog = gradleDownloadActivityId || termination.code !== 0 ? await fs.readFile(logPath, 'utf8').catch(() => recentLines.join('\n')) : ''
     if (gradleDownloadActivityId) {
-      if (termination.code === 0) downloadActivities.complete(gradleDownloadActivityId)
-      else downloadActivities.fail(gradleDownloadActivityId, recentLines.at(-1) || `Gradle ${describeProcessTermination(termination.code, termination.signal)}`)
+      if (isGradleDistributionFailure(fullLog)) downloadActivities.fail(gradleDownloadActivityId, summarizeGradleFailure(fullLog))
+      else if (isGradleBuildStarted(fullLog)) downloadActivities.complete(gradleDownloadActivityId, 'Gradle 分发包已下载')
+      else if (aborted) downloadActivities.fail(gradleDownloadActivityId, '构建已取消')
+      else downloadActivities.fail(gradleDownloadActivityId, '无法确认 Gradle Wrapper 已成功启动')
     }
     if (aborted) throw Object.assign(new Error('构建已取消'), { name: 'AbortError' })
     if (spawnError) throw new Error(`无法启动 Gradle Wrapper：${spawnError}\nJava: ${javaPath}\nWrapper: ${runtime.executable}\n工作目录：${project.path}`)
     if (termination.code !== 0) {
-      const fullLog = await fs.readFile(logPath, 'utf8').catch(() => recentLines.join('\n'))
-      if (!aborted && retryAttempt < 4) {
+      if (!aborted && toolchainRetryAttempt < 4) {
         const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project)
         if (toolchainsPrepared) {
           this.emit('building-mod', '已根据构建日志补齐工具链，正在重试原构建任务', 'warning')
-          return this.buildProjectInternal(signal, retryAttempt + 1)
+          return this.buildProjectInternal(signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
         }
       }
       const detail = summarizeGradleFailure(fullLog)
-      if (!aborted && retryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
+      if (!aborted && distributionRetryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
         this.emit('building-mod', 'Gradle 下载源暂时不可用，正在切换备用源重试', 'warning')
-        return this.buildProjectInternal(signal, retryAttempt + 1)
+        await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+        return this.buildProjectInternal(signal, toolchainRetryAttempt, distributionRetryAttempt + 1)
       }
       throw new Error(`Gradle 构建失败（${describeProcessTermination(termination.code, termination.signal)}）${detail ? `\n${detail}` : ''}\n完整日志：${logPath}`)
     }
@@ -1808,9 +1860,9 @@ export class MinecraftRuntimeManager {
     }
   }
 
-  private async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, retryAttempt = 0): Promise<void> {
+  private async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolchainRetryAttempt = 0, distributionRetryAttempt = 0): Promise<void> {
     await this.prepareGradleMavenFallback(project)
-    await this.prepareGradleWrapperDownload(project, retryAttempt, signal)
+    await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
@@ -1839,7 +1891,7 @@ export class MinecraftRuntimeManager {
       log.write(text)
       const line = text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean).at(-1)
       if (line) this.emit('building-mod', line, level, false)
-      const downloadUrl = text.match(/Downloading\s+(https?:\/\/[^\s\r\n]+)/i)?.[1]
+      const downloadUrl = gradleDistributionDownloadUrl(text)
       if (downloadUrl && !gradleDownloadActivityId) {
         const fileName = decodeURIComponent(new URL(downloadUrl).pathname.split('/').at(-1) || 'Gradle distribution')
         gradleDownloadActivityId = downloadActivities.start({ label: fileName, detail: 'Gradle Wrapper' })
@@ -1853,24 +1905,27 @@ export class MinecraftRuntimeManager {
     this.buildProcess = null
     signal?.removeEventListener('abort', abort)
     await new Promise<void>((resolve) => log.end(resolve))
+    const fullLog = gradleDownloadActivityId || termination.code !== 0 ? await fs.readFile(logPath, 'utf8').catch(() => output) : ''
     if (gradleDownloadActivityId) {
-      if (termination.code === 0) downloadActivities.complete(gradleDownloadActivityId)
-      else downloadActivities.fail(gradleDownloadActivityId, output.trim().split(/\r?\n/).at(-1) || `Gradle ${describeProcessTermination(termination.code, termination.signal)}`)
+      if (isGradleDistributionFailure(fullLog)) downloadActivities.fail(gradleDownloadActivityId, summarizeGradleFailure(fullLog))
+      else if (isGradleBuildStarted(fullLog)) downloadActivities.complete(gradleDownloadActivityId, 'Gradle 分发包已下载')
+      else if (aborted) downloadActivities.fail(gradleDownloadActivityId, '构建已取消')
+      else downloadActivities.fail(gradleDownloadActivityId, '无法确认 Gradle Wrapper 已成功启动')
     }
     if (aborted) throw Object.assign(new Error('构建已取消'), { name: 'AbortError' })
     if (spawnError) throw new Error(`无法启动 Gradle Wrapper：${spawnError}\nJava: ${javaPath}\nWrapper: ${runtime.executable}`)
     if (termination.code !== 0) {
-      const fullLog = await fs.readFile(logPath, 'utf8').catch(() => output)
-      if (!aborted && retryAttempt < 4) {
+      if (!aborted && toolchainRetryAttempt < 4) {
         const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project)
         if (toolchainsPrepared) {
           this.emit('building-mod', '已根据构建日志补齐工具链，正在重试原构建任务', 'warning')
-          return this.runGradleBuild(project, signal, retryAttempt + 1)
+          return this.runGradleBuild(project, signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
         }
       }
-      if (!aborted && retryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
+      if (!aborted && distributionRetryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
         this.emit('building-mod', 'Gradle 下载源暂时不可用，正在切换备用源重试', 'warning')
-        return this.runGradleBuild(project, signal, retryAttempt + 1)
+        await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+        return this.runGradleBuild(project, signal, toolchainRetryAttempt, distributionRetryAttempt + 1)
       }
       throw new Error(`自制 Mod 构建失败（${describeProcessTermination(termination.code, termination.signal)}）\n${summarizeGradleFailure(fullLog)}\n完整日志：${logPath}`)
     }

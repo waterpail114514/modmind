@@ -21,9 +21,15 @@ describe('settings definition compatibility', () => {
     const result = findSettingsSections(new Set(settingsSections.map(section => section.id)), 'general', query)
     expect(result.visibleSections.map(section => section.id)).toEqual(['settings-ai'])
   })
+  it.each(['更长上下文', '超长上下文', '272K'])('finds the long-context option from %s', query => {
+    const result = findSettingsSections(new Set(settingsSections.map(section => section.id)), 'general', query)
+    expect(result.visibleSections.map(section => section.id)).toEqual(['settings-ai'])
+  })
   it('preserves category and section IDs, order, labels, descriptions and search keywords', () => {
     expect(settingsCategories).toEqual(baseline.settings.categories)
-    expect(settingsSections.filter(section => section.id !== 'settings-authors')).toEqual(baseline.settings.sections)
+    const originalKeywords = ' 更长上下文 超长上下文 256K 272K 消费'
+    expect(settingsSections.filter(section => section.id !== 'settings-authors').map(section => section.id === 'settings-ai'
+      ? { ...section, keywords: section.keywords.replace(originalKeywords, '') } : section)).toEqual(baseline.settings.sections)
   })
 
   it('finds the author credits by name and contribution', () => {

@@ -12,7 +12,7 @@ for (const provider of Object.values(providers)) for (const [id, limit] of Objec
   byModel.set(id, entries)
 }
 
-export interface ModelBudgetOptions { baseUrl?: string; contextWindow?: number }
+export interface ModelBudgetOptions { baseUrl?: string; contextWindow?: number; allowLongerContext?: boolean }
 export interface ModelContextBudget {
   contextWindow: number
   autoCompactTokenLimit: number
@@ -23,6 +23,8 @@ export interface ModelContextBudget {
 }
 
 export const UNKNOWN_MODEL_CONTEXT = 524_288
+// Leave room for the next turn before providers' 272K input pricing boundary.
+export const STANDARD_AUTO_COMPACT_LIMIT = 256_000
 
 interface FamilyCandidate { model: string; provider: string; family: ModelFamily; limit: Limit }
 const familyCandidates = new Map<string, FamilyCandidate[]>()
@@ -101,7 +103,8 @@ export function resolveModelContextBudget(model: string, options: ModelBudgetOpt
   const output = limits.length ? Math.max(...limits.map(limit => limit[2] ?? 8192)) : 8192
   const reserve = Math.min(output, Math.floor(contextWindow / 2))
   const input = options.contextWindow !== undefined ? contextWindow : Math.min(contextWindow, ...limits.map(limit => limit[1] ?? limit[0]))
-  const autoCompactTokenLimit = Math.max(1, Math.floor(Math.min(contextWindow * 0.9, input * 0.9, contextWindow - reserve) * 0.95))
+  const calculatedLimit = Math.max(1, Math.floor(Math.min(contextWindow * 0.9, input * 0.9, contextWindow - reserve) * 0.95))
+  const autoCompactTokenLimit = options.allowLongerContext ? calculatedLimit : Math.min(calculatedLimit, STANDARD_AUTO_COMPACT_LIMIT)
   return {
     contextWindow, autoCompactTokenLimit,
     source: options.contextWindow !== undefined ? 'override' : providerLimits.length ? 'provider' : inferred ? 'inferred' : limits.length ? 'registry' : 'fallback',

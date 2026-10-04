@@ -155,7 +155,8 @@ export interface ExternalAgentBridgeHandlers {
   runtimeState: () => Promise<unknown>
   javaHomeScan?: () => Promise<unknown>
   javaHomeProbe?: (home: string) => Promise<unknown>
-  appSettingsRead?: () => Promise<unknown>
+  appSettingsRead?: (model?: string) => Promise<unknown>
+  modelImageCapability?: (input: { model: string; verify?: boolean }) => Promise<unknown>
   appSettingsWrite?: (input: Record<string, unknown>) => Promise<unknown>
   modpackPlan?: (concept: Record<string, unknown>) => Promise<unknown>
   modpackApplyPlan?: (plan: Record<string, unknown>) => Promise<unknown>
@@ -1542,11 +1543,12 @@ const tools = [
   {name:'modmind_asset_preview_reference', description:'Build, render, validate, and visually score a reference-image Mesh candidate without keeping the temporary project.', inputSchema:{type:'object',additionalProperties:false,required:['program'],properties:{expectedRevision:{type:'string',pattern:'^sha256:[a-f0-9]{64}$'},capture:{type:'object'},program:referenceAssetProgramSchema}}, annotations:readOnlyLocal},
   {name:'modmind_asset_apply_reference', description:'Apply a reference-image silhouette as a native editable Blockbench Mesh.', inputSchema:{type:'object',additionalProperties:false,required:['program'],properties:{expectedRevision:{type:'string',pattern:'^sha256:[a-f0-9]{64}$'},program:referenceAssetProgramSchema}}, annotations:managedAction},
   {name:'modmind_asset_visual_review', description:'Capture the current model and score framing, occupancy, contrast, edge density, symmetry, clipping, cross-view consistency, and optional reference silhouette proportions.', inputSchema:{type:'object',additionalProperties:false,properties:{views:{type:'array',minItems:1,maxItems:6,items:{type:'string'}},width:{type:'integer',minimum:128,maximum:1024},height:{type:'integer',minimum:128,maximum:1024},referenceHeightToWidth:{type:'number',minimum:0.2,maximum:8}}}, annotations:readOnlyLocal},
-  {name:'modmind_runtime_state', description:'Read the current isolated Minecraft test runtime state and recent events.', inputSchema:{type:'object',properties:{}}, annotations:readOnlyLocal},
+  {name:'modmind_runtime_state', description:'Read the current isolated Minecraft test runtime state and recent events. Modpacks also return modpackImport with installed counts, pending dependencies and original-pack compatibility warnings; import success does not prove gameplay compatibility.', inputSchema:{type:'object',properties:{}}, annotations:readOnlyLocal},
   {name:'modmind_scan_java_homes', description:'Scan this machine for installed Java runtimes and return each home with its major version. Use the homes with modmind_set_app_setting javaPreferences (game/build/tools) or leave empty for ModMind automatic management.', inputSchema:{type:'object',additionalProperties:false,properties:{}}, annotations:readOnlyLocal},
   {name:'modmind_probe_java_home', description:'Validate one Java home (or bin/java path) and report {valid, major}. Read-only; runs java -version under the hood.', inputSchema:{type:'object',additionalProperties:false,required:['home'],properties:{home:{type:'string',minLength:1}}}, annotations:readOnlyLocal},
-  {name:'modmind_get_app_settings', description:'Read ModMind application settings including javaPreferences (game/build/tools Java homes; empty means automatic) and gradleDownloadSource.', inputSchema:{type:'object',additionalProperties:false,properties:{}}, annotations:readOnlyLocal},
-  {name:'modmind_set_app_setting', description:"Update one ModMind application setting. key javaPreferences takes value {game,build,tools} Java home paths (empty restores automatic; unusable versions fall back to managed runtimes). Other keys: darkMode, notificationsEnabled, allowBuildScriptChanges, preferLocalGradle (boolean), closeBehavior, gradleDownloadSource.", inputSchema:{type:'object',additionalProperties:false,required:['key'],properties:{key:{type:'string',enum:['javaPreferences','darkMode','notificationsEnabled','allowBuildScriptChanges','preferLocalGradle','closeBehavior','gradleDownloadSource']},value:{}}}, annotations:managedAction},
+  {name:'modmind_get_app_settings', description:'Read ModMind application settings including javaPreferences and gradleDownloadSource, plus modelCapabilities for configured connections. Optional model queries an exact model ID on those connections. imageInput distinguishes provider declarations, accepted image requests, successful visual probes, explicit image rejection and unknown; cached evidence can expire. This is read-only and never sends a paid probe. Unknown does not mean unsupported.', inputSchema:{type:'object',additionalProperties:false,properties:{model:{type:'string',minLength:1,maxLength:256}}}, annotations:readOnlyLocal},
+  {name:'modmind_model_image_capability', description:'Read image capability evidence for an exact model ID on this workspace connection. Set verify=true ONLY when the user requests a billed image capability check: it sends a random color-grid image using the current connection, and confirms recognition from the answer. Does not send project images or change settings. A wrong answer or network error does not prove lack of vision. Without verify this only reads cached evidence.', inputSchema:{type:'object',additionalProperties:false,properties:{model:{type:'string',minLength:1,maxLength:256},verify:{type:'boolean',default:false}},required:['model']}, annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:false,openWorldHint:true}},
+  {name:'modmind_set_app_setting', description:"Update one ModMind application setting. key javaPreferences takes value {game,build,tools} Java home paths (empty restores automatic; unusable versions fall back to managed runtimes). Boolean keys include allowLongerContext (may increase cost; false compacts automatically at 256K unless a manual threshold is set), darkMode, notificationsEnabled, allowBuildScriptChanges, preferLocalGradle. Other keys: closeBehavior, gradleDownloadSource.", inputSchema:{type:'object',additionalProperties:false,required:['key'],properties:{key:{type:'string',enum:['javaPreferences','darkMode','notificationsEnabled','allowBuildScriptChanges','allowLongerContext','preferLocalGradle','closeBehavior','gradleDownloadSource']},value:{}}}, annotations:managedAction},
   {name:'modmind_image_generate', description:'Generate or edit through the same Image Studio entry point, saved credentials and model as the UI. Read modmind_image_studio_info for presets and optionally models. Supports every generation parameter; model is a per-request override. Never requires separate agent credentials. Each output records a project path and, up to 8 MiB, a dataUrl for processing or Blockbench.', inputSchema:${JSON.stringify(imageGenerationInputSchema)}, annotations:managedAction}
 ];
 const imageTools = [
@@ -1736,6 +1738,7 @@ input.on('line', async (line) => {
       modmind_scan_java_homes: 'scan_java_homes',
       modmind_probe_java_home: 'probe_java_home',
       modmind_get_app_settings: 'get_app_settings',
+      modmind_model_image_capability: 'model_image_capability',
       modmind_set_app_setting: 'set_app_setting',
       modmind_image_studio_info: 'image_studio_info',
       modmind_image_generate: 'image_generate',
@@ -2306,7 +2309,7 @@ export class ModMindBridge {
       if (this.readOnly && body.action && (isReadOnlyActionDenied(body.action, this.inspirationFeatures) || body.action.startsWith('test_') || body.action === 'creation_context' && !['state', 'read'].includes(String(input.operation)))) {
         throw new Error(`只读灵感台禁止调用 ${body.action}，请改用读取类工具完成分析`)
       }
-      if (body.action && REVIEWED_ACTIONS.has(body.action) && this.handlers.reviewAction) {
+      if (body.action && (REVIEWED_ACTIONS.has(body.action) || body.action === 'model_image_capability' && input.verify === true) && this.handlers.reviewAction) {
         const decision = await this.handlers.reviewAction(body.action, input)
         if (!decision.approved) {
           const denials = (this.reviewDenials.get(body.action) ?? 0) + 1
@@ -2690,7 +2693,14 @@ export class ModMindBridge {
         }
         case 'get_app_settings': {
           if (!this.handlers.appSettingsRead) throw new Error('app settings are unavailable')
-          value = await this.handlers.appSettingsRead()
+          if (input.model !== undefined && (typeof input.model !== 'string' || !input.model.trim() || input.model.length > 256)) throw new Error('model must be a non-empty ID of at most 256 characters')
+          value = await this.handlers.appSettingsRead(input.model as string | undefined)
+          break
+        }
+        case 'model_image_capability': {
+          if (!this.handlers.modelImageCapability) throw new Error('Image capability verification is unavailable')
+          if (typeof input.model !== 'string' || !input.model.trim() || input.model.length > 256 || (input.verify !== undefined && typeof input.verify !== 'boolean')) throw new Error('Invalid model image capability request')
+          value = await this.handlers.modelImageCapability({ model: input.model, ...(input.verify !== undefined ? { verify: input.verify } : {}) })
           break
         }
         case 'set_app_setting': {

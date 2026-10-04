@@ -2,16 +2,16 @@ import { createHash } from 'node:crypto'
 import { createReadStream, type Dirent } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ModpackImportSource, ModpackLocalModule, ModpackManagedMod, ModpackManifest, ModpackModuleSide, ProjectInfo } from '../shared/types'
+import type { ModpackImportSource, ModpackImportStatus, ModpackLocalModule, ModpackManagedMod, ModpackManifest, ModpackModuleSide, ProjectInfo } from '../shared/types'
 import { isJavaLoader } from '../shared/projectPlatform'
 import { createStoredZip } from './bedrockAddon'
 import { MODPACK_LOCK_FILE, auditModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { isSafeModJarFileName, safeModJarFileName } from './modpackFilename'
 import { isRemoteModpackContent, readManagedModpackContent, registerImportedPackContent } from './modpackContentInventoryService'
-import { reconcileCurseForgePack } from './curseForgePackService'
+import { readCurseForgePackState, reconcileCurseForgePack } from './curseForgePackService'
 import { readImportedModrinthFiles } from './modpackImportService'
 import { resolveImportedModrinthIdentity } from './modrinthImportIdentity'
-import { validateRuntimeModArtifact } from './modpackArtifactValidation'
+import { hasConnectorBridge, validateRuntimeModArtifact } from './modpackArtifactValidation'
 import { excludesModsFromOverrides, modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
 
 export const MODPACK_MANIFEST = 'modmind.pack.json'
@@ -276,11 +276,31 @@ export async function assertModpackDependenciesReady(project: ProjectInfo): Prom
 export async function auditImportedPackArtifacts(project: ProjectInfo): Promise<string[]> {
   const manifest = await readModpackManifest(project)
   const warnings: string[] = []
-  for (const mod of manifest.mods) warnings.push(...await validateRuntimeModArtifact(path.join(modpackModsRoot(project, manifest), mod.fileName), project.loader, mod.fileName, true))
+  const artifacts = manifest.mods.map(mod => path.join(modpackModsRoot(project, manifest), mod.fileName))
+  const connectorBridge = await hasConnectorBridge(artifacts, project.loader)
+  for (const [index, mod] of manifest.mods.entries()) warnings.push(...await validateRuntimeModArtifact(artifacts[index], project.loader, mod.fileName, true, connectorBridge))
   const target = path.join(project.path, '.modmind', 'import', 'artifact-report.json')
   await fs.mkdir(path.dirname(target), { recursive: true })
-  await fs.writeFile(target, JSON.stringify({ checked: manifest.mods.length, warnings }, null, 2), 'utf8')
+  await fs.writeFile(target, JSON.stringify({ checked: manifest.mods.length, connectorBridge, warnings }, null, 2), 'utf8')
   return warnings
+}
+
+export async function readModpackImportStatus(project: ProjectInfo): Promise<ModpackImportStatus | null> {
+  if (!isModpackProject(project)) return null
+  const state = await readCurseForgePackState(project.path)
+  const report = await fs.readFile(path.join(project.path, '.modmind', 'import', 'artifact-report.json'), 'utf8')
+    .then(text => JSON.parse(text) as { checked: number; warnings: string[] }).catch(() => null)
+  const compatibilityWarnings = report?.warnings ?? []
+  if (state) return {
+    total: state.files.length, installed: state.files.filter(file => file.status === 'installed').length,
+    requiredPending: state.files.filter(file => file.required && file.status !== 'installed').length,
+    failures: state.files.filter(file => file.status !== 'installed').map(file => ({
+      projectId: file.projectID, fileId: file.fileID, path: file.file?.path, required: file.required, error: file.error
+    })), compatibilityWarnings
+  }
+  if (!report) return null
+  const manifest = await readModpackManifest(project)
+  return { total: manifest.mods.length, installed: manifest.mods.length, requiredPending: manifest.source?.unresolvedDependencies ?? 0, failures: [], compatibilityWarnings }
 }
 
 function safeJarFileName(filePath: string): string {
@@ -400,6 +420,7 @@ async function collectPackEntries(root: string, prefix: string, include: (relati
 
 function isInstanceOverride(relative: string): boolean {
   const top = relative.split('/')[0].toLowerCase()
+  if (top === 'mods') return !/\.jar$/i.test(relative)
   return !['.modmind', '.git', 'mods', 'modules', 'logs', 'crash-reports', 'saves', 'screenshots', 'assets', 'libraries', 'versions', 'natives', 'downloads', 'build', 'out', 'run'].includes(top)
     && !['modmind.project.json', 'modmind.pack.json', 'modrinth.index.json', 'manifest.json', 'minecraftinstance.json', 'modlist.html', 'instance.cfg', 'mmc-pack.json'].includes(top)
 }

@@ -851,6 +851,8 @@ export interface JavaPreferences {
 
 export interface AgentSettings {
   codingBackend: CodingBackend
+  /** Permits automatic context compaction beyond the standard 256K budget. */
+  allowLongerContext?: boolean
   /** Historical storage key; applies to both workbench engines, never inspiration or external terminals. */
   codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
@@ -898,6 +900,7 @@ export interface LocalCodexScan {
   autoCompactTokenLimit?: number
   reasoningEffort?: string
   models: string[]
+  modelsError?: string
 }
 
 export interface ExternalAgentProviderSetup {
@@ -911,6 +914,23 @@ export interface AiModelInfo {
   id: string
   ownedBy?: string
   reasoning?: ModelReasoningCapabilities
+  imageInput?: ModelImageCapability
+}
+
+export interface ModelImageCapability {
+  status: 'supported' | 'unsupported' | 'unknown'
+  source: 'provider' | 'request' | 'probe' | 'unknown'
+  checkedAt?: number
+  protocol?: 'responses' | 'chat-completions'
+  /** Opaque endpoint/account/model identity, never credentials. */
+  scope?: string
+}
+
+export interface ModelImageVerification {
+  model: string
+  imageInput: ModelImageCapability
+  verified: boolean
+  reason?: string
 }
 
 export interface ModelReasoningCapabilities {
@@ -1606,6 +1626,7 @@ export interface ModMindApi {
   production: ProductionApi
   inspiration: {
     listModels: (backend: CodingBackend) => Promise<AiModelInfo[]>
+    verifyImageInput: (backend: CodingBackend, model: string) => Promise<ModelImageVerification>
     readEvidence: (projectPath: string, input: import('./inspirationEvidence').InspirationEvidenceRequest) => Promise<import('./inspirationEvidence').InspirationEvidence>
     readKnowledge: (projectPath: string) => Promise<import('./inspirationKnowledge').InspirationNote[]>
     onKnowledgeChanged: (listener: (event: { projectPath: string; notes: import('./inspirationKnowledge').InspirationNote[] }) => void) => () => void

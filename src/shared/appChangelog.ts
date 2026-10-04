@@ -14,6 +14,32 @@ export interface AppChangelogSnapshot {
 // These notes ship with the app so the first launch works fully offline.
 export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
+    version: '1.4.18',
+    sections: [
+      { title: '修复', items: [
+        '修复使用 Connector 的整合包导入兼容性判断，识别兼容桥并保留原包中的相关模组，避免错误拦截和误导提示。'
+      ] }
+    ]
+  },
+  {
+    version: '1.4.17',
+    sections: [
+      { title: '改进', items: [
+        '新增「更长上下文」设置，默认将自动整理阈值控制在 256K 以内；需要时可启用更长上下文，并保留手动设置。',
+        '完善 Gradle 构建和服务端验证的工具链补齐、下载源切换与取消处理，并提供更准确的 JDK 缺失提示。'
+      ] },
+      { title: '修复', items: [
+        '修复部分模型线路无法正确接收工具返回图片的问题，并根据当前线路的能力信息和验证结果更新识图状态。',
+        '修复余额不足或缓存中的冻结状态阻止使用上游免费模型线路的问题，实际可用性以服务端响应为准。',
+        '修复会话重连后重复显示工具准备、会话恢复和项目分析状态的问题。',
+        '修复 JDK 或编译失败被误判为 Gradle 下载失败的问题，避免反复切换下载源和错误的下载状态。',
+        '修复 Forge / NeoForge 服务端验证的运行目录处理，以及进程提前退出仍可能被判定为稳定运行的问题。',
+        '修复包含内嵌模组描述的 NeoForge Connector 等引导组件被误判为无效 Mod 的问题。',
+        '补齐 Windows 安装包内的自动更新配置，并校验更新清单、安装包与内置 Gradle Wrapper，修复旧包缺少更新配置导致检查更新失败的问题。'
+      ] }
+    ]
+  },
+  {
     version: '1.4.16',
     sections: [
       { title: '修复', items: [
@@ -31,7 +57,6 @@ export const APP_CHANGELOG: AppChangelogRelease[] = [
     ]
   },
   {
-    // Draft from the working-tree diff against 34bdbbd, including new source files.
     version: '1.4.14',
     sections: [
       { title: '新增', items: [

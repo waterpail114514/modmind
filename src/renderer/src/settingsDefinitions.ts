@@ -10,7 +10,7 @@ export const settingsSections = [
   { id: 'settings-appearance', category: 'general', keywords: '外观 主题 配色 颜色 ModMind 默认 中性 暖砂 青绿 石墨 深色模式 暗色模式 浅色模式 自定义 背景 图片 视频 本地 手动 调色 强调色 可见度 模糊 壁纸 dark theme wallpaper' },
   { id: 'settings-sidebar-order', category: 'general', keywords: '外观 侧边栏编辑 侧边栏顺序 侧栏排序 显示 隐藏 入口 分类 大类 分组 创建 新建 删除 重命名 名称 移动 撤销 重置侧栏 恢复默认布局 sidebar' },
   { id: 'settings-notifications', category: 'general', keywords: '通知 关闭窗口 系统托盘 最小化 后台 任务完成通知 notification' },
-  { id: 'settings-ai', category: 'ai', keywords: 'AI 模型 Codex Base URL API Key 思考强度 推理 快速模式 Fast 模式 model 上下文 窗口 上限 手动 自动 压缩 阈值 context token compaction 512K' },
+  { id: 'settings-ai', category: 'ai', keywords: 'AI 模型 Codex Base URL API Key 思考强度 推理 快速模式 Fast 模式 model 上下文 窗口 上限 手动 自动 压缩 阈值 context token compaction 512K 更长上下文 超长上下文 256K 272K 消费' },
   { id: 'settings-image', category: 'ai', keywords: '图片模型 图像服务 自定义图像 API Key Base URL 模型 额度 图像工坊 image' },
   { id: 'settings-approval', category: 'ai', keywords: '执行审批 审批模式 权限 沙箱 自动审批 手动审批 YOLO Codex 工作台' },
   { id: 'settings-java', category: 'development', keywords: 'Java JDK 游戏运行时 Minecraft Gradle 构建 JDK 编译 内置工具 JAVA_HOME' },

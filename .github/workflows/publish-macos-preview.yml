@@ -24,7 +24,7 @@ jobs:
         run: |
           [[ "$RUN_ID" =~ ^[0-9]+$ ]]
           gh api "repos/$GH_REPO/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
-          jq -e '.conclusion == "success" and .path == ".github/workflows/build-macos.yml" and .head_branch == "main" and .event != "pull_request"' "$RUNNER_TEMP/run.json"
+          jq -e '.conclusion == "success" and .path == ".github/workflows/build-macos.yml" and (.head_branch == "main" or .head_branch == "1.4") and .event != "pull_request"' "$RUNNER_TEMP/run.json"
           echo "sha=$(jq -r .head_sha "$RUNNER_TEMP/run.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:

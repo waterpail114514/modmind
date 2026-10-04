@@ -405,7 +405,7 @@
 .modpack-bulk-bar { display: flex; align-items: center; gap: 10px; min-height: 40px; margin-top: 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--surface-alt); font-size: var(--type-support); }
 .modpack-bulk-bar label { display: inline-flex; align-items: center; gap: 6px; color: var(--text, var(--theme-text)); white-space: nowrap; }
 .modpack-bulk-bar > span { flex: 1; }
-.modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto auto; gap: 9px; padding: 0 2px; }
+.modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: max-content; gap: 9px; padding: 0 2px; }
 .modpack-dependencies { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; color: var(--text-muted); }
 .modpack-dependency { display: inline-flex; align-items: center; gap: 2px; }
 .modpack-dependency a { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); text-decoration: none; }
@@ -428,20 +428,20 @@
 .app-shell.dark-mode .modpack-bulk-bar label { color: var(--dark-text); }
 .app-shell.dark-mode .modpack-audit-errors { border-color: var(--theme-danger); color: var(--theme-danger); background: var(--theme-surface); }
 .app-shell.dark-mode .secondary-button.danger { color: var(--theme-danger); border-color: var(--theme-danger); }
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .modpack-mod-list-toolbar { align-items: stretch; flex-direction: column; gap: 12px; }
   .modpack-mod-list-actions { justify-content: flex-end; }
   .modpack-list-tools { flex-wrap: wrap; }
   .modpack-list-search { flex-basis: 100%; }
   .modpack-bulk-bar { align-items: flex-start; flex-wrap: wrap; }
   .modpack-bulk-bar > span { flex-basis: 100%; order: 3; }
-  .modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+  .modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr); }
   .modpack-row.modpack-mod-row .modpack-lock-state { display: none; }
 }
 .app-shell.dark-mode .modpack-mod-list-summary > div { border-color: var(--line); background: var(--surface); }
 .app-shell.dark-mode .modpack-mod-list-section + .modpack-mod-list-section { border-color: var(--line); }
 .app-shell.dark-mode .modpack-mod-list-notice { border-color: var(--theme-line); color: var(--theme-warning); background: var(--theme-surface); }
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .modpack-mod-list-summary, .modpack-mod-list-groups { grid-template-columns: 1fr; padding-inline: 16px; }
   .modpack-mod-list-section, .modpack-mod-list-section + .modpack-mod-list-section { padding: 20px 0 0; border-left: 0; }
   .modpack-mod-list-notice { margin-inline: 16px; }
@@ -4918,6 +4918,7 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .settings-page .codex-connection-settings .external-agent-editor-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .settings-page .codex-connection-settings .external-agent-editor-form > .field-label:first-child { grid-column: auto; }
 .settings-page .local-codex-settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.settings-page .local-codex-settings > * { grid-column: 1 / -1; }
 .settings-page .local-codex-settings .beginner-ai-preferences { margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .settings-page .local-codex-settings .model-context-setting { grid-column: 1; }
 .settings-page .local-codex-settings .reasoning-options { flex-wrap: wrap; overflow: visible; }
@@ -4949,6 +4950,7 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .beginner-reasoning-control > .reasoning-capability-control { display: grid; padding: 0; border: 0; background: transparent; }
 .agent-settings-row > .reasoning-capability-control { display: grid; }
 .settings-page .model-context-setting .settings-actions { grid-column: 1 / -1; justify-content: flex-end; }
+.settings-page .model-context-longer { margin-top: 12px; font-weight: 400; }
 .settings-page #settings-ai .field-label, .settings-page #settings-ai .beginner-model-control > span, .settings-page #settings-ai .beginner-reasoning-control > span { font-weight: 600; }
 .settings-page #settings-ai .reasoning-options button { font-weight: 500; }
 .settings-page .model-context-setting > [role='alert'] { margin: 0; font-size: 12px; color: var(--theme-danger); }
@@ -4986,6 +4988,7 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
   .settings-page .settings-section { padding-inline: 16px; scroll-margin-top: 148px; }
   .settings-page .settings-index { padding-inline: 16px; gap: 2px 14px; }
   .settings-page .settings-form, .settings-page .image-service-form, .settings-page .beginner-ai-preferences, .settings-page .external-agent-editor-form { grid-template-columns: minmax(0, 1fr); }
+  .settings-page .codex-connection-settings .external-agent-editor-form { grid-template-columns: minmax(0, 1fr); }
   .settings-page .external-agent-row { align-items: flex-start; flex-direction: column; padding-block: 12px; gap: 8px; }
   .settings-page .external-agent-row-actions { align-self: flex-end; }
 }

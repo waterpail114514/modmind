@@ -18,6 +18,7 @@ export type WorkbenchTimelineItem = {
   streamId?: string
   eventId?: string
   stage?: string
+  connectionActivity?: string
   sequence?: number
   status?: 'running' | 'done' | 'warning' | 'error'
   terminal?: boolean
@@ -102,7 +103,38 @@ export function isWorkbenchInternalPrompt(content: string): boolean {
 }
 
 export function normalizeWorkbenchTimeline(items: WorkbenchTimelineItem[]): WorkbenchTimelineItem[] {
-  return orderTimeline(items.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content))))
+  const result: WorkbenchTimelineItem[] = []
+  const connections = new Map<string, number>()
+  for (const item of orderTimeline(items.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content))))) {
+    const key = connectionActivityIdentity(item)
+    const index = key ? connections.get(key) : undefined
+    if (index !== undefined) result[index] = mergeConnectionActivity(result[index], item)
+    else {
+      if (key) connections.set(key, result.length)
+      result.push(item)
+    }
+  }
+  return result
+}
+
+// Reconnects repeat these host lifecycle messages; domain steps remain separate.
+function connectionActivity(item: Pick<WorkbenchTimelineItem, 'kind' | 'content' | 'connectionActivity'>): string | undefined {
+  if (item.connectionActivity) return item.connectionActivity
+  if (item.kind === 'start') return `start:${item.content}`
+  if (item.kind !== 'thinking' && item.kind !== 'tool') return undefined
+  const title = item.content.split('\n')[0]
+  return ['正在准备工具', 'Codex 已恢复会话', 'Codex 正在分析项目'].includes(title) ? title : undefined
+}
+
+function connectionActivityIdentity(item: WorkbenchTimelineItem): string | undefined {
+  const activity = connectionActivity(item)
+  const turn = item.turnId ?? item.runId
+  return activity && turn ? JSON.stringify([turn, activity]) : undefined
+}
+
+function mergeConnectionActivity(previous: WorkbenchTimelineItem, incoming: WorkbenchTimelineItem): WorkbenchTimelineItem {
+  if (previous.sequence !== undefined && incoming.sequence !== undefined && previous.sequence >= incoming.sequence) return previous
+  return { ...previous, ...incoming, id: previous.id, time: previous.time }
 }
 
 function mergeStreamingText(current: string, incoming: string): string {
@@ -308,6 +340,8 @@ export function reduceWorkbenchOutput(
     const settled = event.kind === 'retry'
       ? current.map((item) => item.kind === 'response' && item.status === 'running' && sameOutputTurn(item, event) ? { ...item, status: 'done' as const } : item)
       : current
+    if (event.kind === 'start' && (event.turnId || event.runId || event.sessionId)
+      && settled.some(item => item.kind === 'start' && sameOutputTurn(item, event) && item.content === content)) return settled
     return orderTimeline([...settled, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, status: event.kind === 'retry' ? 'warning' : 'done', ...(event.kind === 'retry' ? { terminal: false, recoverable: true } : {}) }])
   }
   const kind: WorkbenchTimelineItem['kind'] = event.kind === 'tool' ? 'tool' : event.kind === 'warning' ? 'warning' : event.kind === 'error' ? 'error' : 'status'
@@ -342,14 +376,25 @@ export function reduceWorkbenchProgress(
     kind,
     content,
     time: event.time,
-    runId: event.runId,
+    runId: event.runId ?? event.sessionId,
     turnId: event.turnId,
     sequence: event.sequence,
+    eventId: event.eventId,
+    connectionActivity: connectionActivity({ kind, content: event.title }),
     stage: event.stage,
     ...(event.changedFiles ? { changedFiles: event.changedFiles } : {}),
     status,
     ...(event.terminal !== undefined ? { terminal: event.terminal } : {}),
     ...(event.recoverable !== undefined ? { recoverable: event.recoverable } : {})
+  }
+  const connectionKey = connectionActivityIdentity(item)
+  const connectionIndex = connectionKey ? currentItems.findIndex(candidate => connectionActivityIdentity(candidate) === connectionKey) : -1
+  if (connectionIndex >= 0) {
+    const previous = items[connectionIndex]
+    if (previous.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return items
+    const next = [...currentItems]
+    next[connectionIndex] = mergeConnectionActivity(previous, item)
+    return orderTimeline(next)
   }
   if (index < 0) {
     // A running stage followed by its terminal update is one lifecycle item;
@@ -370,9 +415,9 @@ export function reduceWorkbenchProgress(
 }
 
 /**
- * Rebuilds the visible timeline from the complete durable journal. This follows
- * the same item-reconciliation rule as Codex/OpenCode: only a matching stream
- * updates an existing projection item; all other records retain their order.
+ * Rebuilds the visible timeline from the complete durable journal. Matching
+ * streams and host connection activities update existing projection
+ * items; domain steps retain their order.
  */
 export function replayWorkbenchEvents(
   view: WorkbenchTimelineItem[],

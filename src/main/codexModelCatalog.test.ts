@@ -5,13 +5,15 @@ import { describe, expect, it } from 'vitest'
 import builtinCatalog from './codexBuiltinModels.json'
 import { CODEX_RUNTIME_VERSION } from './runtimeTarget'
 import { buildCodexModelCatalog, CODEX_MODEL_CATALOG_VERSION, prepareCodexModelCatalog, resolveCodexAutoCompactTokenLimit, THIRD_PARTY_CONTEXT_BUDGET } from './codexModelCatalog'
-import { resolveModelContextBudget } from './modelContextRegistry'
+import { resolveModelContextBudget, STANDARD_AUTO_COMPACT_LIMIT } from './modelContextRegistry'
 
 describe('managed Codex model metadata', () => {
   it('resolves the threshold actually used by native, registered, and overridden models', () => {
     expect(resolveCodexAutoCompactTokenLimit('codex-auto-review', {})).toBe(244800)
-    expect(resolveCodexAutoCompactTokenLimit('gpt-6-sol', {})).toBe(788310)
-    expect(resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 })).toBe(437760)
+    expect(resolveCodexAutoCompactTokenLimit('gpt-6-sol', {})).toBe(STANDARD_AUTO_COMPACT_LIMIT)
+    expect(resolveCodexAutoCompactTokenLimit('gpt-6-sol', { allowLongerContext: true })).toBe(788310)
+    expect(resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 })).toBe(STANDARD_AUTO_COMPACT_LIMIT)
+    expect(resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000, allowLongerContext: true })).toBe(437760)
     expect(resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 }, 200000)).toBe(200000)
     expect(() => resolveCodexAutoCompactTokenLimit('private', { contextWindow: 512000 }, 470000)).toThrow('90%')
   })
@@ -74,7 +76,7 @@ describe('managed Codex model metadata', () => {
   it('uses the refreshed and inferred budgets in actual catalog entries without renaming models', () => {
     for (const model of ['gpt-6-sol', 'gpt-7-sol']) {
       const entry = buildCodexModelCatalog(model)!.models.at(-1)!
-      expect(entry).toMatchObject({ slug: model, context_window: 1050000, auto_compact_token_limit: 788310 })
+      expect(entry).toMatchObject({ slug: model, context_window: 1050000, auto_compact_token_limit: STANDARD_AUTO_COMPACT_LIMIT })
       expect(entry.supports_reasoning_summaries).toBe(false)
     }
     expect(buildCodexModelCatalog('gpt-7-sol')!.models.at(-1)!.description).toContain('Estimated')
@@ -82,11 +84,12 @@ describe('managed Codex model metadata', () => {
   })
 
   it.each([
-    ['gemini-2.5-pro', true], ['google/gemini-2.5-flash', true], ['grok-4', true],
-    ['grok-3', false], ['deepseek-chat', false], ['qwen3-coder', false],
-    ['qwen/qwen2.5-vl-72b-instruct', true], ['unknown-model', false]
-  ])('does not infer vision from text-only family names: %s', (model, image) => {
-    expect(buildCodexModelCatalog(model)!.models.at(-1)!.input_modalities).toEqual(image ? ['text', 'image'] : ['text'])
+    'gpt-6-sol', 'gpt-6-luna', 'claude-opus-5-5', 'anthropic/claude-sonnet-4.6',
+    'gemini-2.5-pro', 'google/gemini-2.5-flash', 'grok-4',
+    'grok-3', 'deepseek-chat', 'qwen3-coder',
+    'qwen/qwen2.5-vl-72b-instruct', 'unknown-model'
+  ])('allows image transport without guessing third-party capabilities from %s', model => {
+    expect(buildCodexModelCatalog(model)!.models.at(-1)!.input_modalities).toEqual(['text', 'image'])
   })
 
   it('isolates model switches, skips identical writes and repairs corrupted catalogs', async () => {

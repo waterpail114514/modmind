@@ -353,7 +353,7 @@ export async function inspectExternalModpack(sourcePath: string): Promise<Extern
     ? await scanFiles(path.join(root, overridesDirectory), (relative) => /^mods\/[^/]+\.jar$/i.test(relative)).then((files) => files.map((relative) => `${overridesDirectory}/${relative}`))
     : await scanFiles(root, (relative) => /^mods\/[^/]+\.jar$/i.test(relative))
   const overrideFiles = (modrinth || archiveLayout)
-    ? (await Promise.all((modrinth ? ['overrides', 'client-overrides', 'server-overrides'] : [overridesDirectory]).map(async (prefix) => (await scanFiles(path.join(root, prefix), (relative) => !/^mods(?:\/|$)/i.test(relative)).catch(() => [])).map((entry) => `${prefix}/${entry}`)))).flat()
+    ? (await Promise.all((modrinth ? ['overrides', 'client-overrides', 'server-overrides'] : [overridesDirectory]).map(async (prefix) => (await scanFiles(path.join(root, prefix), (relative) => !/^mods\/.*\.jar$/i.test(relative)).catch(() => [])).map((entry) => `${prefix}/${entry}`)))).flat()
     : await scanFiles(root, isPackContentFile).then((files) => files.filter((relative) => !/^mods\/[^/]+\.jar$/i.test(relative)))
   if (!localModFiles.length && !remoteFiles.length && !overrideFiles.length && !curseForgeReferences?.length) return null
 

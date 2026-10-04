@@ -5,7 +5,7 @@ import path from 'node:path'
 import extractZip from 'extract-zip'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, removeModpackFile, removeModpackModule, syncModpackOverrides, syncReloadableKubeJsScripts, updateModpackModuleSide } from './modpackService'
+import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, readModpackImportStatus, removeModpackFile, removeModpackModule, syncModpackOverrides, syncReloadableKubeJsScripts, updateModpackModuleSide } from './modpackService'
 import { auditModpackLock, createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { readManagedModpackContent } from './modpackContentInventoryService'
@@ -282,6 +282,7 @@ describe('modpack manifests', () => {
     await fs.mkdir(path.join(info.path, 'overrides', 'mods'), { recursive: true })
     await fs.mkdir(path.join(info.path, 'overrides', 'config'), { recursive: true })
     await fs.writeFile(path.join(info.path, 'overrides', 'mods', 'archive.jar'), bytes)
+    await fs.writeFile(path.join(info.path, 'overrides', 'mods', 'glore_blocks.json'), '{"enabled":true}')
     await fs.writeFile(path.join(info.path, 'overrides', 'config', 'author.toml'), 'enabled=true\n', 'utf8')
 
     const adopted = await adoptExternalModpack(info, { format: 'modrinth', layout: 'archive', importedAt: '2026-08-16T00:00:00.000Z' })
@@ -291,6 +292,8 @@ describe('modpack manifests', () => {
     const copied = await syncModpackOverrides(info, runtime)
     expect(copied).toContain('config/author.toml')
     expect(copied).not.toContain('mods/archive.jar')
+    expect(copied).toContain('mods/glore_blocks.json')
+    await expect(fs.readFile(path.join(runtime, 'mods', 'glore_blocks.json'), 'utf8')).resolves.toContain('enabled')
     await expect(fs.readFile(path.join(runtime, 'config', 'author.toml'), 'utf8')).resolves.toContain('enabled')
 
     const archive = await createModrinthPackArchive(info)
@@ -300,6 +303,19 @@ describe('modpack manifests', () => {
     await extractZip(archivePath, { dir: extracted })
     await expect(fs.readFile(path.join(extracted, 'overrides', 'mods', 'archive.jar'))).resolves.toEqual(bytes)
     await expect(fs.readFile(path.join(extracted, 'overrides', 'config', 'author.toml'), 'utf8')).resolves.toContain('enabled')
+    await expect(fs.readFile(path.join(extracted, 'overrides', 'mods', 'glore_blocks.json'), 'utf8')).resolves.toContain('enabled')
+  })
+
+  it('exposes local Modrinth import warnings without requiring a CurseForge state', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-import-status-'))
+    roots.push(root)
+    const info = project(root)
+    await adoptExternalModpack(info, { format: 'modrinth', layout: 'archive', importedAt: info.createdAt })
+    expect(await readModpackImportStatus(info)).toBeNull()
+    await fs.mkdir(path.join(root, '.modmind', 'import'), { recursive: true })
+    await fs.writeFile(path.join(root, '.modmind', 'import', 'artifact-report.json'), JSON.stringify({ checked: 0, warnings: ['Incompatible NeoForge file'] }))
+    expect(await readModpackImportStatus(info)).toEqual({ total: 0, installed: 0, requiredPending: 0, failures: [], compatibilityWarnings: ['Incompatible NeoForge file'] })
+    expect(await readModpackImportStatus({ ...info, kind: 'mod' })).toBeNull()
   })
 
   it('does not replace a malformed manifest with an empty manifest', async () => {

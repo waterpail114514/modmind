@@ -36,7 +36,8 @@ export function resolveCodexAutoCompactTokenLimit(model: string, options: ModelB
   if (!entry?.context_window) throw new Error(`无法确定模型 ${model} 的自动压缩阈值`)
   // Native entries with a null limit use Codex's 90% default; custom entries
   // already carry ModMind's input/output-aware budget.
-  return entry.auto_compact_token_limit ?? Math.floor(entry.context_window * 0.9)
+  const calculatedLimit = entry.auto_compact_token_limit ?? Math.floor(entry.context_window * 0.9)
+  return options.allowLongerContext ? calculatedLimit : Math.min(calculatedLimit, resolveModelContextBudget(model, options).autoCompactTokenLimit)
 }
 
 export function buildCodexModelCatalog(model: string, options: CatalogOptions = {}) {
@@ -82,9 +83,9 @@ export function buildCodexModelCatalog(model: string, options: CatalogOptions = 
     max_context_window: budget.contextWindow,
     auto_compact_token_limit: budget.autoCompactTokenLimit,
     truncation_policy: { mode: 'tokens', limit: 10_000 },
-    // Family names alone do not imply vision (e.g. deepseek-chat, qwen-coder).
-    input_modalities: /(?:^|\/)(?:gemini-|grok-(?:4|2-vision)|qwen[^/]*-vl(?:-|:|$))/i.test(model)
-      ? ['text', 'image'] : ['text']
+    // This enables transport, not a provider capability claim. Names and aliases
+    // cannot establish lack of vision; let the upstream validate image support.
+    input_modalities: ['text', 'image']
   }
   const reasoningMetadata = options.reasoning ? {
     default_reasoning_level: null,

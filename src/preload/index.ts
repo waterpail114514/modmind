@@ -651,6 +651,7 @@ const api: ModMindApi = {
   ,
   inspiration: {
     listModels: (backend: import('../shared/types').CodingBackend) => invoke('inspiration:listModels', backend),
+    verifyImageInput: (backend: import('../shared/types').CodingBackend, model: string) => invoke('ai:verifyImageInput', backend, model),
     onKnowledgeChanged: listener => {
       const handler = (_event: Electron.IpcRendererEvent, change: Parameters<typeof listener>[0]): void => listener(presentResult(change, 'inspiration:knowledgeChanged'))
       ipcRenderer.on('inspiration:knowledgeChanged', handler)

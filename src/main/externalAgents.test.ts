@@ -25,6 +25,89 @@ const bridges: ModMindBridge[] = []
 const children: ChildProcessWithoutNullStreams[] = []
 
 describe('MC百科 MCP boundary', () => {
+  it('updates and reads the long-context preference through the existing settings tools', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-context-setting-mcp-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Context', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'context', createdAt: '' }
+    let allowLongerContext = false
+    const handlers = {
+      ...stubBridgeHandlers(project),
+      appSettingsRead: async () => ({ allowLongerContext }),
+      appSettingsWrite: async (input: Record<string, unknown>) => {
+        if (input.key !== 'allowLongerContext' || typeof input.value !== 'boolean') throw new Error('Invalid context setting')
+        allowLongerContext = input.value
+        return { allowLongerContext }
+      }
+    }
+    for (const readOnly of [false, true]) {
+      const bridge = new ModMindBridge(project, handlers, 'test', undefined, readOnly)
+      bridges.push(bridge)
+      const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+      const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+      const settingTool = (listed.result as { tools: Array<{ name: string; inputSchema: { properties: { key: { enum: string[] } } } }> }).tools.find(tool => tool.name === 'modmind_set_app_setting')
+      expect(settingTool?.inputSchema.properties.key.enum).toContain('allowLongerContext')
+      const call = (id: number, name: string, args: Record<string, unknown>) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+      const result = await call(2, 'modmind_set_app_setting', { key: 'allowLongerContext', value: true })
+      if (readOnly) {
+        expect(JSON.stringify(result)).toContain('只读')
+      } else {
+        expect(JSON.stringify(result)).toContain('allowLongerContext')
+        expect(allowLongerContext).toBe(true)
+        const readBack = await call(3, 'modmind_get_app_settings', {})
+        expect(JSON.parse((readBack.result as { content: Array<{ text: string }> }).content[0].text)).toEqual({ allowLongerContext: true })
+        const invalid = await call(4, 'modmind_set_app_setting', { key: 'allowLongerContext', value: 'true' })
+        expect((invalid.result as { isError: boolean }).isError).toBe(true)
+      }
+    }
+  })
+
+  it('discovers image capability verification and enforces validation and operation review through real MCP', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-capability-mcp-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Images', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'images', createdAt: '' }
+    const { ModelImageCapabilities } = await import('./modelImageCapabilities')
+    const { verifyModelImageInput } = await import('./modelImageVerification')
+    const sharp = (await import('sharp')).default
+    const cache = new ModelImageCapabilities()
+    const connection = { baseUrl: 'https://fixture.example/v1', apiKey: 'fixture', model: 'private' }
+    const capability = vi.fn(async (input: { model: string; verify?: boolean }) => {
+      if (!input.verify) return { model: input.model, imageInput: cache.resolve(connection.baseUrl, connection.apiKey, input.model) }
+      return verifyModelImageInput({ ...connection, model: input.model }, cache, async body => {
+        const image = (body.input as any[])[0].content.find((part: any) => part.type === 'input_image').image_url
+        const { data, info } = await sharp(Buffer.from(image.split(',')[1], 'base64')).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+        const colors: Record<string, string> = { '255,0,0': 'R', '0,255,0': 'G', '0,0,255': 'B', '255,255,0': 'Y' }
+        const codes = Array.from({ length: 9 }, (_, i) => {
+          const pixel = ((Math.floor(i / 3) * 96 + 48) * info.width + i % 3 * 96 + 48) * info.channels
+          return colors[Array.from(data.subarray(pixel, pixel + 3)).join(',')]
+        })
+        return new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify(codes) }))
+      })
+    })
+    const review = vi.fn(async () => ({ approved: true, complete: true, risk: 'low' as const, dangerousOperations: [], feedback: '' }))
+    const settings = vi.fn(async () => ({ modelCapabilities: [{ model: 'private', imageInput: { status: 'unknown', source: 'unknown' } }] }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), modelImageCapability: capability, appSettingsRead: settings, reviewAction: review }, 'test', undefined, true)
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    expect((listed.result as { tools: Array<{ name: string }> }).tools.some(tool => tool.name === 'modmind_model_image_capability')).toBe(true)
+    const call = (id: number, name: string, args: Record<string, unknown>) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+    expect(JSON.stringify(await call(2, 'modmind_model_image_capability', { model: 'private' }))).toContain('unknown')
+    expect(review).not.toHaveBeenCalled()
+    expect(JSON.stringify(await call(3, 'modmind_model_image_capability', { model: 'private', verify: true }))).toContain('probe')
+    expect(review).toHaveBeenCalledWith('model_image_capability', { model: 'private', verify: true })
+    expect(JSON.stringify(await call(7, 'modmind_model_image_capability', { model: 'private' }))).toContain('probe')
+    await call(4, 'modmind_get_app_settings', { model: 'private' })
+    expect(settings).toHaveBeenCalledWith('private')
+    const invalid = await call(5, 'modmind_model_image_capability', { model: '', verify: 'true' })
+    expect((invalid.result as { isError: boolean }).isError).toBe(true)
+    expect(capability).toHaveBeenCalledTimes(3)
+    review.mockResolvedValueOnce({ approved: false, complete: true, risk: 'low', dangerousOperations: [], feedback: 'No user request to charge a probe' })
+    expect(JSON.stringify(await call(6, 'modmind_model_image_capability', { model: 'private', verify: true }))).toContain('denied')
+    expect(capability).toHaveBeenCalledTimes(3)
+  })
+
   it('creates a draft and keeps research and engineering on the same live bridge', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-guided-bridge-')); temporaryRoots.push(root)
     const project = await createDraftProject(root, '按推荐的配置来')

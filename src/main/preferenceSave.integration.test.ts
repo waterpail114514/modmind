@@ -65,6 +65,7 @@ it('passes the selected quota model override into the runtime catalog', async ()
   let preferences: BeginnerAiPreferences = { model: 'gpt-5.6-sol', reasoningLevel: 'medium', fastMode: false, modelContextWindows: { 'gpt-5.6-sol': 1050000 }, modelAutoCompactTokenLimits: { 'gpt-5.6-sol': 800000 }, reasoningEffortOptions: { 'inspiration-model': ['medium', 'ultra'] } }
   const sandbox = {
     readDeviceCredentials: async () => ({ baseUrl: 'https://relay.example/v1', apiKey: 'fixture' }),
+    readSettings: async () => ({ allowLongerContext: false }),
     quotaModelsForCredentials: async () => [preferences.model, 'inspiration-model'].map(id => ({ id, reasoning: { efforts: ['medium', 'ultra'], source: 'provider', controls: ['effort'] } })),
     reconcileQuotaModelPreferences: vi.fn(async () => preferences),
     readBeginnerAiPreferences: async () => preferences,
@@ -101,6 +102,7 @@ it('passes exact-model thresholds through the configured Codex route', async () 
   const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'configuredCodexServerConfig')!
   const sandbox = {
     normalizeApiBaseUrl: (url: string) => url,
+    readSettings: async () => ({ allowLongerContext: false }),
     refreshConfiguredReasoning: async () => undefined,
     modelReasoningFor: () => ({ efforts: [] }),
     reasoningSelectionEffort, normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, selectedReasoningEfforts, codexReasoningCapabilities,
