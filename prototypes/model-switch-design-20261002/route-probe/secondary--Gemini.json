@@ -1,0 +1,13 @@
+{
+  "checkedAt": "2026-10-02T04:03:03.450Z",
+  "account": "secondary",
+  "group": "Gemini",
+  "endpoint": "https://wawapii.com/v1/models",
+  "modelCount": 4,
+  "modelIds": [
+    "gemini-3.1-pro-preview",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash"
+  ]
+}

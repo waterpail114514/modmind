@@ -34,6 +34,7 @@ export interface CodexServerConfig {
   reasoningCapabilities?: ModelReasoningCapabilities
   contextWindow?: number
   autoCompactTokenLimit?: number
+  allowLongerContext?: boolean
   /** Original provider address before routing through the local protocol adapter. */
   upstreamBaseUrl?: string
 }
@@ -149,7 +150,7 @@ function validateConfig(value: unknown): CodexServerConfig {
   const contextWindow = record.contextWindow as number | undefined
   const autoCompactTokenLimit = record.autoCompactTokenLimit as number | undefined
   validateCodexAutoCompactTokenLimit(model, { baseUrl: upstreamBaseUrl ?? baseUrl, contextWindow }, autoCompactTokenLimit)
-  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow, autoCompactTokenLimit, upstreamBaseUrl}
+  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow, autoCompactTokenLimit, allowLongerContext: record.allowLongerContext === true, upstreamBaseUrl}
 }
 
 function codexConfigText(config: CodexServerConfig, modelCatalogPath: string | undefined, autoCompactTokenLimit: number): string {
@@ -175,7 +176,7 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath: string | u
 }
 
 async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const options = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities }
+  const options = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities, allowLongerContext: config.allowLongerContext }
   const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, options)
   const autoCompactTokenLimit = resolveCodexAutoCompactTokenLimit(config.model, options, config.autoCompactTokenLimit)
   const desired = codexConfigText(config, catalog.path, autoCompactTokenLimit)

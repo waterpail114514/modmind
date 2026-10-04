@@ -36,7 +36,7 @@ export type RemoteAppAction =
   | { type: 'close_app' }
   | { type: 'set_workbench_agent'; agent: AgentSettings['codingBackend'] }
   | { type: 'set_workbench_model'; model: string }
-  | { type: 'set_app_setting'; key: 'darkMode' | 'closeBehavior' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'preferLocalGradle' | 'gradleDownloadSource' | 'javaPreferences'; value: boolean | string | Record<string, unknown> }
+  | { type: 'set_app_setting'; key: 'darkMode' | 'closeBehavior' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'allowLongerContext' | 'preferLocalGradle' | 'gradleDownloadSource' | 'javaPreferences'; value: boolean | string | Record<string, unknown> }
   | { type: 'get_app_settings' }
   | { type: 'scan_java_homes' }
   | { type: 'probe_java_home'; home: string }
@@ -161,7 +161,7 @@ const REMOTE_APP_ACTION_CATALOG = [
   '{"type":"close_app"}',
   '{"type":"set_workbench_agent","agent":"quota|codex"}',
   '{"type":"set_workbench_model","model":"<model id>"}',
-  '{"type":"set_app_setting","key":"darkMode|notificationsEnabled|allowBuildScriptChanges|preferLocalGradle","value":true|false}',
+  '{"type":"set_app_setting","key":"darkMode|notificationsEnabled|allowBuildScriptChanges|allowLongerContext|preferLocalGradle","value":true|false}',
   '{"type":"set_app_setting","key":"closeBehavior","value":"ask|tray|quit"}',
   '{"type":"set_app_setting","key":"gradleDownloadSource","value":"auto|china|official"}',
   '{"type":"set_app_setting","key":"javaPreferences","value":{"game":"<java home>","build":"<java home>","tools":"<java home>"}}',
@@ -247,8 +247,8 @@ function appAction(value: unknown, index: number): RemoteAppAction {
       return { type, model }
     }
     case 'set_app_setting': {
-      const key = String(item.key) as 'darkMode' | 'closeBehavior' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'preferLocalGradle' | 'gradleDownloadSource' | 'javaPreferences'
-      if (!['darkMode', 'closeBehavior', 'notificationsEnabled', 'allowBuildScriptChanges', 'preferLocalGradle', 'gradleDownloadSource', 'javaPreferences'].includes(key)) throw new Error(`不支持的应用设置：${key}`)
+      const key = String(item.key) as 'darkMode' | 'closeBehavior' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'allowLongerContext' | 'preferLocalGradle' | 'gradleDownloadSource' | 'javaPreferences'
+      if (!['darkMode', 'closeBehavior', 'notificationsEnabled', 'allowBuildScriptChanges', 'allowLongerContext', 'preferLocalGradle', 'gradleDownloadSource', 'javaPreferences'].includes(key)) throw new Error(`不支持的应用设置：${key}`)
       if (key === 'javaPreferences') {
         if (typeof item.value !== 'object' || item.value === null || Array.isArray(item.value)) throw new Error('Java 偏好需要对象值')
       } else if (typeof item.value !== 'boolean' && typeof item.value !== 'string') throw new Error(`应用设置 ${key} 的值无效`)

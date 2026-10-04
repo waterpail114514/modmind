@@ -29,6 +29,7 @@ export function normalizeQuotaModelPreferences(value: unknown, fallback: Beginne
   const selectedLevel = reasoningLevel(record.reasoningLevel, model, record.reasoningEffort, fallback.reasoningLevel)
   return {
     model,
+    ...(typeof record.account === 'string' && /^(primary|secondary|deepseek|trial:[a-zA-Z0-9._-]{1,128})$/.test(record.account) && (record.billing === 'free') === record.account.startsWith('trial:') ? { account: record.account, billing: record.billing === 'free' ? 'free' as const : 'quota' as const } : {}),
     reasoningLevel: selectedLevel === 'auto' || selectedReasoningEfforts(model, reasoningEffortOptions).includes(selectedLevel) ? selectedLevel : 'auto',
     fastMode: typeof record.fastMode === 'boolean' ? record.fastMode : fallback.fastMode,
     ...(modelContextWindows ? { modelContextWindows } : {}),

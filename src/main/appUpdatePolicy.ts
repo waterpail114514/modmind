@@ -61,12 +61,10 @@ export function decideAppUpdate(currentVersion: string, latestVersion: string): 
   if (!current || !latest) return null
 
   let updateAvailable = false
-  if (latest.channel === 'stable' && current.channel === 'beta') {
-    // Leaving the beta channel is always allowed, even when its numeric version is higher.
-    updateAvailable = true
-  } else if (latest.channel === 'beta' && current.channel === 'stable') {
+  if (latest.channel === 'beta' && current.channel === 'stable') {
     updateAvailable = false
   } else {
+    // A prerelease may advance to its stable version, never an older stable release.
     updateAvailable = (compareSemanticAppVersions(latest.raw, current.raw) ?? 0) > 0
   }
 

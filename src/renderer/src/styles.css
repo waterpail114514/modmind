@@ -405,7 +405,7 @@
 .modpack-bulk-bar { display: flex; align-items: center; gap: 10px; min-height: 40px; margin-top: 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--surface-alt); font-size: var(--type-support); }
 .modpack-bulk-bar label { display: inline-flex; align-items: center; gap: 6px; color: var(--text, var(--theme-text)); white-space: nowrap; }
 .modpack-bulk-bar > span { flex: 1; }
-.modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto auto; gap: 9px; padding: 0 2px; }
+.modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: max-content; gap: 9px; padding: 0 2px; }
 .modpack-dependencies { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; color: var(--text-muted); }
 .modpack-dependency { display: inline-flex; align-items: center; gap: 2px; }
 .modpack-dependency a { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); text-decoration: none; }
@@ -428,20 +428,20 @@
 .app-shell.dark-mode .modpack-bulk-bar label { color: var(--dark-text); }
 .app-shell.dark-mode .modpack-audit-errors { border-color: var(--theme-danger); color: var(--theme-danger); background: var(--theme-surface); }
 .app-shell.dark-mode .secondary-button.danger { color: var(--theme-danger); border-color: var(--theme-danger); }
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .modpack-mod-list-toolbar { align-items: stretch; flex-direction: column; gap: 12px; }
   .modpack-mod-list-actions { justify-content: flex-end; }
   .modpack-list-tools { flex-wrap: wrap; }
   .modpack-list-search { flex-basis: 100%; }
   .modpack-bulk-bar { align-items: flex-start; flex-wrap: wrap; }
   .modpack-bulk-bar > span { flex-basis: 100%; order: 3; }
-  .modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+  .modpack-row.modpack-mod-row { grid-template-columns: auto auto minmax(0, 1fr); }
   .modpack-row.modpack-mod-row .modpack-lock-state { display: none; }
 }
 .app-shell.dark-mode .modpack-mod-list-summary > div { border-color: var(--line); background: var(--surface); }
 .app-shell.dark-mode .modpack-mod-list-section + .modpack-mod-list-section { border-color: var(--line); }
 .app-shell.dark-mode .modpack-mod-list-notice { border-color: var(--theme-line); color: var(--theme-warning); background: var(--theme-surface); }
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .modpack-mod-list-summary, .modpack-mod-list-groups { grid-template-columns: 1fr; padding-inline: 16px; }
   .modpack-mod-list-section, .modpack-mod-list-section + .modpack-mod-list-section { padding: 20px 0 0; border-left: 0; }
   .modpack-mod-list-notice { margin-inline: 16px; }
@@ -4949,9 +4949,10 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .beginner-reasoning-control > .reasoning-capability-control { display: grid; padding: 0; border: 0; background: transparent; }
 .agent-settings-row > .reasoning-capability-control { display: grid; }
 .settings-page .model-context-setting .settings-actions { grid-column: 1 / -1; justify-content: flex-end; }
+.settings-page .model-context-longer { grid-column: 1 / -1; margin: 0; padding-block: 4px; font-weight: 400; }
 .settings-page #settings-ai .field-label, .settings-page #settings-ai .beginner-model-control > span, .settings-page #settings-ai .beginner-reasoning-control > span { font-weight: 600; }
 .settings-page #settings-ai .reasoning-options button { font-weight: 500; }
-.settings-page .model-context-setting > [role='alert'] { margin: 0; font-size: 12px; color: var(--theme-danger); }
+.settings-page .model-context-setting > [role='alert'] { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--theme-danger); }
 .settings-page .beginner-ai-preferences { padding: 0; min-height: 0; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px 24px; align-items: start; }
 .settings-page .beginner-model-control > span, .settings-page .beginner-reasoning-control > span { font-size: 13px; margin-bottom: 8px; }
 .settings-page .beginner-model-control > span { cursor: pointer; }

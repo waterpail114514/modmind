@@ -145,7 +145,14 @@
           },
           "referenceImage": {
             "type": "string",
-            "description": "Image data URL for reference-guided editing."
+            "description": "Single image data URL for reference-guided editing. Use either referenceImage or referenceImages."
+          },
+          "referenceImages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered image data URLs used together for each output; count is the output count, not a count per reference. Do not combine with referenceImage."
           }
         }
       },

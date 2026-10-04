@@ -1,0 +1,12 @@
+{
+  "checkedAt": "2026-10-02T04:03:11.037Z",
+  "account": "secondary",
+  "group": "Grok",
+  "endpoint": "https://wawapii.com/v1/models",
+  "modelCount": 3,
+  "modelIds": [
+    "grok-4.5",
+    "grok-4.6",
+    "grok-4.7"
+  ]
+}

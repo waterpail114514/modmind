@@ -32,6 +32,23 @@ function boolean(value: unknown, fallback: boolean, label: string): boolean {
   return value
 }
 
+/** Validate all inputs before generation or hosted credit reservation, in both UI and MCP. */
+export function normalizeImageReferences(value: { referenceImage?: unknown; referenceImages?: unknown }): string[] {
+  const single = text(value.referenceImage, '参考图')
+  if (value.referenceImages !== undefined && !Array.isArray(value.referenceImages)) throw new Error('参考图列表必须是数组')
+  const images = value.referenceImages as unknown[] | undefined
+  if (single && images?.length) throw new Error('referenceImage 和 referenceImages 不能同时提供，请将参考图放入同一个列表')
+  return (images?.length ? Array.from(images) : single ? [single] : []).map(item => {
+    const image = text(item, '参考图')
+    const match = /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(image)
+    if (!match) throw new Error('参考图必须是图片 data URL')
+    const encoded = match[1]
+    const bytes = Math.floor(encoded.length * 3 / 4) - (encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0)
+    if (bytes <= 0 || bytes > 20 * 1024 * 1024) throw new Error('参考图不能为空且不能超过 20 MB')
+    return image
+  })
+}
+
 /** Both IPC and workbench enter Image Studio through this parser. Credentials never come from tool input. */
 export function normalizeImageGenerationRequest(input: unknown, source: ImageStudioSource): ImageGenerationRequest {
   const value = record(input)
@@ -42,9 +59,8 @@ export function normalizeImageGenerationRequest(input: unknown, source: ImageStu
   if (presetPrompt !== undefined && !preset) throw new Error('预设提示词需要指定 presetId')
   const prompt = imageWorkflowPrompt({ presetId, presetPrompt }, text(value.prompt, '图片描述'))
   if (!prompt || prompt.length > 32_000) throw new Error('请输入 1 到 32000 个字符的图片描述（含预设）')
-  const referenceImage = text(value.referenceImage, '参考图')
-  if (referenceImage && !/^data:image\/(?:png|jpeg|webp|gif|bmp);base64,[A-Za-z0-9+/=]+$/i.test(referenceImage)) throw new Error('参考图必须是图片 data URL')
-  if (preset?.requiresReference && !referenceImage) throw new Error(`“${preset.label}”需要参考图`)
+  const referenceImages = normalizeImageReferences(value)
+  if (preset?.requiresReference && !referenceImages.length) throw new Error(`“${preset.label}”需要参考图`)
   const model = text(value.model, '图片模型')
   if (model.length > 128) throw new Error('图片模型名称不能超过 128 个字符')
   const size = text(value.size, '尺寸', '1024x1024')
@@ -52,7 +68,8 @@ export function normalizeImageGenerationRequest(input: unknown, source: ImageStu
   const backgroundColor = text(value.backgroundColor, '背景色', '#ffffff')
   if (!/^#[\da-f]{6}$/i.test(backgroundColor)) throw new Error('背景色必须是六位十六进制颜色')
   return {
-    prompt, source, ...(model ? { model } : {}), ...(referenceImage ? { referenceImage } : {}),
+    prompt, source, ...(model ? { model } : {}),
+    ...(referenceImages.length ? (value.referenceImages === undefined ? { referenceImage: referenceImages[0] } : { referenceImages }) : {}),
     style: preset ? 'free' : choice(value.style, ['minecraft', 'free'], 'free', '风格'),
     size, quality: choice(value.quality, ['low', 'medium', 'high', 'auto'], 'medium', '质量'),
     moderation: choice(value.moderation, ['auto', 'low'], 'auto', '审核'),
@@ -85,7 +102,8 @@ export const imageGenerationInputSchema = {
     style: { type: 'string', enum: ['minecraft', 'free'], default: 'free' }, size: { type: 'string', default: '1024x1024' },
     quality: { type: 'string', enum: ['low', 'medium', 'high', 'auto'], default: 'medium' }, moderation: { type: 'string', enum: ['auto', 'low'], default: 'auto' },
     count: { type: 'integer', minimum: 1, maximum: 10, default: 1 }, background: { type: 'string', enum: ['solid', 'auto'], description: 'solid adds a flat-background instruction to the prompt; auto leaves the background to the prompt.' },
-    backgroundColor: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$', default: '#ffffff' }, removeBackground: { type: 'boolean', default: false, description: 'Apply Image Studio local solid-background removal to generated pixels.' }, referenceImage: { type: 'string', description: 'Image data URL for reference-guided editing.' }
+    backgroundColor: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$', default: '#ffffff' }, removeBackground: { type: 'boolean', default: false, description: 'Apply Image Studio local solid-background removal to generated pixels.' }, referenceImage: { type: 'string', description: 'Single image data URL for reference-guided editing. Use either referenceImage or referenceImages.' },
+    referenceImages: { type: 'array', items: { type: 'string' }, description: 'Ordered image data URLs used together for each output; count is the output count, not a count per reference. Do not combine with referenceImage.' }
   }
 } as const
 

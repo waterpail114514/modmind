@@ -6,7 +6,7 @@ import { diagnosticJournal } from '../../src/main/diagnosticLog'
 import { downloadActivities } from '../../src/main/downloadActivityService'
 import type { NativeFeatureHost } from '../../src/main/index'
 import { requireManagedRuntimePreparation } from '../../src/main/managedRuntimePreparation'
-import { isModpackProject,readModpackManifest } from '../../src/main/modpackService'
+import { isModpackProject,readModpackManifest,readModpackImportStatus } from '../../src/main/modpackService'
 import { sameProjectPath } from '../../src/main/projectPath'
 import { generateGithubWorkflow } from '../../src/main/workflowService'
 import type { FeaturePluginInvocationContext } from '../../src/shared/featurePlugins'
@@ -763,7 +763,10 @@ diagnosticHandle('server-plugin:importCore', async (_, root) => {
     return importLocalServerCore(testingProject(root, true), result.filePaths[0])
   })
 actions.local_server = (input, context) => localServerAgentOperation(host.requireProject(), input, context.signal)
-actions.runtime_state = () => requireMinecraftRuntime().refresh()
+actions.runtime_state = async () => {
+  const project = host.requireProject()
+  return { ...await requireMinecraftRuntime().refresh(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }
+}
 actions.test_rendered = (_input, context) => runManagedRenderedTest(host.requireProject(), context.signal)
 actions.test_matrix = (input, context) => runProjectTestMatrix(input.targets as TestTarget[], context.signal)
 actions.test_minecraft = async (_input, context) => {

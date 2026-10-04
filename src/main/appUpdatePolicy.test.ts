@@ -25,9 +25,16 @@ describe('app update policy', () => {
     expect(decideAppUpdate('1.4.0-beta.3', '1.4.0-beta.2')).toMatchObject({ updateAvailable: false })
   })
 
-  it('always lets beta installations move to the latest stable release', () => {
-    expect(decideAppUpdate('2.0.0-beta.5', '1.3.12')).toMatchObject({
-      currentChannel: 'beta', targetChannel: 'stable', updateAvailable: true
+  it.each([
+    ['1.5.0-preview.1', '1.4.14', false],
+    ['1.5.0-preview.1', '1.4.99', false],
+    ['1.5.0-preview.1', '1.5.0', true],
+    ['1.5.0-preview.1', '1.5.1', true],
+    ['1.5.0-preview.1', '1.6.0', true],
+    ['2.0.0-beta.5', '1.3.12', false]
+  ])('offers a stable upgrade from %s to %s only when newer', (current, latest, updateAvailable) => {
+    expect(decideAppUpdate(current, latest)).toMatchObject({
+      currentChannel: 'beta', targetChannel: 'stable', updateAvailable
     })
   })
 

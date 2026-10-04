@@ -1,0 +1,327 @@
+{
+  "checkedDate": "2026-10-02",
+  "excludedAccounts": [
+    "primary"
+  ],
+  "scope": "本次授权账号可见的供应商 2 与免费套餐；目录验证，未执行收费推理",
+  "providers": [
+    {
+      "account": "secondary",
+      "label": "供应商 2（sub2API）",
+      "kind": "paid",
+      "groups": [
+        {
+          "id": "gpt-pro（混池）",
+          "label": "标准 （50%标准价格）B"
+        },
+        {
+          "id": "GPT-MAX（纯血pro池）禁止逆向 触发多次cyber封号",
+          "label": "更稳定 （约75%标准价格）C"
+        },
+        {
+          "id": "Kimi",
+          "label": "Kimi系列（200%标准价格）无缓存 K"
+        },
+        {
+          "id": "GLM",
+          "label": "GLM系列（175%标准价格）L"
+        },
+        {
+          "id": "Gemini",
+          "label": "Gemini系列（标准价格）无缓存 M"
+        },
+        {
+          "id": "Grok",
+          "label": "Grok系列（45%标准价格）O"
+        },
+        {
+          "id": "GPT 企业专用",
+          "label": "GPT满血企业（130%标准价格左右）D"
+        },
+        {
+          "id": "GPT6 Astra不降智分组",
+          "label": "GPT满血Astra 低价（95%标准价格左右）E"
+        }
+      ]
+    },
+    {
+      "account": "trial:openrouter",
+      "label": "免费套餐（目前仅做登陆用，无额度）",
+      "kind": "free",
+      "groups": []
+    },
+    {
+      "account": "trial:free-mtjzrt3s-l9afs",
+      "label": "免费套餐（deepseek-v4.1-flash）",
+      "kind": "free",
+      "groups": []
+    }
+  ],
+  "routes": [
+    {
+      "checkedAt": "2026-10-02T04:02:55.218Z",
+      "account": "secondary",
+      "group": "GLM",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 1,
+      "modelIds": [
+        "glm-5.3-flash"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:03:18.917Z",
+      "account": "secondary",
+      "group": "GPT 企业专用",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 6,
+      "modelIds": [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6.1-sol"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:12:35.666Z",
+      "account": "secondary",
+      "group": "GPT-MAX（纯血pro池）禁止逆向 触发多次cyber封号",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 8,
+      "modelIds": [
+        "codex-auto-review",
+        "gpt-5.5",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-6-astra",
+        "gpt-6-luna",
+        "gpt-6-sol",
+        "gpt-6.1-sol"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:03:26.051Z",
+      "account": "secondary",
+      "group": "GPT6 Astra不降智分组",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 6,
+      "modelIds": [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6.1-sol"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:03:03.450Z",
+      "account": "secondary",
+      "group": "Gemini",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 4,
+      "modelIds": [
+        "gemini-3.1-pro-preview",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:03:11.037Z",
+      "account": "secondary",
+      "group": "Grok",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 3,
+      "modelIds": [
+        "grok-4.5",
+        "grok-4.6",
+        "grok-4.7"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:02:46.700Z",
+      "account": "secondary",
+      "group": "Kimi",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 1,
+      "modelIds": [
+        "kimi-k3"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:02:35.863Z",
+      "account": "secondary",
+      "group": "gpt-pro（混池）",
+      "endpoint": "https://wawapii.com/v1/models",
+      "modelCount": 6,
+      "modelIds": [
+        "codex-auto-review",
+        "gpt-5.5",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-6-astra",
+        "gpt-6-sol"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:06:59.249Z",
+      "account": "trial:free-mtjzrt3s-l9afs",
+      "group": null,
+      "endpoint": "https://ether-studio.top/api/trial/v1/models",
+      "modelCount": 4,
+      "modelIds": [
+        "deepseek-v4-pro-0813",
+        "deepseek-v4.1-flash",
+        "glm-5.3",
+        "qwen3.8-flash"
+      ]
+    },
+    {
+      "checkedAt": "2026-10-02T04:06:52.931Z",
+      "account": "trial:openrouter",
+      "group": null,
+      "endpoint": "https://ether-studio.top/api/trial/v1/models",
+      "modelCount": 1,
+      "modelIds": [
+        "nvidia/nemotron-3-ultra-550b-a55b:free"
+      ]
+    }
+  ],
+  "paidModelCount": 17,
+  "paidModels": [
+    {
+      "id": "gemini-3.1-pro-preview",
+      "name": "Gemini 3.1 Pro Preview",
+      "family": "Gemini",
+      "sentence": "长文本分析模型，适合阅读资料、理解项目和梳理方案。"
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "name": "Gemini 3.6 Flash",
+      "family": "Gemini",
+      "sentence": "轻量通用模型，适合摘要、翻译和文本整理。"
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "family": "Gemini",
+      "sentence": "轻量通用模型，适合日常问答和资料整理。"
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "name": "Gemini 3.8 Flash",
+      "family": "Gemini",
+      "sentence": "轻量通用模型，适合日常问答和代码小改动。"
+    },
+    {
+      "id": "glm-5.3-flash",
+      "name": "GLM 5.3 Flash",
+      "family": "GLM",
+      "sentence": "中文友好的轻量模型，适合需求讨论、小脚本和日常开发。"
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "family": "GPT",
+      "sentence": "较早的通用模型，建议优先使用 GPT-6.1 Sol。"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "family": "GPT",
+      "sentence": "上一代轻量模型，建议优先使用 GPT-6 Luna。"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "family": "GPT",
+      "sentence": "上一代主力模型，建议优先使用 GPT-6.1 Sol。"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "family": "GPT",
+      "sentence": "均衡型模型，适合小功能开发和代码修改。"
+    },
+    {
+      "id": "gpt-6-astra",
+      "name": "GPT-6 Astra",
+      "family": "GPT",
+      "sentence": "极强的模型，适合复杂工作、重构和建模。"
+    },
+    {
+      "id": "gpt-6-luna",
+      "name": "GPT-6 Luna",
+      "family": "GPT",
+      "sentence": "轻量小模型，适合小改动或讨论。"
+    },
+    {
+      "id": "gpt-6-sol",
+      "name": "GPT-6 Sol",
+      "family": "GPT",
+      "sentence": "上一版主力模型，建议优先使用 GPT-6.1 Sol。"
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "family": "GPT",
+      "sentence": "全能主力模型，适合日常开发、写代码和排错。"
+    },
+    {
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "family": "Grok",
+      "sentence": "通用对话模型，适合讨论点子和梳理方案。"
+    },
+    {
+      "id": "grok-4.6",
+      "name": "Grok 4.6",
+      "family": "Grok",
+      "sentence": "通用模型，适合问题分析、代码解释和方案讨论。"
+    },
+    {
+      "id": "grok-4.7",
+      "name": "Grok 4.7",
+      "family": "Grok",
+      "sentence": "通用模型，适合创意讨论、问题分析和日常开发。"
+    },
+    {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "family": "Kimi",
+      "sentence": "擅长长文的模型，适合读资料、分析项目和拆解任务。"
+    }
+  ],
+  "freeModels": [
+    {
+      "id": "deepseek-v4-pro-0813",
+      "sentence": "推理型模型，适合代码分析、复杂问题和排错。",
+      "loginOnly": false
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "sentence": "轻快的模型，适合配方、配置和小脚本。",
+      "loginOnly": false
+    },
+    {
+      "id": "glm-5.3",
+      "sentence": "中文友好的模型，适合需求讨论、写代码和开发规划。",
+      "loginOnly": false
+    },
+    {
+      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "sentence": "通用模型，适合讨论思路、整理资料和分析问题。",
+      "loginOnly": true
+    },
+    {
+      "id": "qwen3.8-flash",
+      "sentence": "轻量通用模型，适合文本整理和代码小改动。",
+      "loginOnly": false
+    }
+  ],
+  "internalModelIds": [
+    "codex-auto-review"
+  ]
+}

@@ -10,8 +10,8 @@ const { chromium } = require('playwright')
   await fs.mkdir(directory, { recursive: true })
   await build({ stdin: { contents: `
     import React, {useState,useEffect} from 'react'; import {createRoot} from 'react-dom/client';
-    import ImageStudioWorkspace from './src/renderer/src/components/ImageStudioWorkspace';
-    import * as storage from './src/renderer/src/lib/imageWorkflowStorage';
+    import ImageStudioWorkspace from './feature-plugins/image-studio/src/renderer/src/components/ImageStudioWorkspace';
+    import * as storage from './feature-plugins/image-studio/src/renderer/src/lib/imageWorkflowStorage';
     import './src/renderer/src/theme-tokens.css';
     import './src/renderer/src/styles.css';
     import './src/renderer/src/workspace-chrome.css';
@@ -302,6 +302,38 @@ const { chromium } = require('playwright')
     await presets.selectOption('free')
     assert.equal(await template.count(), 0)
     await presetContext.close()
+    // Two input nodes must contribute to every output, never create separate jobs per image.
+    const multiContext = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+    const multiPage = await multiContext.newPage()
+    multiPage.on('pageerror', error => errors.push(error.message))
+    const sharp = require('sharp')
+    const references = await Promise.all(['#ff0000', '#0000ff'].map(async background => 'data:image/png;base64,' + (await sharp({ create: { width: 8, height: 8, channels: 3, background } }).png().toBuffer()).toString('base64')))
+    await multiPage.addInitScript(references => {
+      const node = (id, kind, x, y, data) => ({ id, type: 'workflow', position: { x, y }, data: { kind, title: id, subtitle: '', ...data } })
+      localStorage.setItem('modmind.image-studio.workflow.v1', JSON.stringify({
+        nodes: [node('prompt', 'prompt', 0, 0, { prompt: '将红色和蓝色参考图融合' }), node('generate', 'generate', 300, 150, { count: 1 }), ...references.map((referenceImage, i) => node(`ref-${i}`, 'reference', 0, 150 + i * 150, { referenceImage }))],
+        edges: ['prompt', 'ref-0', 'ref-1'].map(source => ({ id: source, source, target: 'generate' }))
+      }))
+    }, references)
+    await multiPage.goto(`http://127.0.0.1:${server.address().port}`)
+    await multiPage.getByRole('button', { name: '运行工作流', exact: true }).click()
+    await multiPage.getByRole('status').filter({ hasText: '工作流完成' }).waitFor()
+    assert.deepEqual(await multiPage.evaluate(() => window.requests.map(request => request.referenceImages)), [references])
+    assert.equal(await multiPage.locator('.image-workflow-node-output').count(), 1)
+    await multiPage.locator('.react-flow__node[data-id="generate"]').click()
+    await multiPage.locator('.field-label').filter({ hasText: '批量数量' }).locator('input').fill('3')
+    await multiPage.getByRole('button', { name: '运行工作流', exact: true }).click()
+    await multiPage.getByRole('status').filter({ hasText: '工作流完成' }).waitFor()
+    assert.deepEqual(await multiPage.evaluate(() => window.requests.map(request => request.referenceImages)), [references, references, references, references])
+    assert.equal(await multiPage.locator('.image-workflow-node-output').count(), 4)
+    assert.equal(await multiPage.locator('.image-output-preview').count(), 4)
+    assert.equal(await multiPage.locator('.image-output-loading').count(), 0)
+    for (const width of [1280, 390]) {
+      await multiPage.setViewportSize({ width, height: 900 })
+      assert.ok(await multiPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+      await multiPage.screenshot({ path: path.join(directory, `multi-reference-${width}.png`), fullPage: true })
+    }
+    await multiContext.close()
     assert.deepEqual(errors, [])
     console.log('Passed: text/image paste, input/hidden/tab isolation, clipboard persistence, immediate loading frames, incremental filling, stable camera/card sizes, rightward rounds, centred collision-free new nodes, safe deletion, prompt names, keyboard switcher, save/copy/switch/reload/delete, failure preservation, IndexedDB conflict protection and six theme/size layouts.')
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)) }

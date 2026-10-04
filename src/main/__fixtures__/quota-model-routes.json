@@ -1,0 +1,77 @@
+[
+  {
+    "group": "GLM",
+    "modelIds": [
+      "glm-5.3-flash"
+    ]
+  },
+  {
+    "group": "GPT 企业专用",
+    "modelIds": [
+      "gpt-5.6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6.1-sol"
+    ]
+  },
+  {
+    "group": "GPT-MAX（纯血pro池）禁止逆向 触发多次cyber封号",
+    "modelIds": [
+      "codex-auto-review",
+      "gpt-5.5",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-6-sol",
+      "gpt-6.1-sol"
+    ]
+  },
+  {
+    "group": "GPT6 Astra不降智分组",
+    "modelIds": [
+      "gpt-5.6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6.1-sol"
+    ]
+  },
+  {
+    "group": "Gemini",
+    "modelIds": [
+      "gemini-3.1-pro-preview",
+      "gemini-3.6-flash",
+      "gemini-3.7-flash",
+      "gemini-3.8-flash"
+    ]
+  },
+  {
+    "group": "Grok",
+    "modelIds": [
+      "grok-4.5",
+      "grok-4.6",
+      "grok-4.7"
+    ]
+  },
+  {
+    "group": "Kimi",
+    "modelIds": [
+      "kimi-k3"
+    ]
+  },
+  {
+    "group": "gpt-pro（混池）",
+    "modelIds": [
+      "codex-auto-review",
+      "gpt-5.5",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-6-astra",
+      "gpt-6-sol"
+    ]
+  }
+]

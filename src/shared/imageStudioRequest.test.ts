@@ -25,6 +25,28 @@ describe('shared Image Studio parameters', () => {
     expect(request).not.toHaveProperty('baseUrl')
   })
 
+  it('preserves all reference images and accepts them for reference-required presets', () => {
+    const referenceImages = ['data:image/png;base64,AA==', 'data:image/jpeg;base64,AQ==']
+    const request = normalizeImageGenerationRequest({ prompt: 'cat', presetId: 'material-variant', referenceImages, count: 2 }, 'agent')
+    expect(request).toMatchObject({ referenceImages, count: 2 })
+    expect(request).not.toHaveProperty('referenceImage')
+    expect(normalizeImageGenerationRequest(request, 'agent')).toEqual(request)
+  })
+
+  it.each([
+    { referenceImages: 'data:image/png;base64,AA==' }, { referenceImages: [null] },
+    { referenceImages: ['data:image/png;base64,AA==', ''] }, { referenceImages: ['/tmp/image.png'] },
+    { referenceImages: ['data:image/png;base64,===='] },
+    { referenceImage: 'data:image/png;base64,AA==', referenceImages: ['data:image/png;base64,AQ=='] }
+  ])('rejects invalid or ambiguous references instead of silently discarding them: %j', input => {
+    expect(() => normalizeImageGenerationRequest({ prompt: 'cat', ...input }, 'agent')).toThrow()
+  })
+
+  it('rejects oversized references before dispatch', () => {
+    const referenceImages = ['data:image/png;base64,' + 'A'.repeat(Math.ceil((20 * 1024 * 1024 + 1) / 3) * 4)]
+    expect(() => normalizeImageGenerationRequest({ prompt: 'cat', referenceImages }, 'manual')).toThrow('20 MB')
+  })
+
   it('validates every PerfectPixel control and preserves explicit zero/false', () => {
     const options = { sampleMethod: 'median' as const, gridSize: [32, 16] as [number, number], minSize: 0.1, peakWidth: 9, refineIntensity: 0, fixSquare: false }
     expect(normalizePerfectPixelOptions(options)).toEqual(options)

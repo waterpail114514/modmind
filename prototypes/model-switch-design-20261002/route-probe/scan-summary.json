@@ -1,0 +1,116 @@
+{
+  "checkedAt": "2026-10-02T04:07:12.817Z",
+  "initial": {
+    "account": "secondary",
+    "group": "GPT-MAX（纯血pro池）禁止逆向 触发多次cyber封号"
+  },
+  "restored": true,
+  "stopped": false,
+  "results": [
+    {
+      "account": "secondary",
+      "group": "gpt-pro（混池）",
+      "label": "标准 （50%标准价格）B",
+      "status": "ok",
+      "count": 6
+    },
+    {
+      "account": "secondary",
+      "group": "GPT-MAX（纯血pro池）禁止逆向 触发多次cyber封号",
+      "label": "更稳定 （约75%标准价格）C",
+      "status": "ok",
+      "count": 8
+    },
+    {
+      "account": "secondary",
+      "group": "Kimi",
+      "label": "Kimi系列（200%标准价格）无缓存 K",
+      "status": "ok",
+      "count": 1
+    },
+    {
+      "account": "secondary",
+      "group": "GLM",
+      "label": "GLM系列（175%标准价格）L",
+      "status": "ok",
+      "count": 1
+    },
+    {
+      "account": "secondary",
+      "group": "Gemini",
+      "label": "Gemini系列（标准价格）无缓存 M",
+      "status": "ok",
+      "count": 4
+    },
+    {
+      "account": "secondary",
+      "group": "Grok",
+      "label": "Grok系列（45%标准价格）O",
+      "status": "ok",
+      "count": 3
+    },
+    {
+      "account": "secondary",
+      "group": "GPT 企业专用",
+      "label": "GPT满血企业（130%标准价格左右）D",
+      "status": "ok",
+      "count": 6
+    },
+    {
+      "account": "secondary",
+      "group": "GPT6 Astra不降智分组",
+      "label": "GPT满血Astra 低价（95%标准价格左右）E",
+      "status": "ok",
+      "count": 6
+    },
+    {
+      "account": "primary",
+      "group": "plus 2组",
+      "label": "标准 （标准价格）",
+      "status": "ok",
+      "count": 8
+    },
+    {
+      "account": "primary",
+      "group": "plus 1组 特惠",
+      "label": "较低价(还算稳定) （83%标准价格）",
+      "status": "ok",
+      "count": 16
+    },
+    {
+      "account": "primary",
+      "group": "plus 3组 兜底",
+      "label": "更稳定(更昂贵)  (125%标准价格)",
+      "status": "ok",
+      "count": 9
+    },
+    {
+      "account": "primary",
+      "group": "auto",
+      "label": "自动配置 保证稳定",
+      "status": "ok",
+      "count": 18
+    },
+    {
+      "account": "primary",
+      "group": "ChatGPT Pro 1组",
+      "label": "Pro分组",
+      "status": "ok",
+      "count": 17
+    },
+    {
+      "account": "trial:openrouter",
+      "group": null,
+      "label": "免费套餐（目前仅做登陆用，无额度）",
+      "status": "ok",
+      "count": 1
+    },
+    {
+      "account": "trial:free-mtjzrt3s-l9afs",
+      "group": null,
+      "label": "免费套餐（deepseek-v4.1-flash）",
+      "status": "ok",
+      "count": 4
+    }
+  ]
+}

@@ -1,3 +1,9 @@
 *.pdf binary
 *.docx binary
 *.cmd text eol=crlf
+
+# These vendored scripts are checked against upstream byte-for-byte SHA-256 pins.
+# Both upstream files use LF, including the Windows batch launcher.
+/vendor/gradle-wrapper/gradlew text eol=lf
+/vendor/gradle-wrapper/gradlew.bat text eol=lf
+/vendor/gradle-wrapper/gradle-wrapper.jar binary

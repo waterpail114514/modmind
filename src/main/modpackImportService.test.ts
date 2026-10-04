@@ -70,6 +70,7 @@ describe('external modpack import', () => {
     await fs.writeFile(path.join(root, 'overrides', 'config', 'example.json'), '{"enabled":true}\n', 'utf8')
     await fs.mkdir(path.join(root, 'overrides', 'mods'), { recursive: true })
     await fs.writeFile(path.join(root, 'overrides', 'mods', 'local.jar'), Buffer.alloc(2_048, 7))
+    await fs.writeFile(path.join(root, 'overrides', 'mods', 'glore_blocks.json'), '{}')
     const target = path.join(root, 'adopted')
 
     const inspection = await inspectExternalModpack(root)
@@ -78,9 +79,10 @@ describe('external modpack import', () => {
     expect(inspection?.localModFiles).toEqual(['overrides/mods/local.jar'])
     expect(inspection?.overrideFiles).toContain('overrides/config/example.json')
     expect(inspection?.overrideFiles).not.toContain('overrides/mods/local.jar')
+    expect(inspection?.overrideFiles).toContain('overrides/mods/glore_blocks.json')
 
     const result = await materializeExternalModpack({ ...inspection!, remoteFiles: [] }, target)
-    expect(result.copiedFiles).toBe(2)
+    expect(result.copiedFiles).toBe(3)
     await expect(fs.readFile(path.join(target, 'overrides', 'config', 'example.json'), 'utf8')).resolves.toContain('enabled')
     await expect(fs.stat(path.join(target, 'overrides', 'mods', 'local.jar'))).resolves.toMatchObject({ size: 2_048 })
   })

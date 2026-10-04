@@ -38,9 +38,11 @@ import AboutAuthors from './components/AboutAuthors'
 import ModelContextSetting from './components/ModelContextSetting'
 import ReasoningControl from './components/ReasoningControl'
 import ReasoningEffortSettings from './components/ReasoningEffortSettings'
+import QuotaModelPicker from './components/QuotaModelPicker'
 import { DEFAULT_CODEX_REASONING_EFFORTS, selectedReasoningEfforts } from '../../shared/modelReasoning'
 import ComposerAiControl from './components/ComposerAiControl'
-import { useSurfaceAiSelection } from './useSurfaceAiSelection'
+import { useSurfaceAiSelection, resetSurfaceAiSelections } from './useSurfaceAiSelection'
+import type { QuotaModelSelection } from '../../shared/quotaModels'
 import { defaultAiSelection } from '../../shared/aiSelection'
 import MoreActions from './components/MoreActions'
 import { normalizeAppearance } from '../../shared/appTheme'
@@ -463,6 +465,7 @@ function externalAgentIcon(kind: ExternalAgentKind, size = 13): React.JSX.Elemen
 }
 
 type ProductionSettingsPanelProps = {
+  hideModel?: boolean
   aiSettings: BeginnerAiPreferences
   deviceState: DeviceConnectionState
   availableModels: AiModelInfo[]
@@ -476,6 +479,7 @@ type ProductionSettingsPanelProps = {
 }
 
 function ProductionSettingsPanel({
+  hideModel = false,
   aiSettings,
   deviceState,
   availableModels,
@@ -494,14 +498,14 @@ function ProductionSettingsPanel({
 
   return <div className="production-settings-panel">
     <section className="beginner-ai-preferences">
-      <label className="beginner-model-control"><span onClick={(event) => {
+      {!hideModel && <label className="beginner-model-control"><span onClick={(event) => {
         event.preventDefault()
         const select = modelSelectRef.current
         if (!select || select.disabled) return
         try { select.showPicker() } catch { select.focus() }
-      }}>模型</span><div><select ref={modelSelectRef} value={aiSettings.model} disabled={savingAiPreferences} onChange={(event) => onModelChange(event.target.value)}>{modelOptions.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}</select><button className="icon-button" type="button" title="刷新模型列表" disabled={scanningModels || savingAiPreferences || deviceState.status !== 'connected'} onClick={onScanModels}>{scanningModels ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div><small>{modelScanMessage}</small></label>
+      }}>模型</span><div><select ref={modelSelectRef} value={aiSettings.model} disabled={savingAiPreferences} onChange={(event) => onModelChange(event.target.value)}>{modelOptions.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}</select><button className="icon-button" type="button" title="刷新模型列表" disabled={scanningModels || savingAiPreferences || deviceState.status !== 'connected'} onClick={onScanModels}>{scanningModels ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div><small>{modelScanMessage}</small></label>}
       <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={aiSettings.reasoningLevel} capabilities={availableModels.find(model => model.id === aiSettings.model)?.reasoning} allowedEfforts={selectedReasoningEfforts(aiSettings.model, aiSettings.reasoningEffortOptions)} disabled={savingAiPreferences} onChange={onReasoningLevelChange} /></div>
-      <div className="beginner-fast-control"><span>Fast 模式</span><label className="switch-control"><input aria-label="Fast 模式" type="checkbox" checked={aiSettings.fastMode} disabled={savingAiPreferences} onChange={(event) => onFastModeChange(event.target.checked)} /><span aria-hidden="true" /></label><InfoTooltip><span>同步 ModMind 账号的 Fast 服务设置</span></InfoTooltip></div>
+      <div className="beginner-fast-control"><span>Fast 模式</span><label className="switch-control"><input aria-label="Fast 模式" type="checkbox" checked={deviceState.billing === 'free' ? false : aiSettings.fastMode} disabled={savingAiPreferences || deviceState.billing === 'free'} onChange={(event) => onFastModeChange(event.target.checked)} /><span aria-hidden="true" /></label><InfoTooltip><span>{deviceState.billing === 'free' ? '免费套餐不使用 Fast 模式，付费设置保留' : '同步 ModMind 账号的 Fast 服务设置'}</span></InfoTooltip></div>
     </section>
   </div>
 }
@@ -930,7 +934,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<AiAttachment[]>([])
   const [busy, setBusy] = useState(false)
-  const [aiOverride, setAiOverride] = useSurfaceAiSelection(`inspiration:${project.path}`)
+  const [aiOverride, setAiOverride] = useSurfaceAiSelection('inspiration')
   const defaultBackend = uiMode === 'beginner' ? 'quota' : codingBackend
   const activeAiOverride = aiOverride?.backend === defaultBackend ? aiOverride : undefined
   const aiSelection = activeAiOverride ?? defaultAiSelection(defaultBackend, aiDefaults ?? { model: '', reasoningLevel: 'auto', fastMode: false }, externalAgents)
@@ -939,13 +943,36 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const [independentModels, setIndependentModels] = useState<{ backend: string; models: AiModelInfo[] }>({ backend: '', models: [] })
   const aiModels = independentModels.backend === aiSelection.backend ? independentModels.models : aiSelection.backend === 'quota' ? defaultModels : []
   const [aiScanMessage, setAiScanMessage] = useState('')
-  const scanInspirationAi = async (): Promise<void> => {
+  const [aiModelSwitching, setAiModelSwitching] = useState(false)
+  const inspirationSwitchRef = useRef<Promise<boolean> | null>(null)
+  const inspirationWaitingRef = useRef(false)
+  const inspirationWaitToken = useRef(0)
+  const inspirationSelectionRef = useRef(aiSelection)
+  inspirationSelectionRef.current = aiSelection
+  const selectInspirationModel = async (model: string, option?: QuotaModelSelection): Promise<void> => {
+    if (inspirationSwitchRef.current || historyBusy) return
+    if (aiSelection.backend !== 'quota') { setAiOverride({ ...aiSelection, model, reasoningLevel: 'auto' }); return }
+    setAiModelSwitching(true)
+    const task = (async () => {
+      try {
+        const result = await window.modmind.device.selectModel(model, { ...option, scope: 'inspiration' })
+        if (result.status !== 'ok') throw new Error(result.message)
+        const next = { ...aiSelection, ...(result.selection ?? { model, reasoningLevel: 'auto' as const }) }
+        inspirationSelectionRef.current = next; setAiOverride(next); setAiScanMessage(busy ? '下条消息使用 ' + model : '')
+        return true
+      } catch (error) { setAiScanMessage(aiFailureMessage(error)); return false }
+      finally { setAiModelSwitching(false); inspirationSwitchRef.current = null }
+    })()
+    inspirationSwitchRef.current = task
+    await task
+  }
+  const scanInspirationAi = async (refresh = false): Promise<void> => {
     if (!window.modmind.inspiration?.listModels) return
     const backend = aiSelection.backend
-    try { const models = await window.modmind.inspiration.listModels(backend); setIndependentModels({ backend, models }); setAiScanMessage('') }
+    try { const models = backend === 'quota' && deviceState.provider !== 'custom' ? (await window.modmind.device.getModelCatalog(refresh)).models : await window.modmind.inspiration.listModels(backend); setIndependentModels({ backend, models }); setAiScanMessage('') }
     catch (error) { setAiScanMessage(aiFailureMessage(error)) }
   }
-  useEffect(() => { if (visible) void scanInspirationAi() }, [visible, aiSelection.backend])
+  useEffect(() => { if (visible) void scanInspirationAi() }, [visible, aiSelection.backend, defaultModels])
   const attachmentInput = useAiAttachments({ attachments, onChange: setAttachments, projectPath: project.path, conversationId: activeConversationId, disabled: busy || historyBusy || !visible || !hydrated })
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
   const [persistenceWarning, setPersistenceWarning] = useState('')
@@ -1346,13 +1373,24 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   }, [busy])
 
   const send = async (value = draft): Promise<void> => {
+    if (inspirationSwitchRef.current) {
+      if (inspirationWaitingRef.current) return
+      inspirationWaitingRef.current = true
+      const token = ++inspirationWaitToken.current
+      setAiScanMessage('等待模型就绪…')
+      const ready = await inspirationSwitchRef.current
+      inspirationWaitingRef.current = false
+      if (!ready || token !== inspirationWaitToken.current) return
+      setAiScanMessage('')
+    }
+    const requestAiSelection = inspirationSelectionRef.current
     const requestedContent = value.trim()
     if ((!requestedContent && !attachments.length) || busy || !hydrated || activeInspirationConversation?.messagesLoaded === false || historyMutationRef.current || attachmentInput.isBusy()) return
     if (features.projectKnowledge && !knowledgeReady) { setPersistenceWarning('项目知识尚未读取成功，请稍后重试或取消勾选「引用项目知识」'); return }
     const content = requestedContent || '请分析我上传的附件'
     setAttachmentReplayWarning('')
     const attachmentContext = formatAiAttachmentContext(features.logAnalysis ? attachments : attachments.map(attachment => ({ ...attachment, diagnosticSummary: undefined }))) + (features.projectKnowledge ? inspirationKnowledgeContext(notes) : '')
-    const selectedBackend = aiSelection.backend
+    const selectedBackend = requestAiSelection.backend
     const usesQuota = selectedBackend === 'quota'
     if (usesQuota && deviceState.status !== 'connected') {
       onConnectionRequired()
@@ -1432,7 +1470,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { surface: 'inspiration', ...(activeAiOverride ? { modelSelection: activeAiOverride } : {}), inspirationFeatures: features, sessionScope: `inspiration/${conversationId}${conversationGeneration ? `/generation-${conversationGeneration}` : ''}`, resumeSession, inspirationQuestion: content, projectPath: project.path, fallbackPrompt: `${fallbackInspirationPrompt}\n\n${INSPIRATION_FOLLOWUPS_INSTRUCTION}`, conversationId, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
+        { surface: 'inspiration', modelSelection: requestAiSelection, inspirationFeatures: features, sessionScope: `inspiration/${conversationId}${conversationGeneration ? `/generation-${conversationGeneration}` : ''}`, resumeSession, inspirationQuestion: content, projectPath: project.path, fallbackPrompt: `${fallbackInspirationPrompt}\n\n${INSPIRATION_FOLLOWUPS_INSTRUCTION}`, conversationId, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
       )
       if (sendToken !== sendTokenRef.current) return
       const reply = finalInspirationReply(result)
@@ -1557,7 +1595,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
           <div className={`inspiration-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...attachmentInput.handlers}>
             {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
             <textarea value={draft} disabled={busy || historyBusy || !hydrated} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} aria-label="灵感提问" placeholder="一个念头、一个问题，都可以从这里开始…" />
-             <div className="inspiration-composer-actions"><InspirationFeatureControls value={features} disabled={busy || historyBusy || !hydrated || !visible} onChange={changeFeatures} /><button className="inspiration-knowledge-button" type="button" disabled={busy || !knowledgeReady} onClick={() => setKnowledgeDialog({})}>项目知识{notes.length ? ` · ${notes.length}` : ''}</button><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy || historyBusy || !hydrated} controller={attachmentInput} /><div className="inspiration-ai-actions"><ComposerAiControl model={aiSelection.model} effort={aiSelection.reasoningLevel} models={aiModels} allowedEfforts={aiAllowedEfforts} disabled={busy || historyBusy} onReset={() => setAiOverride(undefined)} onModelChange={model => setAiOverride({ ...aiSelection, model, reasoningLevel: 'auto' })} onEffortChange={reasoningLevel => setAiOverride({ ...aiSelection, reasoningLevel })} onRefresh={() => void scanInspirationAi()} /><ContextUsage usage={inspirationUsage} />
+             <div className="inspiration-composer-actions"><InspirationFeatureControls value={features} disabled={busy || historyBusy || !hydrated || !visible} onChange={changeFeatures} /><button className="inspiration-knowledge-button" type="button" disabled={busy || !knowledgeReady} onClick={() => setKnowledgeDialog({})}>项目知识{notes.length ? ` · ${notes.length}` : ''}</button><AiAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={busy || historyBusy || !hydrated} controller={attachmentInput} /><div className="inspiration-ai-actions"><ComposerAiControl model={aiSelection.model} account={aiSelection.account} effort={aiSelection.reasoningLevel} models={aiModels} allowedEfforts={aiAllowedEfforts} switching={aiModelSwitching} message={aiScanMessage} onCancelWaiting={() => { inspirationWaitToken.current++; setAiScanMessage('') }} disabled={historyBusy} onReset={() => { void window.modmind.device.resetModelSelection('inspiration').then(() => setAiOverride(undefined)).catch(error => setAiScanMessage(aiFailureMessage(error))) }} onModelChange={(model, option) => void selectInspirationModel(model, option)} onEffortChange={reasoningLevel => setAiOverride({ ...aiSelection, reasoningLevel })} onRefresh={() => void scanInspirationAi(true)} /><ContextUsage usage={inspirationUsage} />
               <button
                 type="button"
                 className={`agent-send-button${busy ? ' stop' : ''}`}
@@ -2493,7 +2531,14 @@ export default function App(): React.JSX.Element {
   const [workbenchAiOverride, setWorkbenchAiOverride] = useSurfaceAiSelection('workspace')
   const workbenchDefaultBackend = uiMode === 'beginner' ? 'quota' : settings.codingBackend
   const workbenchAiSelection = workbenchAiOverride?.backend === workbenchDefaultBackend ? workbenchAiOverride : defaultAiSelection(workbenchDefaultBackend, beginnerAiPreferences, settings.externalAgents)
-  const workbenchAiPreferences = { ...beginnerAiPreferences, model: workbenchAiSelection.model, reasoningLevel: workbenchAiSelection.reasoningLevel,
+  const workbenchSelectionRef = useRef(workbenchAiSelection)
+  workbenchSelectionRef.current = workbenchAiSelection
+  const workbenchModelSwitchRef = useRef<Promise<boolean> | null>(null)
+  const workbenchWaitingRef = useRef(false)
+  const workbenchWaitToken = useRef(0)
+  const [workbenchModelSwitching, setWorkbenchModelSwitching] = useState(false)
+  const [workbenchModelSwitchMessage, setWorkbenchModelSwitchMessage] = useState('')
+  const workbenchAiPreferences = { ...beginnerAiPreferences, model: workbenchAiSelection.model, account: workbenchAiSelection.account, billing: workbenchAiSelection.billing, reasoningLevel: workbenchAiSelection.reasoningLevel,
     reasoningEffortOptions: workbenchDefaultBackend === 'quota' ? beginnerAiPreferences.reasoningEffortOptions : workbenchDefaultBackend === 'codex' ? settings.externalAgents?.codex?.reasoningEffortOptions : undefined }
   const [workbenchExternalModels, setWorkbenchExternalModels] = useState<{ backend: string; models: AiModelInfo[] }>({ backend: '', models: [] })
   useEffect(() => {
@@ -3033,6 +3078,10 @@ export default function App(): React.JSX.Element {
     let deviceStateGeneration = 0
     const applyDeviceState = (state: DeviceConnectionState): void => {
       const generation = ++deviceStateGeneration
+      if (state.status === 'connected' || state.status === 'disconnected') {
+        const owner = state.status === 'connected' ? `${state.siteUrl ?? ''}:${state.username ?? ''}` : ''
+        try { if ((localStorage.getItem('modmind-ai-owner') ?? '') !== owner) { resetSurfaceAiSelections(); localStorage.setItem('modmind-ai-owner', owner) } } catch { /* Backend still validates the active account. */ }
+      }
       setDeviceState(state)
 
       if (state.status !== 'connected') {
@@ -3111,6 +3160,7 @@ export default function App(): React.JSX.Element {
       setEvents((current) => [safeEvent, ...current])
     })
     const removeDeviceListener = window.modmind.device.onState(applyDeviceState)
+    const removeAiPreferencesListener = window.modmind.device.onAiPreferences(preferences => { setBeginnerAiPreferences(preferences); resetSurfaceAiSelections() })
     const removeRemoteListener = window.modmind.remote.onState(setRemoteState)
     const removeMcpBridgeListener = window.modmind.mcpBridge.onState(setMcpBridgeState)
     const removeBeginnerCodexListener = window.modmind.beginnerCodex.onProgress((progress) => {
@@ -3246,6 +3296,7 @@ export default function App(): React.JSX.Element {
       removeProjectChangedListener()
       removeAppUpdateListener()
       removeDeviceListener()
+      removeAiPreferencesListener()
       removeRemoteListener()
       removeMcpBridgeListener()
       removeBeginnerCodexListener()
@@ -3785,6 +3836,17 @@ export default function App(): React.JSX.Element {
   })
 
   const captureIdea = async (phase?: 'engineering' | 'discussion', initialPrompt?: string): Promise<void> => {
+    if (workbenchModelSwitchRef.current) {
+      if (workbenchWaitingRef.current) return
+      workbenchWaitingRef.current = true
+      const token = ++workbenchWaitToken.current
+      setWorkbenchModelSwitchMessage('等待模型就绪…')
+      const ready = await workbenchModelSwitchRef.current
+      workbenchWaitingRef.current = false
+      if (!ready || token !== workbenchWaitToken.current) return
+      setWorkbenchModelSwitchMessage('')
+    }
+    const requestAiSelection = workbenchSelectionRef.current
     const submittedPrompt = initialPrompt ?? (phase === 'engineering' ? '开始制作' : prompt)
     if ((!submittedPrompt.trim() && !aiAttachments.length) || !project || savingAiPreferences || cancelAiPromiseRef.current || draftPreparingRef.current) return
     let taskProject = project
@@ -4009,7 +4071,7 @@ export default function App(): React.JSX.Element {
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { ...workbenchFlowOptions(discussion), ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}), ...(workbenchAiOverride?.backend === selectedBackend ? { modelSelection: workbenchAiOverride } : {}), ...(uiMode === 'advanced' && !beginnerAgent ? { workbenchFeatures } : {}), ...(discussion ? { inspirationQuestion: idea } : {}), sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: fallbackPromptForAgent, conversationId: activeConversation.id, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
+        { ...workbenchFlowOptions(discussion), ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}), modelSelection: requestAiSelection, ...(uiMode === 'advanced' && !beginnerAgent ? { workbenchFeatures } : {}), ...(discussion ? { inspirationQuestion: idea } : {}), sessionScope: activeConversation.sessionScope, resumeSession: !isRewind, projectPath: taskProjectPath, fallbackPrompt: fallbackPromptForAgent, conversationId: activeConversation.id, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
       )
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       storeProjectPlan(taskProjectPath, plan)
@@ -4473,6 +4535,7 @@ export default function App(): React.JSX.Element {
     setSettingsFeedback('正在保存 AI 偏好…')
     try {
       setBeginnerAiPreferences(await window.modmind.device.saveAiPreferences(next))
+      if (patch.model !== undefined) resetSurfaceAiSelections()
       setSettingsFeedback('AI 偏好已保存')
     } catch (error) {
       setBeginnerAiPreferences(previous)
@@ -4517,6 +4580,7 @@ export default function App(): React.JSX.Element {
   const saveLocalCodexPreference = async (patch: Partial<ExternalAgentConfiguration>): Promise<void> => {
     const current = settingsRef.current
     await saveSettingsPatch({ externalAgents: { ...current.externalAgents, codex: { ...current.externalAgents?.codex, mode: current.externalAgents?.codex?.mode ?? 'local', ...patch } } })
+    if (patch.model !== undefined) resetSurfaceAiSelections()
   }
 
   useEffect(() => {
@@ -4694,12 +4758,13 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const scanBeginnerModels = async (): Promise<void> => {
+  const scanBeginnerModels = async (refresh = false): Promise<void> => {
     if (scanningBeginnerModels) return
     setScanningBeginnerModels(true)
     setBeginnerModelScanMessage('正在读取账号可用模型…')
     try {
-      const models = await window.modmind.device.listModels(true)
+      const catalog = deviceState.provider === 'custom' ? undefined : await window.modmind.device.getModelCatalog(refresh)
+      const models = catalog?.models ?? await window.modmind.device.listModels(true)
       setBeginnerAvailableModels(models)
       setBeginnerAiPreferences(await window.modmind.device.getAiPreferences())
       setBeginnerModelScanMessage(models.length ? `发现 ${models.length} 个可用模型` : '账号服务没有返回可用模型')
@@ -4709,6 +4774,22 @@ export default function App(): React.JSX.Element {
     } finally {
       setScanningBeginnerModels(false)
     }
+  }
+  const selectWorkbenchModel = async (model: string, option?: QuotaModelSelection): Promise<void> => {
+    if (savingAiPreferences || workbenchModelSwitchRef.current) return
+    if (workbenchDefaultBackend !== 'quota') { setWorkbenchAiOverride({ ...workbenchAiSelection, model, reasoningLevel: 'auto' }); return }
+    setWorkbenchModelSwitching(true)
+    const task = (async () => {
+      try {
+        const result = await window.modmind.device.selectModel(model, { ...option, scope: 'workspace' })
+        if (result.status !== 'ok') throw new Error(result.message)
+        const next = { ...workbenchAiSelection, ...(result.selection ?? { model, reasoningLevel: 'auto' as const }) }
+        workbenchSelectionRef.current = next; setWorkbenchAiOverride(next); setWorkbenchModelSwitchMessage(planning ? '下条消息使用 ' + model : '')
+        return true
+      } catch (error) { setWorkbenchModelSwitchMessage(aiFailureMessage(error)); return false }
+      finally { setWorkbenchModelSwitching(false); workbenchModelSwitchRef.current = null }
+    })()
+    workbenchModelSwitchRef.current = task; await task
   }
 
   const saveGiteeBuildSettings = async (): Promise<void> => {
@@ -5151,7 +5232,7 @@ export default function App(): React.JSX.Element {
         </aside> : null}
 
         {!isDetachedWindow && !projectIndependentView && (firstProjectPending || projectLauncherOpen || !project || (uiMode === 'advanced' && Boolean(project.draft))) ? (
-          uiMode === 'beginner' ? <MinimalProjectStart draft={beginnerStartupDraft} onDraftChange={setBeginnerStartupDraft} onStart={() => void startConversationProject()} onCreate={() => setBeginnerStartupDraft('')} onOpen={() => void openProject()} preferences={workbenchAiPreferences} models={beginnerAvailableModels} saving={savingAiPreferences || creatingConversationProject} onModelChange={model => setWorkbenchAiOverride({ ...workbenchAiSelection, model, reasoningLevel: 'auto' })} onReasoningLevelChange={reasoningLevel => setWorkbenchAiOverride({ ...workbenchAiSelection, reasoningLevel })} onReset={() => setWorkbenchAiOverride(undefined)} /> : <ProjectLauncher
+          uiMode === 'beginner' ? <MinimalProjectStart draft={beginnerStartupDraft} onDraftChange={setBeginnerStartupDraft} onStart={() => void startConversationProject()} onCreate={() => setBeginnerStartupDraft('')} onOpen={() => void openProject()} preferences={workbenchAiPreferences} models={beginnerAvailableModels} saving={savingAiPreferences || creatingConversationProject} onModelChange={(model, option) => void selectWorkbenchModel(model, option)} onReasoningLevelChange={reasoningLevel => setWorkbenchAiOverride({ ...workbenchAiSelection, reasoningLevel })} onReset={() => setWorkbenchAiOverride(undefined)} /> : <ProjectLauncher
             projects={recentProjects.filter((recent) => !recent.draft)}
             onCreate={() => setShowCreate(true)}
             onOpen={() => void openProject()}
@@ -5221,10 +5302,13 @@ export default function App(): React.JSX.Element {
               savingAiPreferences={savingAiPreferences || draftPreparing}
               beginnerModelScanMessage={beginnerModelScanMessage}
               contextModel={settings.codingBackend === 'codex' ? settings.externalAgents?.codex?.model : undefined}
-              onScanBeginnerModels={() => void scanBeginnerModels()}
-              onModelChange={model => setWorkbenchAiOverride({ ...workbenchAiSelection, model, reasoningLevel: 'auto' })}
+              onScanBeginnerModels={() => void scanBeginnerModels(true)}
+              onModelChange={(model, option) => void selectWorkbenchModel(model, option)}
+              modelSwitching={workbenchModelSwitching}
+              modelSwitchMessage={workbenchModelSwitchMessage}
+              onCancelModelWaiting={() => { workbenchWaitToken.current++; setWorkbenchModelSwitchMessage('') }}
               onReasoningLevelChange={reasoningLevel => setWorkbenchAiOverride({ ...workbenchAiSelection, reasoningLevel })}
-              onResetAiSelection={() => setWorkbenchAiOverride(undefined)}
+              onResetAiSelection={() => { void window.modmind.device.resetModelSelection('workspace').then(() => setWorkbenchAiOverride(undefined)).catch(error => setWorkbenchModelSwitchMessage(aiFailureMessage(error))) }}
               onFastModeChange={(fastMode) => void saveBeginnerAiPreference({ fastMode })}
               placeholder={workspacePromptPlaceholder}
               humanizeActivity={humanizeActivity}
@@ -5378,21 +5462,22 @@ export default function App(): React.JSX.Element {
                     </select>
                   </label><p className="settings-note" style={{ gridColumn: '1 / -1' }}>仅对工作台生效，支持 Codex。默认 YOLO；自动审批不可用时，本次任务直接转为手动确认。新任务使用已保存的模式。</p></div>
                 </section>
-                <section id="settings-ai" className="settings-section">
+                <section id="settings-ai" className="settings-section settings-ai-models">
                   <div className="settings-heading"><h2>AI 模型</h2></div>
                   <div className="segmented-control" role="group" aria-label="模型来源">
                     <button type="button" className={visibleAiSettingsBackend === 'quota' ? 'active' : ''} aria-pressed={visibleAiSettingsBackend === 'quota'} onClick={() => void selectAiSettingsBackend('quota')}>ModMind</button>
                     <button type="button" className={visibleAiSettingsBackend === 'codex' ? 'active' : ''} aria-pressed={visibleAiSettingsBackend === 'codex'} onClick={() => void selectAiSettingsBackend('codex')}>本机 Codex</button>
                   </div>
-                  {visibleAiSettingsBackend === 'quota' ? <>
+                  {visibleAiSettingsBackend === 'quota' ? <QuotaModelPicker preferences={beginnerAiPreferences} device={deviceState} disabled={savingAiPreferences} onApplied={preferences => { setBeginnerAiPreferences(preferences); resetSurfaceAiSelections(); void scanBeginnerModels() }}>
                   <ProductionSettingsPanel
+                    hideModel={deviceState.provider !== 'custom'}
                     aiSettings={beginnerAiPreferences}
                     deviceState={deviceState}
                     availableModels={beginnerAvailableModels}
                     scanningModels={scanningBeginnerModels}
                     savingAiPreferences={savingAiPreferences}
                     modelScanMessage={beginnerModelScanMessage}
-                    onScanModels={() => void scanBeginnerModels()}
+                    onScanModels={() => void scanBeginnerModels(true)}
                     onModelChange={(model) => void saveBeginnerAiPreference({ model })}
                     onReasoningLevelChange={(reasoningLevel) => void saveBeginnerAiPreference({ reasoningLevel })}
                     onFastModeChange={(fastMode) => void saveBeginnerAiPreference({ fastMode })}
@@ -5409,7 +5494,9 @@ export default function App(): React.JSX.Element {
                     model={beginnerAiPreferences.model}
                     value={beginnerAiPreferences.modelContextWindows?.[beginnerAiPreferences.model]}
                     compactValue={beginnerAiPreferences.modelAutoCompactTokenLimits?.[beginnerAiPreferences.model]}
+                    allowLongerContext={Boolean(settings.allowLongerContext)}
                     saving={savingAiPreferences}
+                    onAllowLongerContextChange={allowLongerContext => void saveSettingsPatch({ allowLongerContext })}
                     onSave={(value, compactValue) => {
                       const modelContextWindows = { ...beginnerAiPreferences.modelContextWindows }
                       if (value === undefined) delete modelContextWindows[beginnerAiPreferences.model]
@@ -5420,7 +5507,7 @@ export default function App(): React.JSX.Element {
                       void saveBeginnerAiPreference({ modelContextWindows, modelAutoCompactTokenLimits })
                     }}
                   />
-                  </> : <div className="codex-settings-gate">
+                  </QuotaModelPicker> : <div className="codex-settings-gate">
                   <fieldset className="codex-ai-settings" aria-label="本机 Codex 设置" disabled={codexSettingsBlocked} aria-hidden={codexSettingsBlocked || undefined}><div className="local-codex-settings">
                     <div className="beginner-ai-preferences">
                       <label className="beginner-model-control"><span>模型</span><div>{localCodexScan?.models.length ? <select value={localCodexScan.models.includes(settings.externalAgents?.codex?.model ?? localCodexScan.model) ? settings.externalAgents?.codex?.model ?? localCodexScan.model : ''} disabled={localCodexScanning} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
@@ -5435,7 +5522,9 @@ export default function App(): React.JSX.Element {
                       model={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''}
                       value={settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined)}
                       compactValue={settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined)}
+                      allowLongerContext={Boolean(settings.allowLongerContext)}
                       saving={localCodexScanning}
+                      onAllowLongerContextChange={allowLongerContext => void saveSettingsPatch({ allowLongerContext })}
                       onSave={(value, compactValue) => {
                         const model = settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''
                         const modelContextWindows = { ...settings.externalAgents?.codex?.modelContextWindows }

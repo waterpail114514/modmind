@@ -36,7 +36,8 @@ export function resolveCodexAutoCompactTokenLimit(model: string, options: ModelB
   if (!entry?.context_window) throw new Error(`无法确定模型 ${model} 的自动压缩阈值`)
   // Native entries with a null limit use Codex's 90% default; custom entries
   // already carry ModMind's input/output-aware budget.
-  return entry.auto_compact_token_limit ?? Math.floor(entry.context_window * 0.9)
+  const calculatedLimit = entry.auto_compact_token_limit ?? Math.floor(entry.context_window * 0.9)
+  return options.allowLongerContext ? calculatedLimit : Math.min(calculatedLimit, resolveModelContextBudget(model, options).autoCompactTokenLimit)
 }
 
 export function buildCodexModelCatalog(model: string, options: CatalogOptions = {}) {

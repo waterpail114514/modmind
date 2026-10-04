@@ -10,6 +10,8 @@ import { codexReasoningCapabilities, selectedReasoningEfforts } from '../shared/
 import type { BeginnerAiPreferences } from '../shared/types'
 import type { CodexServerConfig } from './codexSetup'
 import type { AiModelSelection } from '../shared/aiSelection'
+import { providerFixture } from './__fixtures__/providerSync'
+import { providerOwnerKey } from './providerSync'
 
 // Exercise the real Electron entrypoint function without launching its app/IPC side effects.
 it('saving unchanged preferences neither interrupts the task nor writes settings', async () => {
@@ -65,6 +67,8 @@ it('passes the selected quota model override into the runtime catalog', async ()
   let preferences: BeginnerAiPreferences = { model: 'gpt-5.6-sol', reasoningLevel: 'medium', fastMode: false, modelContextWindows: { 'gpt-5.6-sol': 1050000 }, modelAutoCompactTokenLimits: { 'gpt-5.6-sol': 800000 } }
   const sandbox = {
     readDeviceCredentials: async () => ({ baseUrl: 'https://relay.example/v1', apiKey: 'fixture' }),
+    ensureQuotaRoutingReady: async () => undefined,
+    readSettings: async () => ({ allowLongerContext: false }),
     quotaModelsForCredentials: async () => [preferences.model, 'inspiration-model'].map(id => ({ id, reasoning: { efforts: ['medium', 'max'], source: 'provider', controls: ['effort'] } })),
     reconcileQuotaModelPreferences: vi.fn(async () => preferences),
     readBeginnerAiPreferences: async () => preferences,
@@ -79,11 +83,14 @@ it('passes the selected quota model override into the runtime catalog', async ()
   const config = await sandbox.readBeginnerAgentServerConfig()
   expect(config.contextWindow).toBe(1050000)
   expect(config.autoCompactTokenLimit).toBe(800000)
+  expect(config.allowLongerContext).toBe(false)
   expect(config.reasoningCapabilities?.efforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   expect(buildCodexModelCatalog(config.model, config)?.models.at(-1)?.context_window).toBe(1050000)
   preferences = { ...preferences, model: 'gpt-5.6-terra' }
   expect((await sandbox.readBeginnerAgentServerConfig()).contextWindow).toBeUndefined()
   expect((await sandbox.readBeginnerAgentServerConfig()).autoCompactTokenLimit).toBeUndefined()
+  sandbox.readSettings = async () => ({ allowLongerContext: true })
+  expect((await sandbox.readBeginnerAgentServerConfig()).allowLongerContext).toBe(true)
   sandbox.reconcileQuotaModelPreferences.mockClear()
   const independent = await sandbox.readBeginnerAgentServerConfig({ model: 'inspiration-model', reasoningLevel: 'max' })
   expect(independent).toMatchObject({ model: 'inspiration-model', reasoningEffort: 'max' })
@@ -95,12 +102,36 @@ it('passes the selected quota model override into the runtime catalog', async ()
   await expect(sandbox.readBeginnerAgentServerConfig({ model: 'unavailable', reasoningLevel: 'auto' })).rejects.toThrow('当前线路没有模型')
 })
 
+it.each([false, true])('passes the context policy through the synchronized provider route (longer=%s)', async allowLongerContext => {
+  const source = readFileSync('src/main/index.ts', 'utf8')
+  const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
+  const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'readBeginnerAgentServerConfig')!
+  const fixture = providerFixture()
+  const sandbox = {
+    ensureQuotaRoutingReady: async () => undefined,
+    readDeviceCredentials: async () => fixture.owner(),
+    readSettings: async () => ({ allowLongerContext }),
+    readBeginnerAiPreferences: async () => fixture.preferences(),
+    providerSync: () => fixture.service,
+    providerOwnerKey,
+    modelReasoningFor: () => undefined,
+    selectedReasoningEfforts, reasoningSelectionEffort, codexReasoningCapabilities,
+    readBeginnerAgentServerConfig: undefined as unknown as (selection?: AiModelSelection) => Promise<CodexServerConfig>
+  }
+  vm.runInNewContext(ts.transpileModule(fn.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox)
+  const config = await sandbox.readBeginnerAgentServerConfig({ model: 'deepseek-v4.1-flash', account: 'trial:one', billing: 'free', reasoningLevel: 'auto' })
+  expect(config).toMatchObject({ model: 'deepseek-v4.1-flash', baseUrl: 'https://site.example/api/trial/v1', allowLongerContext })
+  expect(buildCodexModelCatalog(config.model, config)?.models.at(-1)?.auto_compact_token_limit)
+    .toBe(allowLongerContext ? 475000 : 256000)
+})
+
 it('passes exact-model thresholds through the configured Codex route', async () => {
   const source = readFileSync('src/main/index.ts', 'utf8')
   const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
   const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'configuredCodexServerConfig')!
   const sandbox = {
     normalizeApiBaseUrl: (url: string) => url,
+    readSettings: async () => ({ allowLongerContext: false }),
     refreshConfiguredReasoning: async () => undefined,
     modelReasoningFor: () => ({ efforts: [] }),
     reasoningSelectionEffort, normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, selectedReasoningEfforts, codexReasoningCapabilities,
@@ -112,4 +143,7 @@ it('passes exact-model thresholds through the configured Codex route', async () 
   const switched = await sandbox.configuredCodexServerConfig({ ...configuration, model: 'another', reasoningEffort: undefined } as unknown as import('../shared/types').ExternalAgentConfiguration)
   expect(switched.contextWindow).toBeUndefined()
   expect(switched.autoCompactTokenLimit).toBeUndefined()
+  expect(switched.allowLongerContext).toBe(false)
+  sandbox.readSettings = async () => ({ allowLongerContext: true })
+  expect((await sandbox.configuredCodexServerConfig(configuration as unknown as import('../shared/types').ExternalAgentConfiguration)).allowLongerContext).toBe(true)
 })

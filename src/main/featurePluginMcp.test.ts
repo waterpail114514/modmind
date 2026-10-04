@@ -11,23 +11,34 @@ import { LiveConfiguration } from './liveConfiguration'
 import { downloadActivities } from './downloadActivityService'
 import { featureHostRuntime } from './featureHostRuntime'
 import type { ImageStudioBackend } from '../shared/imageStudio'
+import type { FeaturePluginInvocationContext, FeaturePluginSurface } from '../shared/featurePlugins'
 import type { ProjectInfo } from '../shared/types'
 
 it('calls the installed plugin through real workbench MCP, preserving discovery, read-only, validation and permission gates', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-feature-mcp-'))
   const project = { name: 'Feature MCP', namespace: 'feature_mcp', path: root, loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' } as ProjectInfo
   const png = await sharp({ create: { width: 16, height: 16, channels: 4, background: '#33aa99' } }).png().toBuffer()
-  const server = createServer(async (request, response) => { for await (const _ of request) { /* consume */ }; response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })) })
+  const secondPng = await sharp({ create: { width: 16, height: 16, channels: 4, background: '#9933aa' } }).png().toBuffer()
+  const requests: Array<{ url?: string; type?: string; body: Buffer }> = []
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    requests.push({ url: request.url, type: request.headers['content-type'], body: Buffer.concat(chunks) })
+    response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }))
+  })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const port = (server.address() as { port: number }).port
   const service = new FeaturePluginService(path.join(root, 'features'), {
-    requireFrom: path.resolve('package.json'), capabilities: { downloadActivities, runtime: featureHostRuntime }, busy: () => false, changed: () => undefined,
+    requireFrom: path.resolve('package.json'), capabilities: { downloadActivities, runtime: featureHostRuntime }, busy: () => false, changed: () => undefined, projectRoot: () => project.path,
     options: () => ({ host: { event: () => ({}), requireProject: () => project }, userDataDir: root, projectRoot: () => root, getSyncedImageApi: async () => ({ customMode: true, imageApi: { baseUrl: `http://127.0.0.1:${port}`, apiKey: 'fixture-key', model: 'fixture-model' } }) })
   })
   const backend = (): ImageStudioBackend => service.service<ImageStudioBackend>('image-studio')
   let allowed = true
   const handlers = {
     projectInfo: project, imageStudioAvailable: async () => service.enabled('image-studio'),
+    featureCatalog: async () => service.catalog(),
+    featureTools: async (surface: FeaturePluginSurface) => service.tools(surface),
+    featureInvoke: (id: string, action: string, input: Record<string, unknown>, context: FeaturePluginInvocationContext) => service.invoke(id, action, input, context),
     imageStudioInfo: (models: boolean) => backend().describe(models),
     imageGenerate: (input: Record<string, unknown>) => backend().generate(input, 'agent'),
     imageProcess: (operation: 'perfect-pixel' | 'remove-background', data: string, options: object) => backend().process(operation, data, options),
@@ -56,17 +67,25 @@ it('calls the installed plugin through real workbench MCP, preserving discovery,
     expect((await rpc('tools/list')).result.tools.some((tool: { name: string }) => tool.name === 'modmind_image_generate')).toBe(false)
     await service.install(await prepareFeaturePlugin(path.resolve('feature-plugin-dist/image-studio.mmfeature')))
     expect((await rpc('tools/list')).result.tools.some((tool: { name: string }) => tool.name === 'modmind_image_generate')).toBe(true)
+    expect(service.tools().find(tool => tool.name === 'modmind_image_generate')?.inputSchema.properties).toHaveProperty('referenceImages')
     const call = (name: string, args: object) => rpc('tools/call', { name, arguments: args })
-    const generated = await call('modmind_image_generate', { prompt: 'MCP plugin fixture', model: 'fixture-model', style: 'free' })
+    const references = [png, secondPng].map(image => `data:image/png;base64,${image.toString('base64')}`)
+    const generated = await call('modmind_image_generate', { prompt: 'MCP plugin fixture', model: 'fixture-model', style: 'free', referenceImages: references })
     expect(generated.result.isError, JSON.stringify(generated.result)).toBeUndefined()
     expect(generated.result.content.some((content: { type: string }) => content.type === 'image')).toBe(true)
     expect(await backend().history()).toHaveLength(1)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].url).toBe('/images/edits')
+    const form = await new Response(new Uint8Array(requests[0].body), { headers: { 'Content-Type': requests[0].type! } }).formData()
+    expect(await Promise.all((form.getAll('image[]') as File[]).map(async file => Buffer.from(await file.arrayBuffer())))).toEqual([png, secondPng])
     const processed = await call('modmind_image_perfect_pixel', { dataUrl: 'data:image/png;base64,' + png.toString('base64'), perfectPixel: { gridSize: [8, 8] } })
     expect(processed.result.isError).toBeUndefined()
     const image = processed.result.content.find((content: { type: string }) => content.type === 'image')
     const metadata = await sharp(Buffer.from(image.data, 'base64')).metadata()
     expect([metadata.width, metadata.height]).toEqual([8, 8])
     expect((await call('modmind_image_generate', { prompt: '' })).result.isError).toBe(true)
+    expect((await call('modmind_image_generate', { prompt: 'invalid reference', referenceImages: [references[0], 'invalid'] })).result.isError).toBe(true)
+    expect(requests).toHaveLength(1)
     allowed = false
     expect((await call('modmind_image_generate', { prompt: 'denied' })).result.isError).toBe(true)
     expect(await backend().history()).toHaveLength(1)

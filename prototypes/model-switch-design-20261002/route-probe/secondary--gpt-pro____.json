@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-10-02T04:02:35.863Z",
+  "account": "secondary",
+  "group": "gpt-pro（混池）",
+  "endpoint": "https://wawapii.com/v1/models",
+  "modelCount": 6,
+  "modelIds": [
+    "codex-auto-review",
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-astra",
+    "gpt-6-sol"
+  ]
+}

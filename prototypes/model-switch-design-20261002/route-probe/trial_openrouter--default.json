@@ -1,0 +1,10 @@
+{
+  "checkedAt": "2026-10-02T04:06:52.931Z",
+  "account": "trial:openrouter",
+  "group": null,
+  "endpoint": "https://ether-studio.top/api/trial/v1/models",
+  "modelCount": 1,
+  "modelIds": [
+    "nvidia/nemotron-3-ultra-550b-a55b:free"
+  ]
+}

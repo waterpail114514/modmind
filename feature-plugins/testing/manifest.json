@@ -2128,7 +2128,7 @@
     {
       "name": "modmind_runtime_state",
       "action": "runtime_state",
-      "description": "Read the current isolated Minecraft test runtime state and recent events."
+      "description": "Read the current isolated Minecraft test runtime state and recent events. Modpacks also return modpackImport with installed counts, pending dependencies and original-pack compatibility warnings; import success does not prove gameplay compatibility."
     }
   ],
   "files": {}

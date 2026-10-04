@@ -5,6 +5,8 @@ import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 import { diagnosticJournal } from './diagnosticLog'
 import { normalizeWorkbenchFeatures } from '../shared/workbenchFeatures'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { routingFixture } from './__fixtures__/quotaRouting'
+import { providerFixture } from './__fixtures__/providerSync'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -14,6 +16,7 @@ import type { ProjectInfo } from '../shared/types'
 import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
 import { LiveConfiguration } from './liveConfiguration'
 import { WORKBENCH_SKILL_POLICY, workbenchSkillPrompt } from './workbenchSkillPolicy'
+import { UserSkillStore } from './userSkillStore'
 import { createDraftProject, initializeDraftProject } from './draftProjectService'
 import * as webResearch from './webResearch'
 import { SoundLibraryService } from "../../feature-plugins/sound-studio/src/main/soundLibraryService"
@@ -27,6 +30,43 @@ const bridges: ModMindBridge[] = []
 const children: ChildProcessWithoutNullStreams[] = []
 
 describe('MC百科 MCP boundary', () => {
+  it('updates and reads the long-context preference through the existing settings tools', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-context-setting-mcp-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Context', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'context', createdAt: '' }
+    let allowLongerContext = false
+    const handlers = {
+      ...stubBridgeHandlers(project),
+      appSettingsRead: async () => ({ allowLongerContext }),
+      appSettingsWrite: async (input: Record<string, unknown>) => {
+        if (input.key !== 'allowLongerContext' || typeof input.value !== 'boolean') throw new Error('Invalid context setting')
+        allowLongerContext = input.value
+        return { allowLongerContext }
+      }
+    }
+    for (const readOnly of [false, true]) {
+      const bridge = new ModMindBridge(project, handlers, 'test', undefined, readOnly)
+      bridges.push(bridge)
+      const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+      const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+      const settingTool = (listed.result as { tools: Array<{ name: string; inputSchema: { properties: { key: { enum: string[] } } } }> }).tools.find(tool => tool.name === 'modmind_set_app_setting')
+      expect(settingTool?.inputSchema.properties.key.enum).toContain('allowLongerContext')
+      const call = (id: number, name: string, args: Record<string, unknown>) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+      const result = await call(2, 'modmind_set_app_setting', { key: 'allowLongerContext', value: true })
+      if (readOnly) {
+        expect(JSON.stringify(result)).toContain('只读')
+      } else {
+        expect(JSON.stringify(result)).toContain('allowLongerContext')
+        expect(allowLongerContext).toBe(true)
+        const readBack = await call(3, 'modmind_get_app_settings', {})
+        expect(JSON.parse((readBack.result as { content: Array<{ text: string }> }).content[0].text)).toEqual({ allowLongerContext: true })
+        const invalid = await call(4, 'modmind_set_app_setting', { key: 'allowLongerContext', value: 'true' })
+        expect((invalid.result as { isError: boolean }).isError).toBe(true)
+      }
+    }
+  })
+
   it('creates a draft and keeps research and engineering on the same live bridge', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-guided-bridge-')); temporaryRoots.push(root)
     const project = await createDraftProject(root, '按推荐的配置来')
@@ -192,6 +232,125 @@ function stubBridgeHandlers(project: ProjectInfo): ExternalAgentBridgeHandlers {
     runtimeState: async () => ({})
   }
 }
+
+describe('user Skills MCP workflow', () => {
+  it('discovers and reads turn snapshots through MCP, enforcing enabled skills, resource paths and read-only scope', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-user-skills-mcp-')); temporaryRoots.push(root)
+    const store = new UserSkillStore(path.join(root, 'store'))
+    const source = path.join(root, 'source')
+    const content = '---\nname: custom-workflow\ndescription: Use for the custom task.\n---\n\nORIGINAL_SKILL_BODY\n'
+    await fs.mkdir(path.join(source, 'references'), { recursive: true })
+    await fs.writeFile(path.join(source, 'SKILL.md'), content)
+    await fs.writeFile(path.join(source, 'references', 'guide.md'), 'REFERENCE_EVIDENCE')
+    const saved = await store.import(source)
+    await store.save({ content: content.replace('custom-workflow', 'disabled-workflow') })
+    await store.setEnabled('disabled-workflow', false)
+    let nextBody = 'ORIGINAL_SKILL_BODY'
+    for (const [index, readOnly] of [false, false, true].entries()) {
+      const project = { name: `Skills-${index}`, path: path.join(root, `project-${index}`), loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'skills', createdAt: '' } as ProjectInfo
+      const bridge = new ModMindBridge(project, stubBridgeHandlers(project), 'test', undefined, readOnly, `turn-${index}`, undefined, undefined, undefined, store)
+      bridges.push(bridge)
+      const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+      const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+      const names = (listed.result as { tools: { name: string }[] }).tools.map(tool => tool.name)
+      expect(names.includes('modmind_user_skills')).toBe(!readOnly)
+      let id = 2
+      const call = (input: Record<string, unknown>) => rpc(child, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name: 'modmind_user_skills', arguments: input } })
+      const resultOf = (response: Record<string, unknown>): { isError?: boolean; content: { text: string }[] } => response.result as { isError?: boolean; content: { text: string }[] }
+      const list = resultOf(await call({ operation: 'list' }))
+      if (readOnly) { expect(list.isError).toBe(true); continue }
+      const catalog = JSON.parse(list.content[0].text).skills
+      expect(catalog.map((skill: { name: string }) => skill.name)).toEqual(['custom-workflow'])
+      expect(catalog[0].path).toContain(`project-${index}`)
+      expect(bridge.userSkillPrompt()).toContain('custom-workflow')
+      expect(bridge.userSkillPrompt()).not.toContain(nextBody)
+      if (index === 0) await store.save({ name: saved.name, revision: saved.revision, content: content.replace('ORIGINAL_SKILL_BODY', 'UPDATED_SKILL_BODY') })
+      const read = resultOf(await call({ operation: 'read', name: saved.name }))
+      expect(JSON.parse(read.content[0].text).content).toContain(nextBody)
+      const resource = resultOf(await call({ operation: 'read', name: saved.name, path: 'references/guide.md' }))
+      expect(JSON.parse(resource.content[0].text).content).toBe('REFERENCE_EVIDENCE')
+      for (const input of [{ operation: 'read', name: 'disabled-workflow' }, { operation: 'read', name: saved.name, path: '../../outside' }, { operation: 'remove', name: saved.name }, { operation: 'list', unexpected: true }]) {
+        expect(resultOf(await call(input)).isError).toBe(true)
+      }
+      nextBody = 'UPDATED_SKILL_BODY'
+    }
+  }, 20_000)
+})
+
+describe('quota model MCP workflow', () => {
+  it('uses v2 scope and account through actual MCP stdio and reads bindings back without secrets',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'modmind-providers-mcp-'));temporaryRoots.push(root)
+    const project={name:'Providers',path:root,loader:'fabric',minecraftVersion:'1.21.1',namespace:'providers',createdAt:''} as ProjectInfo
+    const f=providerFixture()
+    const bridge=new ModMindBridge(project,{...stubBridgeHandlers(project),reviewAction:async()=>({approved:true,complete:true,dangerousOperations:[],risk:'low',feedback:''}),quotaModelsRead:force=>f.service.catalog(force),quotaModelSelect:(model,selection)=>f.service.select(model,selection??{})},'test',undefined,false,'providers-v2')
+    bridges.push(bridge);const {mcpConfigPath}=await bridge.start();await bridge.writeMcpConfig(mcpConfigPath)
+    const config=JSON.parse(await fs.readFile(mcpConfigPath,'utf8')).mcpServers.modmind
+    const child=spawn(config.command,config.args,{env:{...process.env,...config.env},stdio:['pipe','pipe','pipe']});children.push(child)
+    const call=(id:number,name:string,args:object)=>rpc(child,{jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}})
+    const changed=await call(1,'modmind_select_quota_model',{model:'qwen3.8-flash',billing:'free',account:'trial:two',scope:'inspiration'})
+    expect(JSON.stringify(changed)).toContain('已选择')
+    const after=await call(2,'modmind_list_quota_models',{})
+    expect(JSON.stringify(after)).toContain('trial:two')
+    expect(f.owner().sync.bindings?.inspiration).toMatchObject({model:'qwen3.8-flash',account:'trial:two'})
+    expect(f.preferences().model).toBe('gpt-6-astra')
+    expect(JSON.stringify(after)).not.toMatch(/paid-secret|free-secret|session-secret/)
+    await call(3,'modmind_select_quota_model',{model:'gpt-6.1-sol',billing:'quota',account:'secondary',scope:'settings'})
+    expect(f.owner().sync.bindings).toEqual({});expect(f.preferences().model).toBe('gpt-6.1-sol')
+    const linked=await call(4,'modmind_select_quota_model',{model:'gemini-3.8-flash',billing:'quota',account:'secondary',scope:'workspace'})
+    expect(JSON.stringify(linked)).toContain('两个台已同步')
+    const readBack=await call(5,'modmind_list_quota_models',{})
+    expect(JSON.parse((readBack.result as {content:{text:string}[]}).content[0].text)).toMatchObject({bindings:{workspace:{model:'gemini-3.8-flash'},inspiration:{model:'gemini-3.8-flash'}}})
+    expect(f.preferences().model).toBe('gpt-6.1-sol')
+  },20000)
+  it('discovers, selects and reads back through stdio and the real routing service, respecting read-only and review', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-quota-mcp-')); temporaryRoots.push(root)
+    const project = { name: 'Quota routing', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'quota_test', createdAt: '' } as ProjectInfo
+    const fixture = routingFixture()
+    let approved = true, projectCurrent = true
+    const review = vi.fn(async () => ({ approved, complete: true, dangerousOperations: [], risk: 'low' as const, feedback: approved ? '' : 'user denied' }))
+    const handlers: ExternalAgentBridgeHandlers = { ...stubBridgeHandlers(project), reviewAction: review,
+      quotaModelsRead: force => fixture.router.catalog(force),
+      quotaModelSelect: (model, selection) => { if (!projectCurrent) throw new Error('项目已切换'); return fixture.router.select(model, selection) } }
+    const start = async (readOnly: boolean) => {
+      const bridge = new ModMindBridge(project, handlers, 'test', undefined, readOnly, readOnly ? 'quota-readonly' : 'quota-write')
+      bridges.push(bridge)
+      const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+      return child
+    }
+    const child = await start(false)
+    const call = (id: number, name: string, args: object) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+    expect(JSON.stringify(await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' }))).toContain('modmind_select_quota_model')
+    const before = await call(2, 'modmind_list_quota_models', {})
+    expect(JSON.stringify(before)).toContain('gpt-5.6-sol')
+    expect(JSON.parse((before.result as { content: { text: string }[] }).content[0].text)).toMatchObject({ models: expect.arrayContaining([expect.objectContaining({ id: 'kimi-k3', noCache: true })]) })
+    expect(JSON.stringify(before)).not.toContain('key-before')
+    const changed = await call(3, 'modmind_select_quota_model', { model: 'kimi-k3' })
+    expect(JSON.stringify(changed)).toContain('已切换到 Kimi K3')
+    const after = await call(4, 'modmind_list_quota_models', { refresh: true })
+    expect(JSON.parse((after.result as { content: { text: string }[] }).content[0].text)).toMatchObject({ currentModel: 'kimi-k3', currentRoute: { group: 'Kimi' } })
+    expect(review).toHaveBeenCalledWith('select_quota_model', { model: 'kimi-k3' })
+    expect(fixture.log.filter(s => s === 'route-post')).toHaveLength(1)
+    expect(JSON.stringify(await call(5, 'modmind_select_quota_model', { model: 42 }))).toMatch(/error|有效|invalid/i)
+    projectCurrent = false
+    expect(JSON.stringify(await call(6, 'modmind_select_quota_model', { model: 'gpt-6-astra' }))).toContain('项目已切换')
+    projectCurrent = true; approved = false
+    expect(JSON.stringify(await call(7, 'modmind_select_quota_model', { model: 'gpt-6-astra' }))).toContain('denied')
+    const readonly = await start(true)
+    const denied = await rpc(readonly, { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'modmind_select_quota_model', arguments: { model: 'gpt-6-astra' } } })
+    expect(JSON.stringify(denied)).toContain('只读')
+    expect(fixture.preferences().model).toBe('kimi-k3')
+    approved = true
+    const free = await call(9, 'modmind_select_quota_model', { model: 'deepseek-v4.1-flash', billing: 'free' })
+    expect(JSON.stringify(free)).toContain('免费版')
+    const freeRead = await call(10, 'modmind_list_quota_models', { refresh: true })
+    expect(JSON.parse((freeRead.result as { content: {text: string}[] }).content[0].text)).toMatchObject({currentModel:'deepseek-v4.1-flash',billing:'free',currentRoute:{group:null}})
+    expect(JSON.stringify(await call(11,'modmind_select_quota_model',{model:'kimi-k3',billing:'free',account:'primary'}))).toMatch(/error|无效|invalid/i)
+  }, 20000)
+})
 
 describe('agent stream failure extraction', () => {
   it.each(['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'])(
@@ -2196,7 +2355,7 @@ describe('ModMind external agent MCP bridge', () => {
     const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
     const tools = (listed.result as { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> }).tools
     const input = { prompt: 'cat', model: 'selected', presetId: 'item-icon', presetPrompt: 'edited template', style: 'free', size: '2048x1152', quality: 'high', moderation: 'low', count: 2, background: 'auto', backgroundColor: '#123456', removeBackground: true, referenceImage: 'data:image/png;base64,AA==' }
-    expect(Object.keys(tools.find(tool => tool.name === 'modmind_image_generate')!.inputSchema.properties).sort()).toEqual(Object.keys(input).sort())
+    expect(Object.keys(tools.find(tool => tool.name === 'modmind_image_generate')!.inputSchema.properties).sort()).toEqual([...Object.keys(input), 'referenceImages'].sort())
     const perfectPixel = { sampleMethod: 'median', gridSize: [32, 16], minSize: 0.1, peakWidth: 9, refineIntensity: 0, fixSquare: false }
     expect(tools.find(tool => tool.name === 'modmind_image_perfect_pixel')!.inputSchema.properties).toHaveProperty('perfectPixel')
     await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'modmind_image_studio_info', arguments: { includeModels: true } } })
@@ -2204,6 +2363,10 @@ describe('ModMind external agent MCP bridge', () => {
     await rpc(child, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'modmind_image_perfect_pixel', arguments: { dataUrl: input.referenceImage, perfectPixel } } })
     expect(imageStudioInfo).toHaveBeenCalledWith(true)
     expect(imageGenerate).toHaveBeenCalledWith(input)
+    const { referenceImage, ...multiInput } = input
+    const multiRequest = { ...multiInput, referenceImages: [referenceImage, 'data:image/png;base64,AQ=='] }
+    await rpc(child, { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'modmind_image_generate', arguments: multiRequest } })
+    expect(imageGenerate).toHaveBeenLastCalledWith(multiRequest)
     expect(imageProcess).toHaveBeenCalledWith('perfect-pixel', input.referenceImage, { perfectPixel })
   }, 30000)
 

@@ -1,0 +1,17 @@
+{
+  "checkedAt": "2026-10-02T04:06:16.687Z",
+  "account": "primary",
+  "group": "plus 2组",
+  "endpoint": "https://hk.ai.soulecho.cc/v1/models",
+  "modelCount": 8,
+  "modelIds": [
+    "codex-auto-review",
+    "gpt-5.4",
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6.1-sol"
+  ]
+}

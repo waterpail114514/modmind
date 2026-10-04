@@ -97,11 +97,17 @@ describe('app changelog startup persistence', () => {
   })
 })
 
-it('ships notes for the package version with unique descending versions and nonempty content', async () => {
+it('ships public release notes with unique descending versions and nonempty content', async () => {
   const pkg = JSON.parse(await fs.readFile(path.resolve('package.json'), 'utf8'))
   // Future release drafts may precede the currently packaged version.
-  expect(APP_CHANGELOG.some(release => release.version === pkg.version)).toBe(true)
-  expect((await launch(pkg.version)).snapshot().releases[0]?.version).toBe(pkg.version)
+  // The internal plugin test build is intentionally absent from user-facing history.
+  if (pkg.version === '1.5.0-plugintest') {
+    expect(APP_CHANGELOG.some(release => release.version === pkg.version)).toBe(false)
+    expect((await launch(pkg.version)).snapshot().automatic).toBe(false)
+  } else {
+    expect(APP_CHANGELOG.some(release => release.version === pkg.version)).toBe(true)
+    expect((await launch(pkg.version)).snapshot().releases[0]?.version).toBe(pkg.version)
+  }
   expect(new Set(APP_CHANGELOG.map(release => release.version)).size).toBe(APP_CHANGELOG.length)
   APP_CHANGELOG.forEach((release, index) => {
     expect(parseAppVersion(release.version)).not.toBeNull()

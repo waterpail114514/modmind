@@ -1,0 +1,10 @@
+{
+  "checkedAt": "2026-10-02T04:02:55.218Z",
+  "account": "secondary",
+  "group": "GLM",
+  "endpoint": "https://wawapii.com/v1/models",
+  "modelCount": 1,
+  "modelIds": [
+    "glm-5.3-flash"
+  ]
+}

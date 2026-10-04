@@ -46,6 +46,7 @@ interface ReinstallOptions extends ReinstallPaths {
   fetchManifest?: (url: string) => Promise<string>
   download?: (request: DownloadRequest) => Promise<DownloadResult>
   launchHelper?: (plan: ReinstallPlan) => Promise<void>
+  launchInstaller?: (installerPath: string, installDirectory: string) => Promise<void>
 }
 
 function within(parent: string, candidate: string): boolean {
@@ -70,6 +71,13 @@ export function reinstallCleanupDirectories(options: ReinstallPaths): string[] {
     throw new Error('当前使用自定义应用数据目录，无法自动彻底重装')
   }
   const targets = [installDirectory, ...allowedData]
+  assertSafeDirectories(options, targets)
+  // Collapse nested targets, preserving original spelling for display and logs.
+  return targets.filter((target, index) => !targets.some((other, otherIndex) => otherIndex !== index && within(other, target) && (normalize(other) !== normalize(target) || otherIndex < index)))
+}
+
+function assertSafeDirectories(options: ReinstallPaths, targets: string[]): void {
+  const normalize = (value: string): string => path.win32.normalize(value).replace(/[\\/]+$/, '').toLowerCase()
   const protectedRoots = [options.homePath, options.appDataPath, options.localAppDataPath, options.tempPath,
     ...['Desktop', 'Documents', 'Downloads'].map(name => path.win32.join(options.homePath, name)),
     'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
@@ -80,8 +88,6 @@ export function reinstallCleanupDirectories(options: ReinstallPaths): string[] {
       throw new Error('清理目录包含项目或共享目录，请将项目移出 ModMind 的程序和数据目录后重试：' + target)
     }
   }
-  // Collapse nested targets, preserving original spelling for display and logs.
-  return targets.filter((target, index) => !targets.some((other, otherIndex) => otherIndex !== index && within(other, target) && (normalize(other) !== normalize(target) || otherIndex < index)))
 }
 
 export function parseReinstallManifest(text: string, baseUrl: string): { version: string; url: string; size: number; sha512: string } {
@@ -105,7 +111,9 @@ export function parseReinstallManifest(text: string, baseUrl: string): { version
 }
 
 async function assertRegularFile(file: string): Promise<void> {
-  const stat = await fs.lstat(file)
+  // Electron's patched fs sees an ASAR archive as a virtual directory.
+  const physicalFs: typeof fs = process.versions.electron ? require('original-fs').promises : fs
+  const stat = await physicalFs.lstat(file)
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('重装所需文件无效：' + file)
 }
 
@@ -115,13 +123,31 @@ export async function prepareCleanReinstall(options: ReinstallOptions): Promise<
   await assertRegularFile(options.executablePath)
   await assertRegularFile(path.join(installDirectory, 'resources', 'app.asar'))
   await assertRegularFile(path.join(installDirectory, 'Uninstall ModMind.exe'))
+  return prepareInstaller(options, cleanupDirectories)
+}
+
+export async function prepareOverwriteReinstall(options: ReinstallOptions): Promise<() => Promise<void>> {
+  // An incomplete installation or custom userData must still be repairable.
+  if (!/^[a-z]:[\\/]/i.test(options.executablePath) || options.executablePath.includes('\0')
+    || path.win32.basename(options.executablePath).toLowerCase() !== 'modmind.exe') throw new Error('当前程序不是已安装的 ModMind')
+  // The NSIS upgrade can remove old application files, so keep projects out of it.
+  assertSafeDirectories(options, [path.win32.dirname(options.executablePath)])
+  await assertRegularFile(options.executablePath)
+  return prepareInstaller(options)
+}
+
+async function prepareInstaller(options: ReinstallOptions, cleanupDirectories?: string[]): Promise<() => Promise<void>> {
+  const installDirectory = path.dirname(options.executablePath)
   const base = normalizeAppUpdateUrl(options.updateUrl)
   const fetchManifest = options.fetchManifest ?? ((url: string) => fetchTextWithRetry(url, { timeoutMs: 15_000, attempts: 2, headers: { 'Cache-Control': 'no-cache' } }))
   const manifest = parseReinstallManifest(await fetchManifest(new URL('latest.yml', base).toString()), base)
   options.report({ latestVersion: manifest.version, targetChannel: 'stable', message: '正在下载最新版完整安装包', downloadedBytes: 0, totalBytes: manifest.size })
   // The package survives deletion of userData and the normal updater cache.
   const stageDirectory = await fs.mkdtemp(path.join(options.tempPath, 'ModMind-reinstall-'))
-  if (cleanupDirectories.some(root => within(root, stageDirectory))) throw new Error('安装包暂存目录与清理目录重叠')
+  if ([installDirectory, ...(cleanupDirectories ?? [])].some(root => within(root, stageDirectory))) {
+    await fs.rm(stageDirectory, { recursive: true, force: true })
+    throw new Error('安装包暂存目录与安装或清理目录重叠')
+  }
   const installerPath = path.join(stageDirectory, 'ModMind-Setup.exe')
   const activityId = downloadActivities.start({ label: '重装 ModMind ' + manifest.version, detail: '正在下载完整安装包' })
   try {
@@ -139,6 +165,14 @@ export async function prepareCleanReinstall(options: ReinstallOptions): Promise<
     const hash = createHash('sha512')
     for await (const chunk of createReadStream(installerPath)) hash.update(chunk)
     if (hash.digest('hex') !== manifest.sha512) throw new Error('安装包 SHA-512 校验失败，未执行清理')
+    if (!cleanupDirectories) {
+      downloadActivities.complete(activityId, '完整安装包已校验，准备覆盖安装')
+      options.report({ message: '安装包已校验，准备覆盖安装并保留现有数据', downloadedBytes: manifest.size, totalBytes: manifest.size })
+      return async () => {
+        try { await (options.launchInstaller ?? launchOverwriteInstaller)(installerPath, installDirectory) }
+        catch (error) { throw new Error('无法启动覆盖安装：' + (error instanceof Error ? error.message : String(error)) + '。完整安装包保留在：' + installerPath) }
+      }
+    }
     const plan: ReinstallPlan = {
       schemaVersion: 1, userDataPath: options.userDataPath, installDirectory, cleanupDirectories, appDataPath: options.appDataPath,
       localAppDataPath: options.localAppDataPath, homePath: options.homePath, stageDirectory,
@@ -157,6 +191,17 @@ export async function prepareCleanReinstall(options: ReinstallOptions): Promise<
   }
 }
 
+async function launchOverwriteInstaller(installerPath: string, installDirectory: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    // NSIS consumes the remainder of the command line as /D, without quotes.
+    const child = spawn(installerPath, ['--updated', '--force-run', '/D=' + installDirectory], {
+      detached: true, stdio: 'ignore', windowsHide: false, windowsVerbatimArguments: true
+    })
+    child.once('error', reject)
+    child.once('spawn', () => { child.unref(); resolve() })
+  })
+}
+
 async function launchReinstallHelper(plan: ReinstallPlan): Promise<void> {
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   const child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', path.join(plan.stageDirectory, 'reinstall.ps1'), '-PlanPath', path.join(plan.stageDirectory, 'plan.json')], { detached: true, stdio: 'ignore', windowsHide: true, cwd: plan.stageDirectory })
@@ -164,16 +209,21 @@ async function launchReinstallHelper(plan: ReinstallPlan): Promise<void> {
   child.on('error', error => { launchError = error })
   child.unref()
   const deadline = Date.now() + 120_000
-  while (Date.now() < deadline) {
-    if (launchError) throw launchError
-    const error = await fs.readFile(path.join(plan.stageDirectory, 'error.txt'), 'utf8').catch(() => '')
-    if (error) throw new Error(error.trim())
-    if (await fs.stat(path.join(plan.stageDirectory, 'ready')).then(() => true, () => false)) {
-      await fs.writeFile(path.join(plan.stageDirectory, 'proceed'), 'confirmed', 'utf8')
-      return
+  try {
+    while (Date.now() < deadline) {
+      if (launchError) throw launchError
+      const error = await fs.readFile(path.join(plan.stageDirectory, 'error.txt'), 'utf8').catch(() => '')
+      if (error) throw new Error(error.trim())
+      if (await fs.stat(path.join(plan.stageDirectory, 'ready')).then(() => true, () => false)) {
+        await fs.writeFile(path.join(plan.stageDirectory, 'proceed'), 'confirmed', 'utf8')
+        return
+      }
+      await delay(150)
     }
-    await delay(150)
+    throw new Error('重装准备超时，未清理原程序。请检查 Windows 权限提示后重试。安装包保留在：' + plan.stageDirectory)
+  } catch (error) {
+    // A late/elevated helper must not clean data when fallback closes the app.
+    await fs.writeFile(path.join(plan.stageDirectory, 'cancel'), 'cancelled', 'utf8')
+    throw error
   }
-  await fs.writeFile(path.join(plan.stageDirectory, 'cancel'), 'timeout', 'utf8')
-  throw new Error('重装准备超时，未清理原程序。请检查 Windows 权限提示后重试。安装包保留在：' + plan.stageDirectory)
 }

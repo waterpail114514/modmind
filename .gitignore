@@ -28,6 +28,9 @@ ui-check*.jpg
 !/docs/fabric-api-test-policy.zh-CN.md
 !/docs/creation-experience-development-plan.zh-CN.md
 !/docs/minecraft-mcp-integration.zh-CN.md
+!/docs/quota-model-switching.zh-CN.md
+!/docs/model-selection-research.zh-CN.md
+!/docs/user-skills.zh-CN.md
 /modmind-mcp-open-source/
 /resources/server-pack-creator/.parts/
 /resources/server-pack-creator/*.partial
@@ -51,6 +54,8 @@ ui-check*.jpg
 /test-results/test-temp-*/
 /test-results/feature-store/
 /test-results/features-page-preview/
+/test-results/quota-model-ui/
+/test-results/quota-model-live-read/
 !/docs/feature-plugins.zh-CN.md
 !/docs/official-features-publishing.zh-CN.md
 !/docs/branch-workspaces.zh-CN.md

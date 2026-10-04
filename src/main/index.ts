@@ -43,6 +43,7 @@ import { projectSearchFiles,searchProjectText } from './projectSearch'
 import { readProjectTextFile } from './projectTextRead'
 import { WorkbenchApprovals } from './workbenchApprovals'
 import { workbenchSkillNames } from './workbenchSkillPolicy'
+import { UserSkillStore } from './userSkillStore'
 
 
 const readYsmSource: typeof import("../../feature-plugins/model-studio/src/main/modelSourceService").readYsmSource = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').readYsmSource(...args)
@@ -111,6 +112,7 @@ const resourcePackArchive: typeof import("../../feature-plugins/resource-packs/s
 const validateResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").validateResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').validateResourcePack(...args)
 
 import { normalizeAiModelSelection,settingsForAiSelection,type AiModelSelection } from '../shared/aiSelection'
+import { ProviderSyncService, parseProviderSnapshot, providerOwnerKey, type ProviderSnapshot } from './providerSync'
 import { normalizeModelAutoCompactTokenLimits,normalizeModelContextWindows,validModelContext } from '../shared/modelContext'
 import { codexReasoningCapabilities,isReasoningEffort,normalizeReasoningEffortOptions,reasoningSelectionEffort,selectedReasoningEfforts } from '../shared/modelReasoning'
 import type { PluginDiagnostics,PluginOverlayWindowState,PluginSnapshot } from '../shared/plugins'
@@ -119,11 +121,15 @@ import { awaitWithAbort,throwIfAborted,waitForCondition } from './asyncControl'
 import { BackendSwitchCoordinator } from './backendSwitchCoordinator'
 import { createStoredZip } from './bedrockAddon'
 import { ChatCompletionsAdapter } from './chatCompletionsAdapter'
-import { validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
+import { resolveCodexAutoCompactTokenLimit, validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
 import { clearPreparedCodexCredentials,ensureManagedCodexRuntime,isManagedCodexVersion,managedCodexExecutablePath,prepareCodex,type CodexServerConfig,type CodexSetupProgress } from './codexSetup'
 import { deleteExternalAgentSession,detectExternalAgent,externalAgentDocsUrl,externalAgentLabel,externalAgentSupportsHostedConfiguration,launchExternalAgent,listLocalCodexModels,ModMindBridge,readExternalAgentHistory,refreshExternalAgentContext,runExternalAgent,type ExternalAgentAttemptAudit,type ExternalAgentBridgeHandlers,type ExternalAgentKind,type ExternalAgentRetryState,type ExternalAgentRunOptions } from './externalAgents'
 import { GiteeBuildService } from './giteeBuildService'
 import { LiveConfiguration,SerialState,type ConfigurationRevision } from './liveConfiguration'
+import { QuotaModelRouting } from './quotaModelRouting'
+import { QuotaRoutingSessionStore } from './quotaRoutingSessionStore'
+import { validateQuotaModelSelection } from '../shared/quotaModels'
+import type { QuotaModelCatalog, QuotaModelSwitchResult } from '../shared/quotaModels'
 import { readLocalCodexApiKey,readLocalCodexConfig } from './localCodexConfig'
 import { resolveModelContextBudget } from './modelContextRegistry'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
@@ -252,7 +258,7 @@ SnapshotStorageInfo
 import { FeaturePluginService,prepareFeaturePlugin } from './featurePluginService'
 import { FeatureStoreService } from './featureStoreService'
 import { inspectExternalModpack,materializeExternalModpack } from './modpackImportService'
-import { addModpackModule,adoptExternalModpack,auditImportedPackArtifacts,createModpackTemplate,createModrinthPackArchive,isModpackProject,onModpackManifestChanged,readModpackManifest } from './modpackService'
+import { addModpackModule,adoptExternalModpack,auditImportedPackArtifacts,createModpackTemplate,createModrinthPackArchive,isModpackProject,onModpackManifestChanged,readModpackManifest,readModpackImportStatus } from './modpackService'
 import { configureNativeFeatureServices } from './nativeFeatureServices'
 const curseForgePackResolver: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").curseForgePackResolver = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').curseForgePackResolver(...args)
 const installCurseForgePack: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").installCurseForgePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').installCurseForgePack(...args)
@@ -297,7 +303,7 @@ const inspectModpackMigrationJar: typeof import("../../feature-plugins/modpack-m
 
 import { reviewAiAction,type AiReviewerConfig } from './aiReviewer'
 import { AppChangelogService } from './appChangelogService'
-import { prepareCleanReinstall } from './appReinstall'
+import { prepareCleanReinstall, prepareOverwriteReinstall } from './appReinstall'
 import { AppUpdateService,normalizeAppUpdateUrl } from './appUpdateService'
 import { DiagnosticArchiveCollector,summarizeDiagnosticDirectory } from './diagnosticArchive'
 import { diagnosticHandle,diagnosticIpcOperations } from './diagnosticIpc'
@@ -382,6 +388,7 @@ diagnosticJournal.configure(app.getPath('logs'), () => currentProject ? {
   loader: currentProject.loader,
   minecraftVersion: currentProject.minecraftVersion
 } : undefined)
+const userSkillStore = new UserSkillStore(path.join(app.getPath('userData'), 'workbench-skills'))
 const workbenchDataStore = new WorkbenchDataStore(app.getPath('userData'), (entry) => {
   diagnosticJournal.record({
     subsystem: 'workbench-storage',
@@ -868,13 +875,22 @@ interface StoredDeviceCredentials {
   usage?: DeviceUsage
   provider?: 'custom'
   providerId?: string
+  account?: string
+  group?: string | null
+  node?: string
   model?: string
   imageApi?: { baseUrl: string; model: string; encryptedApiKey: string } | null
+  encryptedConnections?: string
 }
 
 interface DeviceCredentials extends Omit<StoredDeviceCredentials, 'encryptedApiKey'> {
   apiKey: string
+  sync?: ProviderSnapshot
   localImageApi?: { baseUrl: string; apiKey: string; model: string } | null
+}
+function isFreeDeviceAccount(credentials: DeviceCredentials): boolean {
+  if (credentials.sync) return credentials.sync.connections.find(c => c.account === (credentials.sync!.defaults?.account ?? credentials.sync!.defaultAccount))?.kind === 'free'
+  return credentials.account?.startsWith('trial:') === true || new URL(credentials.baseUrl).pathname.replace(/\/$/, '') === '/api/trial/v1'
 }
 
 let deviceAuthorizationController: AbortController | null = null
@@ -886,6 +902,151 @@ const QUOTA_USAGE_MAX_AGE_MS = 2 * 60_000
 const QUOTA_MODEL_MAX_AGE_MS = 5 * 60_000
 const quotaModelAvailabilityCache = new Map<string, { checkedAt: number; models: AiModelInfo[] }>()
 const scannedModelCapabilities = new Map<string, { checkedAt: number; models: AiModelInfo[] }>()
+let quotaModelRouter: QuotaModelRouting | undefined
+let quotaModelSwitchInProgress = false
+let providerSyncService: ProviderSyncService | undefined
+function providerSync(): ProviderSyncService {
+  return providerSyncService ??= new ProviderSyncService({
+    read: async () => { const c = await readDeviceCredentials(); return c?.sync ? { siteUrl: c.siteUrl, username: c.username, sync: c.sync } : null },
+    write: (previous, next) => deviceStateWrites.run(async () => {
+      const c = await readDeviceCredentials()
+      if (!c?.sync || providerOwnerKey(c) !== providerOwnerKey(previous) || JSON.stringify(c.sync) !== JSON.stringify(previous.sync)) throw new Error('账号或连接已更新，请重试')
+      const current = next.connections.find(x => x.account === next.defaultAccount)!
+      await writeDeviceCredentialsUnlocked({ ...c, sync: next, account: current.account, group: current.group, node: current.node ?? undefined, baseUrl: current.inferenceBaseUrl, apiKey: current.apiKey })
+      quotaModelAvailabilityCache.clear(); scannedModelCapabilities.clear()
+    }),
+    readSession: () => quotaSessionStore().read(), writeSession: s => deviceStateWrites.run(async () => {
+      const c = await readDeviceCredentials(); if (!c?.sync || providerOwnerKey(c) !== s.owner) throw new Error('账号已切换')
+      await quotaSessionStore().write(s)
+    }),
+    listModels: c => fetchAvailableModels(c.inferenceBaseUrl, c.apiKey, '无法读取供应商模型列表'),
+    readPreferences: readBeginnerAiPreferences,
+    applyDefaults: async (selection, previous) => {
+      const c = await readDeviceCredentials(); if (!c?.sync) throw new Error('账号已切换')
+      return preferenceWrites.run(async () => {
+        if (!sameDeviceCredentials(await readDeviceCredentials(), c) || providerOwnerKey(c) !== providerOwnerKey(previous) || JSON.stringify(c.sync) !== JSON.stringify(previous.sync)) throw new Error('账号已切换')
+        const store = await readStoredBeginnerAiPreferences()
+        const preferences = normalizeQuotaModelPreferences({ ...activeQuotaModelPreferences(store, deviceProfileKey(c)), ...selection }, DEFAULT_BEGINNER_AI_PREFERENCES)
+        return preferences
+      })
+    },
+    paidBusy: account => [...activeAiRuns.values()].some(run => run.backend === 'quota' && (!run.quotaAccount || run.quotaAccount === account))
+  })
+}
+function quotaSessionStore(): QuotaRoutingSessionStore {
+  return new QuotaRoutingSessionStore(path.join(app.getPath('userData'), 'quota-routing-session.enc'), text => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用')
+    return safeStorage.encryptString(text)
+  }, bytes => safeStorage.decryptString(bytes))
+}
+function emitAiPreferences(preferences: BeginnerAiPreferences): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:aiPreferences', preferences)
+  for (const window of BrowserWindow.getAllWindows()) if (window !== mainWindow && !window.isDestroyed()) window.webContents.send('device:aiPreferences', preferences)
+}
+async function upgradeQuotaConnections(previous: Pick<DeviceCredentials, 'siteUrl' | 'username'>, token: string): Promise<boolean> {
+  const response = await fetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { Authorization: `Bearer ${token}` } })
+  if (response.status === 404) return false
+  if (!response.ok) throw new Error('无法刷新供应商连接，请稍后重试')
+  const envelope = await response.json() as { success?: unknown; data?: unknown }
+  if (envelope.success !== true || !envelope.data || typeof envelope.data !== 'object') throw new Error('供应商连接响应无效')
+  const data = envelope.data as Record<string, unknown>
+  if (data.protocolVersion !== 2) return false
+  const snapshot = parseProviderSnapshot(data)
+  const defaults = snapshot.connections.find(c => c.account === snapshot.defaultAccount)!
+  const preferences = await readBeginnerAiPreferences()
+  const model = defaults.models?.includes(preferences.model) ? preferences.model : defaults.model ?? defaults.models?.[0] ?? preferences.model
+  const selection: AiModelSelection = { model, account: defaults.account, billing: defaults.kind === 'free' ? 'free' : 'quota', reasoningLevel: model === preferences.model ? preferences.reasoningLevel : 'auto' }
+  const current = await readDeviceCredentials()
+  if (!current || current.provider === 'custom' || current.siteUrl !== previous.siteUrl || current.username !== previous.username) throw new Error('账号已切换，请重新操作')
+  await writeDeviceCredentialsUnlocked({ ...current, sync: { ...snapshot, defaults: selection }, account: defaults.account, group: defaults.group, node: defaults.node ?? undefined, baseUrl: defaults.inferenceBaseUrl, apiKey: defaults.apiKey })
+  providerSyncService?.invalidate(); quotaModelAvailabilityCache.clear(); scannedModelCapabilities.clear()
+  return true
+}
+function quotaRouter(): QuotaModelRouting {
+  if (quotaModelRouter) return quotaModelRouter
+  const sessions = new QuotaRoutingSessionStore(path.join(app.getPath('userData'), 'quota-routing-session.enc'), text => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用')
+    return safeStorage.encryptString(text)
+  }, bytes => safeStorage.decryptString(bytes))
+  return quotaModelRouter = new QuotaModelRouting({
+    readCredentials: readDeviceCredentials,
+    writeCredentials: async next => {
+      const current = await readDeviceCredentials()
+      if (!current || current.username !== next.username || current.siteUrl !== next.siteUrl || current.provider === 'custom') throw new Error('账号已变更，请重新选择模型')
+      await writeDeviceCredentialsUnlocked({ ...next, connectedAt: current.connectedAt })
+      quotaModelAvailabilityCache.clear()
+      scannedModelCapabilities.clear()
+    },
+    readSession: () => sessions.read(), writeSession: value => sessions.write(value), clearSession: () => sessions.clear(),
+    upgradeConnections: (credentials, session) => upgradeQuotaConnections(credentials, session.token),
+    listModels: credentials => quotaModelsForCredentials({ ...credentials, version: 1, connectedAt: '' }, true),
+    readPreferences: readBeginnerAiPreferences,
+    applyModel: async model => {
+      const credentials = await readDeviceCredentials()
+      if (!credentials) throw new Error('请先连接账号')
+      const store = await readStoredBeginnerAiPreferences()
+      const preferences = normalizeQuotaModelPreferences({ ...store.current, model,
+        reasoningLevel: store.current.model === model ? store.current.reasoningLevel : 'auto' }, DEFAULT_BEGINNER_AI_PREFERENCES)
+      await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(store, preferences, deviceProfileKey(credentials)))
+      return preferences
+    }
+  })
+}
+async function getQuotaModelCatalog(force = false): Promise<QuotaModelCatalog> {
+  if ((await readDeviceCredentials())?.sync) {
+    return providerSync().catalog(force)
+  }
+  const catalog = await quotaRouter().catalog(force)
+  const running = [...activeAiRuns.values()].some(run => run.backend === 'quota')
+  return { ...catalog, canSwitch: catalog.canSwitch && !running && !quotaModelSwitchInProgress,
+    ...(running && !catalog.message ? { message: 'AI 任务正在运行，完成后即可切换模型' } : {}) }
+}
+async function selectQuotaModel(model: unknown, selection?: unknown): Promise<QuotaModelSwitchResult> {
+  if (typeof model !== 'string' || !model.trim() || model.length > 256) throw new Error('请选择有效的工作台模型')
+  const version = validateQuotaModelSelection(selection)
+  if ((await readDeviceCredentials())?.sync) {
+    if (deviceAuthorizationController) throw new Error('账号正在授权，请完成后再选择模型')
+    const result = await providerSync().select(model.trim(), version)
+    if (result.preferences) { emitAiPreferences(result.preferences); await updateDeviceState(null) }
+    else if (result.selection && (version.scope === 'workspace' || version.scope === 'inspiration')) {
+      for (const [surface, selection] of Object.entries({ ...result.linkedSelections, [version.scope]: result.selection })) {
+        const payload = { surface, selection }
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:aiSelection', payload)
+        for (const window of BrowserWindow.getAllWindows()) if (window !== mainWindow && !window.isDestroyed()) window.webContents.send('device:aiSelection', payload)
+      }
+    }
+    return result
+  }
+  if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候')
+  if (deviceAuthorizationController) throw new Error('账号正在授权，请完成后再切换模型')
+  if ([...activeAiRuns.values()].some(run => run.backend === 'quota')) throw new Error('AI 任务正在运行，请在任务完成后切换模型')
+  quotaModelSwitchInProgress = true
+  const revision = quotaConfiguration.begin()
+  let result: QuotaModelSwitchResult
+  try { result = await deviceStateWrites.run(() => quotaRouter().select(model.trim(), version)) }
+  finally { quotaModelSwitchInProgress = false; quotaConfiguration.finish(revision) }
+  if (result.requiresProviderSync) {
+    const catalog = await getQuotaModelCatalog()
+    const requested = catalog.models.find(m => m.id === model.trim() && m.billing === (version.billing ?? 'quota') && (!version.account || m.account === version.account))
+    if (requested) return selectQuotaModel(model, { ...version, account: requested.account })
+    result = { status: 'error', message: '这个供应商尚未同步，请在官网勾选后同步连接', requiresProviderSync: true, catalog }
+    emitAiPreferences(await readBeginnerAiPreferences())
+  }
+  await updateDeviceState(null)
+  if (remoteClient?.getState().enabled === true) {
+    await stopRemoteClient().catch(() => undefined)
+    void startRemoteClientIfPossible().catch(() => undefined)
+  }
+  return result
+}
+async function ensureQuotaRoutingReady(): Promise<void> {
+  if ((await readDeviceCredentials())?.sync) return
+  await quotaConfiguration.acquire(AbortSignal.timeout(30_000))
+  if (!await quotaRouter().recoveryRequired()) return
+  const revision = quotaConfiguration.begin()
+  try { await deviceStateWrites.run(() => quotaRouter().resume()) }
+  finally { quotaConfiguration.finish(revision) }
+}
 function modelReasoningFor(baseUrl: string, apiKey: string, model: string) {
   return scannedModelCapabilities.get(quotaPreferenceKey(baseUrl, apiKey))?.models.find(entry => entry.id === model)?.reasoning
     ?? modelReasoningCatalog.resolve(model, baseUrl)
@@ -909,6 +1070,7 @@ function quotaModelCacheKey(credentials: Pick<DeviceCredentials, 'baseUrl' | 'ap
 }
 
 function deviceProfileKey(credentials: DeviceCredentials): string {
+  if (credentials.sync) return providerOwnerKey(credentials).slice(0, 24)
   return quotaProfileKey(credentials.siteUrl, credentials.username, credentials.provider === 'custom'
     ? `${openAiV1BaseUrl(credentials.baseUrl)}#${credentials.providerId}`
     : openAiV1BaseUrl(credentials.baseUrl))
@@ -919,12 +1081,14 @@ function sameDeviceCredentials(left: DeviceCredentials | null, right: DeviceCred
 }
 
 async function quotaModelsForCredentials(credentials: DeviceCredentials, force = false): Promise<AiModelInfo[]> {
+  const revision = quotaConfiguration.current()
   const key = quotaModelCacheKey(credentials)
   const cached = quotaModelAvailabilityCache.get(key)
   if (!force && cached && Date.now() - cached.checkedAt <= QUOTA_MODEL_MAX_AGE_MS) {
     return cached.models
   }
   const models = await fetchAvailableModels(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
+  if (revision !== quotaConfiguration.current()) throw new Error('线路已更新，请重新读取模型列表')
   quotaModelAvailabilityCache.set(key, { checkedAt: Date.now(), models })
   return models
 }
@@ -1010,6 +1174,8 @@ async function readDeviceCredentials(): Promise<DeviceCredentials | null> {
     if (stored.version === 2 && (stored.provider !== 'custom' || !stored.providerId || !stored.model)) return null
     const apiKey = safeStorage.decryptString(Buffer.from(stored.encryptedApiKey, 'base64')).trim()
     if (!apiKey) return null
+    const rawSync = stored.encryptedConnections ? JSON.parse(safeStorage.decryptString(Buffer.from(stored.encryptedConnections, 'base64'))) : undefined
+    const sync = rawSync ? { ...parseProviderSnapshot(rawSync), ...(rawSync.defaults ? { defaults: normalizeAiModelSelection(rawSync.defaults) } : {}), ...(rawSync.bindings ? { bindings: Object.fromEntries(Object.entries(rawSync.bindings).filter(([key]) => key === 'workspace' || key === 'inspiration').map(([key, value]) => [key, normalizeAiModelSelection(value)])) } : {}) } : undefined
     const localImageApi = stored.provider === 'custom' && stored.imageApi
       ? {
         baseUrl: normalizeRelayBaseUrl(stored.imageApi.baseUrl),
@@ -1023,6 +1189,7 @@ async function readDeviceCredentials(): Promise<DeviceCredentials | null> {
       siteUrl: normalizeSiteUrl(stored.siteUrl),
       baseUrl: normalizeRelayBaseUrl(stored.baseUrl),
       apiKey,
+      ...(sync ? { sync } : {}),
       ...(stored.provider === 'custom' ? { localImageApi } : {})
     }
   } catch {
@@ -1040,10 +1207,11 @@ async function writeDeviceCredentialsUnlocked(credentials: Omit<DeviceCredential
     apiKey: credentials.apiKey.trim()
   }
   if (!normalized.apiKey) throw new Error('接入凭证为空')
-  const { apiKey, localImageApi, imageApi: _imageApi, ...metadata } = normalized
+  const { apiKey, sync, encryptedConnections: _oldConnections, localImageApi, imageApi: _imageApi, ...metadata } = normalized
   const stored: StoredDeviceCredentials = {
     ...metadata,
     encryptedApiKey: safeStorage.encryptString(apiKey).toString('base64'),
+    ...(sync ? { encryptedConnections: safeStorage.encryptString(JSON.stringify(sync)).toString('base64') } : {}),
     ...(normalized.provider === 'custom' ? { imageApi: localImageApi ? {
       baseUrl: normalizeRelayBaseUrl(localImageApi.baseUrl),
       model: localImageApi.model,
@@ -1063,6 +1231,7 @@ async function updateCurrentDeviceUsage(credentials: DeviceCredentials, usage: D
 
 async function removeCurrentDeviceCredentials(credentials: DeviceCredentials): Promise<boolean> {
   return deviceStateWrites.run(async () => {
+    if (quotaModelSwitchInProgress || await quotaRouter().recoveryRequired()) return false
     if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return false
     await fs.rm(deviceCredentialsFile(), { force: true })
     await stopRemoteClient()
@@ -1073,13 +1242,14 @@ async function removeCurrentDeviceCredentials(credentials: DeviceCredentials): P
 function publicDeviceState(credentials: DeviceCredentials): DeviceConnectionState {
   if (credentials.provider === 'custom') return {
     status: 'connected', configured: true, siteUrl: credentials.siteUrl,
-    username: credentials.username, provider: 'custom', providerId: credentials.providerId, model: credentials.model
+    username: credentials.username, provider: 'custom', providerId: credentials.providerId, model: credentials.model, billing: 'custom'
   }
   return {
     status: 'connected',
     configured: true,
     siteUrl: credentials.siteUrl,
     username: credentials.username,
+    billing: isFreeDeviceAccount(credentials) ? 'free' : 'quota',
     balanceCents: credentials.usage?.balanceCents ?? credentials.balanceCents,
     keyStatus: credentials.usage?.keyStatus ?? 'ACTIVE',
     frozenReason: credentials.usage?.frozenReason ?? null,
@@ -1151,22 +1321,43 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           await deviceAuthorizationFailure('授权码已过期，请重新连接账号')
           return
         }
-        if (Boolean(customApi) !== ('provider' in result)) throw new Error('授权模式与同步结果不匹配')
+        const v2 = 'sync' in result && result.sync
+        if (!v2 && Boolean(customApi) !== ('provider' in result)) throw new Error('授权模式与同步结果不匹配')
         throwIfAborted(controller.signal)
+        let initialV2Model: string | undefined
+        if (v2) {
+          const previous = await readDeviceCredentials()
+          if (!previous?.sync || previous.username !== result.username || previous.siteUrl !== siteUrl) {
+            const c = v2.connections.find(c => c.account === v2.defaultAccount)!
+            const models = c.models ?? (await fetchAvailableModels(c.inferenceBaseUrl, c.apiKey, '模型列表暂不可用').catch(() => [] as AiModelInfo[])).map(m => m.id)
+            initialV2Model = c.model ?? models[0]
+          }
+        }
         if (customApi) await stopRemoteClient()
         configuration ??= quotaConfiguration.begin()
         const credentials = await deviceStateWrites.run(async () => {
           throwIfAborted(controller.signal)
+          const previous = await readDeviceCredentials()
+          const sameOwner = previous?.siteUrl === siteUrl && previous.username === result.username
+          if (!sameOwner) for (const run of activeAiRuns.values()) if (run.backend === 'quota') aiAbortControllers.get(run.id)?.abort()
+          const synced = v2 ? { ...result.sync!, ...(sameOwner && previous?.sync?.bindings ? { bindings: previous.sync.bindings } : {}), ...(sameOwner && previous?.sync?.defaults ? { defaults: previous.sync.defaults } : {}) } : undefined
           const saved = await writeDeviceCredentialsUnlocked({
             siteUrl,
-            baseUrl: customApi?.baseUrl ?? ('baseUrl' in result ? result.baseUrl : ''),
-            apiKey: customApi?.apiKey ?? ('apiKey' in result ? result.apiKey : ''),
+            baseUrl: v2 ? result.baseUrl : customApi?.baseUrl ?? ('baseUrl' in result ? result.baseUrl : ''),
+            apiKey: v2 ? result.apiKey : customApi?.apiKey ?? ('apiKey' in result ? result.apiKey : ''),
             username: result.username,
             balanceCents: 'balanceCents' in result ? result.balanceCents : '0',
+            ...('account' in result ? { account: result.account, group: result.group, node: result.node } : {}),
             connectedAt: new Date().toISOString(),
-            ...(customApi ? { provider: 'custom' as const, providerId: customApi.providerId, model: customApi.model, localImageApi: customApi.imageApi } : {})
+            ...(synced ? { sync: synced } : customApi ? { provider: 'custom' as const, providerId: customApi.providerId, model: customApi.model, localImageApi: customApi.imageApi } : {})
           })
-          if (customApi) {
+          if (synced && (!sameOwner || !previous?.sync)) {
+            const c = synced.connections.find(c => c.account === synced.defaultAccount)!
+            const preferences = normalizeQuotaModelPreferences({ ...DEFAULT_BEGINNER_AI_PREFERENCES, account: c.account, billing: c.kind === 'free' ? 'free' : 'quota', model: initialV2Model ?? c.model ?? c.models?.[0] ?? DEFAULT_DEVICE_MODEL }, DEFAULT_BEGINNER_AI_PREFERENCES)
+            await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(await readStoredBeginnerAiPreferences(), preferences, deviceProfileKey(saved)))
+            emitAiPreferences(preferences)
+          }
+          if (customApi && !v2) {
             const store = await readStoredBeginnerAiPreferences()
             await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(store, {
               ...activeQuotaModelPreferences(store, deviceProfileKey(saved)), model: customApi.model, reasoningLevel: 'auto', fastMode: false
@@ -1175,7 +1366,15 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           return saved
         })
         throwIfAborted(controller.signal)
-        if (!customApi) await reconcileQuotaModelPreferences(credentials, true).catch((error) => {
+        if (!credentials.sync) await quotaRouter().reset()
+        else {
+          const session = await quotaSessionStore().read().catch(() => null)
+          if (session?.owner !== providerOwnerKey(credentials)) await quotaSessionStore().clear()
+        }
+        providerSyncService?.invalidate()
+        if (credentials.sync) {
+          await providerSync().initializeSession()
+        } else if (!customApi) await reconcileQuotaModelPreferences(credentials, true).catch((error) => {
           console.warn('[device] unable to reconcile model preferences after key update', error)
         })
         throwIfAborted(controller.signal)
@@ -1189,7 +1388,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
         return
       } catch (error) {
         if (controller.signal.aborted) return
-        if (error instanceof DeviceApiError && (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504)) {
+        if (error instanceof DeviceApiError && (error.status === 0 || error.status === 409 || error.status === 502 || error.status === 503 || error.status === 504)) {
           retryIndex += 1
           continue
         }
@@ -1205,6 +1404,8 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
 }
 
 async function beginDeviceAuthorization(): Promise<DeviceConnectionState> {
+  if (providerSyncService?.busy) throw new Error('连接正在更新，请稍候再授权')
+  if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候再连接账号')
   const siteUrl = configuredDeviceSiteUrl()
   if (!siteUrl) throw new Error('未配置正式站点地址，请在发行环境设置 MODMIND_SITE_URL')
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法开始授权')
@@ -1230,6 +1431,8 @@ async function beginDeviceAuthorization(): Promise<DeviceConnectionState> {
 }
 
 async function beginDeviceDeepLinkAuthorization(rawUrl: string): Promise<DeviceConnectionState> {
+  if (providerSyncService?.busy) throw new Error('连接正在更新，请稍候再同步')
+  if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候再连接账号')
   const expectedSite = configuredDeviceSiteUrl()
   if (!expectedSite) throw new Error('未配置正式站点地址，拒绝处理设备深链')
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法处理设备深链')
@@ -1273,19 +1476,30 @@ async function cancelDeviceAuthorization(): Promise<DeviceConnectionState> {
 }
 
 async function disconnectDeviceLocally(): Promise<DeviceConnectionState> {
+  if (providerSyncService?.busy) throw new Error('连接正在更新，请稍候再断开账号')
+  if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候再断开账号')
   deviceAuthorizationController?.abort()
   deviceAuthorizationController = null
   await stopRemoteClient()
+  for (const run of activeAiRuns.values()) if (run.backend === 'quota') aiAbortControllers.get(run.id)?.abort()
+  const previous = await readDeviceCredentials()
+  if (previous?.sync) {
+    const session = await quotaSessionStore().read().catch(() => null)
+    if (session?.owner === providerOwnerKey(previous)) await fetch(`${previous.siteUrl}/api/device/session`, { method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${session.token}` } }).catch(() => undefined)
+  }
   await deviceStateWrites.run(() => fs.rm(deviceCredentialsFile(), { force: true }))
+  await quotaRouter().reset()
+  providerSyncService?.invalidate()
   const revision = quotaConfiguration.begin()
   quotaConfiguration.finish(revision)
   return updateDeviceState(disconnectedDeviceState('已从本机移除接入凭证'))
 }
 
 async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
+  if (quotaModelSwitchInProgress || await quotaRouter().recoveryRequired()) return readDeviceState()
   const credentials = await readDeviceCredentials()
   if (!credentials) return updateDeviceState(disconnectedDeviceState('请先连接 ModMind 账号'))
-  if (credentials.provider === 'custom') return updateDeviceState(publicDeviceState(credentials))
+  if (credentials.provider === 'custom' || isFreeDeviceAccount(credentials)) return updateDeviceState(publicDeviceState(credentials))
   const checkedAt = credentials.usage ? Date.parse(credentials.usage.checkedAt) : Number.NaN
   if (credentials.usage && Number.isFinite(checkedAt) && Date.now() - checkedAt < QUOTA_USAGE_MAX_AGE_MS) {
     return updateDeviceState(publicDeviceState(credentials))
@@ -1307,9 +1521,11 @@ async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
 }
 
 async function ensureQuotaAccountReady(): Promise<void> {
+  await ensureQuotaRoutingReady()
   let credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
-  if (credentials.provider === 'custom') return
+  if (credentials.sync) return
+  if (credentials.provider === 'custom' || isFreeDeviceAccount(credentials)) return
 
   const usage = credentials.usage
   const checkedAt = usage ? Date.parse(usage.checkedAt) : Number.NaN
@@ -1686,9 +1902,8 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
       if (activeAiRuns.size) throw new Error('存在运行中的 AI 任务，暂时不能切换模型')
       const settings = await readSettings()
       if (settings.codingBackend === 'quota') {
-        const preferences = await readBeginnerAiPreferences()
-        const saved = await saveBeginnerAiPreferences({ ...preferences, model: action.model })
-        return { success: true, model: saved.model }
+        const result = await selectQuotaModel(action.model)
+        return { success: result.status === 'ok', model: result.preferences?.model, message: result.message }
       }
       const current = settings.externalAgents?.[settings.codingBackend] ?? {}
       const saved = await saveAgentSettings({
@@ -1712,11 +1927,11 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
 }
 
 type AppSettingKey =
-  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowBuildScriptChanges'
+  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'allowLongerContext'
   | 'preferLocalGradle' | 'closeBehavior' | 'gradleDownloadSource'
 
 const APP_SETTING_KEYS: readonly AppSettingKey[] = [
-  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowBuildScriptChanges',
+  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowBuildScriptChanges', 'allowLongerContext',
   'preferLocalGradle', 'closeBehavior', 'gradleDownloadSource'
 ]
 
@@ -1729,7 +1944,7 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
   if (key === 'javaPreferences') {
     if (typeof value !== 'object' || value === null) throw new Error('Java 偏好需要对象值')
     next.javaPreferences = normalizeJavaPreferences(value)
-  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowBuildScriptChanges' || key === 'preferLocalGradle') {
+  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowBuildScriptChanges' || key === 'allowLongerContext' || key === 'preferLocalGradle') {
     if (typeof value !== 'boolean') throw new Error(`应用设置 ${key} 需要布尔值`)
     next[key] = value
   } else if (key === 'closeBehavior') {
@@ -1743,6 +1958,11 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
 }
 
 async function remoteQuotaConfig(): Promise<RemoteQuotaConfig> {
+  if ((await readDeviceCredentials())?.sync) {
+    const config = await readBeginnerAgentServerConfig()
+    return { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model, reasoningEffort: config.reasoningEffort }
+  }
+  await ensureQuotaRoutingReady()
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
   const preferences = await readBeginnerAiPreferences()
@@ -1800,6 +2020,8 @@ async function readBeginnerAiPreferences(): Promise<BeginnerAiPreferences> {
   const store = await readStoredBeginnerAiPreferences()
   const credentials = await readDeviceCredentials()
   if (!credentials) return store.current
+  if (credentials.sync) return { ...activeQuotaModelPreferences(store, deviceProfileKey(credentials)), ...credentials.sync.defaults }
+  if (await quotaRouter().recoveryRequired()) return store.current
   const key = deviceProfileKey(credentials)
   const legacyKey = quotaModelCacheKey(credentials)
   const cached = quotaModelAvailabilityCache.get(legacyKey)
@@ -1820,7 +2042,7 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   const compactLimit = value.modelAutoCompactTokenLimits?.[model]
   if (compactLimit !== undefined && !validModelContext(compactLimit)) throw new Error('自动压缩阈值必须是 1,024–100,000,000 之间的整数')
   const reasoningLevel = isReasoningEffort(value.reasoningLevel) ? value.reasoningLevel : 'auto'
-  const preferences = normalizeQuotaModelPreferences({ model, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows, modelAutoCompactTokenLimits: value.modelAutoCompactTokenLimits, reasoningEffortOptions: value.reasoningEffortOptions }, DEFAULT_BEGINNER_AI_PREFERENCES)
+  const preferences = normalizeQuotaModelPreferences({ model, account: value.account, billing: value.billing, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows, modelAutoCompactTokenLimits: value.modelAutoCompactTokenLimits, reasoningEffortOptions: value.reasoningEffortOptions }, DEFAULT_BEGINNER_AI_PREFERENCES)
   const previous = await readBeginnerAiPreferences()
   if (initialRevision !== quotaConfiguration.current()) throw new Error('线路正在切换，请稍后重新选择模型')
   const previousWindows = previous.modelContextWindows ?? {}
@@ -1835,37 +2057,42 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   const nextEfforts = preferences.reasoningEffortOptions ?? {}
   const sameEfforts = Object.keys(previousEfforts).length === Object.keys(nextEfforts).length
     && Object.entries(previousEfforts).every(([id, efforts]) => efforts.join(',') === nextEfforts[id]?.join(','))
-  if (previous.model === preferences.model && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
+  if (previous.model === preferences.model && previous.account === preferences.account && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
   const credentials = await readDeviceCredentials()
+  if (credentials?.sync && (previous.model !== preferences.model || previous.account !== preferences.account)) throw new Error('请通过模型列表切换模型与供应商')
   validateCodexAutoCompactTokenLimit(model, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow }, compactLimit)
   if (preferences.reasoningLevel !== 'auto') {
     reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(model, preferences.reasoningEffortOptions))
   }
-  if (previous.fastMode !== preferences.fastMode && credentials?.provider !== 'custom') {
+  const fastConnection = credentials?.sync?.connections.find(c => c.account === preferences.account)
+  if (previous.fastMode !== preferences.fastMode && credentials?.provider !== 'custom' && !(credentials && (credentials.sync ? fastConnection?.kind === 'free' : isFreeDeviceAccount(credentials)))) {
     if (!credentials) throw new Error('请先连接 ModMind 账号，再切换 Fast 模式')
     await sendDeviceFastMode(
       credentials.siteUrl,
-      credentials.apiKey,
+      fastConnection?.apiKey ?? credentials.apiKey,
       preferences.fastMode,
       AbortSignal.timeout(15_000)
     )
   }
   if (initialRevision !== quotaConfiguration.current()) throw new Error('线路正在切换，请稍后重新选择模型')
-  const revision = quotaConfiguration.begin()
+  const revision = credentials?.sync ? undefined : quotaConfiguration.begin()
   try {
     await preferenceWrites.run(async () => {
-      throwIfAborted(revision.signal)
-      if (credentials && !sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请重新选择模型')
+      if (revision) throwIfAborted(revision.signal)
+      const current = await readDeviceCredentials()
+      if (credentials && (!sameDeviceCredentials(current, credentials) || credentials.sync && JSON.stringify(current?.sync) !== JSON.stringify(credentials.sync))) throw new Error('账号或连接已更新，请重新选择模型')
       const store = await readStoredBeginnerAiPreferences()
       await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(store, preferences, credentials ? deviceProfileKey(credentials) : undefined))
+      if (credentials?.sync?.defaults) await writeDeviceCredentialsUnlocked({ ...credentials, sync: { ...credentials.sync, defaults: { ...credentials.sync.defaults, reasoningLevel: preferences.reasoningLevel } } })
     })
-  } finally { quotaConfiguration.finish(revision) }
+  } finally { if (revision) quotaConfiguration.finish(revision) }
   return preferences
 }
 
-async function reconcileQuotaModelPreferences(credentials: DeviceCredentials, forceScan: boolean, scannedModels?: AiModelInfo[]): Promise<BeginnerAiPreferences> {
+async function reconcileQuotaModelPreferences(credentials: DeviceCredentials, forceScan: boolean, scannedModels?: AiModelInfo[], expectedRevision = quotaConfiguration.current()): Promise<BeginnerAiPreferences> {
   const models = scannedModels ?? await quotaModelsForCredentials(credentials, forceScan)
   const resolved = await preferenceWrites.run(async () => {
+    if (expectedRevision !== quotaConfiguration.current()) throw new Error('线路已更新，请重新读取模型列表')
     const store = await readStoredBeginnerAiPreferences()
     const key = deviceProfileKey(credentials)
     if (!store.profiles[key] && store.profiles[quotaModelCacheKey(credentials)]) store.profiles[key] = store.profiles[quotaModelCacheKey(credentials)]
@@ -1887,8 +2114,30 @@ async function reconcileQuotaModelPreferences(credentials: DeviceCredentials, fo
 }
 
 async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Promise<CodexServerConfig> {
+  await ensureQuotaRoutingReady()
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号')
+  const allowLongerContext = (await readSettings()).allowLongerContext === true
+  if (credentials.sync) {
+    const { owner, connection, model } = await providerSync().resolve(selection)
+    const preferences = { ...await readBeginnerAiPreferences(), ...selection }
+    if (connection.kind === 'paid') {
+      try {
+        await queryDeviceUsage(credentials.siteUrl, connection.apiKey, AbortSignal.timeout(20_000))
+      } catch (error) {
+        if (error instanceof DeviceApiError && error.status === 401) throw error
+        // Usage availability and balances do not determine access to this model.
+      }
+    }
+    const current = await readDeviceCredentials()
+    if (!current?.sync || providerOwnerKey(current) !== providerOwnerKey(credentials)) throw new Error('账号已切换，请重新发送')
+    if (JSON.stringify(current.sync.connections) !== JSON.stringify(owner.sync.connections)) return readBeginnerAgentServerConfig(selection)
+    const efforts = selectedReasoningEfforts(model, preferences.reasoningEffortOptions)
+    const capabilities = modelReasoningFor(connection.inferenceBaseUrl, connection.apiKey, model)
+    return { baseUrl: connection.inferenceBaseUrl, apiKey: connection.apiKey, model,
+      reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, capabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(capabilities, efforts),
+      contextWindow: preferences.modelContextWindows?.[model], autoCompactTokenLimit: preferences.modelAutoCompactTokenLimits?.[model], allowLongerContext }
+  }
   if (credentials.provider === 'custom') {
     const preferences = selection ? { ...await readBeginnerAiPreferences(), ...selection } : await readBeginnerAiPreferences()
     if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig(selection)
@@ -1901,7 +2150,8 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
       reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities, efforts),
       reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts),
       contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[model],
-      autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[model]
+      autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[model],
+      allowLongerContext
     }
   }
   // Upstream groups may change without rotating the key or changing the URL.
@@ -1920,7 +2170,8 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
     reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, reasoningCapabilities, efforts),
     reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts),
     contextWindow: normalizeModelContextWindows(preferences.modelContextWindows)?.[preferences.model],
-    autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[preferences.model]
+    autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(preferences.modelAutoCompactTokenLimits)?.[preferences.model],
+    allowLongerContext
   }
 }
 
@@ -1959,7 +2210,7 @@ async function configuredCodexServerConfig(configuration: ExternalAgentConfigura
   await refreshConfiguredReasoning('codex', configuration)
   const reasoningCapabilities = modelReasoningFor(baseUrl, apiKey, model)
   const efforts = selectedReasoningEfforts(model, configuration.reasoningEffortOptions)
-  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model] }
+  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model], allowLongerContext: (await readSettings()).allowLongerContext === true }
 }
 
 async function prepareManagedCodex(
@@ -1973,7 +2224,7 @@ async function prepareManagedCodex(
 ): ReturnType<typeof prepareCodex> {
   const home = managedCodexHome(project, sessionScope, configSource)
   await migrateLegacyManagedCodexSessions(home)
-  const routeRevision = configSource === 'device' ? quotaConfiguration.current() : undefined
+  const routeRevision = configSource === 'device' && !(await readDeviceCredentials())?.sync ? quotaConfiguration.current() : undefined
   const configurationId = createHash('sha256').update(JSON.stringify(serverConfig)).digest('hex')
   const key = `${process.platform === 'win32' ? home.toLowerCase() : home}:${configurationId}:${routeRevision?.sequence ?? 0}:${existingExecutable ?? ''}`
   const listeners = managedCodexPreparationListeners.get(key) ?? new Set<(progress: CodexSetupProgress) => void>()
@@ -3397,6 +3648,7 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   const kinds = ['codex'] as const
   const normalized: AgentSettings = {
     ...value,
+    allowLongerContext: value.allowLongerContext === true,
     codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
     codexApprovalMode: normalizeAgentApprovalMode(value.codexApprovalMode),
     allowBuildScriptChanges: value.allowBuildScriptChanges !== false,
@@ -3777,6 +4029,7 @@ async function migrateLegacyUserData(): Promise<void> {
 async function readSettings(): Promise<AgentSettings> {
   const defaults: AgentSettings = {
     codingBackend: 'quota',
+    allowLongerContext: false,
     codexApprovalMode: 'yolo',
     allowBuildScriptChanges: true,
     preferLocalGradle: false,
@@ -3834,6 +4087,7 @@ async function readSettings(): Promise<AgentSettings> {
     }
     settings = {
       externalAgents,
+      allowLongerContext: stored.allowLongerContext === true,
       codexApprovalMode: normalizeAgentApprovalMode(stored.codexApprovalMode),
       codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
@@ -3983,20 +4237,28 @@ async function permanentlyDeleteProjectDirectory(projectPath: string): Promise<P
 }
 
 async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
+  const revision = quotaConfiguration.current()
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接账号后扫描模型')
+  if (credentials.sync) return (await providerSync().catalog(force)).models
   await modelReasoningCatalog.refresh(force)
   let models: AiModelInfo[]
   if (credentials.provider === 'custom') {
     try { models = await quotaModelsForCredentials(credentials, force) }
     catch { models = [] }
     if (!models.some((entry) => entry.id === credentials.model)) models = [{ id: credentials.model! }, ...models]
-  } else models = await quotaModelsForCredentials(credentials, force)
-  if (models.length) await reconcileQuotaModelPreferences(credentials, false, models)
+  } else {
+    const catalog = await getQuotaModelCatalog(force)
+    if (catalog.stale) throw new Error(catalog.message || '无法读取模型目录')
+    const available = catalog.models.filter(m => m.available && (m.billing === 'quota' || m.optionKey === catalog.currentOptionKey))
+    return modelReasoningCatalog.enrich(available.map(({ id, reasoning }) => ({ id, reasoning })), openAiV1BaseUrl(credentials.baseUrl))
+  }
+  if (models.length && !await quotaRouter().recoveryRequired()) await reconcileQuotaModelPreferences(credentials, false, models, revision)
   return models
 }
 
 async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<{ baseUrl: string; models: AiModelInfo[] }> {
+  const revision = quotaConfiguration.current()
   await modelReasoningCatalog.refresh()
   const normalized = normalizeApiBaseUrl(baseUrl)
   const url = new URL(normalized)
@@ -4028,7 +4290,7 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
       const models = modelReasoningCatalog.enrich(parseModelPayload(payload), candidate)
       if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
       for (const keyBase of new Set([normalized, candidate])) {
-        scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
+        if (revision === quotaConfiguration.current()) scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
       }
       return { baseUrl: candidate, models }
     }
@@ -4535,6 +4797,7 @@ interface ActiveAiRun {
   conversationId?: string
   generation?: number
   turnId?: string
+  quotaAccount?: string
 }
 
 const aiAbortControllers = new Map<string | number, AbortController>()
@@ -5223,10 +5486,15 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       if (!result.success) throw new Error(result.message || 'HeadlessMC smoke test failed')
       return result
     },
-    runtimeState: async () => requireMinecraftRuntime().getState(),
+    runtimeState: async () => ({ ...requireMinecraftRuntime().getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
     javaHomeScan: () => scanConfiguredJavaHomes(),
     javaHomeProbe: (home) => probeJavaHomeInfo(home),
     appSettingsRead: async () => publicAgentSettings(await readSettings()),
+    quotaModelsRead: (force) => getQuotaModelCatalog(force),
+    quotaModelSelect: (model, selection) => {
+      if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
+      return selectQuotaModel(model, selection)
+    },
     appSettingsWrite: (input) => applyAppSettingWrite(input),
     modpackBuildServer: async (input) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
@@ -5281,7 +5549,7 @@ async function startPublicMcpBridge(projectPath?: string): Promise<{ projectPath
   await refreshExternalAgentContext(project, featurePluginService.enabled('image-studio')).catch(() => undefined)
   const controller = new AbortController()
   const handlers = await createPublicMcpBridgeHandlers(project, controller.signal)
-  const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget())
+  const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget(), undefined, undefined, userSkillStore)
   try {
     const { mcpConfigPath, contextPath } = await bridge.start()
     await bridge.writeMcpConfig(mcpConfigPath)
@@ -5681,7 +5949,14 @@ async function runExternalCodingAgent(
   const surface: AiSurface = context.surface === 'inspiration' ? 'inspiration' : 'workspace'
   const beginnerAgent = surface === 'workspace' && (context.agentMode === 'beginner' || recovery?.agentMode === 'beginner')
   const isInspiration = usesInspirationWorkflow({ ...context, ...(beginnerAgent ? { agentMode: 'beginner' } : {}) })
-  const modelSelection = normalizeAiModelSelection(context.modelSelection ?? recovery?.modelSelection)
+  const initialCredentials = backend === 'quota' ? await readDeviceCredentials() : null
+  const modelSelection = normalizeAiModelSelection(context.modelSelection ?? recovery?.modelSelection ?? initialCredentials?.sync?.bindings?.[surface])
+  const frozenQuotaConfig = initialCredentials?.sync ? await readBeginnerAgentServerConfig(modelSelection) : undefined
+  const quotaRunConfig = (): Promise<CodexServerConfig> => frozenQuotaConfig ? Promise.resolve(frozenQuotaConfig) : readBeginnerAgentServerConfig(modelSelection)
+  if (initialCredentials?.sync) {
+    const run = context.runId ? activeAiRuns.get(context.runId) : [...activeAiRuns.values()].find(r => r.sessionId === sessionId && r.projectPath === project.path)
+    if (run) run.quotaAccount = modelSelection?.account ?? (await readBeginnerAiPreferences()).account ?? initialCredentials.sync.defaultAccount
+  }
   const selectedFeatures = beginnerAgent ? undefined : context.workbenchFeatures ?? recovery?.workbenchFeatures
   const workbenchFeatures = selectedFeatures === undefined ? undefined : normalizeWorkbenchFeatures(selectedFeatures)
   if (project.draft && !isInspiration && !beginnerAgent) throw new Error('当前项目仅用于对话，请先补齐版本和平台信息，再开始制作')
@@ -5717,6 +5992,17 @@ async function runExternalCodingAgent(
   const inspirationFeatures = surface === 'inspiration' ? normalizeInspirationFeatures(context.inspirationFeatures) : undefined
   const savedExternalConfiguration = settings.externalAgents?.[externalBackend] ?? {}
   const runExternalConfiguration = savedExternalConfiguration
+  const localCodexConfig = !usesQuota && runExternalConfiguration.mode !== 'hosted'
+    ? await readLocalCodexConfig().catch(() => null) : null
+  const localCodexModel = !usesQuota && runExternalConfiguration.mode !== 'hosted'
+    ? runExternalConfiguration.model || localCodexConfig?.model : undefined
+  const localCodexContextWindow = runExternalConfiguration.modelContextWindows?.[localCodexModel ?? '']
+    ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.contextWindow : undefined)
+  const localCodexManualCompactLimit = runExternalConfiguration.modelAutoCompactTokenLimits?.[localCodexModel ?? '']
+    ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.autoCompactTokenLimit : undefined)
+  const localCodexAutoCompactLimit = localCodexModel
+    ? resolveCodexAutoCompactTokenLimit(localCodexModel, { baseUrl: localCodexConfig?.baseUrl, contextWindow: localCodexContextWindow, allowLongerContext: settings.allowLongerContext }, localCodexManualCompactLimit)
+    : undefined
   let executionUsage: import('../shared/types').AiTokenUsage | undefined
   const safetyReviewerConfig: AiReviewerConfig = { reviewMode: 'codex-auto' }
   let codexSetup: Awaited<ReturnType<typeof prepareCodex>> | undefined
@@ -5728,7 +6014,7 @@ async function runExternalCodingAgent(
         await awaitWithAbort(ensureQuotaAccountReady(), preparingSignal, 'Agent 任务已停止')
         codexSetup = await prepareQuotaCodex(project, sessionScope, (progress) => {
           if (!preparingSignal.aborted) sendCodingProgress(pipelineEvent('planning', progress.title, progress.detail, progress.status))
-        }, preparingSignal, modelSelection ? await readBeginnerAgentServerConfig(modelSelection) : undefined)
+        }, preparingSignal, frozenQuotaConfig ?? (modelSelection ? await quotaRunConfig() : undefined))
         throwIfAborted(preparingSignal)
         break
       } catch (error) {
@@ -5903,7 +6189,7 @@ async function runExternalCodingAgent(
           externalAgents: { ...settings.externalAgents, [externalBackend]: runExternalConfiguration }
         }), signal, 'Agent 任务已停止')
     const providerRouteIdentity = usesQuota
-      ? await awaitWithAbort(readBeginnerAgentServerConfig(modelSelection), signal, 'Agent 任务已停止').then((config) => `${config.baseUrl}\n${config.model}\n${codexSetup?.version ?? ''}`)
+      ? await awaitWithAbort(quotaRunConfig(), signal, 'Agent 任务已停止').then((config) => `${config.baseUrl}\n${config.model}\n${codexProviderIdentity(config)}\n${codexSetup?.version ?? ''}`)
       : `${runExternalConfiguration.baseUrl ?? 'local'}\n${runExternalConfiguration.model ?? 'local'}\n${configuredExecutable ?? 'detected'}`
     const retryScope = createHash('sha256').update(`${backend}\n${providerRouteIdentity}`).digest('hex').slice(0, 24)
     const sessionFingerprint = createHash('sha256').update(`${backend}\n${externalBackend}`).digest('hex').slice(0, 24)
@@ -5938,16 +6224,17 @@ async function runExternalCodingAgent(
       env: managedExternalEnvironment,
       sessionHome: codexSetup?.home,
       adapterRouteId: codexSetup?.adapterRouteId,
+      ...(frozenQuotaConfig ? { model: frozenQuotaConfig.model, modelProvider: 'thirdparty', reasoningEffort: frozenQuotaConfig.reasoningEffort } : {}),
       ...(!usesQuota && runExternalConfiguration.model ? { model: runExternalConfiguration.model, reasoningEffort: runExternalConfiguration.reasoningEffort, ...(runExternalConfiguration.mode === 'hosted' ? { modelProvider: 'thirdparty' } : {}) } : {}),
       ...(!usesQuota && runExternalConfiguration.mode !== 'hosted' ? { providerConfig: {
         ...(runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ? { model_context_window: runExternalConfiguration.modelContextWindows[runExternalConfiguration.model ?? ''] } : {}),
-        ...(runExternalConfiguration.modelAutoCompactTokenLimits?.[runExternalConfiguration.model ?? ''] ? { model_auto_compact_token_limit: runExternalConfiguration.modelAutoCompactTokenLimits[runExternalConfiguration.model ?? ''] } : {})
+        ...(localCodexAutoCompactLimit !== undefined ? { model_auto_compact_token_limit: localCodexAutoCompactLimit } : {})
       } } : {}),
       ...(usesQuota ? {
-        liveConfiguration: quotaConfiguration,
+        ...(!frozenQuotaConfig ? { liveConfiguration: quotaConfiguration } : {}),
         refreshConfiguration: async (configurationSignal: AbortSignal) => {
           const revision = quotaConfiguration.current()
-          const config = await awaitWithAbort(readBeginnerAgentServerConfig(modelSelection), configurationSignal)
+          const config = await awaitWithAbort(quotaRunConfig(), configurationSignal)
           const prepared = await prepareQuotaCodex(project, sessionScope, undefined, configurationSignal, config)
           codexSetup = prepared
           throwIfAborted(configurationSignal)
@@ -5968,6 +6255,7 @@ async function runExternalCodingAgent(
       } : {}),
       project,
       workflowSourceDirectory: bundledCodexSkillsDirectory(),
+      userSkillStore: isInspiration ? undefined : userSkillStore,
       pluginTarget: createPluginBridgeTarget(),
       systemPrompt: isInspiration
         ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures, featurePluginService.enabled('image-studio')) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
@@ -6365,10 +6653,15 @@ async function runExternalCodingAgent(
           lastRuntimeHashes = await managedCodingHashes(project)
           return smoke
         },
-        runtimeState: async () => runtime.getState(),
+        runtimeState: async () => ({ ...runtime.getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
         javaHomeScan: () => scanConfiguredJavaHomes(),
         javaHomeProbe: (home) => probeJavaHomeInfo(home),
         appSettingsRead: async () => publicAgentSettings(await readSettings()),
+        quotaModelsRead: (force) => getQuotaModelCatalog(force),
+        quotaModelSelect: (model, selection) => {
+          if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
+          return selectQuotaModel(model, selection)
+        },
         appSettingsWrite: (input) => applyAppSettingWrite(input)
         ,
         imageProjectAssets: async () => {
@@ -6665,6 +6958,20 @@ async function runAutomatedE2E(): Promise<void> {
 }
 
 function registerIpc(): void {
+  diagnosticHandle('skills:list', () => userSkillStore.list())
+  diagnosticHandle('skills:read', (_event, name: string) => userSkillStore.read(name))
+  diagnosticHandle('skills:save', (_event, input: import('../shared/userSkills').UserSkillSaveInput) => userSkillStore.save(input))
+  diagnosticHandle('skills:setEnabled', (_event, name: string, enabled: boolean) => userSkillStore.setEnabled(name, enabled))
+  diagnosticHandle('skills:remove', (_event, name: string, revision: string) => userSkillStore.remove(name, revision))
+  diagnosticHandle('skills:import', async (event, kind: 'folder' | 'file') => {
+    if (kind !== 'folder' && kind !== 'file') throw new Error('请选择导入目录或 SKILL.md')
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = kind === 'folder'
+      ? { title: '导入 Skill 目录', properties: ['openDirectory'] }
+      : { title: '导入 SKILL.md', properties: ['openFile'], filters: [{ name: 'SKILL.md', extensions: ['md'] }] }
+    const selected = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    return selected.canceled || !selected.filePaths[0] ? null : userSkillStore.import(selected.filePaths[0])
+  })
   ipcMain.on('app:platformInfo', (event) => { event.returnValue = runtimePlatformInfo(process.platform, process.arch, app.isPackaged) })
   diagnosticHandle('app:version', () => app.getVersion())
   diagnosticHandle('app:getChangelog', (event) => {
@@ -6693,14 +7000,17 @@ function registerIpc(): void {
     if (app.getVersion().endsWith('-plugintest')) throw new Error('插件测试版请使用 1.5.0-plugintest 安装包重装，不接入正式版更新通道')
     if (confirmed !== true) throw new Error('请先确认重装')
     if (!appUpdateService) throw new Error('自动更新服务尚未就绪')
-    return appUpdateService.reinstallLatest(async () => confirmed === true, async report => prepareCleanReinstall({
-        executablePath: process.execPath,
-        userDataPath: app.getPath('userData'), appDataPath: app.getPath('appData'),
-        localAppDataPath: process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
-        homePath: app.getPath('home'), tempPath: app.getPath('temp'),
-        protectedPaths: [...(await readRecentProjects()).map(project => project.path), ...(currentProject ? [currentProject.path] : []), app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')],
-        updateUrl: configuredAppUpdateUrl(), helperScriptPath: path.join(process.resourcesPath, 'reinstall-app.ps1'), report
-    }))
+    const options = {
+      executablePath: process.execPath,
+      userDataPath: app.getPath('userData'), appDataPath: app.getPath('appData'),
+      localAppDataPath: process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'),
+      homePath: app.getPath('home'), tempPath: app.getPath('temp'),
+      protectedPaths: [...(await readRecentProjects()).map(project => project.path), ...(currentProject ? [currentProject.path] : []), app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')],
+      updateUrl: configuredAppUpdateUrl(), helperScriptPath: path.join(process.resourcesPath, 'reinstall-app.ps1')
+    }
+    return appUpdateService.reinstallLatest(async () => confirmed === true,
+      report => prepareCleanReinstall({ ...options, report }),
+      report => prepareOverwriteReinstall({ ...options, report }))
   })
   diagnosticHandle('downloads:list', () => downloadActivities.snapshot())
   diagnosticHandle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))
@@ -6716,6 +7026,20 @@ function registerIpc(): void {
   diagnosticHandle('device:getAiPreferences', () => readBeginnerAiPreferences())
   diagnosticHandle('device:saveAiPreferences', (_event, preferences: BeginnerAiPreferences) => saveBeginnerAiPreferences(preferences))
   diagnosticHandle('device:listModels', (_event, force?: boolean) => listBeginnerModels(force === true))
+  diagnosticHandle('device:getModelCatalog', (_event, force?: boolean) => getQuotaModelCatalog(force === true))
+  diagnosticHandle('device:refreshConnections', async () => {
+    await providerSync().refresh()
+    await updateDeviceState(null)
+    return providerSync().catalog()
+  })
+  diagnosticHandle('device:resetModelSelection', async (_event, surface: unknown) => {
+    if (surface !== 'workspace' && surface !== 'inspiration') throw new Error('模型选择范围无效')
+    if ((await readDeviceCredentials())?.sync) await providerSync().resetBinding(surface)
+    const payload = { surface }
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:aiSelection', payload)
+    for (const window of BrowserWindow.getAllWindows()) if (window !== mainWindow && !window.isDestroyed()) window.webContents.send('device:aiSelection', payload)
+  })
+  diagnosticHandle('device:selectModel', (_event, model: unknown, selection?: unknown) => selectQuotaModel(model, selection))
   diagnosticHandle('device:openSite', (_event, relativePath?: string) => openConfiguredDeviceSite(relativePath))
   diagnosticHandle('remote:getState', () => remoteClient?.getState() ?? { status: 'disabled', enabled: false })
   diagnosticHandle('remote:start', () => startRemoteClientIfPossible(true))

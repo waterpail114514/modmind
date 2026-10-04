@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
@@ -320,6 +322,72 @@ describe('ImageStudioService settings', () => {
 
 
 describe('Image Studio workbench and UI parity', () => {
+  it.each([false, true])('keeps every reference in each multipart request for both sources (hosted=%s)', async hosted => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-multiref-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'key', jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings(hosted ? '' : 'own-key'))
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const form = init.body as FormData
+      expect(form.get('n')).toBe('1')
+      expect(form.get('image')).toBeNull()
+      const references = form.getAll('image[]') as File[]
+      expect(references.map(file => file.type)).toEqual(['image/png', 'image/jpeg'])
+      expect(references.map(file => file.name)).toEqual(['reference-1.png', 'reference-2.jpg'])
+      expect(await Promise.all(references.map(async file => [...new Uint8Array(await file.arrayBuffer())]))).toEqual([[0], [1]])
+      return new Response(JSON.stringify({ data: [{ b64_json: 'Ag==' }] }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    for (const source of ['manual', 'agent'] as const) {
+      const result = await service.generate({ prompt: 'combine', referenceImages: ['data:image/png;base64,AA==', 'data:image/jpeg;base64,AQ=='], count: 2 }, source)
+      expect(result.assets).toHaveLength(2)
+      expect(result.error).toBeUndefined()
+      expect(result.credits).toBe(hosted ? 2 : 0)
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(getHostedLease).toHaveBeenCalledTimes(hosted ? 4 : 0)
+  })
+
+  it('sends two references as one real HTTP edit request with both image payloads', async () => {
+    const sharp = (await import('sharp')).default
+    const pixels = await Promise.all(['#ff0000', '#0000ff'].map(background => sharp({ create: { width: 2, height: 2, channels: 3, background } }).png().toBuffer()))
+    const received: Array<{ url?: string; type?: string; body: Buffer }> = []
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(Buffer.from(chunk))
+      received.push({ url: req.url, type: req.headers['content-type'], body: Buffer.concat(chunks) })
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ data: [{ b64_json: pixels[0].toString('base64') }] }))
+    })
+    server.listen(0, '127.0.0.1'); await once(server, 'listening')
+    try {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-http-')); roots.push(root)
+      const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: vi.fn() })
+      await service.saveSettings({ ...settings('local-test'), baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1` })
+      const result = await service.generate({ prompt: 'combine red and blue', count: 1, referenceImages: pixels.map(pixel => `data:image/png;base64,${pixel.toString('base64')}`) })
+      expect(result.assets).toHaveLength(1)
+      expect(received).toHaveLength(1)
+      expect(received[0].url).toBe('/v1/images/edits')
+      const form = await new Response(new Uint8Array(received[0].body), { headers: { 'Content-Type': received[0].type! } }).formData()
+      const references = form.getAll('image[]') as File[]
+      expect(await Promise.all(references.map(async file => Buffer.from(await file.arrayBuffer())))).toEqual(pixels)
+      expect(form.get('n')).toBe('1')
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    }
+  })
+
+  it('rejects invalid later references before obtaining hosted credit or calling the provider', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-invalid-ref-')); roots.push(root)
+    const getHostedLease = vi.fn(); const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock)
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    await service.saveSettings(settings(''))
+    await expect(service.generate({ prompt: 'cat', referenceImages: ['data:image/png;base64,AA==', 'invalid'] })).rejects.toThrow('参考图必须')
+    expect(getHostedLease).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])('uses the same configuration and parameters for both sources (hosted=%s)', async hosted => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-parity-')); roots.push(root)
     const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'hosted-key', jobId: 'job', reservedCredits: 1 }))

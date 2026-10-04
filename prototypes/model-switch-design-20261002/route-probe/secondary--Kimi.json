@@ -1,0 +1,10 @@
+{
+  "checkedAt": "2026-10-02T04:02:46.700Z",
+  "account": "secondary",
+  "group": "Kimi",
+  "endpoint": "https://wawapii.com/v1/models",
+  "modelCount": 1,
+  "modelIds": [
+    "kimi-k3"
+  ]
+}

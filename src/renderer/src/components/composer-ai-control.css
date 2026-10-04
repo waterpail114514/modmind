@@ -6,7 +6,7 @@
 .composer-ai-pill strong { font-weight: 550; color: var(--theme-text); }
 .composer-ai-pill > svg { position: static; flex-shrink: 0; }
 .composer-ai-pill:disabled { opacity: .5; cursor: default; }
-.composer-ai-panel { position: fixed; z-index: 1200; width: min(280px, calc(100vw - 16px)); box-sizing: border-box; padding: 16px; border: 1px solid var(--theme-line); border-radius: 18px; background: var(--theme-raised); color: var(--theme-text); box-shadow: 0 10px 35px color-mix(in srgb, var(--theme-shadow) 18%, transparent); max-height: min(520px, 70dvh); overflow-y: auto; }
+.composer-ai-panel { position: fixed; z-index: 1200; width: min(340px, calc(100vw - 16px)); box-sizing: border-box; padding: 16px; border: 1px solid var(--theme-line); border-radius: 18px; background: var(--theme-raised); color: var(--theme-text); box-shadow: 0 10px 35px color-mix(in srgb, var(--theme-shadow) 18%, transparent); max-height: min(520px, 70dvh); overflow-y: auto; display: flex; flex-direction: column; }
 .composer-ai-heading { position: relative; display: flex; align-items: flex-start; justify-content: center; padding: 0 28px; }
 .composer-ai-heading > div { min-width: 0; flex: 1; text-align: center; }
 .composer-ai-heading strong { color: var(--theme-action); font-size: 14px; font-weight: 600; }
@@ -23,6 +23,32 @@
 .composer-ai-engines button { flex: 1 0 auto; padding: 5px 7px; border: 0; border-radius: 6px; color: var(--theme-muted); background: transparent; font-size: 11px; cursor: pointer; }
 .composer-ai-engines button[aria-pressed='true'] { color: var(--theme-on-action); background: var(--theme-action); }
 .composer-ai-models { display: grid; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--theme-line); }
+.composer-ai-models { order: -1; margin-top: 0; padding-top: 0; padding-bottom: 12px; border-top: 0; border-bottom: 1px solid var(--theme-line); margin-bottom: 12px; }
+.composer-ai-feedback { position: absolute; bottom: calc(100% + 8px); right: 0; max-width: min(420px, 80vw); color: var(--theme-muted); font-size: 12px; overflow-wrap: anywhere; }
+.composer-ai-feedback button { margin-left: 8px; border: 0; background: transparent; color: var(--theme-action); font: inherit; cursor: pointer; }
+.inspiration-ai-actions, .agent-composer-actions { position: relative; }
+.composer-ai-models > div:first-child { align-items: center; }
+.composer-ai-models [role='group'] button { display: flex; align-items: center; gap: 7px; min-height: 38px; width: 100%; }
+.composer-ai-models [role='group'] button > span:first-child { flex: 1; min-width: 0; }
+.composer-ai-models button small { display: block; font-size: 11px; color: var(--theme-muted); }
+.composer-ai-models button em { font-size: 11px; font-style: normal; color: var(--theme-muted); white-space: nowrap; }
+.composer-model-check { width: 14px; flex: 0 0 14px; color: var(--theme-action); }
+.composer-model-filters { display: flex; flex-wrap: wrap; gap: 3px; }
+.composer-model-filters button[aria-pressed='true'] { background: var(--theme-selected); color: var(--theme-action); }
+.model-catalog-rows { display: grid; gap: 2px; }
+.model-catalog-option { width: 100%; min-height: 65px; display: flex; align-items: center; gap: 8px; padding: 10px 8px; border: 0; border-bottom: 1px solid var(--theme-line); border-radius: 5px; background: transparent; color: var(--theme-text); text-align: left; font: inherit; cursor: pointer; }
+.model-catalog-option:hover:not(:disabled), .model-catalog-option[aria-pressed='true'] { background: var(--theme-selected); }
+.model-catalog-option:disabled { opacity: .55; cursor: default; }
+.model-catalog-copy { flex: 1; min-width: 0; }
+.model-catalog-copy strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.model-catalog-copy small, .model-catalog-copy > span { display: block; color: var(--theme-muted); font-size: 12px; overflow-wrap: anywhere; }
+.model-catalog-billing, .model-catalog-no-cache { font-size: 11px; color: var(--theme-muted); white-space: nowrap; }
+.model-catalog-billing.quota-free-mark { vertical-align: baseline; font-size: 11px; font-weight: 400; line-height: 1.5; }
+.model-catalog-check { width: 16px; flex: 0 0 16px; color: var(--theme-action); }
+.model-catalog-empty { color: var(--theme-muted); padding: 22px 8px; font-size: 12px; }
+.is-compact .model-catalog-option { min-height: 40px; border-bottom: 0; }
+.composer-ai-models .model-catalog-rows { height: 240px; min-height: 180px; max-height: 240px; overflow-y: auto; }
+.composer-ai-panel button:focus-visible, .composer-ai-pill:focus-visible, .composer-ai-panel input:focus-visible { outline: 2px solid var(--theme-action); outline-offset: 2px; }
 .composer-ai-models > div:first-child { display: flex; gap: 6px; }
 .composer-ai-models input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); color: var(--theme-text); font-size: 12px; }
 .composer-ai-models [role='group'] { display: grid; gap: 3px; max-height: 180px; overflow-y: auto; }

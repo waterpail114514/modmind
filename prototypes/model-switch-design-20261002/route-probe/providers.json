@@ -1,0 +1,89 @@
+{
+  "checkedAt": "2026-10-02T04:06:10.040Z",
+  "account": "primary",
+  "group": "plus 2组",
+  "node": "default",
+  "keyStatus": "ACTIVE",
+  "canSwitch": true,
+  "canSwitchProvider": true,
+  "providers": [
+    {
+      "account": "primary",
+      "label": "供应商 1（new-api）",
+      "kind": "paid",
+      "groups": [
+        {
+          "id": "plus 2组",
+          "label": "标准 （标准价格）"
+        },
+        {
+          "id": "plus 1组 特惠",
+          "label": "较低价(还算稳定) （83%标准价格）"
+        },
+        {
+          "id": "plus 3组 兜底",
+          "label": "更稳定(更昂贵)  (125%标准价格)"
+        },
+        {
+          "id": "auto",
+          "label": "自动配置 保证稳定"
+        },
+        {
+          "id": "ChatGPT Pro 1组",
+          "label": "Pro分组"
+        }
+      ]
+    },
+    {
+      "account": "secondary",
+      "label": "供应商 2（sub2API）",
+      "kind": "paid",
+      "groups": [
+        {
+          "id": "gpt-pro（混池）",
+          "label": "标准 （50%标准价格）B"
+        },
+        {
+          "id": "GPT-MAX（纯血pro池）禁止逆向 触发多次cyber封号",
+          "label": "更稳定 （约75%标准价格）C"
+        },
+        {
+          "id": "Kimi",
+          "label": "Kimi系列（200%标准价格）无缓存 K"
+        },
+        {
+          "id": "GLM",
+          "label": "GLM系列（175%标准价格）L"
+        },
+        {
+          "id": "Gemini",
+          "label": "Gemini系列（标准价格）无缓存 M"
+        },
+        {
+          "id": "Grok",
+          "label": "Grok系列（45%标准价格）O"
+        },
+        {
+          "id": "GPT 企业专用",
+          "label": "GPT满血企业（130%标准价格左右）D"
+        },
+        {
+          "id": "GPT6 Astra不降智分组",
+          "label": "GPT满血Astra 低价（95%标准价格左右）E"
+        }
+      ]
+    },
+    {
+      "account": "trial:openrouter",
+      "label": "免费套餐（目前仅做登陆用，无额度）",
+      "kind": "free",
+      "groups": []
+    },
+    {
+      "account": "trial:free-mtjzrt3s-l9afs",
+      "label": "免费套餐（deepseek-v4.1-flash）",
+      "kind": "free",
+      "groups": []
+    }
+  ]
+}

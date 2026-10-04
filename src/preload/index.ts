@@ -71,6 +71,14 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 const api: ModMindApi = {
+  skills: {
+    list: () => invoke('skills:list'),
+    read: name => invoke('skills:read', name),
+    save: input => invoke('skills:save', input),
+    import: kind => invoke('skills:import', kind),
+    setEnabled: (name, enabled) => invoke('skills:setEnabled', name, enabled),
+    remove: (name, revision) => invoke('skills:remove', name, revision)
+  },
   itemEditor: {
     list: (projectPath: string) => invoke('itemEditor:list', projectPath),
     catalog: (projectPath: string) => invoke('itemEditor:catalog', projectPath),
@@ -358,6 +366,20 @@ const api: ModMindApi = {
     getAiPreferences: () => invoke('device:getAiPreferences'),
     saveAiPreferences: (preferences: BeginnerAiPreferences) => invoke('device:saveAiPreferences', preferences),
     listModels: (force?: boolean) => invoke('device:listModels', force),
+    getModelCatalog: (force?: boolean) => invoke('device:getModelCatalog', force),
+    refreshConnections: () => invoke('device:refreshConnections'),
+    resetModelSelection: (surface: 'workspace' | 'inspiration') => invoke('device:resetModelSelection', surface),
+    onAiSelection: (listener: (value: { surface: 'workspace' | 'inspiration'; selection?: import('../shared/aiSelection').AiModelSelection }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]): void => listener(value)
+      ipcRenderer.on('device:aiSelection', handler)
+      return () => ipcRenderer.removeListener('device:aiSelection', handler)
+    },
+    onAiPreferences: (listener: (value: BeginnerAiPreferences) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: BeginnerAiPreferences): void => listener(value)
+      ipcRenderer.on('device:aiPreferences', handler)
+      return () => ipcRenderer.removeListener('device:aiPreferences', handler)
+    },
+    selectModel: (model: string, selection?: import('../shared/quotaModels').QuotaModelSelection) => invoke('device:selectModel', model, selection),
     openSite: (path?: string) => invoke('device:openSite', path),
     onState: (listener: (state: DeviceConnectionState) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, value: DeviceConnectionState): void => listener(presentResult(value, 'device:state'))

@@ -14,12 +14,13 @@ export interface AppChangelogSnapshot {
 // These notes ship with the app so the first launch works fully offline.
 export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
-    version: '1.5.0-plugintest',
+    version: '1.5.0-preview.1',
     sections: [
-      { title: '功能插件实验', items: [
-        '核心保留工作台、灵感台、代码、测试、构建、设置和插件管理，其余创作功能可独立安装或停用。',
-        '图像工坊与其他功能通过统一插件接口接入，保留原有编辑、处理、生成与项目交接流程。',
-        '对话按当前插件与用户选择更新工具目录，记录本轮工具变化，并识别尚未安装的 ModMind 功能。'
+      { title: '主要更新', items: [
+        '新增「功能」页，图像、模型、声音、测试等功能可按需安装和更新。',
+        '工作台会推荐任务所需功能，小白模式可自动安装。',
+        '大型组件改为按需下载，未安装测试功能也可构建和导出作品。',
+        '修复旧版更新误提示、模型编辑器遮挡弹窗及整合包构建异常。'
       ] }
     ]
   },

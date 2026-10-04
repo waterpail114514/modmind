@@ -736,6 +736,7 @@ export interface DeviceConnectionState {
   configured: boolean
   provider?: 'custom'
   providerId?: string
+  billing?: 'quota' | 'free' | 'custom'
   model?: string
   siteUrl?: string
   username?: string
@@ -834,6 +835,8 @@ export interface ExternalAgentConfiguration {
 
 export interface BeginnerAiPreferences {
   model: string
+  account?: string
+  billing?: 'quota' | 'free'
   reasoningLevel: BeginnerReasoningLevel
   fastMode: boolean
   /** Manual runtime context limits for exact model IDs on the active route. */
@@ -851,6 +854,8 @@ export interface JavaPreferences {
 
 export interface AgentSettings {
   codingBackend: CodingBackend
+  /** Permits automatic context compaction beyond the standard 256K budget. */
+  allowLongerContext?: boolean
   /** Historical storage key; applies to both workbench engines, never inspiration or external terminals. */
   codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
@@ -910,6 +915,12 @@ export interface ExternalAgentProviderSetup {
 
 export interface AiModelInfo {
   id: string
+  optionKey?: string
+  account?: string
+  billing?: 'quota' | 'free'
+  available?: boolean
+  unavailableReason?: string
+  providerLabel?: string
   ownedBy?: string
   reasoning?: ModelReasoningCapabilities
 }
@@ -1304,6 +1315,14 @@ export interface DownloadActivitySnapshot {
 }
 
 export interface ModMindApi {
+  skills: {
+    list: () => Promise<import('./userSkills').UserSkill[]>
+    read: (name: string) => Promise<import('./userSkills').UserSkillDocument>
+    save: (input: import('./userSkills').UserSkillSaveInput) => Promise<import('./userSkills').UserSkillDocument>
+    import: (kind: 'folder' | 'file') => Promise<import('./userSkills').UserSkillDocument | null>
+    setEnabled: (name: string, enabled: boolean) => Promise<import('./userSkills').UserSkillDocument>
+    remove: (name: string, revision: string) => Promise<void>
+  }
   itemEditor: import('./itemEditor').ItemEditorApi
   resourcePacks: import('./resourcePack').ResourcePackApi
   serverPlugin: import('./serverPlugin').ServerPluginApi
@@ -1497,6 +1516,12 @@ export interface ModMindApi {
     getAiPreferences: () => Promise<BeginnerAiPreferences>
     saveAiPreferences: (preferences: BeginnerAiPreferences) => Promise<BeginnerAiPreferences>
     listModels: (force?: boolean) => Promise<AiModelInfo[]>
+    getModelCatalog: (force?: boolean) => Promise<import('./quotaModels').QuotaModelCatalog>
+    refreshConnections: () => Promise<import('./quotaModels').QuotaModelCatalog>
+    resetModelSelection: (surface: 'workspace' | 'inspiration') => Promise<void>
+    onAiPreferences: (listener: (preferences: BeginnerAiPreferences) => void) => () => void
+    onAiSelection: (listener: (value: { surface: 'workspace' | 'inspiration'; selection?: import('./aiSelection').AiModelSelection }) => void) => () => void
+    selectModel: (model: string, selection?: import('./quotaModels').QuotaModelSelection) => Promise<import('./quotaModels').QuotaModelSwitchResult>
     openSite: (path?: string) => Promise<void>
     onState: (listener: (state: DeviceConnectionState) => void) => () => void
   }

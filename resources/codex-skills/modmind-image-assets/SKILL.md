@@ -15,7 +15,7 @@ Treat every generated or processed image as a candidate until its returned pixel
 ## Tool Routing
 
 - Read `modmind_image_studio_info` for the same saved configuration and presets used by the Image Studio UI. `includeModels: true` queries the current provider model list; lookup errors do not invalidate the saved settings. Credentials stay inside ModMind; do not read credential files or manually request image leases.
-- Generation accepts `model` (this request only; otherwise the saved model), `presetId`, editable `presetPrompt`, supplemental `prompt`, `style`, `size`, `quality`, `moderation`, integer `count` (1–10), `background` (`solid`/`auto`), `backgroundColor` (`#RRGGBB`), `removeBackground`, and `referenceImage`. Presets use the same templates as the UI and reference-required presets need actual input pixels.
+- Generation accepts `model` (this request only; otherwise the saved model), `presetId`, editable `presetPrompt`, supplemental `prompt`, `style`, `size`, `quality`, `moderation`, integer `count` (1–10), `background` (`solid`/`auto`), `backgroundColor` (`#RRGGBB`), `removeBackground`, and `referenceImage` or `referenceImages` (ordered images used together for each output; do not combine the two fields). Presets use the same templates as the UI and reference-required presets need actual input pixels.
 - `modmind_image_perfect_pixel` accepts `perfectPixel: {sampleMethod, gridSize, minSize, peakWidth, refineIntensity, fixSquare}`. Omit `gridSize` for automatic detection. Generation and processing use the same service as the UI; they do not change the user's saved credentials or default model.
 
 - Use `modmind_image_project_assets` to discover existing project images and `modmind_image_read_project_asset` to obtain the exact `dataUrl` for a reference. Do not describe available pixels from memory.
@@ -29,7 +29,7 @@ Treat every generated or processed image as a candidate until its returned pixel
 - Choose `style: minecraft` for textures, item icons, block art, and native pixel assets. Use `style: free` only for a requested non-Minecraft visual style.
 - Use one focused prompt per distinct asset. Use `count` for comparable variants of the same brief, not unrelated deliverables.
 - Include subject, view, silhouette, palette, material, pixel scale, transparency/background, and prohibited artifacts in the prompt when they matter.
-- Pass an available source image as `referenceImage`. Do not substitute a prose reconstruction.
+- Pass one source image as `referenceImage`, or multiple source images together as `referenceImages`. Do not substitute a prose reconstruction.
 - Prefer a flat solid background when reliable removal is part of the plan.
 
 ## Acceptance Loop

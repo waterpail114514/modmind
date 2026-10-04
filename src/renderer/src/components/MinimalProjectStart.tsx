@@ -12,7 +12,7 @@ export default function MinimalProjectStart({ draft, onDraftChange, onStart, onO
   preferences: BeginnerAiPreferences
   models: AiModelInfo[]
   saving: boolean
-  onModelChange: (model: string) => void
+  onModelChange: (model: string, selection?: import('../../../shared/quotaModels').QuotaModelSelection) => void
   onReasoningLevelChange: (level: BeginnerReasoningLevel) => void
   onReset?: () => void
 }): React.JSX.Element {

@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-10-02T04:03:18.917Z",
+  "account": "secondary",
+  "group": "GPT 企业专用",
+  "endpoint": "https://wawapii.com/v1/models",
+  "modelCount": 6,
+  "modelIds": [
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6.1-sol"
+  ]
+}

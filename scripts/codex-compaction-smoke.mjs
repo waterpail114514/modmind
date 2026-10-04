@@ -14,6 +14,7 @@ const executable = path.resolve(process.argv[2] || 'missing-codex-path')
 await fs.access(executable)
 const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-compaction-smoke-'))
 let requestCount = 0
+let observedInputTokens = 250000
 const server = http.createServer(async (req, res) => {
   try {
     const chunks = []
@@ -22,7 +23,7 @@ const server = http.createServer(async (req, res) => {
     JSON.parse(Buffer.concat(chunks).toString())
     const n = ++requestCount
     const item = { id: `msg_${n}`, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Fixture response: continue the current task.', annotations: [] }] }
-    const usage = { input_tokens: n === 1 ? 250000 : 100, output_tokens: 10, total_tokens: n === 1 ? 250010 : 110 }
+    const usage = { input_tokens: n === 1 ? observedInputTokens : 100, output_tokens: 10, total_tokens: n === 1 ? observedInputTokens + 10 : 110 }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' })
     for (const event of [
       { type: 'response.created', response: { id: `resp_${n}`, status: 'in_progress', output: [] } },
@@ -34,11 +35,12 @@ const server = http.createServer(async (req, res) => {
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 
-async function check(prepareCodex, autoCompactTokenLimit, expectedCompactions) {
+async function check(prepareCodex, autoCompactTokenLimit, expectedCompactions, allowLongerContext = false, inputTokens = 250000) {
   requestCount = 0
+  observedInputTokens = inputTokens
   const home = await fs.mkdtemp(path.join(temporary, 'home-'))
   const prepared = await prepareCodex({ rootDir: temporary, homeDir: home, existingExecutable: executable, rememberPrepared: false, serverConfig: {
-    apiKey: 'local-fixture', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'modmind-compaction-fixture', contextWindow: 512000, autoCompactTokenLimit
+    apiKey: 'local-fixture', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'modmind-compaction-fixture', contextWindow: 512000, autoCompactTokenLimit, allowLongerContext
   } })
   const child = spawn(executable, ['app-server', '--listen', 'stdio://'], { cwd: home, env: { ...process.env, ...prepared.environment }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
   let buffer = '', stderr = '', id = 0
@@ -70,7 +72,7 @@ async function check(prepareCodex, autoCompactTokenLimit, expectedCompactions) {
       (async () => {
         await request('initialize', { clientInfo: { name: 'modmind_compaction_test', version: '1' } })
         const config = await request('config/read', { cwd: home })
-        assert.equal(config.config.model_auto_compact_token_limit, autoCompactTokenLimit ?? 437760)
+        assert.equal(config.config.model_auto_compact_token_limit, autoCompactTokenLimit ?? (allowLongerContext ? 437760 : 256000))
         const thread = await request('thread/start', { cwd: home, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true })
         for (const text of ['Reply with a short acknowledgement.', 'Continue with a short acknowledgement.']) {
           const completed = new Promise(resolve => { finishTurn = resolve })
@@ -83,7 +85,7 @@ async function check(prepareCodex, autoCompactTokenLimit, expectedCompactions) {
         const windows = events.filter(event => event.method === 'thread/tokenUsage/updated').map(event => event.params.tokenUsage.modelContextWindow)
         assert.ok(windows.some(window => window >= 460800 && window <= 512000), JSON.stringify(windows))
         assert.equal(completions.length, 2)
-        console.log(`PASS threshold=${autoCompactTokenLimit ?? 'auto'}: context=512000, observed input=250000, compactions=${compactions.length}, turns=2`)
+        console.log(`PASS threshold=${autoCompactTokenLimit ?? 'auto'}, longer=${allowLongerContext}: context=512000, observed input=${inputTokens}, compactions=${compactions.length}, turns=2`)
       })(),
       new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`Timed out: ${stderr}\n${JSON.stringify(events).slice(-3000)}`)), 30000) })
     ])
@@ -102,6 +104,9 @@ try {
   await check(prepareCodex, 200000, 1)
   await check(prepareCodex, 450000, 0)
   await check(prepareCodex, undefined, 0)
+  await check(prepareCodex, undefined, 1, false, 300000)
+  await check(prepareCodex, undefined, 0, true, 300000)
+  await check(prepareCodex, 200000, 1, true)
 } finally {
   await new Promise(resolve => server.close(resolve))
   // temporary is a verified task-owned directory created by mkdtemp.

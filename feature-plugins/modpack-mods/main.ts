@@ -2,7 +2,7 @@ import { applyModpackPlan, planModpack } from "./src/main/modpackPlanner"
 import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState } from "./src/main/curseForgePackService"
 import { promises as fs, readFileSync, createReadStream } from "node:fs"
 import path from "node:path"
-import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from "../../src/main/modpackService"
+import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, readModpackImportStatus, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from "../../src/main/modpackService"
 import { downloadActivities } from "../../src/main/downloadActivityService"
 import { modpackModsRoot, modpackOverridesRoot } from "../../src/main/modpackPaths"
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, Tray } from "electron"
@@ -77,16 +77,7 @@ const host = options.host
 const packImportControllers = new Map<string, AbortController>()
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
 const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
-diagnosticHandle('modpack:importStatus', async () => {
-    const state = await readCurseForgePackState(host.requireProject().path);
-    const report = await fs.readFile(path.join(host.requireProject().path, '.modmind/import/artifact-report.json'), 'utf8').then(text => JSON.parse(text) as {
-        warnings: string[];
-    }).catch(() => ({ warnings: [] }));
-    return state ? { total: state.files.length, installed: state.files.filter(file => file.status === 'installed').length,
-        compatibilityWarnings: report.warnings,
-        requiredPending: state.files.filter(file => file.required && file.status !== 'installed').length,
-        failures: state.files.filter(file => file.status !== 'installed').map(file => ({ projectId: file.projectID, fileId: file.fileID, path: file.file?.path, required: file.required, error: file.error })) } : null;
-});
+diagnosticHandle('modpack:importStatus', () => readModpackImportStatus(host.requireProject()));
 diagnosticHandle('modpack:cancelImport', () => { packImportControllers.get(host.requireProject().path)?.abort(); return undefined; });
 diagnosticHandle('modpack:resumeImport', async () => {
     const project = host.requireProject();

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { verifyInstallerGradleWrapper } from './verify-gradle-wrapper.mjs'
 
 const platformIndex = process.argv.indexOf('--platform')
 if (process.platform === 'darwin' || (platformIndex >= 0 && process.argv[platformIndex + 1] === 'mac')) {
@@ -30,7 +31,8 @@ for (const file of artifacts) {
   if (!stat?.isFile() || stat.size < 10 * 1024 * 1024) {
     throw new Error(`Missing or implausibly small release artifact: ${file}`)
   }
-  results.push({ file, size: stat.size, hash: await sha256(file) })
+  const gradleWrapper = verifyInstallerGradleWrapper(file)
+  results.push({ file, size: stat.size, hash: await sha256(file), gradleWrapper })
 }
 
 if (process.platform === 'win32') {

@@ -299,6 +299,7 @@ export class ImageStudioService {
     const prompt = String(request.prompt ?? '').trim()
     if (!prompt || prompt.length > 32_000) throw new Error('请输入 1 到 32000 个字符的图片描述')
     const count = 1
+    const references = (request.referenceImages ?? (request.referenceImage ? [request.referenceImage] : [])).map(parseReferenceImage)
     const stored = await this.readStored()
     const synced = await this.options.getSyncedImageApi?.()
     const ownKey = synced?.imageApi?.apiKey ?? await this.decryptKey(stored)
@@ -322,11 +323,10 @@ export class ImageStudioService {
       quality: clampQuality(request.quality),
       moderation: clampModeration(request.moderation)
     }
-    const reference = request.referenceImage ? parseReferenceImage(request.referenceImage) : null
     let requestBody: BodyInit = JSON.stringify(body)
     const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` }
-    const endpoint = reference ? 'images/edits' : 'images/generations'
-    if (reference) {
+    const endpoint = references.length ? 'images/edits' : 'images/generations'
+    if (references.length) {
       const form = new FormData()
       form.append('model', body.model)
       form.append('prompt', body.prompt)
@@ -334,7 +334,9 @@ export class ImageStudioService {
       form.append('size', body.size)
       form.append('quality', body.quality)
       form.append('moderation', body.moderation)
-      form.append('image', new Blob([new Uint8Array(reference.buffer)], { type: reference.mime }), `reference.${reference.extension}`)
+      references.forEach((reference, index) => {
+        form.append(references.length === 1 ? 'image' : 'image[]', new Blob([new Uint8Array(reference.buffer)], { type: reference.mime }), `reference-${index + 1}.${reference.extension}`)
+      })
       requestBody = form
     } else {
       headers['Content-Type'] = 'application/json'

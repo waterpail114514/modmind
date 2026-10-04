@@ -8,6 +8,7 @@ import TurnCompletionCard, { isTurnCompletion } from './TurnCompletionCard'
 import { AiNoticeDetails } from './AiNoticeDetails'
 import WorkbenchFeatureControls from './WorkbenchFeatureControls'
 import ProjectKnowledgeButton from './ProjectKnowledgeButton'
+import UserSkillsDialog from './UserSkillsDialog'
 import type { WorkbenchFeatures } from '../../../shared/workbenchFeatures'
 /**
  * Copyright 2025 AionUi (aionui.com)
@@ -35,6 +36,7 @@ import {
   Archive,
   ArrowUp,
   Brain,
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -138,7 +140,10 @@ export type AgentWorkbenchProps = {
   beginnerModelScanMessage?: string
   contextModel?: string
   onScanBeginnerModels?: () => void
-  onModelChange?: (model: string) => void
+  onModelChange?: (model: string, selection?: import('../../../shared/quotaModels').QuotaModelSelection) => void
+  modelSwitching?: boolean
+  modelSwitchMessage?: string
+  onCancelModelWaiting?: () => void
   onReasoningLevelChange?: (level: BeginnerReasoningLevel) => void
   onResetAiSelection?: () => void
   onFastModeChange?: (enabled: boolean) => void
@@ -322,6 +327,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
   const beginnerConversation = props.uiMode === 'beginner' || props.conversations.find(item => item.id === props.activeConversationId)?.agentMode === 'beginner'
   const minimal = props.presentation === 'minimal'
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [skillsOpen, setSkillsOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [conversationPickerOpen, setConversationPickerOpen] = useState(false)
   useWorkbenchPopover(workbenchRef, conversationPickerOpen, setConversationPickerOpen, '.agent-conversation-menu', '.agent-conversation-picker > button')
@@ -403,6 +409,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
         {props.persistenceState === 'saving' || props.persistenceState === 'error' ? <span className={`agent-persistence-status ${props.persistenceState ?? 'ready'}`} title={props.persistenceMessage}>{props.persistenceState === 'saving' ? <LoaderCircle className="spin" size={12} /> : props.persistenceState === 'error' ? <CircleAlert size={12} /> : <Check size={12} />}<span>{props.persistenceMessage ?? '已保存'}</span></span> : null}
         <div className="agent-picker"><button type="button" className="agent-picker-trigger" aria-label={`开发引擎：${backendLabel(effectiveBackend)}`} disabled={planning || Boolean(props.switchingBackend) || props.uiMode !== 'advanced'} aria-expanded={agentPickerOpen} onClick={() => props.uiMode === 'advanced' && setAgentPickerOpen((value) => !value)}>{props.switchingBackend ? <LoaderCircle className="spin" size={14} /> : backendIcon(effectiveBackend)}<span>{props.switchingBackend ? `正在切换到 ${backendLabel(props.switchingBackend)}` : backendLabel(effectiveBackend)}</span>{props.uiMode === 'advanced' ? <ChevronDown size={12} /> : null}</button>{agentPickerOpen ? <div className="agent-picker-menu">{(['quota', 'codex'] as const).map((backend) => <button type="button" className={(props.runningBackend ?? props.backend) === backend ? 'active' : ''} key={backend} onClick={() => { props.onBackendChange(backend); setAgentPickerOpen(false) }}>{backendIcon(backend)}<span>{backendLabel(backend)}</span>{(props.runningBackend ?? props.backend) === backend ? <Check size={13} /> : null}</button>)}</div> : null}</div>
         <MoreActions label="工作台更多操作">        <button type="button" className="agent-icon-button" title="保存版本" aria-label="保存版本" onClick={props.onSnapshot}><History size={15} /></button>
+        <button type="button" onClick={() => setSkillsOpen(true)}><BookOpen size={15} />Skills</button>
         <button type="button" className="agent-icon-button" title="导出成品" aria-label="导出成品" disabled={!canExport} onClick={props.onExport}><Download size={15} /></button>
         {modpack ? <button type="button" className="agent-icon-button" title="导出服务端包" aria-label="导出服务端包" disabled={planning || props.building} onClick={props.onExportServerPack}><Archive size={15} /></button> : null}
 <button type="button" onClick={props.onRename}><Pencil size={14} />重命名项目</button>{props.onUiModeChange ? <button type="button" onClick={() => props.onUiModeChange?.(props.uiMode === 'advanced' ? 'beginner' : 'advanced')}>{props.uiMode === 'advanced' ? '切换到简洁模式' : '切换到专业模式'}</button> : null}</MoreActions>        {props.uiMode === 'beginner' ? <button type="button" className="agent-icon-button agent-account-button" title="账号与远程设置" aria-label="账号与远程设置" onClick={props.onOpenAccount}><UserRound size={15} /><span className={`agent-account-dot ${props.deviceState?.status === 'connected' ? 'connected' : ''}`} /></button> : null}
@@ -421,12 +428,13 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
       <footer className={`agent-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...attachmentInput.handlers}>
         {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
         <textarea ref={composerRef} aria-label="发送给 AI 的消息" value={props.prompt} onChange={(event) => props.setPrompt(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && attachmentInput.isBusy()) { event.preventDefault(); return }; if (event.key === 'Enter' && event.shiftKey) return; if (props.savingAiPreferences && event.key === 'Enter' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); return } if (event.ctrlKey || event.metaKey) { if (event.key === 'Enter' && !planning) { event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart; const end = textarea.selectionEnd; props.setPrompt(`${props.prompt.slice(0, start)}\n${props.prompt.slice(end)}`); window.requestAnimationFrame(() => textarea.setSelectionRange(start + 1, start + 1)) } return } if (event.key === 'Enter' && !planning && (props.prompt.trim() || props.attachments.length)) { event.preventDefault(); props.onStart() } }} placeholder={props.placeholder} disabled={planning} rows={2} />
-        <div className="agent-composer-toolbar"><div className="agent-composer-tools">{props.uiMode === 'advanced' && !beginnerConversation ? <WorkbenchFeatureControls value={props.workbenchFeatures} disabled={planning} onChange={props.onWorkbenchFeaturesChange} /> : null}<ProjectKnowledgeButton key={project.path} projectPath={project.path} disabled={planning} /><AiAttachmentPicker attachments={props.attachments} onChange={props.setAttachments} disabled={planning} controller={attachmentInput} /></div><div className="agent-composer-actions">{props.uiMode === 'beginner' ? <button type="button" className="agent-mode-pill" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((value) => !value)}><Settings size={14} /><span>制作设置</span><ChevronDown size={12} /></button> : null}{props.beginnerAiPreferences ? <QuotaPreferenceControls managedCodex preferences={props.beginnerAiPreferences} models={props.beginnerAvailableModels ?? []} disabled={planning || Boolean(props.savingAiPreferences)} onModelChange={props.onModelChange} onReasoningLevelChange={props.onReasoningLevelChange} onReset={props.onResetAiSelection} /> : null}<ContextUsage usage={latestUsage} />{planning ? <button type="button" className="agent-send-button stop" title="停止任务" aria-label="停止任务" onClick={props.onCancel}><Square size={14} fill="currentColor" /></button> : <button type="button" className="agent-send-button" title="发送" aria-label="发送" disabled={attachmentInput.busy || Boolean(props.savingAiPreferences) || (!props.prompt.trim() && !props.attachments.length)} onClick={() => { if (!attachmentInput.isBusy()) props.onStart() }}><ArrowUp size={17} strokeWidth={2.7} /></button>}</div></div>
+        <div className="agent-composer-toolbar"><div className="agent-composer-tools">{props.uiMode === 'advanced' && !beginnerConversation ? <WorkbenchFeatureControls value={props.workbenchFeatures} disabled={planning} onChange={props.onWorkbenchFeaturesChange} /> : null}{minimal ? <button type="button" className="agent-icon-button" title="Skills" aria-label="Skills" aria-haspopup="dialog" aria-expanded={skillsOpen} onClick={() => setSkillsOpen(true)}><BookOpen size={16} /></button> : null}<ProjectKnowledgeButton key={project.path} projectPath={project.path} disabled={planning} /><AiAttachmentPicker attachments={props.attachments} onChange={props.setAttachments} disabled={planning} controller={attachmentInput} /></div><div className="agent-composer-actions">{props.uiMode === 'beginner' ? <button type="button" className="agent-mode-pill" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((value) => !value)}><Settings size={14} /><span>制作设置</span><ChevronDown size={12} /></button> : null}{props.beginnerAiPreferences ? <QuotaPreferenceControls managedCodex preferences={props.beginnerAiPreferences} models={props.beginnerAvailableModels ?? []} disabled={Boolean(props.savingAiPreferences)} switching={props.modelSwitching} message={props.modelSwitchMessage} onCancelWaiting={props.onCancelModelWaiting} onRefresh={props.onScanBeginnerModels} onModelChange={props.onModelChange} onReasoningLevelChange={props.onReasoningLevelChange} onReset={props.onResetAiSelection} /> : null}<ContextUsage usage={latestUsage} />{planning ? <button type="button" className="agent-send-button stop" title="停止任务" aria-label="停止任务" onClick={props.onCancel}><Square size={14} fill="currentColor" /></button> : <button type="button" className="agent-send-button" title="发送" aria-label="发送" disabled={attachmentInput.busy || Boolean(props.savingAiPreferences) || (!props.prompt.trim() && !props.attachments.length)} onClick={() => { if (!attachmentInput.isBusy()) props.onStart() }}><ArrowUp size={17} strokeWidth={2.7} /></button>}</div></div>
       </footer>
       {minimal && !timelineRows.length ? <div className="chat-welcome minimal-recommendations"><ChatRecommendations mode="workbench" modpack={modpack} serverPlugin={project.kind === 'server-plugin'} disabled={planning} onSelect={value => { props.setPrompt(value); composerRef.current?.focus() }} /></div> : null}
       {props.aiOutputStatus === 'error' && !planning ? <div className="agent-error-footer"><CircleAlert size={14} /><span>任务没有完成，详细信息已保留</span><button type="button" className="agent-text-button" onClick={props.onExportLogs}>导出诊断</button></div> : null}
     </div>
 
     {conversationDeleteDialog}
+    {skillsOpen ? <UserSkillsDialog onClose={() => setSkillsOpen(false)} /> : null}
   </div>
 }

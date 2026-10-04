@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { providerFixture } from './__fixtures__/providerSync'
 import {
   normalizeSiteUrl,
   openAiV1BaseUrl,
@@ -15,6 +16,22 @@ import {
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
+
+describe('device authorization v2', () => {
+  it('declares v2 and consumes all connections instead of the legacy top-level key', async () => {
+    const f=providerFixture()
+    const fetcher=vi.fn(async()=>jsonResponse({success:true,data:{status:'ok',...f.owner().sync,username:'alice',balanceCents:'0',apiKey:'legacy-ignore',baseUrl:'https://legacy.example'}})) as unknown as typeof fetch
+    const result=await pollDeviceCode('https://site.example','K7M3QX',new AbortController().signal,fetcher)
+    expect(result).toMatchObject({status:'ok',apiKey:'paid-secret',sync:{connections:expect.any(Array)}})
+    expect(new Headers(vi.mocked(fetcher).mock.calls[0][1]?.headers).get('X-ModMind-Sync-Version')).toBe('2')
+    expect(JSON.stringify(result)).not.toContain('legacy-ignore')
+  })
+  it('ignores stale custom parameters in v2 links and rejects an invalid full connection collection',async()=>{
+    expect(parseDeviceDeepLink('mcdev://sync?site=https%3A%2F%2Fsite.example&code=K7M3QX&version=2&customApi=invalid','https://site.example')).toEqual({siteUrl:'https://site.example',code:'K7M3QX'})
+    const fetcher=vi.fn(async()=>jsonResponse({success:true,data:{status:'ok',protocolVersion:2,selectionRevision:1,connections:[],defaultAccount:'secondary',apiKey:'legacy',baseUrl:'https://legacy.example',balanceCents:'100',username:'alice'}})) as unknown as typeof fetch
+    await expect(pollDeviceCode('https://site.example','K7M3QX',new AbortController().signal,fetcher)).rejects.toThrow('多供应商')
+  })
+})
 
 describe('device integration protocol', () => {
   it.each([false, true])('requests fresh image credentials using the account credential (envelope=%s)', async (envelope) => {
@@ -195,7 +212,7 @@ describe('device integration protocol', () => {
     }))
   })
 
-  it('accepts plain-text versions and lets beta installations return to stable', async () => {
+  it('accepts plain-text versions and lets beta installations advance to stable', async () => {
     const fetcher = vi.fn(async () => new Response('1.3.3', { status: 200, headers: { 'Content-Type': 'text/plain' } })) as unknown as typeof fetch
     await expect(checkAppVersion('https://site.example.com', '1.3.2', new AbortController().signal, fetcher)).resolves.toMatchObject({
       latestVersion: '1.3.3', updateAvailable: true
@@ -208,6 +225,13 @@ describe('device integration protocol', () => {
     })
     await expect(checkAppVersion('https://site.example.com', '1.3.2-beta.2', new AbortController().signal, fetcher)).resolves.toMatchObject({
       latestVersion: '1.3.3', updateAvailable: true
+    })
+  })
+
+  it.each([['1.4.14', false], ['1.5.0', true], ['1.5.1', true]])('checks preview upgrades against server version %s', async (latestVersion, updateAvailable) => {
+    const fetcher = vi.fn(async () => jsonResponse({ success: true, data: { latestVersion, updateAvailable: true } })) as unknown as typeof fetch
+    await expect(checkAppVersion('https://site.example.com', '1.5.0-preview.1', new AbortController().signal, fetcher)).resolves.toMatchObject({
+      currentVersion: '1.5.0-preview.1', latestVersion, currentChannel: 'beta', targetChannel: 'stable', updateAvailable
     })
   })
 

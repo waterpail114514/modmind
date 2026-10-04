@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-10-02T04:06:23.774Z",
+  "account": "primary",
+  "group": "plus 1组 特惠",
+  "endpoint": "https://hk.ai.soulecho.cc/v1/models",
+  "modelCount": 16,
+  "modelIds": [
+    "codex-auto-review",
+    "gpt-5.4",
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6.1-sol",
+    "gpt-image-2",
+    "gpt-image-2-4K",
+    "gpt-image-2-adobe",
+    "gpt-image-2-cc",
+    "gpt-image-2-tst",
+    "gpt-image-2.5",
+    "gpt-image-2.5-flare",
+    "gpt-image-2.5-sunburst"
+  ]
+}

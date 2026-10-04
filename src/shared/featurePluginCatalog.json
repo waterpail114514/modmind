@@ -824,7 +824,14 @@
             },
             "referenceImage": {
               "type": "string",
-              "description": "Image data URL for reference-guided editing."
+              "description": "Single image data URL for reference-guided editing. Use either referenceImage or referenceImages."
+            },
+            "referenceImages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Ordered image data URLs used together for each output; count is the output count, not a count per reference. Do not combine with referenceImage."
             }
           }
         },
@@ -12001,7 +12008,7 @@
       {
         "name": "modmind_runtime_state",
         "action": "runtime_state",
-        "description": "Read the current isolated Minecraft test runtime state and recent events."
+        "description": "Read the current isolated Minecraft test runtime state and recent events. Modpacks also return modpackImport with installed counts, pending dependencies and original-pack compatibility warnings; import success does not prove gameplay compatibility."
       }
     ]
   },

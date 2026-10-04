@@ -55,11 +55,51 @@ describe('image workflow execution safety', () => {
     expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('整数')
   })
 
-  it('bounds cascading requests before starting generation', () => {
+  it('bounds total requested outputs before starting generation', () => {
     const graph = basic(); graph.nodes[1].data.count = 10
-    graph.nodes.push(node('p2', 'prompt', { prompt: 'edit' }), node('g2', 'generate', { count: 10 }))
-    graph.edges.push(edge('g', 'g2'), edge('p2', 'g2'))
+    for (let i = 0; i < 10; i += 1) {
+      graph.nodes.push(node(`g${i}`, 'generate', { count: 10 }))
+      graph.edges.push(edge('p', `g${i}`))
+    }
     expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('超过 100 张')
+  })
+
+  it.each([1, 3])('uses two ordered references together for each of %s outputs', async count => {
+    const graph = basic(); graph.nodes[1].data.count = count
+    const references = ['data:image/png;base64,AQ==', image.dataUrl]
+    graph.nodes.push(node('r1', 'reference', { referenceImage: references[1] }), node('r2', 'reference', { referenceImage: references[0] }))
+    graph.edges.push(edge('r2', 'g'), edge('r1', 'g'))
+    const plan = planImageWorkflow(graph.nodes, graph.edges)
+    expect(plan.totalCount).toBe(count)
+    const calls = api(); const progress = vi.fn()
+    await runImageWorkflow(plan, calls, { onAsset: vi.fn(), onProgress: progress })
+    expect(calls.generate).toHaveBeenCalledTimes(count)
+    for (const [request] of calls.generate.mock.calls as unknown as [Record<string, unknown>][]) {
+      expect(request).toMatchObject({ count: 1, referenceImages: references })
+      expect(request).not.toHaveProperty('referenceImage')
+    }
+    expect(progress).toHaveBeenLastCalledWith(count, count)
+  })
+
+  it('joins upstream batches, processed images and saved outputs without multiplying downstream jobs', async () => {
+    const graph = basic()
+    const saved = { ...image, dataUrl: 'data:image/png;base64,Ag==' }
+    graph.nodes.push(node('processed', 'process', { operation: 'perfect-pixel' }), node('o', 'output', { outputAsset: saved, outputStatus: 'done' }), node('g2', 'generate', { count: 2, presetId: 'material-variant' }))
+    graph.edges.push(edge('g', 'processed'), edge('processed', 'g2'), edge('o', 'g2'))
+    const plan = planImageWorkflow(graph.nodes, graph.edges)
+    expect(plan.totalCount).toBe(5)
+    const calls = api()
+    await runImageWorkflow(plan, calls, { onAsset: vi.fn() })
+    expect(calls.generate).toHaveBeenCalledTimes(5)
+    expect(calls.process).toHaveBeenCalledTimes(3)
+    for (const index of [4, 5]) expect(calls.generate).toHaveBeenNthCalledWith(index, expect.objectContaining({ referenceImages: ['data:image/png;base64,AQ==', 'data:image/png;base64,AQ==', 'data:image/png;base64,AQ==', saved.dataUrl] }))
+  })
+
+  it('rejects malformed reference pixels anywhere in the plan before starting paid work', () => {
+    const graph = basic()
+    graph.nodes.push(node('r', 'reference', { referenceImage: 'data:image/png;base64,not-an-image' }))
+    graph.edges.push(edge('r', 'g'))
+    expect(() => planImageWorkflow(graph.nodes, graph.edges)).toThrow('参考图必须')
   })
 
   it('publishes every completed image immediately, preserves it on later failure and makes no further requests', async () => {

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createStoredZip } from './bedrockAddon'
-import { validateRuntimeModArtifact } from './modpackArtifactValidation'
+import { hasConnectorBridge, validateRuntimeModArtifact } from './modpackArtifactValidation'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -15,6 +15,45 @@ async function jar(files: Record<string, string | Buffer>): Promise<string> {
 }
 
 describe('launcher-compatible modpack JAR validation', () => {
+  const forgeLocator = 'META-INF/services/net.minecraftforge.forgespi.locating.IModLocator'
+  it.each([
+    'net.minecraftforge.forgespi.locating.IModLocator',
+    'net.minecraftforge.forgespi.locating.IDependencyLocator',
+    'cpw.mods.modlauncher.api.ITransformationService'
+  ])('accepts Forge service entrypoints without a top-level mod descriptor: %s', async service => {
+    const target = await jar({ [`META-INF/services/${service}`]: '# provider\nexample.Bootstrap # comment\n', 'example/Bootstrap.class': Buffer.alloc(2048) })
+    await expect(validateRuntimeModArtifact(target, 'forge')).resolves.toEqual([])
+    await expect(validateRuntimeModArtifact(target, 'forge', target, true)).resolves.toEqual([])
+    await expect(validateRuntimeModArtifact(target, 'neoforge')).rejects.toThrow('neoforge descriptor')
+  })
+  it.each(['', '# no provider', 'missing.Class', '../Locator', 'example.Bootstrap\nmissing.Class'])('rejects invalid Forge service providers: %j', async service => {
+    const target = await jar({ [forgeLocator]: service, 'example/Bootstrap.class': Buffer.alloc(2048) })
+    await expect(validateRuntimeModArtifact(target, 'forge', target, true)).rejects.toThrow('forge descriptor')
+  })
+  it('detects Forge Connector embedded metadata and permits its Fabric companions', async () => {
+    const nested = createStoredZip([{ name: 'META-INF/mods.toml', data: Buffer.from('modLoader="javafml"\n[[mods]]\nmodId="connectormod"') }])
+    const bridge = await jar({ [forgeLocator]: 'org.sinytra.connector.locator.EarlyLocator', 'org/sinytra/connector/locator/EarlyLocator.class': Buffer.alloc(2048), 'META-INF/jarjar/connector-mod.jar': nested })
+    const companion = await jar({ 'fabric.mod.json': '{}', 'example/Fabric.class': Buffer.alloc(2048) })
+    expect(await hasConnectorBridge([companion, bridge], 'forge')).toBe(true)
+    expect(await hasConnectorBridge([bridge], 'neoforge')).toBe(false)
+    expect(await hasConnectorBridge([companion], 'forge')).toBe(false)
+    await expect(validateRuntimeModArtifact(companion, 'forge', companion, true, true)).resolves.toEqual([])
+    await expect(validateRuntimeModArtifact(companion, 'forge', companion, true, false)).resolves.toEqual([expect.stringContaining('尚未检测到 Connector')])
+    await expect(validateRuntimeModArtifact(companion, 'forge', companion, false, true)).rejects.toThrow('forge descriptor')
+  })
+  it('does not detect Connector from a service with missing provider classes', async () => {
+    const bridge = await jar({ [forgeLocator]: 'org.sinytra.connector.locator.Missing', 'META-INF/jarjar/connector-mod.jar': createStoredZip([{ name: 'META-INF/mods.toml', data: Buffer.from('[[mods]]\nmodId="connectormod"') }]) })
+    expect(await hasConnectorBridge([bridge], 'forge')).toBe(false)
+  })
+  it('preserves NeoForge files without claiming the original Forge loading chain cannot load them', async () => {
+    const target = await jar({ 'META-INF/neoforge.mods.toml': 'modLoader="javafml"\n[[mods]]\nmodId="modefite"\n[[dependencies.modefite]]\nmodId="minecraft"\nversionRange="[1.21.1,)"', 'example/Mod.class': Buffer.alloc(2048) })
+    const warnings = await validateRuntimeModArtifact(target, 'forge', target, true, true)
+    expect(warnings).toEqual([expect.stringMatching(/NeoForge.*1\.21\.1.*尚未验证/)])
+    expect(warnings.join('')).not.toMatch(/不匹配|不兼容|不能转换/)
+    await expect(validateRuntimeModArtifact(target, 'forge')).rejects.toThrow('forge descriptor')
+    const malformed = await jar({ 'META-INF/neoforge.mods.toml': 'not valid TOML', 'example/Mod.class': Buffer.alloc(2048) })
+    await expect(validateRuntimeModArtifact(malformed, 'forge', malformed, true)).rejects.toThrow('Invalid Mod JAR')
+  })
   it('accepts lowcodefml data-only mods without requiring Java classes', async () => {
     const target = await jar({ 'META-INF/mods.toml': "modLoader='lowcodefml'\n[[mods]]\nmodId='data_pack'", 'data/example/loot_tables/test.json': '{}' })
     await expect(validateRuntimeModArtifact(target, 'forge')).resolves.toEqual([])

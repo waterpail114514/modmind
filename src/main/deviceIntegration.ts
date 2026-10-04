@@ -2,6 +2,7 @@ import type { AiModelInfo, AppVersionCheckResult, DeviceKeyStatus, DeviceUsage }
 import { parseReasoningCapabilities } from '../shared/modelReasoning'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
+import { parseProviderSnapshot, type ProviderSnapshot } from './providerSync'
 
 export const DEFAULT_DEVICE_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_REASONING_EFFORT = 'high' as const
@@ -24,7 +25,7 @@ export interface CustomApiConfig {
 export type DevicePollResult =
   | { status: 'pending' }
   | { status: 'expired' }
-  | { status: 'ok'; baseUrl: string; apiKey: string; balanceCents: string; username: string }
+  | { status: 'ok'; baseUrl: string; apiKey: string; balanceCents: string; username: string; account?: string; group?: string | null; node?: string; sync?: ProviderSnapshot }
   | { status: 'ok'; provider: 'custom'; usageTracked: false; requiresLocalSync: true; username: string }
 
 export class DeviceApiError extends Error {
@@ -115,6 +116,7 @@ export function parseDeviceDeepLink(rawUrl: string, expectedSiteUrl: string): { 
   const code = (url.searchParams.get('code') ?? '').trim().toUpperCase()
   if (!/^[A-Z0-9]{6,16}$/.test(code)) throw new Error('深链授权码无效')
   const customValues = url.searchParams.getAll('customApi')
+  if (url.searchParams.get('version') === '2') return { siteUrl, code }
   if (customValues.length > 1) throw new Error('自定义 API 同步参数重复')
   return { siteUrl, code, ...(customValues.length ? { customApi: parseCustomApi(customValues[0]) } : {}) }
 }
@@ -171,12 +173,18 @@ export async function pollDeviceCode(siteUrl: string, code: string, signal: Abor
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/poll`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(customLocal ? { 'X-ModMind-Custom-Local': '1' } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(customLocal ? { 'X-ModMind-Custom-Local': '1' } : { 'X-ModMind-Sync-Version': '2' }) },
     body: JSON.stringify({ code }),
     signal
   }, '查询授权状态失败')
   if (data.status === 'pending' || data.status === 'expired') return { status: data.status }
   if (data.status !== 'ok') throw new DeviceApiError('查询授权状态失败：未知状态', 200)
+  if (data.protocolVersion === 2) {
+    const sync = parseProviderSnapshot(data)
+    const connection = sync.connections.find(c => c.account === sync.defaultAccount)!
+    if (typeof data.username !== 'string' || !data.username.trim() || typeof data.balanceCents !== 'string' || !/^\d+$/.test(data.balanceCents)) throw new DeviceApiError('多供应商授权身份无效', 200)
+    return { status: 'ok', baseUrl: connection.inferenceBaseUrl, apiKey: connection.apiKey, username: data.username.trim(), balanceCents: data.balanceCents, account: connection.account, group: connection.group, ...(connection.node ? { node: connection.node } : {}), sync }
+  }
   if (customLocal) {
     const username = typeof data.username === 'string' ? data.username.trim() : ''
     if (data.provider !== 'custom' || data.usageTracked !== false || data.requiresLocalSync !== true || !username) {
@@ -191,7 +199,10 @@ export async function pollDeviceCode(siteUrl: string, code: string, signal: Abor
   if (!baseUrl || !apiKey || !/^\d+$/.test(balanceCents) || !username) {
     throw new DeviceApiError('授权成功响应缺少必要字段', 200)
   }
-  return { status: 'ok', baseUrl, apiKey, balanceCents, username }
+  return { status: 'ok', baseUrl, apiKey, balanceCents, username,
+    ...(typeof data.account === 'string' ? { account: data.account } : {}),
+    ...(data.group === null || typeof data.group === 'string' ? { group: data.group } : {}),
+    ...(typeof data.node === 'string' ? { node: data.node } : {}) }
 }
 
 function stringInteger(record: Record<string, unknown>, key: string): string {
