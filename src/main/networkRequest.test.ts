@@ -6,6 +6,7 @@ import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatc
 let server: Server
 const hitCounts = new Map<string, number>()
 let port = 0
+let onRateLimitResponse: (() => void) | undefined
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -14,7 +15,11 @@ beforeAll(async () => {
     hitCounts.set(key, hits)
 
     if (req.url === '/missing') { res.writeHead(404); res.end('missing'); return }
-    if (req.url === '/rate-limit') { res.writeHead(429); res.end('slow down'); return }
+    if (req.url === '/rate-limit') {
+      res.writeHead(429)
+      res.end('slow down', () => onRateLimitResponse?.())
+      return
+    }
 
     if (req.url === '/flaky' && req.method === 'GET' && hits === 1) {
       res.writeHead(502)
@@ -57,9 +62,10 @@ describe('networkRequest helpers', () => {
 
   it('cancels during retry backoff without another request', async () => {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 100)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    onRateLimitResponse = () => { timer = setTimeout(() => controller.abort(), 100) }
     try { await expect(fetchTextWithRetry(`http://127.0.0.1:${port}/rate-limit`, { signal: controller.signal })).rejects.toThrow() }
-    finally { clearTimeout(timer) }
+    finally { clearTimeout(timer); onRateLimitResponse = undefined }
     expect(hitCounts.get('GET /rate-limit')).toBe(1)
   })
   it('surfaces the last HTTP status after exhausting attempts', async () => {

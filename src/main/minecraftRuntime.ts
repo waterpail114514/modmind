@@ -905,6 +905,7 @@ export class MinecraftRuntimeManager {
   }
 
   prepare(signal?: AbortSignal): Promise<MinecraftRuntimeState> {
+    if (signal?.aborted) return Promise.reject(abortError())
     if (this.preparePromise) return waitWithAbort(this.preparePromise, signal)
     const controller = new AbortController()
     const generation = ++this.prepareGeneration
