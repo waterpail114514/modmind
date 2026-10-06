@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { adoptiumMetadataUrl, jdkDownloadSources } from './jdkDownload'
+import { adoptiumMetadataUrl, jdkDownloadSources, ensureManagedJdk } from './jdkDownload'
 
 describe('managed build JDK downloads', () => {
+  it('cancels before provisioning a JDK when the caller is already aborted', async () => {
+    const controller = new AbortController(); controller.abort()
+    await expect(ensureManagedJdk('unused-cache', 21, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  })
   it('selects both native Mac architectures and rejects unsupported targets', () => {
     expect(adoptiumMetadataUrl(21, 'darwin', 'arm64')).toContain('architecture=aarch64')
     expect(adoptiumMetadataUrl(21, 'darwin', 'x64')).toContain('os=mac')

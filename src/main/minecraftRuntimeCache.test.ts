@@ -73,6 +73,14 @@ afterEach(async () => {
 })
 
 describe('shared Minecraft runtime reuse', () => {
+  it('keeps aggregate download failure reasons in the runtime error state', async () => {
+    const manager = runtime('failed-download')
+    const failure = new AggregateError([new Error('read ECONNRESET'), Object.assign(new Error('invalid archive'), { name: 'InvalidZipError' })])
+    vi.spyOn(manager as unknown as { prepareInternal: () => Promise<unknown> }, 'prepareInternal').mockRejectedValue(failure)
+    await expect(manager.prepare()).rejects.toBe(failure)
+    expect(manager.getState()).toMatchObject({ stage: 'error', message: expect.stringContaining('ECONNRESET') })
+    expect(manager.getState().message).toContain('InvalidZipError')
+  })
   it('prepares successive isolated player tests from the existing install without contacting a download source', async () => {
     const first = await runtime('first-session').prepare()
     const second = await runtime('second-session').prepare()

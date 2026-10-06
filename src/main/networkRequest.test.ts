@@ -14,6 +14,10 @@ beforeAll(async () => {
     const hits = (hitCounts.get(key) ?? 0) + 1
     hitCounts.set(key, hits)
 
+    if (req.url?.startsWith('/redirect-')) {
+      res.writeHead(Number(req.url.slice('/redirect-'.length)), { location: '/echo' }); res.end(); return
+    }
+
     if (req.url === '/missing') { res.writeHead(404); res.end('missing'); return }
     if (req.url === '/rate-limit') {
       res.writeHead(429)
@@ -49,6 +53,10 @@ afterAll(async () => {
 })
 
 describe('networkRequest helpers', () => {
+  it('preserves POST bodies for 307 redirects and switches to GET for 303', async () => {
+    expect(await postJsonWithRetry<{ echoed: unknown }>(`http://127.0.0.1:${port}/redirect-307`, { probe: true })).toEqual({ echoed: { probe: true } })
+    expect(await fetchTextWithRetry(`http://127.0.0.1:${port}/redirect-303`, { method: 'POST' }, '{"probe":true}')).toBe('fine for /echo')
+  })
   it('honors Retry-After seconds and dates with a bounded wait', () => {
     expect(retryAfterDelay('2', 100)).toBe(2000)
     expect(retryAfterDelay('900', 100)).toBe(60000)

@@ -63,7 +63,7 @@ export function jdkDownloadSources(fileName: string, major: number, officialUrl:
   return sources
 }
 
-async function fetchAsset(major: number): Promise<Required<AdoptiumAsset>['binary']['package'] & { checksum: string; link: string; name: string }> {
+async function fetchAsset(major: number, signal?: AbortSignal): Promise<Required<AdoptiumAsset>['binary']['package'] & { checksum: string; link: string; name: string }> {
   const url = adoptiumMetadataUrl(major)
   const startedAt = Date.now()
   let assets: AdoptiumAsset[]
@@ -71,7 +71,7 @@ async function fetchAsset(major: number): Promise<Required<AdoptiumAsset>['binar
     assets = await fetchJsonWithRetry<AdoptiumAsset[]>(url, {
       headers: { 'User-Agent': 'ModMind/1.2 (managed-jdk)' },
       attempts: 4,
-      signal: AbortSignal.timeout(30_000)
+      signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])])
     })
   } catch (error) {
     diagnosticJournal.record({ subsystem: 'jdk-download', operation: 'metadata', phase: 'error', message: `Unable to fetch JDK ${major} metadata`, durationMs: Date.now() - startedAt, data: { url }, error })
@@ -89,7 +89,8 @@ async function downloadVerified(
   target: string,
   checksum: string,
   expectedSize: number,
-  onProgress?: (progress: ManagedJdkProgress) => void
+  onProgress?: (progress: ManagedJdkProgress) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   const result = await verifiedDownload.download({
     sources: sources.map((source, index) => ({ id: `jdk-${index + 1}`, ...source, headers: { 'User-Agent': 'ModMind/1.3 (managed-jdk)' } })),
@@ -98,6 +99,7 @@ async function downloadVerified(
     maxBytes: Math.max(expectedSize || 0, 512 * 1024 * 1024),
     timeoutMs: 15 * 60_000,
     retriesPerSource: DOWNLOAD_ATTEMPTS_PER_SOURCE,
+    signal,
     onProgress: ({ downloaded, total, source }) => onProgress?.({ downloaded, total: total ?? expectedSize, source: source.label })
   })
   return result.source.label
@@ -140,20 +142,22 @@ async function validCachedJdk(home: string, major: number): Promise<boolean> {
 export async function ensureManagedJdk(
   cacheRoot: string,
   major: number,
-  onProgress?: (progress: ManagedJdkProgress) => void
+  onProgress?: (progress: ManagedJdkProgress) => void,
+  signal?: AbortSignal
 ): Promise<ManagedJdkResult> {
+  signal?.throwIfAborted()
   cacheRoot = path.resolve(cacheRoot)
   await fs.mkdir(cacheRoot, { recursive: true })
   const destination = path.join(cacheRoot, `temurin-${major}-${platformName(process.platform)}-${architectureName(process.arch)}`)
-  return withToolInstallLock(destination, undefined, async () => {
+  return withToolInstallLock(destination, signal, async () => {
     const installed = await findJdkHome(destination).catch(() => null)
     if (installed && await validCachedJdk(installed, major)) return { home: installed, major, source: 'ModMind JDK 缓存' }
 
-    const asset = await fetchAsset(major)
+    const asset = await fetchAsset(major, signal)
     const temporary = await fs.mkdtemp(path.join(cacheRoot, `.temurin-${major}-`))
     const archive = path.join(os.tmpdir(), `modmind-${process.pid}-${Date.now()}-${asset.name}`)
     try {
-      const source = await downloadVerified(jdkDownloadSources(asset.name, major, asset.link), archive, asset.checksum, asset.size ?? 0, onProgress)
+      const source = await downloadVerified(jdkDownloadSources(asset.name, major, asset.link), archive, asset.checksum, asset.size ?? 0, onProgress, signal)
       const extracted = path.join(temporary, 'extracted')
       await fs.mkdir(extracted, { recursive: true })
       if (asset.name.endsWith('.zip')) await extractZip(archive, { dir: extracted })
@@ -164,6 +168,7 @@ export async function ensureManagedJdk(
       if (process.platform !== 'win32') {
         for (const tool of ['java', 'javac', 'javap']) await fs.chmod(path.join(home, 'bin', tool), 0o755)
       }
+      signal?.throwIfAborted()
       await fs.rm(destination, { recursive: true, force: true })
       await fs.mkdir(path.dirname(destination), { recursive: true })
       await fs.rename(home, destination)

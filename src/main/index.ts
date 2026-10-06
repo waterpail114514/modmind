@@ -94,6 +94,7 @@ import { normalizeProjectName, validateProjectNameInput } from '../shared/projec
 import { buildBedrockAddon, buildNeteaseArchive, createStoredZip } from './bedrockAddon'
 import { deleteExternalAgentSession, detectExternalAgent, detectExternalAgents, externalAgentDocsUrl, externalAgentLabel, externalAgentSupportsHostedConfiguration, launchExternalAgent, listLocalCodexModels, ModMindBridge, readExternalAgentHistory, refreshExternalAgentContext, runExternalAgent, type ExternalAgentAttemptAudit, type ExternalAgentBridgeHandlers, type ExternalAgentKind, type ExternalAgentRetryState, type ExternalAgentRunOptions } from './externalAgents'
 import { readLocalCodexApiKey, readLocalCodexConfig } from './localCodexConfig'
+import { sameApiBaseUrl } from '../shared/apiConnection'
 import { createPluginBridgeTarget, getPluginService, getPluginRuntime, importPluginZipInteractive, initializePlugins, refreshPluginRegistry, registerPluginProtocolSchemeEarly, shutdownPlugins, waitForPluginRegistry } from './pluginBridgeIntegration'
 import { PluginChatBridge } from './pluginChatBridge'
 import type { PluginDiagnostics, PluginOverlayWindowState, PluginSnapshot } from '../shared/plugins'
@@ -2114,23 +2115,6 @@ function externalAgentEnvironment(kind: ExternalAgentKind, configuration: Extern
   return {CODEX_HOME: codexHome, MODMIND_THIRD_PARTY_API_KEY: apiKey}
 }
 
-async function configureExternalAgentProvider(kind: ExternalAgentKind, settings: AgentSettings): Promise<{kind: ExternalAgentKind; executable?: string; configPath?: string; detail: string}> {
-  const configured = settings.externalAgents?.[kind] ?? {}
-  if (configured.mode !== 'hosted') {
-    const detected = await detectInstalledCodex(configured)
-    if (!detected.installed) throw new Error('未检测到本机 Codex CLI')
-    return { kind, executable: detected.executable, detail: '使用本机 Codex 登录与配置' }
-  }
-  if (!externalAgentSupportsHostedConfiguration(kind)) {
-    return {kind, executable: configured.executable, detail: `${externalAgentLabel(kind)} 使用本机已有配置；ModMind 将在项目中准备 MCP 工具桥`}
-  }
-  if (!configured.apiKey?.trim()) throw new Error('请先填写 API Key')
-  normalizeApiBaseUrl(configured.baseUrl ?? '')
-  if (!configured.model?.trim()) throw new Error('请先选择模型')
-  const detected = await detectInstalledCodex(configured)
-  return { kind, executable: detected.executable || undefined, detail: 'Codex 服务配置已保存；工作台将优先使用本机 CLI 和项目隔离会话' }
-}
-
 async function externalAgentRunEnvironment(kind: ExternalAgentKind, settings: AgentSettings): Promise<NodeJS.ProcessEnv | undefined> {
   const configured = settings.externalAgents?.[kind] ?? {}
   if (configured.mode !== 'hosted') return undefined
@@ -3630,7 +3614,7 @@ async function writeAgentSettingsAtomically(stored: Record<string, unknown>): Pr
   }
 }
 
-async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
+async function saveAgentSettings(value: AgentSettings, validatePreferences = true): Promise<AgentSettings> {
   let resolveWrite!: (settings: AgentSettings) => void
   let rejectWrite!: (error: unknown) => void
   const result = new Promise<AgentSettings>((resolve, reject) => {
@@ -3656,8 +3640,10 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
     notificationsEnabled: value.notificationsEnabled !== false
   }
   let existingAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
+  let existingAgentEntries: AgentSettings['externalAgents'] = {}
   try {
-    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>> }
+    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { externalAgents?: AgentSettings['externalAgents']; encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>> }
+    existingAgentEntries = existing.externalAgents ?? {}
     existingAgentKeys = existing.encryptedAgentKeys ?? {}
     if (existing.encryptedKey && existing.externalAgentProvider && !existingAgentKeys[existing.externalAgentProvider]) {
       existingAgentKeys[existing.externalAgentProvider] = existing.encryptedKey
@@ -3670,20 +3656,33 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   for (const kind of kinds) {
     const entry = normalized.externalAgents?.[kind]
     if (!entry) continue
-    if (kind === 'codex') {
+    if (kind === 'codex' && validatePreferences) {
+      const existing = existingAgentEntries[kind]
       const model = entry.model?.trim() ?? ''
-      validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
-      reasoningSelectionEffort(entry.reasoningEffort ?? 'auto', undefined, selectedReasoningEfforts(model, entry.reasoningEffortOptions))
+      const contextFields = (configuration?: ExternalAgentConfiguration) => JSON.stringify([
+        configuration?.model, configuration?.modelContextWindows, configuration?.modelAutoCompactTokenLimits
+      ])
+      const existingContext = { ...existing, modelContextWindows: normalizeModelContextWindows(existing?.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(existing?.modelAutoCompactTokenLimits) }
+      if (contextFields(entry) !== contextFields(existingContext)) {
+        validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
+      }
+      const existingOptions = normalizeReasoningEffortOptions(existing?.reasoningEffortOptions)
+      const existingEffort = isReasoningEffort(existing?.reasoningEffort) && selectedReasoningEfforts(existing?.model ?? '', existingOptions).includes(existing.reasoningEffort) ? existing.reasoningEffort : undefined
+      if (entry.model !== existing?.model || entry.reasoningEffort !== existingEffort || JSON.stringify(entry.reasoningEffortOptions) !== JSON.stringify(existingOptions)) {
+        reasoningSelectionEffort(entry.reasoningEffort ?? 'auto', undefined, selectedReasoningEfforts(model, entry.reasoningEffortOptions))
+      }
     }
-    if (entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
-    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, hasStoredKey: undefined}
-    if (entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
-    else if (existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
+    if (!entry.clearApiKey && entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
+    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, clearApiKey: undefined, hasStoredKey: undefined}
+    if (!entry.clearApiKey && entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
+    else if (!entry.clearApiKey && existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
   }
   const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries }
+  delete stored.encryptedAgentKeys
+  delete stored.encryptedKey
   if (Object.keys(encryptedAgentKeys).length) stored.encryptedAgentKeys = encryptedAgentKeys
       await writeAgentSettingsAtomically(stored)
-      await pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
+      void pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
       const savedSettings = await readSettings()
       const appearance = normalizeAppearance(savedSettings)
       for (const window of BrowserWindow.getAllWindows()) {
@@ -4153,10 +4152,8 @@ async function listAvailableAgentModels(kind: ExternalAgentKind, input: External
   const stored = await readSettings()
   const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
   const storedEntry = stored.externalAgents?.[kind]
-  const storedBaseUrl = storedEntry?.baseUrl ? normalizeApiBaseUrl(storedEntry.baseUrl) : ''
   const native = await readLocalCodexConfig().catch(() => null)
-  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
-  const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '') || (baseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
+  const apiKey = input.apiKey?.trim() || (sameApiBaseUrl(baseUrl, storedEntry?.baseUrl) ? storedEntry?.apiKey?.trim() ?? '' : '') || (sameApiBaseUrl(baseUrl, native?.baseUrl) ? await readLocalCodexApiKey() : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
@@ -4167,35 +4164,20 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
   const settings = await readSettings()
   const existingConfiguration = settings.externalAgents?.[kind]
   const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
-  const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
-  const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && targetBaseUrl !== existingBaseUrl ? await readLocalCodexConfig().catch(() => null) : null
-  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const sameConnection = sameApiBaseUrl(targetBaseUrl, existingConfiguration?.baseUrl)
+  const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && !sameConnection ? await readLocalCodexConfig().catch(() => null) : null
   const apiKey = configuration?.apiKey?.trim()
-    || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
-    || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
+    || (sameConnection ? existingConfiguration?.apiKey?.trim() : '')
+    || (sameApiBaseUrl(targetBaseUrl, native?.baseUrl) ? await readLocalCodexApiKey().catch(() => '') : '')
   const nextConfiguration = {
     ...existingConfiguration,
     ...configuration,
     executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
-    apiKey: apiKey || ''
+    apiKey: apiKey || '',
+    clearApiKey: !apiKey && !sameConnection
   }
   if (nextConfiguration.mode === 'hosted') {
-    if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
     nextConfiguration.baseUrl = targetBaseUrl
-    try {
-      const discovered = await discoverAvailableModels(targetBaseUrl, nextConfiguration.apiKey, '无法读取当前服务的模型列表')
-      nextConfiguration.baseUrl = discovered.baseUrl
-      if (discovered.models.length && (targetBaseUrl !== existingBaseUrl || !discovered.models.some(model => model.id === nextConfiguration.model))) {
-        nextConfiguration.model = discovered.models[0].id
-        nextConfiguration.reasoningEffort = undefined
-      }
-    } catch (error) {
-      // Model-list support is optional; keep manually supplied IDs usable offline.
-      if (!nextConfiguration.model?.trim()) throw error
-    }
-    if (!nextConfiguration.model?.trim()) throw new Error('服务没有返回可用模型，请手动输入模型 ID')
-    const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
-    reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
   }
   const current = await readSettings()
   const next: AgentSettings = {
@@ -4203,8 +4185,9 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
     codingBackend: kind,
     externalAgents: { ...current.externalAgents, [kind]: nextConfiguration }
   }
-  const saved = await saveAgentSettings(next)
-  return configureExternalAgentProvider(kind, saved)
+  // Persist first; availability, model discovery and CLI detection belong to refresh/run.
+  const saved = await saveAgentSettings(next, false)
+  return { kind, detail: '连接已保存到本地设置', settings: publicAgentSettings(saved) }
 }
 
 async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {

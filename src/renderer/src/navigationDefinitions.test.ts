@@ -17,7 +17,7 @@ interface BaselineScenario {
   project: string
   uiMode: NavigationInput['uiMode']
   plugins: string
-  contentFeatures: NavigationInput['contentFeatures']
+  contentFeatures: { ftbQuests: boolean; patchouli: boolean }
   groups: number[]
   labelMap: number
   navOrderStorageKey: string
@@ -38,8 +38,7 @@ const baseline = JSON.parse(readFileSync(new URL('./__fixtures__/extensionDefini
 const inputFor = (scenario: BaselineScenario): NavigationInput => ({
   project: baseline.projects[scenario.project],
   uiMode: scenario.uiMode,
-  plugins: baseline.plugins[scenario.plugins],
-  contentFeatures: scenario.contentFeatures
+  plugins: baseline.plugins[scenario.plugins]
 })
 const groupFromBaseline = (index: number): SidebarGroup<NavigationEntry> => {
   const group = baseline.groups[index]
@@ -48,7 +47,7 @@ const groupFromBaseline = (index: number): SidebarGroup<NavigationEntry> => {
 const groupIds = (groups: SidebarGroup[]) => groups.map(group => [group.groupKey, group.label, group.items.map(item => item.id)])
 
 describe('navigation compatibility with the pre-extraction checkpoint', () => {
-  it.each(baseline.scenarios)('$name', scenario => {
+  it.each(baseline.scenarios.filter(scenario => scenario.contentFeatures.ftbQuests && scenario.contentFeatures.patchouli))('$name', scenario => {
     const actual = buildNavigationDefinitions(inputFor(scenario))
     expect(actual.baseVisibleNavGroups).toEqual(scenario.groups.map(groupFromBaseline))
     expect(actual.navLabelMap).toEqual(baseline.labelMaps[scenario.labelMap])
@@ -59,7 +58,7 @@ describe('navigation compatibility with the pre-extraction checkpoint', () => {
   it('retains custom groups, unavailable entries, hidden preferences and old numeric group keys', () => {
     const definitions = buildNavigationDefinitions({
       project: baseline.projects.modpack, uiMode: 'beginner',
-      plugins: baseline.plugins.panel, contentFeatures: { ftbQuests: true, patchouli: true }
+      plugins: baseline.plugins.panel
     })
     const layout = parseSidebarLayout({
       ...emptySidebarLayout(),
@@ -79,13 +78,19 @@ describe('navigation compatibility with the pre-extraction checkpoint', () => {
     ])
     expect(JSON.stringify(layout)).toBe(storedLayout)
 
-    const withoutOptionalEntries = buildNavigationDefinitions({
-      project: baseline.projects.modpack, uiMode: 'beginner', plugins: [],
-      contentFeatures: { ftbQuests: false, patchouli: false }
+    const withoutPlugins = buildNavigationDefinitions({
+      project: baseline.projects.modpack, uiMode: 'beginner', plugins: []
     })
-    expect(resolveSidebarGroups(withoutOptionalEntries.baseVisibleNavGroups, layout).find(group => group.groupKey === 'custom-tools')?.items).toEqual([])
+    expect(resolveSidebarGroups(withoutPlugins.baseVisibleNavGroups, layout).find(group => group.groupKey === 'custom-tools')?.items.map(item => item.id)).toEqual(['patchouli'])
     expect(JSON.stringify(layout)).toBe(storedLayout)
     expect(resolveSidebarGroups(definitions.baseVisibleNavGroups, layout).find(group => group.groupKey === 'custom-tools')?.items.map(item => item.id)).toEqual(['plugin:panel-a', 'patchouli'])
+  })
+
+  it.each(['beginner', 'advanced'] as const)('always includes both modpack content editors in %s mode', uiMode => {
+    const definitions = buildNavigationDefinitions({ project: baseline.projects.modpack, uiMode, plugins: [] })
+    const entries = definitions.baseVisibleNavGroups.flatMap(group => group.items.map(item => item.id))
+    expect(entries).toContain('ftb-quests')
+    expect(entries).toContain('patchouli')
   })
 
   it('does not share mutable navigation entries between builds or mutate plugin snapshots', () => {

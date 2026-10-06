@@ -1,7 +1,6 @@
 import { Archive, ArrowRightLeft, Binary, BookOpen, Box, CloudUpload, Code2, FileCog, FolderOpen, Gamepad2, Gauge, Hammer, History, Image, LibraryBig, Lightbulb, Link2, List, MessageSquareText, Music, PackageOpen, PackagePlus, Puzzle, Save, Server, ServerCog, Settings, SlidersHorizontal, Sparkles, WandSparkles, type LucideIcon } from 'lucide-react'
 import type { ProjectInfo, SidebarViewId, UiMode } from '../../shared/types'
 import type { PluginRecord } from '../../shared/plugins'
-import type { ModpackContentFeatures } from '../../shared/modpackContentFeatures'
 import { isJavaLoader, isServerPluginPlatform } from '../../shared/projectPlatform'
 import type { SidebarGroup } from './sidebarLayout'
 
@@ -164,11 +163,10 @@ function buildProjectNavigationGroups(project: NavigationProject): NavigationGro
   ]
 }
 
-export function buildNavigationDefinitions({ project, uiMode, plugins, contentFeatures }: {
+export function buildNavigationDefinitions({ project, uiMode, plugins }: {
   project: NavigationProject
   uiMode: UiMode
   plugins: PluginRecord[]
-  contentFeatures: ModpackContentFeatures
 }): {
   baseVisibleNavGroups: SidebarGroup<NavigationEntry>[]
   navLabelMap: Partial<Record<SidebarViewId, string>>
@@ -279,7 +277,6 @@ export function buildNavigationDefinitions({ project, uiMode, plugins, contentFe
     label: group.label === '创建' || group.label === '鍒涗綔' ? '创作' : group.label === '项目' || group.label === '椤圭洰' ? '项目' : group.label === '应用' || group.label === '搴旂敤' ? '应用' : group.label,
     items: (() => {
       const mapped = group.items
-        .filter(item => item.id === 'ftb-quests' ? contentFeatures.ftbQuests : item.id === 'patchouli' ? contentFeatures.patchouli : true)
         .filter((item) => uiMode !== 'beginner' || pluginProject || item.id !== 'image-studio')
         .map((item) => ({ ...item, label: navLabelMap[item.id] || item.label }))
       if (uiMode === 'beginner' && modpackProject && !mapped.some((item) => item.id === 'modpack-server')) {

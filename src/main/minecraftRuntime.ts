@@ -59,10 +59,12 @@ import {
   MINECRAFT_VERSION_MANIFEST_SOURCES,
   resolveMinecraftVersionFromManifests
 } from './minecraftVersionManifest'
-import { runMinecraftTaskWithRecovery } from './minecraftTaskRecovery'
+import { runMinecraftTaskWithRecovery, minecraftDownloadRecoveryOptions } from './minecraftTaskRecovery'
 import { forgeInstallerVersion } from './forgeInstallerVersion'
 import { installedRuntimeCandidates } from './minecraftRuntimeCache'
-import { getNetworkProxyUrl } from './networkRequest'
+import { getNetworkProxyUrl, fetchTextWithRetry } from './networkRequest'
+import { downloadFailureText } from '../shared/downloadFailure'
+import { prepareLoaderInstaller, loaderLibraryHost } from './loaderInstallerDownload'
 import { detectToolchainRequirements, mergeToolchainJavaHomes } from './toolchainDetection'
 import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
 import { minecraftDownloadDispatcher } from './minecraftDownloadNetwork'
@@ -793,10 +795,13 @@ export class MinecraftRuntimeManager {
   }
 
   async ensureJavaRuntime(
-    onProgress?: (message: string) => void,
+    onProgressOrSignal?: ((message: string) => void) | AbortSignal,
     minimumMajorOverride?: number,
     onDownloadProgress?: (progress: ManagedJdkProgress) => void
   ): Promise<string> {
+    const onProgress = typeof onProgressOrSignal === 'function' ? onProgressOrSignal : undefined
+    const signal = typeof onProgressOrSignal === 'function' ? undefined : onProgressOrSignal
+    signal?.throwIfAborted()
     const project = this.requireProject()
     const projectMinimumMajor = javaVersionForMinecraft(project.minecraftVersion)
     const minimumMajor = Math.max(projectMinimumMajor, minimumMajorOverride ?? projectMinimumMajor)
@@ -827,7 +832,7 @@ export class MinecraftRuntimeManager {
         reportedSource = progress.source
         onProgress?.(message)
       }
-    })
+    }, signal)
     const candidate = await probeJavaHome(managed.home, minimumMajor, false)
     if (!candidate) throw new Error(`已下载的 JDK 无法运行 ServerPackCreator：${managed.home}`)
     onProgress?.(`Java ${candidate.major} 已就绪：${managed.source}`)
@@ -920,7 +925,7 @@ export class MinecraftRuntimeManager {
     this.preparePromise = this.prepareInternal(controller.signal, generation)
       .catch((error: unknown) => {
         if (this.prepareGeneration === generation) this.prepareGeneration += 1
-        const message = error instanceof Error ? error.message : String(error)
+        const message = downloadFailureText(error)
         diagnosticJournal.record({
           subsystem: 'minecraft',
           operation: 'prepare',
@@ -2039,7 +2044,7 @@ export class MinecraftRuntimeManager {
     await fs.mkdir(this.resourceRoot(), { recursive: true })
     if (signal?.aborted) throw abortError()
     this.emit('preparing', `正在检查本地 Minecraft ${project.minecraftVersion}`)
-    if (!this.vanillaClient && project.kind !== 'modpack' && (project.loader === 'fabric' || project.loader === 'quilt')) await this.ensureManagedLoaderApi(project)
+    if (!this.vanillaClient && project.kind !== 'modpack' && (project.loader === 'fabric' || project.loader === 'quilt')) await this.ensureManagedLoaderApi(project, signal)
     let cached = await this.readMetadata(project)
     const cachedVersionId = cached?.loaderVersionId
     const matchingMetadata = cached && (!configuredLoaderVersion || cached.loaderVersion === configuredLoaderVersion)
@@ -2165,6 +2170,7 @@ export class MinecraftRuntimeManager {
       await runMinecraftTaskWithRecovery({
         signal,
         createTask: (attempt) => installTask(versionMeta, this.resourceRoot(), {
+          ...minecraftDownloadRecoveryOptions(attempt),
           side: 'client',
           assetsDownloadConcurrency: 4,
           librariesDownloadConcurrency: 4,
@@ -2229,32 +2235,35 @@ export class MinecraftRuntimeManager {
         })
       } else if (project.loader === 'forge') {
         if (!loaderVersion) {
-          const forge = await getForgeVersionList({ minecraft: project.minecraftVersion })
+          const forge = await getForgeVersionList({ minecraft: project.minecraftVersion, dispatcher })
           const selected = forge.versions.find((entry) => entry.type === 'recommended') ?? forge.versions.find((entry) => entry.type === 'latest') ?? forge.versions[0]
           if (!selected) throw new Error(`Forge 没有返回 Minecraft ${project.minecraftVersion} 的版本`)
           loaderVersion = `${project.minecraftVersion}-${selected.version}`
         }
         const forgeVersion = forgeInstallerVersion(project.minecraftVersion, loaderVersion)
+        await prepareLoaderInstaller({ loader: 'forge', minecraftVersion: project.minecraftVersion, version: forgeVersion, resourceRoot: this.resourceRoot(), signal, onProgress: progress => this.emitProgress('installing-loader', `正在下载 Forge 安装器：${progress.source.label}`, progress.downloaded, progress.total ?? 0, generation) })
         loaderVersionId = await runMinecraftTaskWithRecovery({
           signal,
           stallTimeoutMs: 120_000,
           createTask: (attempt) => installForgeTask(
             { mcversion: project.minecraftVersion, version: forgeVersion },
             this.resourceRoot(),
-            { java: javaPath, side: 'client', mavenHost: attempt % 2 === 1 ? FORGE_MAVEN_HOSTS : [...FORGE_MAVEN_HOSTS].reverse(), dispatcher }
+            { java: javaPath, side: 'client', mavenHost: attempt % 2 === 1 ? FORGE_MAVEN_HOSTS : [...FORGE_MAVEN_HOSTS].reverse(), dispatcher, ...minecraftDownloadRecoveryOptions(attempt) }
           ),
           onUpdate: (task) => this.emitProgress('installing-loader', `正在安装 Forge ${loaderVersion}`, task.progress, task.total, generation),
-          onRetry: (attempt, error) => this.emit('installing-loader', `${error.message}，正在切换下载源重试 Forge 安装（${attempt}/3）`, 'warning'),
-          retryOnError: (error) => error instanceof AggregateError && error.errors.some((cause: unknown) =>
-            cause instanceof Error && /InvalidZipError|ResponseStatusCodeError|RequestError|SocketError|TimeoutError/.test(cause.name))
+          onRetry: (attempt, error) => this.emit('installing-loader', `${error.message}，正在切换下载源重试 Forge 安装（${attempt}/3）`, 'warning')
         })
       } else {
         if (!loaderVersion) throw new Error(`NeoForge ${project.minecraftVersion} 缺少加载器版本`)
         const artifact = project.minecraftVersion === '1.20.1' ? 'forge' : 'neoforge'
+        await prepareLoaderInstaller({ loader: 'neoforge', minecraftVersion: project.minecraftVersion, version: loaderVersion, resourceRoot: this.resourceRoot(), signal, onProgress: progress => this.emitProgress('installing-loader', `正在下载 NeoForge 安装器：${progress.source.label}`, progress.downloaded, progress.total ?? 0, generation) })
         loaderVersionId = await runMinecraftTaskWithRecovery({
           signal,
           stallTimeoutMs: 120_000,
-          createTask: () => installNeoForgedTask(artifact, loaderVersion!, this.resourceRoot(), { java: javaPath, side: 'client', mavenHost: NEOFORGE_MAVEN_HOSTS, dispatcher }),
+          createTask: (attempt) => {
+            const hosts = attempt % 2 === 1 ? NEOFORGE_MAVEN_HOSTS : [...NEOFORGE_MAVEN_HOSTS].reverse()
+            return installNeoForgedTask(artifact, loaderVersion!, this.resourceRoot(), { java: javaPath, side: 'client', mavenHost: hosts, libraryHost: loaderLibraryHost(hosts), dispatcher, ...minecraftDownloadRecoveryOptions(attempt) })
+          },
           onUpdate: (task) => this.emitProgress('installing-loader', `正在安装 NeoForge ${loaderVersion}`, task.progress, task.total, generation),
           onRetry: (attempt, error) => this.emit('installing-loader', `${error.message}，正在重试 NeoForge 安装（${attempt}/3）`, 'warning')
         })
@@ -2264,6 +2273,7 @@ export class MinecraftRuntimeManager {
       await runMinecraftTaskWithRecovery({
         signal,
         createTask: (attempt) => installDependenciesTask(resolved, {
+          ...minecraftDownloadRecoveryOptions(attempt),
           assetsDownloadConcurrency: 4,
           librariesDownloadConcurrency: 4,
           dispatcher,
@@ -2431,7 +2441,7 @@ export class MinecraftRuntimeManager {
       try {
         await runMinecraftTaskWithRecovery({
           signal,
-          createTask: () => installJavaRuntimeTask({ destination: stagingHome, manifest, dispatcher }),
+          createTask: (attempt) => installJavaRuntimeTask({ destination: stagingHome, manifest, dispatcher, ...minecraftDownloadRecoveryOptions(attempt) }),
           onUpdate: (task) => this.emitProgress('downloading-java', '正在下载 Java Runtime', task.progress, task.total, generation),
           onRetry: (attempt, error) => this.emit('downloading-java', `${error.message}，正在重新下载 Java Runtime（${attempt}/3）`, 'warning')
         })
@@ -2456,7 +2466,7 @@ export class MinecraftRuntimeManager {
     return { target, javaPath }
   }
 
-  private async ensureManagedLoaderApi(project: ProjectInfo): Promise<void> {
+  private async ensureManagedLoaderApi(project: ProjectInfo, signal?: AbortSignal): Promise<void> {
     if (project.loader !== 'fabric' && project.loader !== 'quilt') return
     if (!await prepareLoaderApiTestPolicy(project.path, project.loader)) {
       this.emit('installing-loader', '测试配置已禁用完整 API 自动安装，并清理 ModMind 托管的 API；验证无外置 API 时还需检查其余模组与内嵌依赖')
@@ -2487,12 +2497,11 @@ export class MinecraftRuntimeManager {
     let checksumError: unknown
     for (const source of sources) {
       try {
-        const checksumResponse = await fetch(`${source}.sha1`, { signal: AbortSignal.timeout(30_000) })
-        if (!checksumResponse.ok) throw new Error(`SHA-1 HTTP ${checksumResponse.status}`)
-        expected = (await checksumResponse.text()).trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+        expected = (await fetchTextWithRetry(`${source}.sha1`, { timeoutMs: 30_000, signal })).trim().split(/\s+/)[0]?.toLowerCase() ?? ''
         if (!expected || !/^[a-f0-9]{40}$/.test(expected)) throw new Error(`${label} SHA-1 格式无效`)
         break
       } catch (error) {
+        signal?.throwIfAborted()
         checksumError = error
       }
     }
@@ -2502,6 +2511,7 @@ export class MinecraftRuntimeManager {
       destination: target,
       expectedHash: { algorithm: 'sha1', value: expected },
       maxBytes: 256 * 1024 * 1024,
+      signal,
       retriesPerSource: 2
     })
     await fs.writeFile(marker, version, 'utf8')

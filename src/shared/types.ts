@@ -831,6 +831,8 @@ export interface ExternalAgentConfiguration {
   reasoningEffortOptions?: Record<string, ReasoningEffort[]>
   reasoningEffort?: ReasoningEffort
   apiKey?: string
+  /** Save input only: remove the previous connection's encrypted credential. */
+  clearApiKey?: boolean
   hasStoredKey?: boolean
 }
 
@@ -910,6 +912,7 @@ export interface ExternalAgentProviderSetup {
   executable?: string
   configPath?: string
   detail: string
+  settings?: AgentSettings
 }
 
 export interface AiModelInfo {

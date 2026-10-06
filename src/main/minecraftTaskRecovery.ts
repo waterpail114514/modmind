@@ -1,4 +1,16 @@
 import type { Task } from '@xmcl/task'
+import { downloadFailureText } from '../shared/downloadFailure'
+
+export function isRecoverableMinecraftDownloadError(error: unknown): boolean {
+  const text = downloadFailureText(error)
+  if (/AbortError|UND_ERR_ABORTED|已取消|ENOSPC|EACCES|EPERM|EROFS|EBUSY/i.test(text)) return false
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR_(?:CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|SOCKET)|socket hang up|fetch failed|InvalidZipError|ChecksumNotMatchError|checksum mismatch|checksum.*mismatch|RequestError|SocketError|TimeoutError|HTTP (?:408|425|429|5\d\d)/i.test(text)
+}
+
+/** A fresh task resets files; retries also avoid broken parallel Range responses. */
+export function minecraftDownloadRecoveryOptions(attempt: number): { rangePolicy?: { computeRanges: () => [] } } {
+  return attempt > 1 ? { rangePolicy: { computeRanges: () => [] } } : {}
+}
 
 type RecoveryTaskFactory<T> = (attempt: number) => Task<T>
 
@@ -62,9 +74,9 @@ export async function runMinecraftTaskWithRecovery<T>(options: MinecraftTaskReco
       if (cancelPromise) await cancelPromise
       if (options.signal?.aborted) throw abortError()
       const failure = stalled ? new MinecraftDownloadStalledError(stallTimeoutMs) : error
-      if (!stalled && !options.retryOnError?.(error)) throw error
+      if (!stalled && !(options.retryOnError ?? isRecoverableMinecraftDownloadError)(error)) throw error
       if (attempt >= maxAttempts) throw failure
-      options.onRetry?.(attempt + 1, failure instanceof Error ? failure : new Error(String(failure)))
+      options.onRetry?.(attempt + 1, new Error(downloadFailureText(failure), { cause: failure }))
     } finally {
       clearInterval(watchdog)
       options.signal?.removeEventListener('abort', onAbort)

@@ -14,6 +14,7 @@ import { buildWithServerPackCreator } from './serverPackCreatorService'
 import { windowsCmdInvocation } from './windowsCommand'
 import { createStoredZip } from './bedrockAddon'
 import { isSafeModJarFileName, safeModJarFileName } from './modpackFilename'
+import { validateJavaArchive } from './javaArchive'
 
 export interface ServerPackOptions {
   outputDirectory: string
@@ -286,7 +287,7 @@ async function detectInstalledServerRuntime(root: string, project: ProjectInfo, 
   const jarCandidates = project.loader === 'quilt' ? ['quilt-server-launch.jar'] : ['server.jar', `${project.loader}-server.jar`, 'forge-server.jar', 'neoforge-server.jar']
   const serverJar = (await Promise.all(jarCandidates.map(async (name) => {
     const file = path.join(root, name)
-    return await fs.stat(file).then((stat) => stat.isFile()).catch(() => false) ? file : null
+    return await validateJavaArchive(file, { executable: true }).then(() => true, () => false) ? file : null
   }))).find((value): value is string => Boolean(value))
   if (serverJar) {
     await fs.writeFile(path.join(root, 'start-server.cmd'), `@echo off\n"${javaPath.replaceAll('"', '')}" -Xms2G -Xmx4G -jar "${path.basename(serverJar)}" nogui\n`, 'utf8')
@@ -410,8 +411,8 @@ export async function installServerRuntime(options: ServerRuntimeInstallOptions,
     const installers = await fetchJsonWithRetry<Array<{ url: string; hashes?: { sha256?: string } }>>('https://meta.quiltmc.org/v3/versions/installer', { signal: options.signal })
     const installer = installers.find(entry => /^https:\/\//.test(entry.url) && /^[a-f0-9]{64}$/i.test(entry.hashes?.sha256 ?? ''))
     if (!installer) throw new Error('Quilt Installer 目录没有可校验的发行文件')
-    await verifiedDownload.download({ sources: [{ id: 'quilt-installer', label: 'Quilt 官方安装器', url: installer.url }], expectedHash: { algorithm: 'sha256', value: installer.hashes!.sha256! }, destination: target, signal: options.signal, onProgress: options.onDownloadProgress })
-  } else await verifiedDownload.download({ sources: selected.sources, destination: target, maxBytes: 512 * 1024 * 1024, retriesPerSource: 2, signal: options.signal, onProgress: options.onDownloadProgress })
+    await verifiedDownload.download({ sources: [{ id: 'quilt-installer', label: 'Quilt 官方安装器', url: installer.url }], expectedHash: { algorithm: 'sha256', value: installer.hashes!.sha256! }, destination: target, validate: file => validateJavaArchive(file, { executable: true }), signal: options.signal, onProgress: options.onDownloadProgress })
+  } else await verifiedDownload.download({ sources: selected.sources, destination: target, validate: file => validateJavaArchive(file, { executable: true, installer: !selected.direct }), maxBytes: 512 * 1024 * 1024, retriesPerSource: 2, signal: options.signal, onProgress: options.onDownloadProgress })
   if (!selected.direct) {
     const args = project.loader === 'quilt'
       ? ['-jar', target, 'install', 'server', project.minecraftVersion, loaderVersion, `--install-dir="${options.serverPack.root}"`, '--download-server']

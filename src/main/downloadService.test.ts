@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DownloadManager } from './downloadService'
+import { createStoredZip } from './bedrockAddon'
+import { validateJavaArchive } from './javaArchive'
 
 const roots: string[] = []
 const servers: http.Server[] = []
@@ -24,6 +26,50 @@ function server(handler: http.RequestListener): Promise<{ url: string; close: ()
 }
 
 describe('verified download manager', () => {
+  it('skips missing sources without repeated requests', async () => {
+    let hits = 0
+    const bad = await server((_request, response) => { hits++; response.writeHead(404); response.end('missing') })
+    const good = await server((_request, response) => response.end('valid'))
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-missing-')); roots.push(root)
+    await new DownloadManager().download({ sources: [{ id: 'missing', label: 'missing', url: bad.url }, { id: 'good', label: 'good', url: good.url }], destination: path.join(root, 'file'), retriesPerSource: 3 })
+    expect(hits).toBe(1)
+  })
+
+  it('stops immediately on disk failures instead of retrying other sources', async () => {
+    const source = await server((_request, response) => response.end('valid'))
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-disk-stop-')); roots.push(root)
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValue(Object.assign(new Error('disk full'), { code: 'ENOSPC' }))
+    await expect(new DownloadManager().download({ sources: [{ id: 'one', label: 'one', url: source.url }, { id: 'two', label: 'two', url: `${source.url}/two` }], destination: path.join(root, 'file'), retriesPerSource: 3 })).rejects.toMatchObject({ code: 'ENOSPC' })
+    expect(rename).toHaveBeenCalledOnce()
+  })
+  it('rejects HTTP 200 error pages, isolates fallback files and validates before replacing the cache', async () => {
+    const bad = await server((_request, response) => response.end('<html>blocked</html>'.repeat(1000)))
+    const bytes = createStoredZip([
+      { name: 'install_profile.json', data: Buffer.from('{}') },
+      { name: 'Installer.class', data: Buffer.from('class fixture') }
+    ])
+    const good = await server((_request, response) => response.end(bytes))
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-jar-')); roots.push(root)
+    const destination = path.join(root, 'installer.jar')
+    await fs.writeFile(destination, 'previous cache')
+    const result = await new DownloadManager().download({
+      sources: [{ id: 'bad', label: 'bad', url: bad.url }, { id: 'good', label: 'good', url: good.url }],
+      destination, retriesPerSource: 1, validate: file => validateJavaArchive(file, { installer: true })
+    })
+    expect(result.failures).toHaveLength(1)
+    expect(await fs.readFile(destination)).toEqual(bytes)
+    expect(await fs.readdir(root)).toEqual(['installer.jar'])
+  })
+
+  it('preserves the old cache when all JAR sources lack required installer contents', async () => {
+    const bytes = createStoredZip([{ name: 'Installer.class', data: Buffer.from('class fixture') }])
+    const source = await server((_request, response) => response.end(bytes))
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-jar-invalid-')); roots.push(root)
+    const destination = path.join(root, 'installer.jar'); await fs.writeFile(destination, 'known-good')
+    await expect(new DownloadManager().download({ sources: [{ id: 'bad', label: 'bad', url: source.url }], destination, retriesPerSource: 1, validate: file => validateJavaArchive(file, { installer: true }) })).rejects.toThrow('install_profile.json')
+    expect(await fs.readFile(destination, 'utf8')).toBe('known-good')
+    expect(await fs.readdir(root)).toEqual(['installer.jar'])
+  })
   it('isolates simultaneous downloads to the same destination', async () => {
     const source = await server((_request, response) => { response.end('verified') })
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-concurrent-')); roots.push(root)

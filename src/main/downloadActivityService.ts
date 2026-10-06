@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { DownloadActivity, DownloadActivitySnapshot } from '../shared/types'
+import { downloadFailureText } from '../shared/downloadFailure'
 
 type ActivityInput = Pick<DownloadActivity, 'label'> & Partial<Pick<DownloadActivity, 'detail' | 'downloadedBytes' | 'totalBytes'>> & {
   retry?: () => Promise<void>
@@ -12,7 +13,7 @@ const COMPLETED_RETENTION_MS = 30_000
 const MAX_ACTIVITIES = 80
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return downloadFailureText(error)
 }
 
 export class DownloadActivityStore {

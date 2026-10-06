@@ -27,6 +27,7 @@ export interface DownloadRequest {
   retriesPerSource?: number
   trackActivity?: boolean
   signal?: AbortSignal
+  validate?: (file: string) => Promise<void>
   onAttempt?: (progress: { source: DownloadSource; attempt: number; attemptsPerSource: number }) => void
   onProgress?: (progress: { source: DownloadSource; downloaded: number; total?: number }) => void
 }
@@ -130,14 +131,19 @@ async function streamDownload(
     headersTimeout: Math.min(timeoutMs, 60_000),
     requireHttpsRedirects: true
   })
+  let bytes = 0
   try {
+    diagnosticJournal.record({
+      subsystem: 'download', operation: 'verified-download', phase: 'response',
+      message: `Received download response for ${path.basename(request.destination)}`,
+      data: { source: diagnosticSource(source), finalUrl: diagnosticSource({ ...source, url: response.finalUrl ?? source.url }).url, status: response.statusCode, contentType: response.headers.get('content-type'), contentLength: response.headers.get('content-length'), proxyMode: response.proxyMode }
+    })
     if (!response.ok) throw Object.assign(new Error(`HTTP ${response.statusCode}`), { retryAfterMs: retryAfterDelay(response.headers.get('retry-after'), 250) })
     if (!isAllowedDownloadUrl(source.url)) throw new Error('redirected to a non-HTTPS URL')
     const declared = Number(response.headers.get('content-length') ?? 0)
     if (!Number.isSafeInteger(declared) || declared < 0) throw new Error('invalid response content length')
     if (declared > maxBytes) throw new Error(`content length ${declared} exceeds ${maxBytes}`)
     const total = declared || undefined
-    let bytes = 0
     const meter = new Transform({
       transform(chunk, _encoding, callback) {
         bytes += chunk.length
@@ -161,7 +167,11 @@ async function streamDownload(
     if (request.expectedHash && hash?.toLowerCase() !== request.expectedHash.value.toLowerCase()) {
       throw new Error(`${request.expectedHash.algorithm} mismatch: expected ${request.expectedHash.value}, got ${hash ?? 'unknown'}`)
     }
+    await request.validate?.(partial)
     return { bytes, hash }
+  } catch (error) {
+    diagnosticJournal.record({ subsystem: 'download', operation: 'verified-download', phase: 'transfer-failed', level: 'warning', message: `Download transfer or validation failed for ${path.basename(request.destination)}`, data: { source: diagnosticSource(source), bytes }, error })
+    throw error
   } finally { disposeResponseBody(response) }
 }
 
@@ -269,7 +279,7 @@ export class DownloadManager {
               durationMs: Date.now() - startedAt,
               data: { downloadId, source: diagnosticSource(source), bytes: result.bytes, attempts, previousFailures: failures }
             })
-            downloadActivities.complete(activityId, `已从 ${source.label} 下载${request.expectedHash ? `并通过 ${request.expectedHash.algorithm} 校验` : '（上游未提供校验值）'}`)
+            downloadActivities.complete(activityId, `已从 ${source.label} 下载${request.expectedHash ? `并通过 ${request.expectedHash.algorithm} 校验` : request.validate ? '并通过内容校验' : '（上游未提供校验值）'}`)
             return { source, destination, bytes: result.bytes, ...(result.hash ? { hash: result.hash } : {}), attempts, failures }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -285,6 +295,8 @@ export class DownloadManager {
               error
             })
             if (request.signal?.aborted) throw Object.assign(new Error('download cancelled'), { name: 'AbortError', cause: error })
+            if (/^(?:ENOSPC|EACCES|EPERM|EROFS|EBUSY)$/.test((error as NodeJS.ErrnoException)?.code ?? '')) throw error
+            if (/^HTTP (?:400|401|403|404|410)\b/.test(message)) break
             const maxAttempts = configuredRetries ?? (isPermanentDownloadError(error) ? 2 : 3)
             if (attempt < maxAttempts) await delay((error as { retryAfterMs?: number })?.retryAfterMs ?? 250 * attempt, undefined, { signal: request.signal })
             else break

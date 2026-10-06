@@ -8,13 +8,14 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { request } from 'undici'
 import { installJavaRuntimeTask, type JavaRuntimeManifest } from '@xmcl/installer'
 import { minecraftDownloadDispatcher } from './minecraftDownloadNetwork'
-import { setNetworkProxy } from './networkRequest'
+import { setNetworkProxy, fetchTextWithRetry, systemProxyTransport } from './networkRequest'
 import { runtimeDownloadError } from './minecraftRuntime'
+import { runMinecraftTaskWithRecovery, minecraftDownloadRecoveryOptions } from './minecraftTaskRecovery'
 
 const system = vi.hoisted(() => ({ resolveProxy: vi.fn() }))
 vi.mock('electron', () => ({ session: { defaultSession: system }, app: { getPath: () => os.tmpdir() } }))
 const cleanup: Array<() => Promise<unknown>> = []
-afterEach(async () => { setNetworkProxy(''); vi.clearAllMocks(); for (const fn of cleanup.splice(0).reverse()) await fn() })
+afterEach(async () => { setNetworkProxy(''); vi.restoreAllMocks(); vi.clearAllMocks(); for (const fn of cleanup.splice(0).reverse()) await fn() })
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-java-download-'))
@@ -56,6 +57,25 @@ it('uses the system proxy for real XMCL Runtime downloads and replaces a zero-by
   expect(await fs.readFile(path.join(f.root, 'bin/runtime.dll'))).toEqual(f.bytes)
   expect(f.tunnels).toContain('runtime.invalid:80')
   expect(system.resolveProxy).toHaveBeenCalledWith('http://runtime.invalid/runtime.dll')
+})
+it('uses the same system proxy for common metadata requests and XMCL downloads', async () => {
+  const f = await fixture()
+  vi.spyOn(systemProxyTransport, 'resolveProxy').mockImplementation(url => system.resolveProxy(url))
+  expect(await fetchTextWithRetry('http://metadata.invalid/runtime.dll', { attempts: 1 })).toBe(f.bytes.toString())
+  expect(f.tunnels).toContain('metadata.invalid:80')
+  await installJavaRuntimeTask({ destination: f.root, manifest: f.manifest, dispatcher: f.dispatcher }).startAndWait()
+  expect(f.tunnels).toContain('runtime.invalid:80')
+})
+
+it('automatically repairs failed real XMCL downloads on a fresh task with Range disabled', async () => {
+  const f = await fixture(); f.breakDownload()
+  const retries: number[] = []
+  await runMinecraftTaskWithRecovery({
+    createTask: attempt => installJavaRuntimeTask({ destination: f.root, manifest: f.manifest, dispatcher: f.dispatcher, ...minecraftDownloadRecoveryOptions(attempt) }),
+    onRetry: attempt => { retries.push(attempt); f.repair() }
+  })
+  expect(retries).toEqual([2])
+  expect(await fs.readFile(path.join(f.root, 'bin/runtime.dll'))).toEqual(f.bytes)
 })
 it('gives the application proxy precedence and resolves system routes again for a different destination', async () => {
   const f = await fixture()

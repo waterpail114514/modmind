@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { verifiedDownload } from './downloadService'
 import { retryTransientFileLock } from './fileLockRetry'
+import { extractSevenZipArchive } from './sevenZipArchive'
+import { diagnosticJournal } from './diagnosticLog'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
@@ -206,6 +208,23 @@ async function runTar(args: string[]): Promise<void> {
   })
 }
 
+async function extractCodexArchive(archive: string, destination: string, options: EnsureManagedCodexOptions): Promise<void> {
+  await fs.mkdir(destination, { recursive: true })
+  try {
+    await runTar(['-xzf', archive, '-C', destination])
+  } catch (systemError) {
+    diagnosticJournal.record({ subsystem: 'codex-runtime', operation: 'extract', phase: 'fallback', level: 'warning', message: 'System tar failed; using bundled 7-Zip', error: systemError })
+    progress(options, { stage: 'verifying', title: '正在验证开发工具', detail: '系统解压不可用，正在使用 ModMind 托管解压', status: 'running' })
+    // Keep the archive outside this empty directory so 7-Zip can unwrap gzip and tar.
+    await fs.rm(destination, { recursive: true, force: true })
+    try {
+      await extractSevenZipArchive(archive, destination)
+    } catch (managedError) {
+      throw new AggregateError([systemError, managedError], `Codex 解压失败，系统解压和 ModMind 托管解压均未成功：${managedError instanceof Error ? managedError.message : String(managedError)}`)
+    }
+  }
+}
+
 async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions): Promise<string> {
   const descriptor = requireCodexRuntimeTarget()
   const urls = ['https://registry.npmjs.org', 'https://registry.npmmirror.com'].map((origin) => `${origin}/@openai/codex/-/${descriptor.archiveName}`)
@@ -215,6 +234,7 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
 
   const staging = `${runtimePath}.staging-${randomUUID()}`
   const archive = path.join(staging, 'codex.tgz')
+  const extracted = path.join(staging, 'extracted')
   await fs.mkdir(staging, {recursive: true})
   progress(options, {stage: 'downloading', title: '正在准备开发工具', detail: `正在连接 ${urls.length} 个可用下载源`, status: 'running'})
   try {
@@ -228,16 +248,16 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
       expectedHash: { algorithm: 'sha512', value: descriptor.sha512 }
     })
     progress(options, {stage: 'verifying', title: '正在验证开发工具', detail: '下载完整性已通过，正在解压', status: 'running'})
-    await runTar(['-xzf', archive, '-C', staging])
-    const stagedExecutable = path.join(staging, descriptor.executableRelativePath)
-    await validateCodexFile(staging, stagedExecutable)
+    await extractCodexArchive(archive, extracted, options)
+    const stagedExecutable = path.join(extracted, descriptor.executableRelativePath)
+    await validateCodexFile(extracted, stagedExecutable)
     if (process.platform !== 'win32') await fs.chmod(stagedExecutable, 0o755)
     if (await probeCodexExecutable(stagedExecutable) !== CODEX_RUNTIME_VERSION) throw new Error('Codex 版本探测不匹配')
     await fs.rm(archive, { force: true })
     const backup = `${runtimePath}.previous-${randomUUID()}`
     const hasPrevious = await fs.stat(runtimePath).then(() => true).catch(() => false)
     if (hasPrevious) await fs.rename(runtimePath, backup)
-    try { await retryTransientFileLock(() => fs.rename(staging, runtimePath)) }
+    try { await retryTransientFileLock(() => fs.rename(extracted, runtimePath)) }
     catch (error) { if (hasPrevious) await fs.rename(backup, runtimePath); throw error }
     if (hasPrevious) await fs.rm(backup, { recursive: true, force: true }).catch(() => undefined)
     return executable

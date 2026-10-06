@@ -1,4 +1,4 @@
-import { Agent, ProxyAgent, interceptors, request } from 'undici'
+import { Agent, ProxyAgent, request } from 'undici'
 import { setTimeout as delay } from 'node:timers/promises'
 
 export interface FetchTextOptions {
@@ -84,9 +84,21 @@ let proxyOverrideAgent: ProxyAgent | undefined
 let environmentProxyUrl = ''
 let environmentProxyAgent: ProxyAgent | undefined
 const directAgent = new Agent({ connections: 8, keepAliveTimeout: 10_000, keepAliveMaxTimeout: 30_000 })
+const systemAgents = new Map<string, ProxyAgent>()
+const systemRoutes = new Map<string, { expires: number; route: Promise<string> }>()
+
+export const systemProxyTransport = {
+  async resolveProxy(url: string): Promise<string> {
+    if (!process.versions.electron) return 'DIRECT'
+    const { session } = await import('electron')
+    return session.defaultSession.resolveProxy(url)
+  }
+}
 
 export async function shutdownNetwork(): Promise<void> {
-  await Promise.allSettled([directAgent.destroy(), proxyOverrideAgent?.destroy(), environmentProxyAgent?.destroy()])
+  await Promise.allSettled([directAgent.destroy(), proxyOverrideAgent?.destroy(), environmentProxyAgent?.destroy(), ...[...systemAgents.values()].map(agent => agent.destroy())])
+  systemAgents.clear()
+  systemRoutes.clear()
   proxyOverrideAgent = undefined
   environmentProxyAgent = undefined
 }
@@ -104,6 +116,7 @@ function newProxyAgent(proxyUrl: string): ProxyAgent | undefined {
  * HTTPS_PROXY environment variables; pass an empty string to clear it.
  */
 export function setNetworkProxy(url: string): void {
+  systemRoutes.clear()
   const trimmed = url.trim()
   if (trimmed === proxyOverrideUrl) return
   void proxyOverrideAgent?.close().catch(() => undefined)
@@ -127,11 +140,57 @@ const DIRECT_HOST_PREFIXES = ['127.']
 function shouldBypassProxy(url: string): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase()
-    return DIRECT_HOST_PREFIXES.some((prefix) => host.startsWith(prefix))
+    return host === '[::1]' || DIRECT_HOST_PREFIXES.some((prefix) => host.startsWith(prefix))
       || DIRECT_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))
   } catch {
     return false
   }
+}
+
+/** Shared route selection for XMCL, metadata and verified downloads. */
+export async function resolveNetworkProxyUrl(url: string, resolver = systemProxyTransport.resolveProxy): Promise<string> {
+  if (shouldBypassProxy(url)) return ''
+  const configured = getNetworkProxyUrl()
+  if (configured) return /^[a-z][a-z0-9+.-]*:\/\//i.test(configured) ? configured : `http://${configured}`
+  const cached = systemRoutes.get(url)
+  if (cached && cached.expires > Date.now()) return cached.route
+  const route = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const result = await Promise.race([
+        resolver(url),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('读取系统代理超时，请在设置中配置下载代理')), 10_000) })
+      ])
+      const first = result.split(';')[0].trim()
+      if (!first || first === 'DIRECT') return ''
+      const match = first.match(/^(PROXY|HTTPS)\s+(\S+)$/i)
+      if (!match) throw new Error('系统代理类型不支持，请在设置中配置 HTTP 下载代理')
+      return `${match[1].toUpperCase() === 'HTTPS' ? 'https' : 'http'}://${match[2]}`
+    } finally { clearTimeout(timer) }
+  })()
+  systemRoutes.set(url, { expires: Date.now() + 15_000, route })
+  if (systemRoutes.size > 64) systemRoutes.delete(systemRoutes.keys().next().value!)
+  void route.catch(() => { if (systemRoutes.get(url)?.route === route) systemRoutes.delete(url) })
+  return route
+}
+
+async function requestRoute(url: string): Promise<{ dispatcher: Agent | ProxyAgent; proxyMode: string }> {
+  const proxy = await resolveNetworkProxyUrl(url)
+  if (!proxy) return { dispatcher: directAgent, proxyMode: 'direct' }
+  const configured = proxyDispatcher(url)
+  if (configured) return { dispatcher: configured, proxyMode: proxyOverrideUrl ? 'application' : 'environment' }
+  let agent = systemAgents.get(proxy)
+  if (!agent) {
+    agent = newProxyAgent(proxy)
+    if (!agent) throw new Error('系统代理地址无效，请检查网络设置')
+    if (systemAgents.size >= 16) {
+      const oldest = systemAgents.keys().next().value!
+      void systemAgents.get(oldest)?.close().catch(() => undefined)
+      systemAgents.delete(oldest)
+    }
+    systemAgents.set(proxy, agent)
+  }
+  return { dispatcher: agent, proxyMode: 'system' }
 }
 
 export function proxyDispatcher(url?: string): ProxyAgent | undefined {
@@ -163,6 +222,8 @@ export interface ProxiedRequestOptions {
 export interface ProxiedResponse {
   ok: boolean
   statusCode: number
+  finalUrl?: string
+  proxyMode?: string
   headers: { get(name: string): string | null }
   /** undici's body is already a Node readable; it also exposes .text(). */
   body: NodeJS.ReadableStream & { text(): Promise<string>; destroy?(): void }
@@ -188,45 +249,33 @@ export async function proxiedUndiciRequest(url: string, options: ProxiedRequestO
 }
 
 async function actualProxiedRequest(url: string, options: ProxiedRequestOptions): Promise<ProxiedResponse> {
-  if (options.requireHttpsRedirects) {
-    let current = new URL(url)
-    let headers = { ...options.headers }
-    for (let redirects = 0; redirects <= 5; redirects += 1) {
-      const response = await request(current, {
-        method: 'GET', headers, signal: options.signal, bodyTimeout: options.bodyTimeout,
-        headersTimeout: options.headersTimeout, dispatcher: proxyDispatcher(current.href) ?? directAgent
-      })
-      if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
-        response.body.on('error', () => undefined)
-        response.body.destroy()
-        if (redirects === 5) throw new Error('download exceeds redirect limit')
-        const next = new URL(String(response.headers.location), current)
-        if (next.protocol !== 'https:') throw new Error('download redirected to a non-HTTPS URL')
-        if (next.origin !== current.origin) headers = Object.fromEntries(Object.entries(headers).filter(([key]) => !['authorization', 'cookie', 'proxy-authorization', 'host'].includes(key.toLowerCase())))
-        current = next
-        continue
+  let current = new URL(url)
+  let headers = { ...options.headers }
+  let method = options.method ?? 'GET'
+  let body = options.body
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    options.signal?.throwIfAborted()
+    const route = await requestRoute(current.href)
+    const response = await request(current, {
+      method, headers, body, signal: options.signal, bodyTimeout: options.bodyTimeout,
+      headersTimeout: options.headersTimeout, dispatcher: route.dispatcher
+    })
+    if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+      response.body.on('error', () => undefined)
+      response.body.destroy()
+      if (redirects === 5) throw new Error('download exceeds redirect limit')
+      const next = new URL(String(response.headers.location), current)
+      if (options.requireHttpsRedirects && next.protocol !== 'https:') throw new Error('download redirected to a non-HTTPS URL')
+      if (next.origin !== current.origin) headers = Object.fromEntries(Object.entries(headers).filter(([key]) => !['authorization', 'cookie', 'proxy-authorization', 'host'].includes(key.toLowerCase())))
+      if ((response.statusCode === 303 && method !== 'HEAD') || ([301, 302].includes(response.statusCode) && method === 'POST')) {
+        method = 'GET'
+        body = undefined
+        headers = Object.fromEntries(Object.entries(headers).filter(([key]) => !['content-length', 'content-type', 'transfer-encoding'].includes(key.toLowerCase())))
       }
-      return { ok: response.statusCode >= 200 && response.statusCode < 300, statusCode: response.statusCode, headers: { get: name => response.headers[name.toLowerCase()]?.toString() ?? null }, body: response.body as unknown as ProxiedResponse['body'] }
+      current = next
+      continue
     }
-    throw new Error('download exceeds redirect limit')
+    return { ok: response.statusCode >= 200 && response.statusCode < 300, statusCode: response.statusCode, finalUrl: current.href, proxyMode: route.proxyMode, headers: { get: name => response.headers[name.toLowerCase()]?.toString() ?? null }, body: response.body as unknown as ProxiedResponse['body'] }
   }
-  // A custom dispatcher cannot take maxRedirections, so always compose the
-  // redirect interceptor — with a ProxyAgent when configured, a default Agent
-  // otherwise.
-  const base = proxyDispatcher(url) ?? directAgent
-  const response = await request(url, {
-    method: options.method ?? 'GET',
-    headers: options.headers,
-    signal: options.signal,
-    bodyTimeout: options.bodyTimeout,
-    headersTimeout: options.headersTimeout,
-    ...(options.body !== undefined ? { body: options.body } : {}),
-    dispatcher: base.compose(interceptors.redirect({ maxRedirections: 5 }))
-  })
-  return {
-    ok: response.statusCode >= 200 && response.statusCode < 300,
-    statusCode: response.statusCode,
-    headers: { get: (name) => response.headers[String(name).toLowerCase()]?.toString() ?? null },
-    body: response.body as unknown as ProxiedResponse['body']
-  }
+  throw new Error('download exceeds redirect limit')
 }
