@@ -14,6 +14,19 @@ export interface AppChangelogSnapshot {
 // These notes ship with the app so the first launch works fully offline.
 export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
+    version: '1.4.19',
+    sections: [
+      { title: '修复', items: [
+        '修复接管项目时将其他依赖版本误识别为 Minecraft 版本的问题；多版本工程需选择目标版本，也可手动填写，支持 26.x 版本。',
+        '修复 Minecraft 与 Java Runtime 下载未使用配置代理或系统代理的问题。',
+        '修复 Java Runtime 损坏缓存无法恢复的问题，准备实例时校验并修复文件，失败后清理未完成下载并显示具体原因。',
+        '修复整合包构建并同步完成后仍返回目录读取错误的问题，现返回同步清单，并明确区分构建失败与产物记录失败。',
+        '修复已取消的测试实例准备仍可能继续执行的问题。',
+        '修复外部 Agent 提前退出时，写入任务内容引发未处理错误的问题。'
+      ] }
+    ]
+  },
+  {
     version: '1.4.18',
     sections: [
       { title: '修复', items: [
