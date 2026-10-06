@@ -5,6 +5,7 @@ import type { ProductionApi, ProjectFileMutationResult } from './production'
 import type { ImageGenerationRequest, ImageGenerationResult, ImageHistoryItem, ImageProcessingOptions, ImageProcessingResult, ImageStudioCapabilities, ImageStudioSettings, ImageStudioSettingsInput } from './imageStudio'
 import type { AssetIntentCandidate, AssetIntentPreview, AssetIntentProgram, AssetRefinementCandidate, AssetRefinementPreview, AssetRefinementProgram } from './assetIntent'
 import type {AdvancedAssetCandidate, AdvancedAssetComparison, AdvancedAssetPreviewOptions, AdvancedAssetProgram, AssetVisualReview, ReferenceImageAssetCandidate, ReferenceImageAssetProgram} from './advancedAsset'
+import type { ServerFixtureJar } from './serverScenario'
 
 export type JavaLoaderKind = 'fabric' | 'quilt' | 'forge' | 'neoforge'
 export type AddonPlatformKind = 'bedrock' | 'netease-pc' | 'netease-mobile'
@@ -1463,6 +1464,8 @@ export interface ModMindApi {
     installServerRuntime: (input: unknown) => Promise<unknown>
     verifyServerJoin: (input: unknown) => Promise<unknown>
     runServerScenario: (input: unknown) => Promise<unknown>
+    pickScenarioJars: () => Promise<ServerFixtureJar[]>
+    removeScenarioJar: (file: string) => Promise<ServerFixtureJar[]>
     getServerState: () => Promise<LocalServerState>
     startServer: (input: unknown) => Promise<LocalServerState>
     stopServer: () => Promise<LocalServerState>

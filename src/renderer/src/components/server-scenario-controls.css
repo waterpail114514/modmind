@@ -1,0 +1,25 @@
+.server-scenario-controls { min-width: 0; }
+.scenario-mode { display: flex; border-bottom: 1px solid var(--line); }
+.scenario-mode button { flex: 1; min-width: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 4px; color: var(--muted); }
+.scenario-mode button[aria-pressed='true'] { color: var(--theme-accent); border-bottom-color: var(--theme-accent); }
+.scenario-runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.scenario-runtime-fields label:last-child { grid-column: 1 / -1; }
+.scenario-jar-heading, .scenario-step-heading, .scenario-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scenario-jar-heading { justify-content: space-between; }
+.scenario-jars { margin: 0; padding: 0; list-style: none; max-height: 160px; overflow-y: auto; }
+.scenario-jars li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+.scenario-jars li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.scenario-jars .icon-button, .scenario-step-heading .icon-button { flex: none; width: 30px; height: 30px; }
+.scenario-steps { display: grid; gap: 12px; }
+.scenario-step { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.scenario-step-heading > span { flex: 1; }
+.scenario-step-heading select { width: 90px; }
+.server-scenario-controls input:not([type='checkbox']), .server-scenario-controls textarea, .server-scenario-controls select { min-width: 0; width: 100%; }
+.scenario-step-heading select { max-width: 90px; }
+.server-scenario-controls .scenario-download-note { font-size: var(--type-body); line-height: 1.5; }
+.scenario-status { height: 96px; overflow-y: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; overflow-wrap: anywhere; font-size: var(--type-body); }
+.scenario-status strong { font-weight: 500; }
+.scenario-results { max-height: 320px; overflow-y: auto; font-size: var(--type-body); overflow-wrap: anywhere; }
+.scenario-results dl { margin: 8px 0; }
+.scenario-results dd { margin: 0 0 8px; }
+.scenario-results p { margin: 8px 0; }

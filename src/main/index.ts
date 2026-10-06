@@ -244,6 +244,9 @@ import { downloadModpackContent, importModpackContent, listModpackContent, modpa
 import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from './serverPackService'
 import { SERVER_PACK_CREATOR_MIN_JAVA } from './serverPackCreatorService'
 import type { buildAndJoinServer, runServerScenario, ServerJoinVerificationResult } from './serverVerificationService'
+import { ServerFixtureService } from './serverFixtureService'
+import { IsolatedServerScenarioService } from './isolatedServerScenarioService'
+import { installFixtureRuntime } from './serverFixtureRuntime'
 import { LocalServerManager } from './localServerService'
 import { applyOptimizationProfile, BUILTIN_OPTIMIZATION_PROFILES } from './optimizationService'
 import { McmodService, readManualModRequirements, saveManualModRequirements } from './mcmodService'
@@ -640,6 +643,7 @@ function shutdownApplication(): Promise<void> {
   shutdownPromise = (async () => {
     diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'start', message: 'Stopping tasks and process trees' })
     await playerTestService?.stop().catch(error => console.warn('测试会话停止失败', error))
+    await isolatedServerScenarios?.stop().catch(error => console.warn('隔离测试停止失败', error))
     await localTestService?.stop().catch(error => console.warn('本机测试停止失败', error))
     await localServerManager?.stop().catch(error => diagnosticJournal.recordCritical({ subsystem: 'local-server', operation: 'shutdown', phase: 'error', message: '服务端正常停止失败', error }))
     const results = await Promise.allSettled([
@@ -1509,6 +1513,7 @@ function emitProjectChanged(): void {
     void startPublicMcpBridge(currentProject.path).catch((error) => console.warn('[mcp-bridge] failed to start after project open', error))
   }
   void playerTestService?.projectChanged(currentProject?.path).catch(error => console.warn('测试会话清理失败', error))
+  void isolatedServerScenarios?.projectChanged(currentProject?.path).catch(error => console.warn('隔离测试清理失败', error))
   if (currentProject) scheduleSnapshotStorageMaintenance(currentProject)
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
   mainWindow.webContents.send('project:changed', currentProject)
@@ -2622,6 +2627,7 @@ function createWindow(): void {
     activeAiRuns.clear()
     disposeBlockbenchBridge()
     const closingServer = localServerManager
+    void isolatedServerScenarios?.stop().catch(error => console.warn('隔离测试停止失败', error))
     void (async () => {
       try { await playerTestService?.stop(); await localTestService?.stop() }
       catch (error) { console.warn('测试会话清理失败', error) }
@@ -2807,6 +2813,36 @@ async function previewReferenceImageCandidate(
 function requireMinecraftRuntime(): MinecraftRuntimeManager {
   if (!minecraftRuntime) throw new Error('Minecraft runtime manager is not available')
   return minecraftRuntime
+}
+
+const serverFixtures = new ServerFixtureService()
+let isolatedServerScenarios: IsolatedServerScenarioService | undefined
+function requireIsolatedServerScenarios(): IsolatedServerScenarioService {
+  return isolatedServerScenarios ??= new IsolatedServerScenarioService({
+    fixtures: serverFixtures,
+    java: (project, signal) => withMinecraftResourceLock(async () => {
+      signal.throwIfAborted()
+      const javaPath = await aiProjectContext.run(project, () => requireMinecraftRuntime().ensureServerTestJava(signal))
+      const probe = await probeJavaHomeInfo(javaPath)
+      if (!probe.valid) throw new Error('隔离测试 Java 不可用')
+      return { path: javaPath, version: String(probe.major) }
+    }),
+    install: (options, project) => withMinecraftResourceLock(() => installFixtureRuntime(path.join(app.getPath('userData'), 'server-scenario-runtimes'), options, project))
+  })
+}
+
+async function isolatedServerScenarioOperation(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  if (!currentProject || !sameProjectPath(project.path, currentProject.path)) throw new Error('隔离测试需要当前项目')
+  const operation = input.operation ?? 'start'
+  if (operation === 'files') return { jars: serverFixtures.list(project) }
+  const service = requireIsolatedServerScenarios()
+  if (operation === 'state') return service.read(project, typeof input.taskId === 'string' ? input.taskId : undefined, typeof input.waitSeconds === 'number' ? input.waitSeconds : 0)
+  if (operation === 'cancel') {
+    if (typeof input.taskId !== 'string') throw new Error('取消需要任务 ID')
+    return service.cancel(project, input.taskId)
+  }
+  if (operation !== 'start') throw new Error('隔离场景操作无效')
+  return service.start(project, input, signal)
 }
 
 let minecraftResourceTail = Promise.resolve()
@@ -5036,6 +5072,7 @@ async function stopRemoteClient(persist = false): Promise<RemoteConnectionState>
 }
 
 function assertProjectSwitchAllowed(): void {
+  if (isolatedServerScenarios?.isBusy()) throw new Error('隔离服务端测试正在运行，请先取消后再切换项目')
   if (localTestService?.isBusy()) throw new Error('本机测试正在准备或运行，请先停止后再切换项目')
   if (localServerManager?.isBusy()) throw new Error('本机服务端正在准备或运行，请先停止后再切换项目')
 }
@@ -6003,6 +6040,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       return applyOptimizationProfile(requireModProviderRegistry(), project, profile as Parameters<typeof applyOptimizationProfile>[2], signal)
     },
     modpackRunServerScenario: async (input) => {
+      if (input.fixture || input.operation) return isolatedServerScenarioOperation(project, input, signal)
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
       const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
       if (!Array.isArray(input.steps) || !input.steps.length) throw new Error('server scenario requires at least one step')
@@ -7301,6 +7339,7 @@ async function runExternalCodingAgent(
           }
         },
         modpackRunServerScenario: async (input) => {
+          if (input.fixture || input.operation) return isolatedServerScenarioOperation(project, input, signal)
           runtimeUsed = false
           lastRuntimeHashes = null
           if (!isModpackProject(project)) throw new Error('current project is not a modpack')
@@ -8868,6 +8907,7 @@ function registerIpc(): void {
   diagnosticHandle('modpack:runServerScenario', async (_event, input: unknown) => {
     const project = requireProject()
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+    if (value.fixture || value.operation) return isolatedServerScenarioOperation(project, value)
     if (!Array.isArray(value.steps) || !value.steps.length) throw new Error('server scenario requires at least one step')
     const steps = value.steps.map((step) => {
       if (!step || typeof step !== 'object') throw new Error('invalid server scenario step')
@@ -8882,6 +8922,18 @@ function registerIpc(): void {
     return managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: value.onlineMode === true, javaPath, steps, onEvent: (event) => mainWindow?.webContents.send('minecraft:event', event) })
   })
   registerServerPluginIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(localServerManager?.isBusy() || runsForProject(requireProject().path).length) })
+  diagnosticHandle('modpack:pickScenarioJars', async () => {
+    const project = requireProject()
+    if (project.kind !== 'modpack') throw new Error('隔离服务端测试需要整合包项目')
+    const picked = await dialog.showOpenDialog(mainWindow!, { title: '选择隔离测试 JAR', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Minecraft Mod JAR', extensions: ['jar'] }] })
+    if (picked.canceled) return serverFixtures.list(project)
+    if (!currentProject || !sameProjectPath(project.path, currentProject.path)) throw new Error('项目已切换，请重新选择')
+    return serverFixtures.select(project, picked.filePaths)
+  })
+  diagnosticHandle('modpack:removeScenarioJar', (_event, file: unknown) => {
+    if (typeof file !== 'string') throw new Error('测试 JAR 路径无效')
+    return serverFixtures.remove(requireProject(), file)
+  })
   registerResourcePackIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), blockbench: requireBlockbench })
   registerSoundLibraryIpc({ project: requireProject, window: () => mainWindow!, busy: () => Boolean(runsForProject(requireProject().path).length), minecraftRoot: () => requireMinecraftRuntime().managedMinecraftDirectory(), cacheRoot: path.join(app.getPath('userData'), 'sound-library') })
   diagnosticHandle('local-test:getState', () => localTestService?.getState())

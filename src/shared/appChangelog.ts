@@ -16,6 +16,9 @@ export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
     version: '1.4.19',
     sections: [
+      { title: '改进', items: [
+        '服务端场景验证支持选择指定 JAR、固定游戏与加载器版本，在独立新存档中运行命令和重启验证；可查询进度、取消测试并查看结果日志。'
+      ] },
       { title: '修复', items: [
         '修复接管项目时将其他依赖版本误识别为 Minecraft 版本的问题；多版本工程需选择目标版本，也可手动填写，支持 26.x 版本。',
         '修复 Minecraft 与 Java Runtime 下载未使用配置代理或系统代理的问题。',

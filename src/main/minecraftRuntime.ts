@@ -787,6 +787,11 @@ export class MinecraftRuntimeManager {
   }
 
   /** Prepare Java for server-side pack tools without downloading a Minecraft instance or loader. */
+  async ensureServerTestJava(signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted()
+    return (await this.ensureJava(this.requireProject(), signal)).javaPath
+  }
+
   async ensureJavaRuntime(
     onProgress?: (message: string) => void,
     minimumMajorOverride?: number,

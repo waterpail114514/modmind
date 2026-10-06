@@ -25,6 +25,7 @@ export interface ServerProcessOptions {
   gracefulTimeoutMs?: number
   onEvent?: (event: MinecraftRuntimeEvent) => void
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void
+  maxLogBytes?: number
 }
 
 export interface ServerJoinVerificationOptions {
@@ -149,13 +150,18 @@ export class ServerProcess {
       shell: false,
       windowsVerbatimArguments: options.runtime.windowsVerbatimArguments,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: managedJavaEnvironment()
+      env: managedJavaEnvironment(options.runtime.javaPath ? {
+        ...process.env,
+        JAVA_HOME: path.dirname(path.dirname(options.runtime.javaPath)),
+        PATH: `${path.dirname(options.runtime.javaPath)}${path.delimiter}${process.env.PATH ?? ''}`
+      } : process.env)
     })
     this.child = child
     let output = ''
     let ready = false
     let spawnError = ''
     let batchPausePrompt = false
+    let writtenBytes = 0
     const line = (text: string, level: MinecraftRuntimeEvent['level']): void => {
       if (!text.trim()) return
       const display = isWindowsBatchPausePrompt(text) ? '服务端启动失败，请检查您的服务端包' : text
@@ -171,6 +177,13 @@ export class ServerProcess {
       const decoder = new StringDecoder('utf8')
       let pending = ''
       const capture = (text: string): void => {
+        const bytes = Buffer.byteLength(text)
+        writtenBytes += bytes
+        if (options.maxLogBytes && writtenBytes > options.maxLogBytes) {
+          spawnError = '隔离服务端日志超过容量限制'
+          void this.stop(1000).catch(() => undefined)
+          return
+        }
         if (!log.writableEnded && !log.destroyed && !log.write(text)) {
           const stream = level === 'info' ? child.stdout : child.stderr
           stream.pause()

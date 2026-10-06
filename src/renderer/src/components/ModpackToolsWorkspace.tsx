@@ -7,6 +7,7 @@ import FtbQuestEditor from './FtbQuestEditor'
 import ImportModpackModule from './ImportModpackModule'
 import { useConfirmDialog } from './InteractionDialogs'
 import { ServerPluginSettings } from './ServerPluginTools'
+import ServerScenarioControls from './ServerScenarioControls'
 
 type ToolSection = 'content' | 'automation' | 'server' | 'modules'
 
@@ -225,6 +226,7 @@ export default function ModpackToolsWorkspace({ project, section, onOpenModule }
             <button className="server-operation" disabled={serverBusy || !runtimeReadyToCheck} title={runtimeReadyToCheck ? undefined : '请先同步服务端包'} onClick={() => runServerAction('verify', () => window.modmind.modpack.verifyServerJoin(serverInput), '本机联机验证已完成')}><ShieldCheck size={17} /><span><strong>启动并验证</strong></span></button>
           </div>
           <div className="server-settings-block"><h3>启动设置</h3><label className="server-setting-row"><span>监听端口</span><input type="number" min={1024} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} disabled={serverState.running || serverBusy} /></label><label className="server-setting-row check-row"><input type="checkbox" checked={serverOnlineMode} onChange={(event) => setServerOnlineMode(event.target.checked)} disabled={serverState.running || serverBusy} /><span>启用正版在线验证</span></label></div></> : <div className="server-settings-block"><h3>场景验证</h3><label className="field-label">命令<input value={scenarioCommand} onChange={event => setScenarioCommand(event.target.value)} /></label><label className="field-label">预期新日志<input value={scenarioEvidence} onChange={event => setScenarioEvidence(event.target.value)} /></label><button className="secondary-button" disabled={!serverState.running || serverBusy || !scenarioCommand.trim() || !scenarioEvidence.trim()} onClick={() => runServerAction('scenario', () => window.modmind.modpack.runServerScenario({ steps: [{ command: scenarioCommand, expect: [scenarioEvidence] }] }), '场景验证通过')}><ShieldCheck size={15} />验证场景</button></div>}
+          {project.kind === 'modpack' ? <ServerScenarioControls key={project.path} project={project} running={serverState.running} disabled={serverBusy} /> : null}
         </details>
       </section>
       {notice ? <div className={`server-panel-notice ${serverNoticeTone}`} role="status">{notice}</div> : null}

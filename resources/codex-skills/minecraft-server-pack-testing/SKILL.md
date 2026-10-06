@@ -43,6 +43,12 @@ Call `modmind_modpack_verify_server_join` when client compatibility or actual jo
 
 Use `modmind_modpack_run_server_scenario` for bounded console commands and log assertions. Follow the current tool schema for steps. Keep commands deterministic and assertions tied to observable server behavior. Do not use an open-ended shell or unbounded wait as a scenario step.
 
+For an exact JAR fixture, use this same tool with `operation: "start"`, `acceptEula: true`, a `fixture` containing fixed `minecraftVersion`, `loader`, `loaderVersion`, and `jars: [{path, sha256}]`, plus `steps`. Use project-owned JARs, or call `operation: "files"` to read the external files the user selected in the service test UI. Other external paths are rejected. Do not supply `outputDirectory` or manually modify host runtime directories.
+
+Start returns a task ID before installation completes. Poll `operation: "state"` with `taskId` and `waitSeconds` at most 20; continue until a terminal status and inspect the final result. Use `operation: "cancel"` to stop that task. A timeout of one MCP call does not prove completion or failure; query its known task ID. A `restart` step preserves this task's world, while a new task always starts a fresh world. Regular servers are never reused by fixture tasks.
+
+Fixture commands require fresh expected log text. For NBT or persistence assertions, issue game commands that check the exact state and emit an unambiguous marker, then require that marker; an acknowledgement alone does not prove the state. The fixture runner does not directly parse arbitrary world NBT files. Report `declaredMods` (input metadata) separately from `observedMods` (actual log evidence), and disclose incomplete observed inventory. Final cleanup removes the temporary game directory only after process exit, retaining bounded logs and reports.
+
 ### 5. Close the loop
 
 Correct pack composition, side metadata, config, port, or runtime issues and rerun the same failed check. Report the server manifest, output directory, engine/runtime, skipped mods, port and mode, ready/join/scenario evidence, logs, and remaining interactive checks.

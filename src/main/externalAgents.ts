@@ -1,4 +1,5 @@
 import { PROJECT_REPLY_MODELS_PROMPT } from '../shared/projectModels'
+import { SERVER_SCENARIO_SCHEMA } from '../shared/serverScenario'
 import { PROJECT_REPLY_IMAGES_PROMPT } from '../shared/projectImages'
 import type { ImageProcessingOptions } from '../shared/imageStudio'
 import { imageGenerationInputSchema, perfectPixelInputSchema } from '../shared/imageStudioRequest'
@@ -1522,7 +1523,7 @@ const tools = [
   {name:'modmind_modpack_build_server', description:'Deterministically build the initial server pack by invoking the pinned open-source ServerPackCreator CLI. This tool does not use AI, does not modify the AI workspace, and excludes unknown-side mods by default; return the generated manifest, skipped mods, engine version and log path.', inputSchema:{type:'object',properties:{outputDirectory:{type:'string'},port:{type:'number'},acceptEula:{type:'boolean'}},required:[]}, annotations:managedAction},
   {name:'modmind_modpack_verify_server_join', description:'Build a loopback-only local server in offline test mode, wait for its ready port, and verify a HeadlessMC client joins with transcript evidence. Set onlineMode true only for an explicit authenticated-server test.', inputSchema:{type:'object',properties:{outputDirectory:{type:'string'},port:{type:'number'},acceptEula:{type:'boolean'},onlineMode:{type:'boolean'}},required:[]}, annotations:managedAction},
   {name:'modmind_modpack_apply_optimization_profile', description:'Resolve and install a conservative optimization profile, then apply only explicitly declared configuration patches.', inputSchema:{type:'object',properties:{profileId:{type:'string'},profile:{type:'object'}},required:[]}, annotations:managedAction},
-  {name:'modmind_modpack_run_server_scenario', description:'Start a loopback-only local server in offline test mode and execute bounded console commands with log evidence assertions.', inputSchema:{type:'object',properties:{steps:{type:'array'},outputDirectory:{type:'string'},port:{type:'number'},acceptEula:{type:'boolean'},onlineMode:{type:'boolean'}},required:['steps']}, annotations:managedAction},
+  {name:'modmind_modpack_run_server_scenario', description:"Run bounded console/log scenarios. With fixture and operation=start, pin Minecraft/Loader versions and select exact JARs by authorized path and SHA-256; acceptEula must be true. Returns taskId immediately. Poll operation=state with taskId and waitSeconds<=20; cancel stops only that task. operation=files reads JARs authorized by the UI. Each task uses a fresh loopback offline world; restart steps preserve only this task world. Results distinguish declared and log-observed mods. Without fixture or operation, retain the existing full-pack scenario.", inputSchema:${JSON.stringify(SERVER_SCENARIO_SCHEMA)}, annotations:managedAction},
   {name:'modmind_blockbench_project_state', description:'Read the complete live Blockbench project structure, including a content revision, cubes, groups, meshes, textures, animations, UV state, and selection. Read this before editing an existing model.', inputSchema:{type:'object',additionalProperties:false,properties:{}}, annotations:readOnlyLocal},
   {name:'modmind_blockbench_validate', description:'Validate the live Blockbench project for missing parents, group cycles, invalid cube bounds, texture problems, duplicate names, and missing animation targets.', inputSchema:{type:'object',additionalProperties:false,properties:{}}, annotations:readOnlyLocal},
   {name:'modmind_blockbench_capture_views', description:'Render 1-6 model-only PNG views through Blockbench offscreen camera presets. Returns MCP image content for visual review without moving the visible camera.', inputSchema:{type:'object',additionalProperties:false,properties:{views:{type:'array',minItems:1,maxItems:6,uniqueItems:true,items:{type:'string',enum:['initial','top','bottom','south','north','east','west','isometric_right','isometric_left','true_isometric_right','true_isometric_left']}},width:{type:'integer',minimum:128,maximum:1024},height:{type:'integer',minimum:128,maximum:1024}}}, annotations:readOnlyLocal},
@@ -2281,6 +2282,8 @@ export class ModMindBridge {
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {action?: string; input?: Record<string, unknown>}
       const input = body.input ?? {}
+      const scenarioRead = body.action === 'modpack_run_server_scenario' && ['state', 'files'].includes(String(input.operation))
+      const scenarioCancel = body.action === 'modpack_run_server_scenario' && input.operation === 'cancel'
       if (this.readOnly && this.inspirationFeatures) {
         const required = requiredInspirationFeature(body.action ?? '', input)
         const jarPrerequisite = body.action === 'research' && ['inspect', 'resource'].includes(String(input.operation))
@@ -2306,10 +2309,10 @@ export class ModMindBridge {
         response.writeHead(200, {'content-type': 'application/json'}); response.end(JSON.stringify(value))
         return
       }
-      if (this.readOnly && body.action && (isReadOnlyActionDenied(body.action, this.inspirationFeatures) || body.action.startsWith('test_') || body.action === 'creation_context' && !['state', 'read'].includes(String(input.operation)))) {
+      if (this.readOnly && body.action && !scenarioRead && (isReadOnlyActionDenied(body.action, this.inspirationFeatures) || body.action.startsWith('test_') || body.action === 'creation_context' && !['state', 'read'].includes(String(input.operation)))) {
         throw new Error(`只读灵感台禁止调用 ${body.action}，请改用读取类工具完成分析`)
       }
-      if (body.action && (REVIEWED_ACTIONS.has(body.action) || body.action === 'model_image_capability' && input.verify === true) && this.handlers.reviewAction) {
+      if (body.action && !scenarioRead && !scenarioCancel && (REVIEWED_ACTIONS.has(body.action) || body.action === 'model_image_capability' && input.verify === true) && this.handlers.reviewAction) {
         const decision = await this.handlers.reviewAction(body.action, input)
         if (!decision.approved) {
           const denials = (this.reviewDenials.get(body.action) ?? 0) + 1

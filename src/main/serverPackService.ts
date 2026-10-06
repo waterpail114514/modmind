@@ -49,6 +49,7 @@ export interface ServerRuntimeInstallOptions {
 }
 
 export interface ServerRuntimeResult {
+  javaPath?: string
   serverJar?: string
   launchCommand: string[]
   windowsVerbatimArguments?: boolean
