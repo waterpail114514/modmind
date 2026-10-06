@@ -777,6 +777,8 @@ function AdoptProjectDialog({
   onAdopted: (project: ProjectInfo) => void
 }): React.JSX.Element {
   const [form, setForm] = useState<ExistingProjectAdoptInput>({ sourcePath: analysis.sourcePath, ...analysis.inferred })
+  const [manualMinecraftVersion, setManualMinecraftVersion] = useState(false)
+  const minecraftVersions = analysis.minecraftVersions ?? []
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const kindLabel = analysis.kind === 'complete'
@@ -816,14 +818,19 @@ function AdoptProjectDialog({
         <div className="adopt-fields">
           <label className="field-label">项目名称<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label className="field-label">命名空间<input value={form.namespace} onChange={(event) => setForm({ ...form, namespace: event.target.value })} /></label>
-          <label className="field-label">Minecraft 版本<input value={form.minecraftVersion} onChange={(event) => setForm({ ...form, minecraftVersion: event.target.value })} /></label>
+          <label className="field-label">Minecraft 版本{minecraftVersions.length > 1 ? <select aria-label="Minecraft 版本" value={manualMinecraftVersion ? '__manual__' : form.minecraftVersion} onChange={(event) => {
+            const manual = event.target.value === '__manual__'
+            setManualMinecraftVersion(manual)
+            setForm({ ...form, minecraftVersion: manual ? '' : event.target.value })
+          }}><option value="" disabled>请选择目标版本</option>{minecraftVersions.map(version => <option key={version} value={version}>{version}</option>)}<option value="__manual__">手动输入</option></select> : <input value={form.minecraftVersion} placeholder="请输入目标版本" onChange={(event) => setForm({ ...form, minecraftVersion: event.target.value })} />}</label>
+          {manualMinecraftVersion ? <label className="field-label">手动填写 Minecraft 版本<input value={form.minecraftVersion} onChange={(event) => setForm({ ...form, minecraftVersion: event.target.value })} /></label> : null}
           <label className="field-label">目标平台<select value={form.loader} disabled={analysis.kind === 'complete'} onChange={(event) => setForm({ ...form, loader: event.target.value as ExistingProjectAdoptInput['loader'] })}>{(analysis.inferred.kind === 'server-plugin' ? ['paper', 'spigot', 'folia', 'velocity'] as const : ['fabric', 'quilt', 'forge', 'neoforge'] as const).map(platform => <option key={platform} value={platform}>{platformLabel(platform)}</option>)}</select></label>
         </div>
         {analysis.detectedFiles.length ? <div className="adopt-files"><span>检测到的关键文件</span><code>{analysis.detectedFiles.slice(0, 8).join('\n')}</code></div> : null}
         {error ? <div className="inline-error"><CircleAlert size={15} />{error}</div> : null}
         <div className="dialog-footer">
           <button className="secondary-button" disabled={busy} onClick={onClose}>取消</button>
-          <button className="primary-button" disabled={busy || !form.name.trim() || !form.namespace.trim()} onClick={() => void adopt()}>
+          <button className="primary-button" disabled={busy || !form.name.trim() || !form.namespace.trim() || !form.minecraftVersion.trim()} onClick={() => void adopt()}>
             {busy ? <LoaderCircle className="spin" size={16} /> : <PackageOpen size={16} />}{analysis.kind === 'complete' ? '接管此项目' : analysis.kind === 'modpack' ? '接管此整合包' : '创建项目并导入'}
           </button>
         </div>

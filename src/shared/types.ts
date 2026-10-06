@@ -546,6 +546,7 @@ export interface ExistingProjectAnalysis {
   detectedFiles: string[]
   reasons: string[]
   inferred: ProjectCreateInput & { namespace: string }
+  minecraftVersions?: string[]
   modpack?: ExistingModpackAnalysis
 }
 

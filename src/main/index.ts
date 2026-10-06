@@ -71,7 +71,7 @@ import { inspectProjectPreflight } from './projectPreflight'
 import { recordZipExpansion } from './archiveImportPolicy'
 import { sameProjectPath } from './projectPath'
 import { archiveSignatureForFile, extractTar } from './tarArchive'
-import { extractMinecraftVersion, inferGradleLoader, parseGradleProperties } from './existingProjectMetadata'
+import { inferMinecraftVersions, inferGradleLoader, parseGradleProperties } from './existingProjectMetadata'
 import { extractSevenZipArchive } from './sevenZipArchive'
 import { windowsCmdInvocation } from './windowsCommand'
 import { setNetworkProxy, shutdownNetwork } from './networkRequest'
@@ -3095,32 +3095,30 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
       : descriptor && /mods\.toml$/i.test(descriptor) ? 'forge' : 'fabric'
   let name = path.basename(root)
   let namespace = slugify(name)
-  let minecraftVersion = '1.21.1'
-  const importantTextFiles = [...new Set([...buildFiles, ...(descriptor ? [descriptor] : []), ...(files.includes('.build-target-props.json') ? ['.build-target-props.json'] : [])])]
+  const versionFiles = files.filter(file => /(?:^|\/)(?:gradle\.properties|build\.gradle(?:\.kts)?|fabric\.mod\.json|quilt\.mod\.json|mods\.toml|neoforge\.mods\.toml|\.build-target-props\.json)$/i.test(file))
+  const importantTextFiles = [...new Set([...buildFiles, ...versionFiles])]
   const importantContents: Array<{ path: string; content: string }> = []
+  let incompleteVersionMetadata = false
   for (const relative of importantTextFiles) {
-    const content = await fs.readFile(path.join(root, ...relative.split('/')), 'utf8').catch(() => '')
+    const absolute = path.join(root, ...relative.split('/'))
+    const stat = await fs.stat(absolute).catch(() => null)
+    if (!stat?.isFile() || stat.size > 1024 * 1024) { incompleteVersionMetadata = true; continue }
+    const content = await fs.readFile(absolute, 'utf8').catch(() => { incompleteVersionMetadata = true; return '' })
     if (content) importantContents.push({ path: relative, content })
   }
   const gradlePropertiesFile = importantContents.find((entry) => /(?:^|\/)gradle\.properties$/i.test(entry.path))
   const properties = gradlePropertiesFile ? parseGradleProperties(gradlePropertiesFile.content) : {}
-  const detectedLoader = inferGradleLoader(importantContents, descriptor)
+  const detectedLoader = inferGradleLoader(importantContents.filter(entry => buildFiles.includes(entry.path) || entry.path === descriptor), descriptor)
   loader = detectedLoader.loader
   if (properties.mod_name && !properties.mod_name.includes('${')) name = properties.mod_name.trim()
   if (properties.mod_id && !properties.mod_id.includes('${')) namespace = slugify(properties.mod_id)
-  const explicitMinecraftVersion = properties.minecraft_version ?? properties.parchment_minecraft_version
-  if (explicitMinecraftVersion) minecraftVersion = extractMinecraftVersion(explicitMinecraftVersion) ?? minecraftVersion
   for (const { path: relative, content } of importantContents) {
-    if (!content) continue
-    if (!explicitMinecraftVersion) minecraftVersion = extractMinecraftVersion(content) ?? minecraftVersion
+    if (!content || relative !== descriptor) continue
     if (/fabric\.mod\.json$/i.test(relative)) {
       try {
         const manifest = JSON.parse(content) as { id?: unknown; name?: unknown; depends?: { minecraft?: unknown } }
         if (typeof manifest.id === 'string') namespace = slugify(manifest.id)
         if (typeof manifest.name === 'string' && manifest.name.trim()) name = manifest.name.trim()
-        const dependency = manifest.depends?.minecraft
-        const dependencyText = Array.isArray(dependency) ? dependency.join(' ') : typeof dependency === 'string' ? dependency : ''
-        minecraftVersion = extractMinecraftVersion(dependencyText) ?? minecraftVersion
       } catch {
         // Keep filename-based inference when the descriptor is malformed.
       }
@@ -3132,9 +3130,6 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
         const quilt = manifest.quilt_loader
         if (typeof quilt?.id === 'string') namespace = slugify(quilt.id)
         if (typeof quilt?.metadata?.name === 'string' && quilt.metadata.name.trim()) name = quilt.metadata.name.trim()
-        const minecraft = quilt?.depends?.find((entry) => entry.id === 'minecraft')?.versions
-        const dependencyText = Array.isArray(minecraft) ? minecraft.join(' ') : typeof minecraft === 'string' ? minecraft : ''
-        minecraftVersion = extractMinecraftVersion(dependencyText) ?? minecraftVersion
       } catch {
         // Keep filename-based inference when the descriptor is malformed.
       }
@@ -3145,6 +3140,9 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
       if (descriptorName && !descriptorName.includes('${')) name = descriptorName
     }
   }
+
+  const minecraftVersions = inferMinecraftVersions(importantContents)
+  const minecraftVersion = !incompleteVersionMetadata && minecraftVersions.length === 1 ? minecraftVersions[0] : ''
 
   const reasons = kind === 'complete' ? ['Complete project detected; ModMind metadata will be added in place.'] : kind === 'partial' ? ['The source or build structure is incomplete.', 'A new buildable project will be created with references copied to docs/imported-source.'] : ['No buildable source was detected; the content appears to be API documentation.', 'A new buildable project will be created with references copied to docs/imported-api.']
   return {
@@ -3158,6 +3156,7 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
       documentCount: documentFiles.length,
       detectedFiles: notable,
       reasons,
+      minecraftVersions,
       inferred: { name, loader, minecraftVersion, namespace, ...(detectedLoader.loaderVersion ? { loaderVersion: detectedLoader.loaderVersion } : {}) }
     }
   }

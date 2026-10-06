@@ -1,4 +1,5 @@
 import type { JavaLoaderKind } from '../shared/types'
+import { parse as parseToml } from 'smol-toml'
 
 export interface ExistingProjectTextFile {
   path: string
@@ -6,9 +7,55 @@ export interface ExistingProjectTextFile {
 }
 
 export function extractMinecraftVersion(value: string): string | null {
-  // Loader/plugin versions contain many `x.y` values. Minecraft versions are
-  // explicitly prefixed with `1.` in Java mod Gradle metadata.
-  return value.match(/\b1\.\d{1,2}(?:\.\d{1,2})?\b/)?.[0] ?? null
+  const labelled = value.match(/\bMinecraft\s+((?:1|[2-9]\d)\.\d{1,2}(?:\.\d{1,2})?)/i)?.[1]
+  return labelled ?? minecraftVersionsIn(value)[0] ?? null
+}
+
+function minecraftVersionsIn(value: string): string[] {
+  if (/\$\{|\$[A-Za-z_]/.test(value)) return []
+  return [...value.matchAll(/(?<![\w.])(?:1|2[6-9]|[3-9]\d)\.\d{1,2}(?:\.\d{1,2})?(?![\w.])/g)].map(match => match[0])
+}
+
+/** Read only Minecraft-specific metadata; unrelated dependency versions are never fallbacks. */
+export function inferMinecraftVersions(contents: ExistingProjectTextFile[]): string[] {
+  const versions = new Set<string>()
+  const declared = new Set<string>()
+  const add = (value: unknown, target = versions): void => {
+    if (Array.isArray(value)) { value.forEach(entry => add(entry, target)); return }
+    if (typeof value === 'string') minecraftVersionsIn(value).forEach(version => target.add(version))
+  }
+  for (const { path, content } of contents) {
+    if (/(?:^|\/)gradle\.properties$/i.test(path)) {
+      const properties = parseGradleProperties(content)
+      add(properties.minecraft_version ?? properties.mc_version ?? properties.parchment_minecraft_version, declared)
+    } else if (/fabric\.mod\.json$/i.test(path)) {
+      try { add(JSON.parse(content).depends?.minecraft) } catch { /* malformed metadata stays undetermined */ }
+    } else if (/quilt\.mod\.json$/i.test(path)) {
+      try {
+        const depends = JSON.parse(content).quilt_loader?.depends
+        if (Array.isArray(depends)) depends.filter(entry => entry?.id === 'minecraft').forEach(entry => add(entry.versions))
+      } catch { /* malformed metadata stays undetermined */ }
+    } else if (/(?:^|\/)(?:neoforge\.)?mods\.toml$/i.test(path)) {
+      try {
+        const dependencies = parseToml(content).dependencies
+        if (dependencies && typeof dependencies === 'object') {
+          Object.values(dependencies).forEach(entries => {
+            if (Array.isArray(entries)) entries.forEach(entry => {
+              if (entry && typeof entry === 'object' && entry.modId === 'minecraft') add(entry.versionRange)
+            })
+          })
+        }
+      } catch { /* malformed metadata stays undetermined */ }
+    } else if (/(?:^|\/)build\.gradle(?:\.kts)?$/i.test(path)) {
+      const script = content.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, '')
+      for (const match of script.matchAll(/\b(?:minecraft_version|minecraftVersion|mc_version)\s*(?:=|\()\s*["']([^"']+)["']/g)) add(match[1], declared)
+      for (const match of script.matchAll(/["']com\.mojang:minecraft:([^"']+)["']/g)) add(match[1], declared)
+      for (const match of script.matchAll(/["']net\.minecraftforge:forge:([^"']+)["']/g)) add(match[1].split('-')[0], declared)
+    } else if (/(?:^|\/)\.build-target-props\.json$/i.test(path)) {
+      try { add(JSON.parse(content).minecraft_version, declared) } catch { /* malformed metadata stays undetermined */ }
+    }
+  }
+  return [...(declared.size ? declared : versions)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
 }
 
 export function parseGradleProperties(content: string): Record<string, string> {

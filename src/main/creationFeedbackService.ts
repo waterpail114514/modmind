@@ -95,12 +95,15 @@ export class CreationFeedbackService {
   }
   async build<T extends { path: string }>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const id = randomUUID()
+    let completedArtifact: T | undefined
     // Fingerprint failure must not prevent an otherwise valid build; it prevents certification.
     const before = signal?.aborted ? undefined : await buildInputFingerprint(this.project.path).catch(() => undefined)
     await this.mutate(state => { state.builds.push({ id, path: '', sourceHash: before, configurationHash: '', createdAt: new Date().toISOString(), status: 'running' }); state.builds = state.builds.slice(-60) })
     try {
       signal?.throwIfAborted()
       const artifact = await run()
+      completedArtifact = artifact
+      if (!(await fs.stat(artifact.path)).isFile()) throw new Error(`构建产物不是文件：${artifact.path}`)
       const sha256 = await artifactHash(artifact.path)
       const after = await buildInputFingerprint(this.project.path).catch(() => undefined)
       await this.mutate(state => {
@@ -109,8 +112,11 @@ export class CreationFeedbackService {
       })
       return artifact
     } catch (error) {
-      await this.mutate(state => { const build = state.builds.find(item => item.id === id)!; build.status = signal?.aborted ? 'cancelled' : 'failed'; build.detail = String(error).slice(0, 2000) })
-      throw error
+      const failure = completedArtifact && !signal?.aborted
+        ? new Error(`构建已完成，但产物记录失败（${completedArtifact.path}）：${String(error)}`, { cause: error })
+        : error
+      await this.mutate(state => { const build = state.builds.find(item => item.id === id)!; build.status = signal?.aborted ? 'cancelled' : 'failed'; build.path = completedArtifact?.path ?? ''; build.detail = String(failure).slice(0, 2000) })
+      throw failure
     }
   }
   async verifyLatestBuild(): Promise<boolean> {

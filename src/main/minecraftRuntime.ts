@@ -7,7 +7,6 @@ import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_pr
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Agent, interceptors } from 'undici'
 import { diagnoseAssets, LaunchPrecheck, MinecraftFolder, Version, launch } from '@xmcl/core'
 import {
   fetchJavaRuntimeManifest,
@@ -66,6 +65,8 @@ import { installedRuntimeCandidates } from './minecraftRuntimeCache'
 import { getNetworkProxyUrl } from './networkRequest'
 import { detectToolchainRequirements, mergeToolchainJavaHomes } from './toolchainDetection'
 import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
+import { minecraftDownloadDispatcher } from './minecraftDownloadNetwork'
+import { validManagedJavaCache, MANAGED_JAVA_MANIFEST } from './managedJavaIntegrity'
 
 const BMCLAPI = BMCLAPI_BASE_URL
 const MINECRAFT_ASSET_HOSTS = [`${BMCLAPI}/assets`, 'https://resources.download.minecraft.net']
@@ -132,6 +133,17 @@ async function reuseAssetIndex(version: { assets?: string; assetIndex?: { sha1?:
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
+  return String(error)
+}
+
+export function runtimeDownloadError(error: unknown, depth = 0): string {
+  if (depth >= 5) return errorMessage(error)
+  if (error instanceof AggregateError) return error.errors.slice(0, 8).map(cause => runtimeDownloadError(cause, depth + 1)).join('; ') || error.message
+  if (error instanceof Error) {
+    const destination = (error as Error & { destination?: unknown }).destination
+    const cause = error.cause ? runtimeDownloadError(error.cause, depth + 1) : ''
+    return [typeof destination === 'string' ? destination : '', error.message || error.name, cause].filter(Boolean).join(': ')
+  }
   return String(error)
 }
 
@@ -232,13 +244,6 @@ async function domesticMinecraftFetch(input: Parameters<typeof fetch>[0], init?:
     diagnosticJournal.record({ subsystem: 'minecraft-download', operation: 'fetch', phase: 'error', message: 'Minecraft network request failed', durationMs: Date.now() - startedAt, data: { url }, error })
     throw error
   }
-}
-
-function minecraftDownloadDispatcher() {
-  return new Agent({ connections: 4, bodyTimeout: 60_000, headersTimeout: 30_000 }).compose(
-    interceptors.retry({ maxRetries: 3 }),
-    interceptors.redirect({ maxRedirections: 5 })
-  )
 }
 
 function minecraftAssetHosts(attempt: number): string[] {
@@ -379,12 +384,7 @@ async function replaceModArtifact(source: string, target: string, loader: Loader
 }
 
 async function fetchCompatibleJavaRuntimeManifest(target: string) {
-  const agent = new Agent({ connections: 4 })
-  const dispatcher = agent.compose((dispatch) => (options, handler) => {
-    const compatibleOptions = { ...options }
-    delete (compatibleOptions as typeof compatibleOptions & { throwOnError?: boolean }).throwOnError
-    return dispatch(compatibleOptions, handler)
-  })
+  const dispatcher = minecraftDownloadDispatcher()
   try {
     return await fetchJavaRuntimeManifest({ target: target as JavaRuntimeTargetType, dispatcher })
   } finally {
@@ -1615,7 +1615,7 @@ export class MinecraftRuntimeManager {
     completedSteps = totalSteps
     reportSync('整合包同步完成')
     await fs.mkdir(path.dirname(statePath), { recursive: true })
-    await fs.writeFile(statePath, `${JSON.stringify({ files: written, overrides }, null, 2)}\n`, 'utf8')
+    await fs.writeFile(statePath, `${JSON.stringify({ files: written, overrides, artifacts: sources.map(entry => ({ name: entry.targetName, ...entry.integrity })) }, null, 2)}\n`, 'utf8')
     this.emit('syncing-mod', `Synced ${written.length} modpack mods and ${overrides.length} override files`)
     await this.refresh()
     this.updateState({ stage: 'idle', message: `已同步 ${written.length} 个整合包 Mod 和 ${overrides.length} 个配置文件` })
@@ -1805,12 +1805,13 @@ export class MinecraftRuntimeManager {
     }
     await this.syncModpack()
     const mods = await this.listMods()
-    const size = mods.reduce((total, mod) => total + mod.size, 0)
+    const receiptPath = path.join(this.instanceRoot(project), 'modmind-pack-sync.json')
+    const receipt = await fs.stat(receiptPath)
     const artifact: MinecraftManagedMod = {
-      name: `${project.namespace}.mrpack 工作区`,
-      path: project.path,
-      size,
-      modifiedAt: new Date().toISOString(),
+      name: `${project.namespace} 整合包同步清单`,
+      path: receiptPath,
+      size: receipt.size,
+      modifiedAt: receipt.mtime.toISOString(),
       projectArtifact: true
     }
     this.updateState({ stage: 'idle', message: `整合包构建并同步完成：${mods.length} 个 Mod`, mods })
@@ -2416,15 +2417,16 @@ export class MinecraftRuntimeManager {
     const target = requestedTarget ?? javaRuntimeTargetForJavaVersion(minimumMajor)
     const javaHome = path.join(this.runtimeRoot(), target)
     const javaPath = managedJavaExecutable(this.runtimeRoot(), target)
-    if (!(await probeJavaHome(javaHome, minimumMajor, false).catch(() => null))) {
+    if (!await validManagedJavaCache(javaHome) || !(await probeJavaHome(javaHome, minimumMajor, false).catch(() => null))) {
       const stagingHome = `${javaHome}.staging-${randomUUID()}`
       this.emit('downloading-java', `正在下载托管 Java：${target}`)
       const manifest = await fetchCompatibleJavaRuntimeManifest(target)
       await fs.rm(stagingHome, { recursive: true, force: true })
+      const dispatcher = minecraftDownloadDispatcher()
       try {
         await runMinecraftTaskWithRecovery({
           signal,
-          createTask: () => installJavaRuntimeTask({ destination: stagingHome, manifest }),
+          createTask: () => installJavaRuntimeTask({ destination: stagingHome, manifest, dispatcher }),
           onUpdate: (task) => this.emitProgress('downloading-java', '正在下载 Java Runtime', task.progress, task.total, generation),
           onRetry: (attempt, error) => this.emit('downloading-java', `${error.message}，正在重新下载 Java Runtime（${attempt}/3）`, 'warning')
         })
@@ -2432,10 +2434,15 @@ export class MinecraftRuntimeManager {
         if (!(await probeJavaHome(stagingHome, minimumMajor, false).catch(() => null))) {
           throw new Error(`下载的托管 Java 验证失败：${managedJavaExecutable(path.dirname(stagingHome), path.basename(stagingHome))}`)
         }
+        await fs.writeFile(path.join(stagingHome, MANAGED_JAVA_MANIFEST), JSON.stringify(manifest), 'utf8')
         await fs.rm(javaHome, { recursive: true, force: true })
         await fs.rename(stagingHome, javaHome)
+      } catch (error) {
+        if (signal?.aborted) throw abortError()
+        throw new Error(`Java Runtime 下载或校验失败：${runtimeDownloadError(error)}`, { cause: error })
       } finally {
-        await fs.rm(stagingHome, { recursive: true, force: true }).catch(() => undefined)
+        try { await dispatcher.close() }
+        finally { await fs.rm(stagingHome, { recursive: true, force: true }).catch(() => undefined) }
       }
     }
     if (!(await probeJavaHome(javaHome, minimumMajor, false).catch(() => null))) {

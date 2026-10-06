@@ -147,7 +147,8 @@ export class NativeMinecraftTestService {
       combined.throwIfAborted()
       const artifact = await this.dependencies.build(project, combined)
       combined.throwIfAborted()
-      await copyNativeTestInstance(path.dirname(path.dirname(artifact.path)), directory)
+      const sourceInstance = project.kind === 'modpack' ? path.dirname(artifact.path) : path.dirname(path.dirname(artifact.path))
+      await copyNativeTestInstance(sourceInstance, directory)
       await (this.dependencies.install ?? installNativeMcp)(entry, path.join(directory, 'mods'), combined)
       // No user saves/options copied. Keep the owned instance responsive when focus moves to ModMind.
       await fs.writeFile(path.join(directory, 'options.txt'), 'pauseOnLostFocus:false\n')

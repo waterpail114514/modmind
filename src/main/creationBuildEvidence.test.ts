@@ -1,10 +1,13 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { CreationFeedbackService } from './creationFeedbackService'
 import { currentVerification } from './creationBuildEvidence'
 import type { ProjectInfo } from '../shared/types'
+import { MinecraftRuntimeManager } from './minecraftRuntime'
+import { createModpackTemplate } from './modpackService'
+vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 const roots: string[] = []
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }) })
 async function fixture() {
@@ -50,4 +53,24 @@ it('does not request builds for simple edits and ignores generated diagnostic ch
   expect(currentVerification(true, verified, new Map([...verified, ['logs/latest.log', 'b']]))).toBe(true)
   expect(currentVerification(true, verified, new Map([['src/Main.java', 'new']]))).toBe(false)
   expect(currentVerification(true, null, verified)).toBe(false)
+})
+
+it('returns a file receipt for a modpack build and completes artifact evidence without EISDIR', async () => {
+  const { root } = await fixture()
+  const project: ProjectInfo = { path: root, name: 'Pack', namespace: 'pack', kind: 'modpack', loader: 'forge', minecraftVersion: '1.20.1', createdAt: '' }
+  await createModpackTemplate(project)
+  const service = new CreationFeedbackService(project)
+  const runtime = new MinecraftRuntimeManager({ getProject: () => project, onState: () => {}, onEvent: () => {} })
+  const artifact = await service.build(() => runtime.buildProject())
+  expect(artifact.path).toBe(path.join(root, '.modmind/minecraft/modmind-pack-sync.json'))
+  expect((await fs.stat(artifact.path)).isFile()).toBe(true)
+  expect(JSON.parse(await fs.readFile(artifact.path, 'utf8'))).toMatchObject({ files: [], overrides: [] })
+  expect((await service.state()).builds.at(-1)).toMatchObject({ path: artifact.path, status: 'built', sha256: expect.stringMatching(/^[a-f0-9]{64}$/) })
+  expect(await service.verifyLatestBuild()).toBe(true)
+})
+
+it('identifies post-processing errors separately from a completed compiler operation', async () => {
+  const { root, service } = await fixture()
+  await expect(service.build(async () => ({ path: root }))).rejects.toThrow('构建已完成，但产物记录失败')
+  expect((await service.state()).builds.at(-1)).toMatchObject({ path: root, status: 'failed', detail: expect.stringContaining('构建产物不是文件') })
 })
