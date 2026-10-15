@@ -20,7 +20,7 @@
     "preview": "electron-vite preview",
     "pretest": "node scripts/verify-workspace.mjs --mcp",
     "test": "vitest run src && npm run test:mcp && npm run test:mac-policy && npm run test:update-artifacts && npm run test:gradle-wrapper && npm run test:workspace",
-    "pretest:mcp": "node scripts/verify-workspace.mjs --mcp && node scripts/sync-mcp-server.mjs",
+    "pretest:mcp": "node scripts/verify-workspace.mjs --mcp && node scripts/patch-mcp-tests.mjs && node scripts/sync-mcp-server.mjs",
     "test:mcp": "npm --prefix modmind-mcp-open-source test",
     "test:workspace": "node --test scripts/verify-workspace.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.web.json --pretty false",

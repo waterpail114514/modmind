@@ -103,7 +103,7 @@ npm test
 npm run build
 ```
 
-`npm run sync:mcp` 从应用内 MCP 源码生成独立检出的服务实现；请先保存该文件已有修改并检查生成差异。`npm test` 会检查两份实现是否同步。`npm run verify:workspace` 检查独立依赖和 MCP 固定提交。测试默认最多使用 4 个 worker，避免大量子进程和文件日志写入争抢磁盘。`node scripts/development-profile-smoke.mjs` 使用真实 Electron 进程验证两个工作区的数据与单实例锁隔离，不启动主界面。
+`npm run sync:mcp` 从应用内 MCP 源码生成独立检出的服务实现；请先保存该文件已有修改并检查生成差异。`npm test` 会检查两份实现是否同步，并向固定版本的 MCP 测试应用换行分帧与图片回归补丁。`npm run verify:workspace` 检查独立依赖和 MCP 固定提交。测试默认最多使用 4 个 worker，避免大量子进程和文件日志写入争抢磁盘。`node scripts/development-profile-smoke.mjs` 使用真实 Electron 进程验证两个工作区的数据与单实例锁隔离，不启动主界面。
 
 构建前会自动检查主题颜色与插件模板是否和源码一致。部分集成测试需要 Java 或额外运行环境，请同时查看测试输出中的跳过项。
 

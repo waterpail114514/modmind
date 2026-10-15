@@ -1,0 +1,77 @@
+diff --git a/test/mcp-server.test.mjs b/test/mcp-server.test.mjs
+index 94848d0..be75046 100644
+--- a/test/mcp-server.test.mjs
++++ b/test/mcp-server.test.mjs
+@@ -5,6 +5,7 @@ import http from 'node:http';
+ import os from 'node:os';
+ import path from 'node:path';
+ import { spawn } from 'node:child_process';
++import { createInterface } from 'node:readline';
+ import { test } from 'node:test';
+ import { fileURLToPath } from 'node:url';
+ 
+@@ -36,7 +37,10 @@ test('implements MCP initialize, tools/list, and tools/call over stdio', async (
+     for await (const chunk of request) text += chunk;
+     const body = JSON.parse(text);
+     response.writeHead(200, { 'content-type': 'application/json' });
+-    response.end(JSON.stringify(body.action === 'asset_preview_advanced'
++    response.end(JSON.stringify(body.action === 'image_read_project_asset'
++      ? { path: 'pixel.png', dataUrl: 'data:image/png;base64,AA==' }
++      : body.action === 'image_generate' ? { assets: [{ dataUrl: 'data:image/png;base64,AQ==' }] }
++      : body.action === 'asset_preview_advanced'
+       ? {selectedCandidateId: 'base', candidates: [{variantId: 'base', captures: [{view: 'north', width: 128, height: 128, dataUrl: 'data:image/png;base64,AA=='}]}]}
+       : body.action === 'blockbench_capture_views' || body.action === 'asset_preview_intent' || body.action === 'asset_preview_refinement'
+       ? {
+@@ -56,7 +60,7 @@ test('implements MCP initialize, tools/list, and tools/call over stdio', async (
+   t.after(() => child.kill());
+   const lines = [];
+   child.stdout.setEncoding('utf8');
+-  child.stdout.on('data', (chunk) => lines.push(...chunk.split(/\r?\n/).filter(Boolean)));
++  createInterface({ input: child.stdout }).on('line', (line) => { if (line.trim()) lines.push(line); });
+   const waitForLine = async () => {
+     while (lines.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+     return JSON.parse(lines.shift());
+@@ -70,6 +74,8 @@ test('implements MCP initialize, tools/list, and tools/call over stdio', async (
+   const listed = await waitForLine();
+   assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_project_info'));
+   assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_project_files'));
++  assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_read_project_file'));
++  assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_project_knowledge_save'));
+   assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_blockbench_project_state'));
+   assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_blockbench_validate'));
+   assert.ok(listed.result.tools.some((tool) => tool.name === 'modmind_blockbench_capture_views'));
+@@ -127,6 +133,16 @@ test('implements MCP initialize, tools/list, and tools/call over stdio', async (
+   assert.equal(captured.result.content[1].mimeType, 'image/png');
+   assert.equal(captured.result.content[1].data, 'AA==');
+   assert.equal(JSON.parse(captured.result.content[0].text).captures[0].dataUrl, undefined);
++  for (const [name, argumentsValue, bytes] of [
++    ['modmind_image_read_project_asset', { path: 'pixel.png' }, 'AA=='],
++    ['modmind_image_generate', { prompt: 'pixel' }, 'AQ==']
++  ]) {
++    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 40, method: 'tools/call', params: { name, arguments: argumentsValue } }) + '\n');
++    const image = await waitForLine();
++    assert.equal(image.result.content[1].type, 'image');
++    assert.equal(image.result.content[1].data, bytes);
++    assert.ok(!image.result.content[0].text.includes('base64'));
++  }
+   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'modmind_asset_preview_intent', arguments: { intent: {version:1,metadata:{name:'Preview'},model:{format:'java_block',parts:[{id:'body',kind:'body',size:[8,8,8]}]}} } } }) + '\n');
+   const previewed = await waitForLine();
+   assert.equal(previewed.result.content[1].type, 'image');
+@@ -224,7 +240,7 @@ test('merges user plugin tools from the bridge and forwards plugin calls', async
+   t.after(() => child.kill());
+   const lines = [];
+   child.stdout.setEncoding('utf8');
+-  child.stdout.on('data', (chunk) => lines.push(...chunk.split(/\r?\n/).filter(Boolean)));
++  createInterface({ input: child.stdout }).on('line', (line) => { if (line.trim()) lines.push(line); });
+   const waitForLine = async () => {
+     while (lines.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+     return JSON.parse(lines.shift());
+@@ -277,7 +293,7 @@ test('falls back to the static tool list when the bridge has no plugin support',
+   t.after(() => child.kill());
+   const lines = [];
+   child.stdout.setEncoding('utf8');
+-  child.stdout.on('data', (chunk) => lines.push(...chunk.split(/\r?\n/).filter(Boolean)));
++  createInterface({ input: child.stdout }).on('line', (line) => { if (line.trim()) lines.push(line); });
+   const waitForLine = async () => {
+     while (lines.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+     return JSON.parse(lines.shift());
