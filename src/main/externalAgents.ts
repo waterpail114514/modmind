@@ -3399,10 +3399,15 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
   const sessionScope = options.sessionScope?.trim() || 'workspace'
   let persistedSessionId: string | undefined
   try {
-    const bridgePaths = await awaitWithAbort(bridge.start(), options.signal, '外部 Agent 启动已停止')
+    throwIfAborted(options.signal, '外部 Agent 启动已停止')
+    // Finish local startup before cleanup; cancellation must not leave file
+    // creation or a listener starting after the caller has already returned.
+    const bridgePaths = await bridge.start()
+    throwIfAborted(options.signal, '外部 Agent 启动已停止')
     mcpConfigPath = bridgePaths.mcpConfigPath
     contextPath = bridgePaths.contextPath
-    await awaitWithAbort(bridge.writeMcpConfig(mcpConfigPath), options.signal, '外部 Agent 启动已停止')
+    await bridge.writeMcpConfig(mcpConfigPath)
+    throwIfAborted(options.signal, '外部 Agent 启动已停止')
     executable = options.executable || (options.kind === 'codex' ? getPreparedCodexExecutable() : undefined) || (await awaitWithAbort(detectExternalAgents(), options.signal, '外部 Agent 启动已停止')).find((item) => item.kind === options.kind)?.executable || ''
     if (!executable) throw new Error(`${externalAgentLabel(options.kind)} CLI 未安装或不在 PATH 中`)
     persistedSessionId = options.sessionId?.trim() || (options.resumeSession

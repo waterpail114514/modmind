@@ -315,12 +315,17 @@ async function saveBook(project: ProjectInfo, input: FtbQuestBook): Promise<FtbQ
     if (desired.has(target)) throw new Error(`reward table filename is duplicated: ${table.filename}`)
     desired.set(target, compile(compiledRewardTable(table, format), table.source))
   }
-  // Windows treats a case-only filename edit as the same file. Do not delete the
-  // just-published chapter/reward table through its previous spelling.
-  const canonical = (file: string): string => process.platform === 'win32' ? file.toLowerCase() : file
-  const desiredPaths = new Set([...desired.keys()].map(canonical))
+  // Resolve existing aliases on the actual filesystem, including default macOS
+  // volumes, before deciding which previous filenames need removal.
+  const canonical = async (file: string): Promise<string> => {
+    const resolved = await fs.realpath(file).catch(error => { if (missing(error)) return file; throw error })
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+  }
+  const desiredPaths = new Set(await Promise.all([...desired.keys()].map(canonical)))
   if (desiredPaths.size !== desired.size) throw new Error('任务书包含重复文件名（忽略大小写）')
-  const removed = [...existing].filter((file) => !desiredPaths.has(canonical(file)))
+  const previousFiles = [...existing]
+  const previousPaths = await Promise.all(previousFiles.map(canonical))
+  const removed = previousFiles.filter((_, index) => !desiredPaths.has(previousPaths[index]))
   const original = new Map<string, string | null>()
   for (const target of new Set([...desired.keys(), ...removed])) original.set(target, await fs.readFile(target, 'utf8').catch((error) => { if (missing(error)) return null; throw error }))
   const temporary = new Map<string, string>()
