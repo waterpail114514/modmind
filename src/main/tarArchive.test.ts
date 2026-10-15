@@ -17,6 +17,35 @@ function tarEntry(name: string, content: Buffer, type = '0'): Buffer {
 }
 
 describe('tar archive import', () => {
+  it('checks expansion budgets immediately after the header, before receiving a large entry', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-tar-budget-'))
+    try {
+      const header = tarEntry('huge.bin', Buffer.alloc(0))
+      header.write((1024 * 1024 * 1024).toString(8).padStart(11, '0') + '\0', 124, 12, 'ascii')
+      const archive = path.join(root, 'huge.tar')
+      await fs.writeFile(archive, header)
+      await expect(extractTar(archive, path.join(root, 'out'), entry => {
+        expect(entry.uncompressedSize).toBe(1024 * 1024 * 1024)
+        throw new Error('Expansion budget exceeded')
+      })).rejects.toThrow('Expansion budget exceeded')
+      expect(await fs.stat(path.join(root, 'out')).catch(() => null)).toBeNull()
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
+
+  it('streams files and removes an incomplete output on truncation', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-tar-stream-'))
+    try {
+      const bytes = Buffer.alloc(2 * 1024 * 1024 + 33, 73)
+      const archive = path.join(root, 'large.tar')
+      const out = path.join(root, 'out')
+      await fs.writeFile(archive, Buffer.concat([tarEntry('large.bin', bytes), Buffer.alloc(1024)]))
+      await extractTar(archive, out)
+      expect((await fs.readFile(path.join(out, 'large.bin'))).equals(bytes)).toBe(true)
+      await fs.writeFile(archive, tarEntry('partial.bin', bytes).subarray(0, 100000))
+      await expect(extractTar(archive, out)).rejects.toThrow(/ended/)
+      expect(await fs.stat(path.join(out, 'partial.bin')).catch(() => null)).toBeNull()
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
   it('recognizes and extracts a tar stream even when the caller supplied a zip extension', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-tar-test-'))
     const archive = path.join(root, 'project.zip')

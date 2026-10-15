@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -14,6 +14,29 @@ afterEach(async () => {
 })
 
 describe('release preflight and publishing guard', () => {
+  it('uses one project and one settings snapshot across a pending preflight', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'release-identity-')); roots.push(root)
+    const make = (name: string): ProjectInfo => ({ name, path: path.join(root, name), namespace: name, loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' })
+    const a = make('A'), b = make('B'); await fs.mkdir(a.path); await fs.mkdir(b.path)
+    let current = a
+    const service = new ReleaseService(() => current, async () => ({ githubToken: 'fixture-token', modrinthToken: '', curseForgeToken: '' }), async () => {})
+    await service.saveSettings({ version: '1.0.0', displayName: 'A', changelog: '', channel: 'release', modrinthProjectId: '', curseForgeProjectId: '', githubRepository: 'owner/A' })
+    current = b
+    await service.saveSettings({ version: '2.0.0', displayName: 'B', changelog: '', channel: 'release', modrinthProjectId: '', curseForgeProjectId: '', githubRepository: 'owner/B' })
+    current = a
+    vi.spyOn(service, 'preflight').mockImplementation(async project => { expect(project?.path).toBe(a.path); current = b; return { ready: true, artifactPath: path.join(a.path, 'A.jar'), checks: [] } })
+    await fs.writeFile(path.join(a.path, 'A.jar'), 'fixture')
+    const requests: Array<{ url: string; body: unknown }> = []
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      requests.push({ url, body: init.body })
+      return new Response(JSON.stringify({ upload_url: 'https://uploads.example.test/A', html_url: 'https://example.test/A' }), { status: 200 })
+    })
+    try {
+      expect((await service.publish({ confirmed: true, targets: ['github'] }))[0].success).toBe(true)
+      expect(requests[0].url).toContain('owner/A')
+      expect(JSON.parse(String(requests[0].body)).tag_name).toBe('v1.0.0')
+    } finally { vi.unstubAllGlobals(); vi.restoreAllMocks() }
+  })
   it('finds a release artifact and never publishes without explicit confirmation', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-release-'))
     roots.push(root)

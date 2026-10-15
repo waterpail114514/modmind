@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import ffmpegPath from 'ffmpeg-static'
 import { spawnManaged } from './processTree'
 import type {
@@ -9,6 +10,7 @@ import type {
   ContentValidationResult
 } from '../shared/production'
 import type { ProjectInfo } from '../shared/types'
+import { assertContentTarget, installContentTransaction } from './contentInstallTransaction'
 
 function compareMinecraft(left: string, right: string): number {
   const parts = (value: string): number[] => (value.startsWith('1.') ? value.slice(2) : value).split('.').map((entry) => Number(entry) || 0)
@@ -143,11 +145,20 @@ export function buildContentFile(project: ProjectInfo, input: ContentCreateInput
   }
 }
 
-async function mergeJsonObject(target: string, values: Record<string, unknown>): Promise<void> {
-  const existing = await fs.readFile(target, 'utf8').then((content) => JSON.parse(content) as unknown).catch(() => ({}))
+async function mergedJsonObject(target: string, values: Record<string, unknown>): Promise<string> {
+  const existing = await fs.readFile(target, 'utf8').then((content) => JSON.parse(content.replace(/^\uFEFF/, '')) as unknown).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return {}; throw error })
   if (!existing || typeof existing !== 'object' || Array.isArray(existing)) throw new Error(`不能合并非对象 JSON：${target}`)
+  return json({ ...(existing as Record<string, unknown>), ...values })
+}
+
+async function mergeJsonObject(target: string, values: Record<string, unknown>): Promise<void> {
+  const content = await mergedJsonObject(target, values)
   await fs.mkdir(path.dirname(target), { recursive: true })
-  await fs.writeFile(target, json({ ...(existing as Record<string, unknown>), ...values }), 'utf8')
+  const pending = `${target}.pending-${randomUUID()}`
+  try {
+    await fs.writeFile(pending, content, { encoding: 'utf8', flag: 'wx' })
+    await fs.rename(pending, target)
+  } finally { await fs.rm(pending, { force: true }).catch(() => undefined) }
 }
 
 async function runFfmpeg(source: string, destination: string): Promise<void> {
@@ -187,12 +198,9 @@ export class ContentService {
     if (!['.ogg', '.mp3', '.wav', '.flac', '.m4a'].includes(extension)) throw new Error('请选择 OGG、MP3、WAV、FLAC 或 M4A 音频')
     const relativeAudio = `src/main/resources/assets/${project.namespace}/sounds/${eventId}.ogg`
     const destination = path.join(project.path, ...relativeAudio.split('/'))
-    await fs.mkdir(path.dirname(destination), { recursive: true })
-    if (extension === '.ogg') await fs.copyFile(source, destination)
-    else await runFfmpeg(source, destination)
     const soundsRelative = `src/main/resources/assets/${project.namespace}/sounds.json`
     const soundsPath = path.join(project.path, ...soundsRelative.split('/'))
-    await mergeJsonObject(soundsPath, {
+    const definitions = await mergedJsonObject(soundsPath, {
       [eventId]: {
         sounds: [{
           name: `${project.namespace}:${eventId}`,
@@ -202,6 +210,17 @@ export class ContentService {
         }]
       }
     })
+    const stagingRoot = path.join(project.path, '.modmind', 'audio-import')
+    await assertContentTarget(project.path, stagingRoot)
+    await fs.mkdir(stagingRoot, { recursive: true })
+    const staging = await fs.mkdtemp(path.join(stagingRoot, 'import-'))
+    try {
+      const audio = path.join(staging, 'audio.ogg'), sounds = path.join(staging, 'sounds.json')
+      if (extension === '.ogg') await fs.copyFile(source, audio)
+      else await runFfmpeg(source, audio)
+      await fs.writeFile(sounds, definitions)
+      await installContentTransaction(project.path, [{ source: audio, destination }, { source: sounds, destination: soundsPath }], async () => undefined)
+    } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined) }
     return { paths: [relativeAudio, soundsRelative], summary: `已导入声音 ${project.namespace}:${eventId}`, warnings: [] }
   }
 

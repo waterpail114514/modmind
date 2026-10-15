@@ -1,4 +1,5 @@
 import { normalizeAgentApprovalMode, type AgentApprovalMode, type AgentApprovalDecision, type AgentApprovalDetails } from '../shared/agentApproval'
+import { networkFetch } from './networkRequest'
 
 export function codexApprovalRequest(method: string, params: Record<string, unknown>): AgentApprovalDetails | null {
   const legacy = method === 'execCommandApproval' || method === 'applyPatchApproval'
@@ -51,7 +52,7 @@ export class AutomaticApprovalUnavailableError extends Error {
 export async function fetchWithApprovalModelFallback(
   url: string, init: RequestInit, body: Record<string, unknown>, fallbackModel?: string
 ): Promise<Response> {
-  const response = await fetch(url, { ...init, body: JSON.stringify(body) })
+  const response = await networkFetch(url, { ...init, body: JSON.stringify(body) })
   if (response.ok || body.model !== 'codex-auto-review' || !fallbackModel || fallbackModel === body.model) return response
   const unavailable = [429, 500, 502, 503, 504].includes(response.status)
     || [400, 403, 404, 422].includes(response.status) && /model[_ -]?(?:not[_ -]found|unavailable|not[_ -]supported)|(?:model|模型)[\s\S]{0,160}(?:not found|not exist|unavailable|not supported|no access|not have access|不存在|不可用|不支持|无权)/i.test(await response.clone().text())
@@ -59,5 +60,5 @@ export async function fetchWithApprovalModelFallback(
   await response.body?.cancel()
   console.warn(`[approval] codex-auto-review unavailable (${response.status}); retrying review with ${fallbackModel}`)
   // Keep the review instructions and decision schema intact. Only replace its model.
-  return fetch(url, { ...init, body: JSON.stringify({ ...body, model: fallbackModel }) })
+  return networkFetch(url, { ...init, body: JSON.stringify({ ...body, model: fallbackModel }) })
 }

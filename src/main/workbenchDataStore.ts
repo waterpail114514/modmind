@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { promises as fs } from 'node:fs'
+import { createReadStream, promises as fs } from 'node:fs'
+import { createInterface } from 'node:readline'
 import path from 'node:path'
 import { gzip, gunzip } from 'node:zlib'
 import * as lockfile from 'proper-lockfile'
@@ -301,12 +302,12 @@ export class WorkbenchDataStore {
     const unique = new Set<string>()
     const failures: unknown[] = []
     for (const target of targets) {
-      const content = await withJournalLock(target, () => retryTransientFileLock(() => fs.readFile(target, 'utf8'))).catch((error) => {
-        if (isMissingFileError(error)) return ''
-        failures.push(error)
-        return ''
-      })
-      for (const line of content.split(/\r?\n/u)) if (line.trim()) unique.add(`${line}\n`)
+      await withJournalLock(target, () => retryTransientFileLock(async () => {
+        const input = createReadStream(target, { encoding: 'utf8' })
+        const reader = createInterface({ input, crlfDelay: Infinity })
+        try { for await (const line of reader) if (line.trim()) unique.add(`${line}\n`) }
+        finally { reader.close(); input.destroy() }
+      })).catch((error) => { if (!isMissingFileError(error)) failures.push(error) })
     }
     if (!unique.size && failures.length) throw new AggregateError(failures, 'Conversation journal replicas could not be read')
     return [...unique]

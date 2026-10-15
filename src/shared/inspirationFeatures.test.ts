@@ -4,21 +4,23 @@ import { buildInspirationHandoff, inspirationKnowledgeContext } from './inspirat
 import { parseInspirationEvidenceLink } from './inspirationEvidence'
 
 describe('inspiration selections and handoff', () => {
-  it('makes user prohibitions explicit without removing deliberate knowledge-save exceptions', () => {
-    const prompt = inspirationFeaturePrompt(normalizeInspirationFeatures({ webResearch: true }))
+  it('makes user prohibitions explicit without natural-language save bypasses', () => {
+    const prompt = inspirationFeaturePrompt(normalizeInspirationFeatures({ webResearch: true, imageGeneration: false, projectKnowledge: false }))
     expect(prompt).toContain('联网检索：已启用')
-    expect(prompt).toContain('图像工坊效果图：用户主动禁止')
+    expect(prompt).toContain('图像工坊效果图：用户禁止')
     expect(prompt).toContain('[USER_DISABLED_TOOL]')
-    expect(prompt).toContain('不限制用户明确要求的知识读取和保存')
+    expect(prompt).toContain('即使用户提及记住或保存，也不得绕过')
     expect(prompt).toContain('已启用工具的连接故障不得归因于用户禁用')
   })
-  it('defaults expensive capabilities off and fails closed for malformed saved choices', () => {
-    expect(Object.values(readInspirationFeatures(null)).every(value => !value)).toBe(true)
-    expect(readInspirationFeatures('{bad')).toEqual(normalizeInspirationFeatures())
+  it('defaults all capabilities on, preserves deselection and fails closed for malformed saved choices', () => {
+    expect(Object.values(readInspirationFeatures(null)).every(Boolean)).toBe(true)
+    expect(Object.values(readInspirationFeatures('{bad')).every(value => !value)).toBe(true)
+    expect(Object.values(readInspirationFeatures('null')).every(value => !value)).toBe(true)
+    expect(readInspirationFeatures('{"projectKnowledge":false}')).toMatchObject({ projectKnowledge: false, autoSaveKnowledge: true })
     expect(normalizeInspirationFeatures({ jarAnalysis: 'true', deepAnalysis: true })).toMatchObject({ jarAnalysis: false, deepAnalysis: true })
     expect(requiredInspirationFeature('research', { operation: 'compare' })).toBe('comparison')
     expect(requiredInspirationFeature('research', { operation: 'decompile' })).toBe('jarAnalysis')
-    expect(readInspirationFeatures(null).imageGeneration).toBe(false)
+    expect(readInspirationFeatures(null).imageGeneration).toBe(true)
     expect(readInspirationFeatures('{"imageGeneration":true}').imageGeneration).toBe(true)
     expect(requiredInspirationFeature('image_generate')).toBe('imageGeneration')
     expect(requiredInspirationFeature('image_read_project_asset')).toBeUndefined()

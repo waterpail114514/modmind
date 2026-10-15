@@ -11,6 +11,30 @@ afterEach(() => {
 })
 
 describe('Chat Completions compatibility adapter', () => {
+  it('uses the provider gateway pathname while preserving its query on a real request', async () => {
+    const urls: string[] = []
+    const upstream = createServer((request, response) => {
+      urls.push(request.url!); request.resume()
+      if (request.url !== '/gateway/v1/responses?api-version=2026') { response.writeHead(404); response.end('unknown route'); return }
+      response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ status: 'completed', output: [] }))
+    })
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+    try {
+      const adapter = new ChatCompletionsAdapter(); adapters.push(adapter)
+      const base = await adapter.baseUrl(`http://127.0.0.1:${(upstream.address() as { port: number }).port}/gateway/v1/?api-version=2026#ignored`)
+      const response = await fetch(`${base}/responses`, { method: 'POST', body: JSON.stringify({ model: 'fixture', input: 'hello' }) })
+      expect(response.status).toBe(200); await response.text()
+      expect(urls).toEqual(['/gateway/v1/responses?api-version=2026'])
+    } finally { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())) }
+  })
+  it('round trips tool reasoning through persisted Responses items without adapter memory', () => {
+    const tool = { type: 'function', name: 'write_file', parameters: { type: 'object' } }
+    const first = responsesRequestToChatCompletions({ model: 'reasoner', input: 'write', tools: [tool] })
+    const events = chatCompletionToResponsesEvents({ choices: [{ message: { reasoning_content: 'Inspect before applying the requested edit.', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'write_file', arguments: '{}' } }] } }] }, first.tools)
+    const persisted = JSON.parse(JSON.stringify(events.filter(event => event.type === 'response.output_item.done').map(event => event.item)))
+    const next = responsesRequestToChatCompletions({ model: 'reasoner', tools: [tool], input: [...persisted, { type: 'function_call_output', call_id: 'call_1', output: 'done' }] })
+    expect(next.body.messages).toMatchObject([{ role: 'assistant', reasoning_content: 'Inspect before applying the requested edit.', tool_calls: [{ id: 'call_1' }] }, { role: 'tool', tool_call_id: 'call_1', content: 'done' }])
+  })
   it.each(['completed', 'failed', 'unfinished', 'text-only'])('records image evidence only for relevant completed requests: %s', async mode => {
     const { ModelImageCapabilities } = await import('./modelImageCapabilities')
     const store = new ModelImageCapabilities()

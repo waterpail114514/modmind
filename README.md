@@ -31,7 +31,7 @@ ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感�
 
 | 你的设备 | 选择的安装包 |
 | --- | --- |
-| Windows | `ModMind-Setup-<版本>.exe` |
+| Windows 10 及以上（x64） | `ModMind-Setup-<版本>.exe` |
 | Mac · Apple Silicon（M 系列） | 文件名包含 `arm64` 的 `.dmg` 或 `.zip` |
 | Mac · Intel | 文件名包含 `x64` 的 `.dmg` 或 `.zip` |
 
@@ -76,7 +76,7 @@ Java 模组的真实界面测试实验性接入 [Minecraft Mod MCP](https://gith
 
 ## 本地开发
 
-使用 **Node.js 22**。首次克隆后执行：
+使用 **Node.js 22.12 或更新的受支持版本**。首次克隆后执行：
 
 ```sh
 git clone https://github.com/waterpail114514/modmind.git
@@ -98,11 +98,12 @@ git -C modmind-mcp-open-source checkout f21d65950f255243e941554d1463729ad1056b41
 
 ```sh
 npm run typecheck
+npm run sync:mcp
 npm test
 npm run build
 ```
 
-`npm run verify:workspace` 检查独立依赖和 MCP 固定提交。测试默认最多使用 4 个 worker，避免大量子进程和文件日志写入争抢磁盘。`node scripts/development-profile-smoke.mjs` 使用真实 Electron 进程验证两个工作区的数据与单实例锁隔离，不启动主界面。
+`npm run sync:mcp` 从应用内 MCP 源码生成独立检出的服务实现；请先保存该文件已有修改并检查生成差异。`npm test` 会检查两份实现是否同步。`npm run verify:workspace` 检查独立依赖和 MCP 固定提交。测试默认最多使用 4 个 worker，避免大量子进程和文件日志写入争抢磁盘。`node scripts/development-profile-smoke.mjs` 使用真实 Electron 进程验证两个工作区的数据与单实例锁隔离，不启动主界面。
 
 构建前会自动检查主题颜色与插件模板是否和源码一致。部分集成测试需要 Java 或额外运行环境，请同时查看测试输出中的跳过项。
 

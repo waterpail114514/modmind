@@ -1,5 +1,7 @@
 import { mkdirSync, promises as fs, watch as fsWatch } from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { scopedFilePath } from './scopedFilePath'
 import { extractSevenZipArchive } from './sevenZipArchive'
 import { createStoredZip } from './bedrockAddon'
 import { createPluginPanelHtml } from '../shared/pluginUi'
@@ -20,6 +22,8 @@ export interface PluginServiceOptions {
   projectRoot: () => string | null
   /** 注册表或某插件变化时的通知回调。 */
   onChange?: (snapshot: PluginSnapshot) => void
+  /** A background project's registry reads shared preferences without replacing the UI's cache. */
+  passiveRegistry?: boolean
 }
 
 interface WatcherEntry {
@@ -112,22 +116,25 @@ export class PluginService {
 
   /** 全局 + 项目级合并注册表；同名 id 项目级优先。 */
   async refresh(options: { forceReload?: boolean } = {}): Promise<PluginSnapshot> {
+    const scopeDirectories = this.scopeDirectories()
+    if (this.options.passiveRegistry) { this.preferencesLoaded = false; this.enabledOverrides.clear() }
     await this.loadPreferences()
     if (options.forceReload) this.bumpAllRevisions()
     const scanned = new Map<string, PluginRecord>()
     const cached = await this.readRegistryCache()
     const nextScopes: Record<string, PluginRegistryCacheEntry> = {}
 
-    for (const [scope, directory] of this.scopeDirectories()) {
+    for (const [scope, directory] of scopeDirectories) {
       const cachedRecords = this.validCachedRecords(cached.scopes[directory]?.records, scope, directory)
       const fingerprint = await this.scopeFingerprint(directory, cachedRecords)
       const cachedEntry = cached.scopes[directory]
       const cacheHit = Boolean(cachedEntry && cachedEntry.fingerprint === fingerprint && cachedRecords)
       const found = cacheHit ? cachedRecords! : await this.scanScope(scope, directory)
       for (const record of found) {
-        const preferenceKey = this.preferenceKey(scope, record.manifest.id)
+        const preferenceKey = this.preferenceKey(scope, record.manifest.id, record.directory)
         const preferred = this.enabledOverrides.get(preferenceKey)
         if (preferred !== undefined) record.enabled = preferred
+        else if (scope === 'project') record.enabled = false
         else if (record.enabled === false) this.enabledOverrides.set(preferenceKey, false)
         record.revision = this.revisions.get(record.manifest.id) ?? 0
       }
@@ -146,8 +153,10 @@ export class PluginService {
 
     this.records = scanned
     this.registryCache = { version: 1, scopes: nextScopes }
-    await this.persistRegistryCache()
-    await this.persistPreferences()
+    if (!this.options.passiveRegistry) {
+      await this.persistRegistryCache()
+      await this.persistPreferences()
+    }
     const snapshot: PluginSnapshot = { plugins: [...scanned.values()] }
     return snapshot
   }
@@ -162,8 +171,11 @@ export class PluginService {
     return path.join(path.dirname(this.options.globalDirectory), 'plugin-preferences.json')
   }
 
-  private preferenceKey(scope: PluginScope, pluginId: string): string {
-    return `${scope}:${pluginId}`
+  private preferenceKey(scope: PluginScope, pluginId: string, directory?: string): string {
+    if (scope === 'global') return `${scope}:${pluginId}`
+    const absolute = path.resolve(directory ?? path.join(this.scopeDirectoryFor(scope), pluginId))
+    const canonical = process.platform === 'win32' ? absolute.toLowerCase() : absolute
+    return `project:${createHash('sha256').update(canonical).digest('hex')}:${pluginId}`
   }
 
   private async loadPreferences(): Promise<void> {
@@ -173,7 +185,7 @@ export class PluginService {
       const parsed = JSON.parse(await fs.readFile(this.preferencesPath(), 'utf8')) as Partial<PluginPreferences>
       if (parsed.version !== 1 || !parsed.enabled || typeof parsed.enabled !== 'object') return
       for (const [key, enabled] of Object.entries(parsed.enabled)) {
-        if (/^(global|project):[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(key) && typeof enabled === 'boolean') {
+        if (/^(?:global:|project:[a-f0-9]{64}:)[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(key) && typeof enabled === 'boolean') {
           this.enabledOverrides.set(key, enabled)
         }
       }
@@ -325,7 +337,7 @@ export class PluginService {
         manifest,
         scope,
         directory: pluginDirectory,
-        enabled: this.enabledOverrides.get(this.preferenceKey(scope, manifest.id)) ?? true,
+        enabled: this.enabledOverrides.get(this.preferenceKey(scope, manifest.id, pluginDirectory)) ?? scope === 'global',
         revision: this.revisions.get(manifest.id) ?? 0,
         ...(entryErrors.length > 0 ? { error: entryErrors.join('；') } : {})
       })
@@ -355,7 +367,7 @@ export class PluginService {
   setEnabled(id: string, enabled: boolean): void {
     const record = this.records.get(id)
     if (record) {
-      this.enabledOverrides.set(this.preferenceKey(record.scope, id), enabled)
+      this.enabledOverrides.set(this.preferenceKey(record.scope, id, record.directory), enabled)
       record.enabled = enabled
       if (enabled) this.runtimeErrors.delete(id)
       this.bumpRevision(id)
@@ -531,15 +543,17 @@ export class PluginService {
 
   /** 把 previewZipImport 暂存的目录移动到目标作用域。 */
   async confirmImport(stagedDirectory: string, scope: PluginScope): Promise<PluginManifest> {
+    const scopeDirectory = this.scopeDirectoryFor(scope)
     const loaded = await readManifestFile(stagedDirectory)
     if (!loaded.manifest) throw new Error(loaded.error ?? 'manifest 无效')
     const manifest = loaded.manifest
     const entryErrors = await verifyEntries(manifest, stagedDirectory)
     if (entryErrors.length > 0) throw new Error(entryErrors.join('；'))
-    const destination = path.join(this.scopeDirectoryFor(scope), manifest.id)
+    const destination = path.join(scopeDirectory, manifest.id)
     await fs.mkdir(path.dirname(destination), { recursive: true })
     await this.replaceDirectoryAtomically(stagedDirectory, destination)
     await this.cleanupStagingDirectory(stagedDirectory)
+    this.enabledOverrides.set(this.preferenceKey(scope, manifest.id, destination), true)
     this.runtimeErrors.delete(manifest.id)
     this.bumpRevision(manifest.id)
     await this.refresh()
@@ -553,13 +567,14 @@ export class PluginService {
 
   /** 直接导入一个已存在的文件夹（开发场景）。 */
   async importFolder(sourceDirectory: string, scope: PluginScope): Promise<PluginManifest> {
+    const scopeDirectory = this.scopeDirectoryFor(scope)
     const loaded = await readManifestFile(sourceDirectory)
     if (!loaded.manifest) throw new Error(loaded.error ?? 'manifest 无效')
     const manifest = loaded.manifest
     if (manifest.id !== path.basename(sourceDirectory)) {
       throw new Error(`manifest id "${manifest.id}" 与文件夹名 "${path.basename(sourceDirectory)}" 不一致`)
     }
-    const destination = path.join(this.scopeDirectoryFor(scope), manifest.id)
+    const destination = path.join(scopeDirectory, manifest.id)
     await fs.mkdir(path.dirname(destination), { recursive: true })
     const entryErrors = await verifyEntries(manifest, sourceDirectory)
     if (entryErrors.length > 0) throw new Error(entryErrors.join('；'))
@@ -571,6 +586,7 @@ export class PluginService {
       await fs.rm(incoming, { recursive: true, force: true }).catch(() => undefined)
     }
     this.runtimeErrors.delete(manifest.id)
+    this.enabledOverrides.set(this.preferenceKey(scope, manifest.id, destination), true)
     this.bumpRevision(manifest.id)
     await this.refresh()
     this.options.onChange?.(this.getSnapshot())
@@ -599,7 +615,7 @@ export class PluginService {
     const record = this.records.get(pluginId)
     if (!record) return
     await fs.rm(record.directory, { recursive: true, force: true })
-    this.enabledOverrides.delete(this.preferenceKey(record.scope, pluginId))
+    this.enabledOverrides.delete(this.preferenceKey(record.scope, pluginId, record.directory))
     void this.persistPreferences()
     this.runtimeErrors.delete(pluginId)
     this.revisions.delete(pluginId)
@@ -683,10 +699,11 @@ export class PluginService {
     if (!record) throw new Error(`未找到插件 ${pluginId}`)
     for (const file of files) {
       const normalized = file.path.replaceAll('\\', '/')
-      const resolved = path.resolve(record.directory, normalized)
-      if (!resolved.startsWith(path.resolve(record.directory) + path.sep)) {
-        throw new Error(`文件路径越界：${file.path}`)
-      }
+      const resolved = await scopedFilePath(record.directory, normalized).catch((error: Error) => {
+        throw new Error(`文件路径越界或不安全：${file.path} (${error.message})`)
+      })
+      const anchor = await fs.realpath(record.scope === 'project' ? path.resolve(record.directory, '../../..') : path.dirname(this.options.globalDirectory))
+      await scopedFilePath(anchor, path.relative(anchor, resolved))
       await fs.mkdir(path.dirname(resolved), { recursive: true })
       await fs.writeFile(resolved, file.content, 'utf8')
     }

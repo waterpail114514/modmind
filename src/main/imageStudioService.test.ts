@@ -1,6 +1,8 @@
+vi.mock('./networkRequest', async (importOriginal) => ({ ...(await importOriginal<typeof import('./networkRequest')>()), networkFetch: (input: string | URL, init?: RequestInit) => globalThis.fetch(input, init) }))
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createServer } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
@@ -19,7 +21,11 @@ const roots: string[] = []
 afterEach(async () => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
-  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
+  // Sharp may release a worker-owned file handle just after the assertion
+  // completes on Windows. Let the sandbox cleanup retry that transient
+  // directory race instead of turning a passing product assertion into a
+  // suite failure.
+  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })))
 })
 
 function settings(apiKey: string, clearApiKey = false) {
@@ -39,6 +45,58 @@ function generationRequest(overrides: Partial<ImageGenerationRequest> = {}): Ima
 }
 
 describe('ImageStudioService hosted credential freshness', () => {
+  it('aborts the real secondary image download without creating the next billed request', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-url-cancel-')); roots.push(root)
+    const controller = new AbortController()
+    let generations = 0
+    let origin = ''
+    const server = createServer((request, response) => {
+      if (request.url === '/v1/images/generations') {
+        generations += 1; request.resume()
+        response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ data: [{ url: `${origin}/image.png` }] }))
+      } else {
+        response.writeHead(200, { 'Content-Type': 'image/png' }); response.write(Buffer.alloc(10))
+        setTimeout(() => controller.abort(), 20)
+      }
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+    const getHostedLease = vi.fn(async () => ({ baseUrl: `${origin}/v1`, apiKey: 'fixture', jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    try {
+      await expect(service.generate(generationRequest({ count: 3, model: 'images' }), 'agent', controller.signal)).rejects.toThrow()
+      expect(generations).toBe(1); expect(getHostedLease).toHaveBeenCalledTimes(1)
+      expect(await service.history()).toEqual([])
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
+  })
+  it('cancels an active request and does not acquire another image lease', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-cancel-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://image.test/v1', apiKey: 'fixture', jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      queueMicrotask(() => controller.abort())
+      await new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
+    }))
+    await expect(service.generate(generationRequest({ count: 3, model: 'images' }), 'agent', controller.signal)).rejects.toThrow()
+    expect(getHostedLease).toHaveBeenCalledTimes(1)
+    expect(await service.history()).toEqual([])
+  })
+
+  it('returns already generated image bytes if history replacement fails and preserves old history', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-history-failure-')); roots.push(root)
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: async () => ({ baseUrl: 'https://image.test/v1', apiKey: 'fixture', jobId: 'job', reservedCredits: 1 }) })
+    const old = '[{"id":"previous"}]'; await fs.writeFile(path.join(root, 'image-studio-history.json'), old)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] }))))
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(Object.assign(new Error('disk blocked'), { code: 'EACCES' }))
+    const result = await service.generate(generationRequest({ count: 3, model: 'images' }))
+    expect(result.assets).toHaveLength(1)
+    expect(result.assets[0].dataUrl).toBe('data:image/png;base64,aW1hZ2U=')
+    expect(result.error).toContain('历史记录保存失败')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(await fs.readFile(path.join(root, 'image-studio-history.json'), 'utf8')).toBe(old)
+    expect((await fs.readdir(root)).filter(name => name.endsWith('.tmp'))).toEqual([])
+  })
   it('uses the synced image API without requesting a hosted lease', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-synced-image-'))
     roots.push(root)
@@ -176,7 +234,7 @@ describe('ImageStudioService hosted credential freshness', () => {
     await expect(service.generate(request)).rejects.toThrow('HTTP 401')
     await expect(service.generate(request)).resolves.toMatchObject({ jobId: 'job-3', hosted: true })
     expect(getHostedLease).toHaveBeenCalledTimes(3)
-    expect(getHostedLease).toHaveBeenNthCalledWith(3, request)
+    expect(getHostedLease).toHaveBeenNthCalledWith(3, request, undefined)
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(events).toEqual(['lease:1', 'ready:1', 'fetch:1', 'lease:2', 'ready:2', 'fetch:2', 'lease:3', 'ready:3', 'fetch:3'])
   })

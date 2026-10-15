@@ -3,12 +3,18 @@ import path from 'node:path'
 import type { VanillaItem, VanillaItemKind } from '../shared/itemEditor'
 import { fetchTextWithRetry } from './networkRequest'
 import { bundledVanillaItems } from './itemCatalogBundled'
+import { referenceDownloadSources } from './referenceDownloadSources'
 
 const catalogs = new Map<string, Promise<VanillaItem[]>>()
 const itemName = /^[a-z0-9_]+$/
 
 async function catalogJson(url: string): Promise<unknown> {
-  return JSON.parse(await fetchTextWithRetry(url, { attempts: 2, timeoutMs: 12000 })) as unknown
+  let lastError: unknown
+  for (const source of referenceDownloadSources(url)) {
+    try { return JSON.parse(await fetchTextWithRetry(source, { attempts: 1, timeoutMs: 12000 })) as unknown }
+    catch (error) { lastError = error }
+  }
+  throw lastError
 }
 
 function kindOf(id: string, blocks: Set<string>): VanillaItemKind {

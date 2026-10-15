@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import net from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy, retryAfterDelay } from './networkRequest'
+import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy, retryAfterDelay, networkFetch } from './networkRequest'
 
 let server: Server
 const hitCounts = new Map<string, number>()
@@ -115,6 +115,8 @@ describe('configured network proxy', () => {
     try {
       setNetworkProxy(`http://probe:secret@127.0.0.1:${(proxy.address() as net.AddressInfo).port}`)
       expect(await fetchTextWithRetry('http://proxy-test.invalid/echo', { attempts: 1 })).toContain('/echo')
+      const response = await networkFetch('http://proxy-test.invalid/echo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ streamingFetch: true }) })
+      expect(await response.json()).toEqual({ echoed: { streamingFetch: true } })
       expect(authorization).toBe(`Basic ${Buffer.from('probe:secret').toString('base64')}`)
     } finally { setNetworkProxy(''); for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => proxy.close(() => resolve())) }
   })

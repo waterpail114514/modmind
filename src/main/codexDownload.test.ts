@@ -38,6 +38,64 @@ async function archive(directory: string, includeExecutable: boolean): Promise<s
   return result
 }
 describe('managed Codex cache protection', () => {
+  it('does not start work for an already cancelled request', async () => {
+    const directory = await root()
+    const controller = new AbortController()
+    controller.abort()
+    const download = vi.spyOn(verifiedDownload, 'download')
+    await expect(ensureManagedCodexRuntime({ rootDir: directory, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(download).not.toHaveBeenCalled()
+    expect(await fs.readdir(directory)).toEqual([])
+  })
+
+  it('cancels the last subscriber during download and waits for staging cleanup', async () => {
+    const directory = await root()
+    const old = await installedRuntime(directory, '0.146.0')
+    const controller = new AbortController()
+    let started!: () => void
+    const downloading = new Promise<void>(resolve => { started = resolve })
+    vi.spyOn(verifiedDownload, 'download').mockImplementation(async request => {
+      await fs.writeFile(request.destination, 'partial fixture')
+      started()
+      return await new Promise<never>((_resolve, reject) => request.signal!.addEventListener('abort', () => reject(Object.assign(new Error('download cancelled'), { name: 'AbortError' })), { once: true }))
+    })
+    const operation = ensureManagedCodexRuntime({ rootDir: directory, signal: controller.signal })
+    const rejected = expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    await downloading
+    controller.abort()
+    await rejected
+    expect(await fs.readFile(old, 'utf8')).toBe('0.146.0')
+    expect((await fs.readdir(path.join(directory, 'codex-runtime'))).some(name => name.includes('.staging-'))).toBe(false)
+  })
+
+  it('lets another subscriber finish the shared installation after one caller stops', async () => {
+    const directory = await root()
+    const fixture = await archive(directory, true)
+    const controller = new AbortController()
+    let started!: () => void, release!: () => void
+    const downloading = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let transferSignal: AbortSignal | undefined
+    vi.mocked(probeCodexExecutable).mockResolvedValue(CODEX_RUNTIME_VERSION)
+    const download = vi.spyOn(verifiedDownload, 'download').mockImplementation(async request => {
+      transferSignal = request.signal
+      started()
+      await gate
+      await fs.copyFile(fixture, request.destination)
+      return {} as Awaited<ReturnType<typeof verifiedDownload.download>>
+    })
+    const stopped = ensureManagedCodexRuntime({ rootDir: directory, signal: controller.signal })
+    const rejected = expect(stopped).rejects.toMatchObject({ name: 'AbortError' })
+    const continuing = ensureManagedCodexRuntime({ rootDir: directory })
+    await downloading
+    controller.abort()
+    await rejected
+    expect(transferSignal?.aborted).toBe(false)
+    release()
+    expect(await continuing).toBe(managedCodexExecutablePath(directory))
+    expect(download).toHaveBeenCalledOnce()
+  })
+
   it('retires all obsolete versions on a cache hit while preserving user data and unrelated directories', async () => {
     const directory = await root()
     const executable = await installedRuntime(directory)

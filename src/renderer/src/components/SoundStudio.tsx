@@ -5,6 +5,7 @@ import { changeEffectParameter, draftToMidi, effectParameter, effectPresetLabels
 import { renderBeepBoxSong } from './beepboxMusic'
 import BeepBoxEditor from './BeepBoxEditor'
 import { reportClientFailure } from '../lib/clientFailure'
+import AudioPlayer from './AudioPlayer'
 
 const parameters = [
   { key: 'waveform', label: '波形' }, { key: 'frequency', label: '频率' }, { key: 'frequencySweep', label: '频率滑动' },
@@ -137,7 +138,7 @@ export default function SoundStudio({ projectPath, onFilesChanged }: { projectPa
       {loaded ? <BeepBoxEditor song={draft.music.beepboxSong ?? ''} view={musicView} onChange={(song, hasNotes) => { setMusicHasNotes(hasNotes); if (song !== draft.music.beepboxSong) update({ ...draft, music: { ...draft.music, beepboxSong: song } }) }} /> : null}
     </>}</div>
     <div className="sound-studio-footer"><label>输出事件 ID<input value={draft.eventId} onChange={event => update({ ...draft, eventId: event.target.value })} placeholder={draft.mode === 'music' ? 'music/theme' : 'ui/confirm'} /></label><label>总音量 <output>{Math.round(draft.gain * 100)}%</output><input type="range" min={.05} max={1} step={.05} value={draft.gain} onChange={event => update({ ...draft, gain: Number(event.target.value) })} /></label><div className="sound-studio-actions"><button className="secondary-button compact" type="button" disabled={Boolean(busy) || draft.mode === 'music' && !musicHasNotes} onClick={() => void render()}>{busy === 'render' ? <LoaderCircle className="spin" size={14} /> : <SlidersHorizontal size={14} />}生成试听</button><button className="primary-button compact" type="button" disabled={Boolean(busy) || !draft.eventId.trim() || draft.mode === 'music' && !musicHasNotes} onClick={() => void exportSound()}>{busy === 'save' ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}导出到项目</button></div></div>
-    <div className="sound-studio-preview">{preview ? <audio controls src={preview} /> : <span>{draft.mode === 'music' && !musicHasNotes ? '添加音符后可生成试听' : '生成后可试听'}</span>}</div>
+    <div className="sound-studio-preview">{preview ? <AudioPlayer src={preview} /> : <span>{draft.mode === 'music' && !musicHasNotes ? '添加音符后可生成试听' : '生成后可试听'}</span>}</div>
     {notice ? <div className="authoring-feedback" role="status"><CircleAlert size={14} />{notice}</div> : null}
   </div>
 }

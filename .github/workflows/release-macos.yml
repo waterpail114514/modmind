@@ -38,6 +38,7 @@ jobs:
           test -z "$(git status --porcelain)"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"; fi
       - run: npm ci
+      - run: npm run sync:mcp
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import type { JavaLoaderKind, ModpackImportFormat, ModpackLayout, ModpackModuleSide } from '../shared/types'
 import { verifiedDownload } from './downloadService'
+import { assertContentTarget, installContentTransaction } from './contentInstallTransaction'
 import { installCurseForgePack, parseCurseForgeReferences, type CurseForgePackReference, type CurseForgePackInstallOptions } from './curseForgePackService'
 
 const PACK_CONTENT_DIRECTORIES = new Set([
@@ -423,6 +423,7 @@ async function downloadRemoteFile(
     maxBytes: Math.min(MAX_REMOTE_FILE_BYTES, remaining),
     retriesPerSource: 2,
     timeoutMs: 120_000,
+    signal: options.signal,
     trackActivity: options.trackDownloadActivities !== false,
     onAttempt: ({ source, attempt, attemptsPerSource }) => options.onProgress?.({
       path: entry.path,
@@ -460,6 +461,7 @@ export async function materializeExternalModpack(
   targetRoot: string,
   options: ExternalModpackMaterializationOptions = {}
 ): Promise<ExternalModpackMaterialization> {
+  options.signal?.throwIfAborted()
   const target = path.resolve(targetRoot)
   const source = path.resolve(inspection.root)
   let copiedFiles = 0
@@ -472,12 +474,12 @@ export async function materializeExternalModpack(
       if (await pathIsDirectory(from)) copiedFiles += await copyDirectory(from, path.join(target, 'overrides'), localBudget)
       for (const directory of ['client-overrides', 'server-overrides']) {
         const scoped = path.join(source, directory)
-        if (await pathIsDirectory(scoped)) copiedFiles += await copyDirectory(scoped, path.join(target, 'overrides'), localBudget)
+        if (await pathIsDirectory(scoped)) copiedFiles += await copyDirectory(scoped, path.join(target, directory), localBudget)
       }
     } else if ((inspection.format === 'modrinth' || inspection.format === 'curseforge') && !installedInstance) {
       for (const directory of ['overrides', 'client-overrides', 'server-overrides']) {
         const from = path.join(source, directory)
-        if (await pathIsDirectory(from)) copiedFiles += await copyDirectory(from, target, localBudget)
+        if (await pathIsDirectory(from)) copiedFiles += await copyDirectory(from, directory === 'overrides' ? target : path.join(target, directory), localBudget)
       }
     } else {
       const entries = await fs.readdir(source, { withFileTypes: true }).catch(() => [])
@@ -517,30 +519,31 @@ export async function materializeExternalModpack(
     return { copiedFiles, ...result }
   }
   const budget = { bytes: 0 }
-  const remoteStaging = source === target ? await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-remote-')) : ''
+  const stagingParent = path.join(target, '.modmind', 'import')
+  await assertContentTarget(target, stagingParent)
+  await fs.mkdir(stagingParent, { recursive: true })
+  const remoteStaging = await fs.mkdtemp(path.join(stagingParent, 'remote-'))
   const downloadedPaths: Array<{ staged: string; target: string }> = []
   try {
     for (const [index, entry] of inspection.remoteFiles.entries()) {
+      options.signal?.throwIfAborted()
       const fileIndex = index + 1
       const fileCount = inspection.remoteFiles.length
       options.onProgress?.({ path: entry.path, fileIndex, fileCount, phase: 'checking' })
       const relative = inspection.layout === 'archive' ? `overrides/${entry.path}` : entry.path
       const finalPath = destinationFor(target, relative)
-      if (source === target && await matchesRemoteHash(finalPath, entry)) {
+      if (await matchesRemoteHash(finalPath, entry)) {
         options.onProgress?.({ path: entry.path, fileIndex, fileCount, phase: 'completed' })
         continue
       }
-      const stagedPath = remoteStaging ? destinationFor(remoteStaging, relative) : finalPath
+      const stagedPath = destinationFor(remoteStaging, relative)
       await downloadRemoteFile(entry, stagedPath, budget, options, fileIndex, fileCount)
       if (stagedPath !== finalPath) downloadedPaths.push({ staged: stagedPath, target: finalPath })
       downloadedFiles += 1
       options.onProgress?.({ path: entry.path, fileIndex, fileCount, phase: 'completed' })
     }
-    for (const entry of downloadedPaths) {
-      await fs.mkdir(path.dirname(entry.target), { recursive: true })
-      await fs.rm(entry.target, { force: true })
-      await fs.rename(entry.staged, entry.target)
-    }
+    options.signal?.throwIfAborted()
+    await installContentTransaction(target, downloadedPaths.map(entry => ({ source: entry.staged, destination: entry.target })), async () => { options.signal?.throwIfAborted() })
   } finally {
     if (remoteStaging) await fs.rm(remoteStaging, { recursive: true, force: true }).catch(() => undefined)
   }

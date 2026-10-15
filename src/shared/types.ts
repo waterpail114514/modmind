@@ -6,6 +6,7 @@ import type { ImageGenerationRequest, ImageGenerationResult, ImageHistoryItem, I
 import type { AssetIntentCandidate, AssetIntentPreview, AssetIntentProgram, AssetRefinementCandidate, AssetRefinementPreview, AssetRefinementProgram } from './assetIntent'
 import type {AdvancedAssetCandidate, AdvancedAssetComparison, AdvancedAssetPreviewOptions, AdvancedAssetProgram, AssetVisualReview, ReferenceImageAssetCandidate, ReferenceImageAssetProgram} from './advancedAsset'
 import type { ServerFixtureJar } from './serverScenario'
+import type { PatchouliBookInput } from './patchouli'
 
 export type JavaLoaderKind = 'fabric' | 'quilt' | 'forge' | 'neoforge'
 export type AddonPlatformKind = 'bedrock' | 'netease-pc' | 'netease-mobile'
@@ -860,7 +861,9 @@ export interface AgentSettings {
   /** Historical storage key; applies to both workbench engines, never inspiration or external terminals. */
   codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
+  /** @deprecated Legacy storage compatibility; builds use the managed automatic policy. */
   allowBuildScriptChanges: boolean
+  /** @deprecated Legacy storage compatibility; not an effective runtime preference. */
   preferLocalGradle: boolean
   gradleExecutable?: string
   gradleDownloadSource: 'auto' | 'china' | 'official'
@@ -1017,6 +1020,7 @@ export interface AiNotice {
 }
 
 export interface AiOutputEvent {
+  inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   notice?: AiNotice
   kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage'
   content: string
@@ -1045,6 +1049,10 @@ export interface AiOutputEvent {
 }
 
 export interface InspirationChatMessage {
+  /** Selection snapshot for this turn; history never adopts later capability choices. */
+  inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
+  generation?: number
+  promptEdit?: string
   usage?: AiTokenUsage
   notice?: AiNotice
   role: 'user' | 'assistant'
@@ -1326,6 +1334,21 @@ export interface DownloadActivitySnapshot {
   activities: DownloadActivity[]
 }
 
+/**
+ * A renderer-owned application dialog.  Main-process workflows use this
+ * instead of Electron's native message box so that confirmations and notices
+ * inherit ModMind's theme and keyboard/focus behavior.
+ */
+export interface AppDialogRequest {
+  id: string
+  kind: 'confirm' | 'info'
+  title: string
+  message: string
+  detail?: string
+  confirmLabel?: string
+  cancelLabel?: string
+}
+
 export interface ModMindApi {
   itemEditor: import('./itemEditor').ItemEditorApi
   resourcePacks: import('./resourcePack').ResourcePackApi
@@ -1345,6 +1368,8 @@ export interface ModMindApi {
     onOpenSettings: (listener: () => void) => () => void
     onOpenView: (listener: (view: SidebarViewId) => void) => () => void
     onDetachedWindowClosed: (listener: (target: DetachedWindowTarget) => void) => () => void
+    onDialogRequest: (listener: (request: AppDialogRequest) => void) => () => void
+    resolveDialog: (requestId: string, confirmed: boolean) => Promise<void>
     onCloseRequested: (listener: () => void) => () => void
     resolveClose: (choice: 'tray' | 'quit' | 'cancel', remember: boolean) => Promise<void>
     minimize: () => Promise<void>
@@ -1462,6 +1487,7 @@ export interface ModMindApi {
     saveFtbQuestBook: (book: FtbQuestBook, projectPath?: string) => Promise<FtbQuestSaveResult>
     writeFtbQuest: (input: unknown) => Promise<string>
     writePatchouliBook: (input: unknown) => Promise<string[]>
+    readPatchouliBooks: () => Promise<PatchouliBookInput[]>
     applyKeybindPreset: (input: unknown, allowConflicts?: boolean) => Promise<unknown>
     buildServerPack: (input: unknown) => Promise<unknown>
     installServerRuntime: (input: unknown) => Promise<unknown>
@@ -1500,7 +1526,7 @@ export interface ModMindApi {
   settings: {
     revealSecret: (key: 'codex' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
     getAgent: () => Promise<AgentSettings>
-    saveAgent: (settings: AgentSettings) => Promise<AgentSettings>
+    saveAgent: (settings: import('./agentSettingsPatch').AgentSettingsPatch) => Promise<AgentSettings>
     onAppearanceChanged: (listener: (appearance: import('./appTheme').AppAppearance) => void) => () => void
     pickBackground: () => Promise<import('./appTheme').BackgroundMedia | null>
     listAgentModels: (kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => Promise<AiModelInfo[]>
@@ -1632,6 +1658,8 @@ export interface ModMindApi {
   localTest: LocalTestApi
   production: ProductionApi
   inspiration: {
+    readWorkflow: (projectPath: string, identity: { conversationId: string; turnId: string; generation: number }) => Promise<import('./inspirationKnowledge').InspirationWorkflowRecord | null>
+    commitWorkflow: (projectPath: string, identity: { conversationId: string; turnId: string; generation: number }, edits: Array<{ index: number; title: string; content: string }>, undo?: boolean) => Promise<import('./inspirationKnowledge').InspirationWorkflowRecord>
     listModels: (backend: CodingBackend) => Promise<AiModelInfo[]>
     verifyImageInput: (backend: CodingBackend, model: string) => Promise<ModelImageVerification>
     readEvidence: (projectPath: string, input: import('./inspirationEvidence').InspirationEvidenceRequest) => Promise<import('./inspirationEvidence').InspirationEvidence>

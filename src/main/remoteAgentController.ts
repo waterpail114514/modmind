@@ -1,3 +1,4 @@
+import { requestAiTextResponse } from './aiTextRequest'
 import type { AgentSettings, LoaderKind, ProjectKind, ReasoningEffort, RemoteConnectionState } from '../shared/types'
 
 export interface RemoteQuotaConfig {
@@ -306,14 +307,7 @@ export class RemoteControllerAgent {
     callbacks.signal?.addEventListener('abort', forwardAbort, { once: true })
     let response: Response
     try {
-      response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: config.model,
-          reasoning_effort: config.reasoningEffort,
-          temperature: 0,
-          messages: [
+      response = await requestAiTextResponse(config, [
             {
               role: 'system',
               content: `你是 ModMind Remote Controller。你只负责判断请求路由和控制 ModMind 应用，不负责修改项目文件。\n\n严格规则：\n1. 只要请求涉及项目源码、资源、配置、依赖、构建、测试、Minecraft、Blockbench、图片资源或整合包，就归类 WORKBENCH。手动点击构建和 MCP 构建属于同一个 WORKBENCH 能力。\n2. WORKBENCH 请求不要改写用户原话。桌面端会把原始请求原样交给工作台。\n3. APP_CONTROL 只能用于 ModMind 应用层操作。\n4. MIXED 用于同时包含应用控制和项目任务；先给出应用操作，再给出交给工作台的子任务。\n5. 无法完成时使用 UNSUPPORTED，不要编造已执行。\n6. 只返回 JSON，不要 Markdown。\n\nWORKBENCH 能力：\n${WORKBENCH_CAPABILITIES.map((item) => `- ${item}`).join('\n')}\n\nAPP_CONTROL 能力：\n${CONTROL_CAPABILITIES.map((item) => `- ${item}`).join('\n')}\n\nJSON 格式：\nWORKBENCH: {"kind":"WORKBENCH"}\nAPP_CONTROL: {"kind":"APP_CONTROL","actions":[{"type":"..."}],"reply":"..."}\nMIXED: {"kind":"MIXED","actions":[{"type":"..."}],"workbenchPrompt":"交给工作台的任务"}\nUNSUPPORTED: {"kind":"UNSUPPORTED","reply":"..."}`
@@ -323,10 +317,7 @@ export class RemoteControllerAgent {
               content: `APP_CONTROL actions are limited to these exact JSON objects. Never invent an action type. Creating/opening/switching a project is APP_CONTROL, not WORKBENCH. For a request like "create a project and then do X", return MIXED with create_project first. If project details are omitted, use name "新项目", loader "fabric", Minecraft version "1.21.1", kind "mod". Page/view values must be one of: ${REMOTE_APP_PAGES.join(', ')}\n${REMOTE_APP_ACTION_CATALOG.map((item) => `- ${item}`).join('\n')}`
             },
             { role: 'user', content: JSON.stringify({ request: prompt, appState: state }) }
-          ]
-        }),
-        signal: requestController.signal
-      })
+          ], { signal: requestController.signal, reasoningEffort: config.reasoningEffort, temperature: 0 })
       const payload = await response.json().catch(() => null)
       if (!response.ok) throw new Error(`Remote Controller 请求失败（HTTP ${response.status}）`)
       const decision = extractJson(messageContent(payload))

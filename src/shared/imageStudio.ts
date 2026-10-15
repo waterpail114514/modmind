@@ -9,7 +9,9 @@ export interface ImageStudioSettings {
   model: string
   hasStoredKey: boolean
   syncedFromDevice?: boolean
+  /** @deprecated Compatibility field, normalized to true; not an authorization switch. */
   allowAgentImages: boolean
+  /** @deprecated Compatibility field; existing authorized work continues automatically. */
   autoApproveAgentImages: boolean
   manualHostedConsent: boolean
 }

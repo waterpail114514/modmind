@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DownloadManager } from './downloadService'
 import { createStoredZip } from './bedrockAddon'
@@ -76,6 +77,28 @@ describe('verified download manager', () => {
     const destination = path.join(root, 'core.jar')
     const request = { sources: [{ id: 'core', label: 'core', url: source.url }], destination, retriesPerSource: 1, expectedHash: { algorithm: 'sha256' as const, value: createHash('sha256').update('verified').digest('hex') } }
     await Promise.all([new DownloadManager().download(request), new DownloadManager().download(request)])
+    expect(await fs.readFile(destination, 'utf8')).toBe('verified')
+    expect(await fs.readdir(root)).toEqual(['core.jar'])
+  })
+
+  it('serializes same-target promotion across separate managers', async () => {
+    const source = await server((_request, response) => { response.end('verified') })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-promotion-')); roots.push(root)
+    const destination = path.join(root, 'core.jar')
+    const request = { sources: [{ id: 'core', label: 'core', url: source.url }], destination, retriesPerSource: 1 }
+    const originalRename = fs.rename.bind(fs)
+    let activePromotions = 0
+    let overlappedPromotions = false
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(from).startsWith(root + path.sep) && String(from).includes('.partial-')) {
+        if (activePromotions++ > 0) overlappedPromotions = true
+        await delay(20)
+        activePromotions -= 1
+      }
+      return originalRename(from, to)
+    })
+    await Promise.all([new DownloadManager().download(request), new DownloadManager().download(request)])
+    expect(overlappedPromotions).toBe(false)
     expect(await fs.readFile(destination, 'utf8')).toBe('verified')
     expect(await fs.readdir(root)).toEqual(['core.jar'])
   })

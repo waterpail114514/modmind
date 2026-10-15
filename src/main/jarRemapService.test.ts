@@ -51,12 +51,12 @@ function findJava(): string | null {
   return null
 }
 
-function compileClass(directory: string): void {
+function compileClass(directory: string, sourceDirectory: string): void {
   const javaHome = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin') : ''
   const javac = javaHome && existsSync(path.join(javaHome, 'javac.exe')) ? path.join(javaHome, 'javac.exe')
     : javaHome && existsSync(path.join(javaHome, 'javac')) ? path.join(javaHome, 'javac')
     : 'javac'
-  execFileSync(javac, ['-d', directory, path.join(directory, 'Main.java')], { stdio: 'pipe' })
+  execFileSync(javac, ['-d', directory, path.join(sourceDirectory, 'Main.java'), path.join(sourceDirectory, 'class_1234.java')], { stdio: 'pipe' })
 }
 
 /** Builds a jar whose class references intermediary-named classes so remapping has something to do. */
@@ -74,11 +74,6 @@ async function fixtureIntermediaryJar(): Promise<string> {
   ].join('\n'), 'utf8')
   const classes = path.join(root, 'classes')
   await fs.mkdir(classes, { recursive: true })
-  try {
-    compileClass(classes)
-  } catch {
-    return ''
-  }
   // Recompile against a stub named class_1234 so javac accepts the reference.
   await fs.writeFile(path.join(sourceDir, 'class_1234.java'), [
     'public class class_1234 {',
@@ -86,11 +81,7 @@ async function fixtureIntermediaryJar(): Promise<string> {
     '  }',
     ''
   ].join('\n'), 'utf8')
-  try {
-    compileClass(classes)
-  } catch {
-    return ''
-  }
+  compileClass(classes, sourceDir)
   const files: Array<{ name: string; data: Buffer }> = []
   for (const entry of await fs.readdir(classes, { withFileTypes: true })) {
     if (entry.isFile()) files.push({ name: entry.name, data: await fs.readFile(path.join(classes, entry.name)) })
@@ -101,6 +92,28 @@ async function fixtureIntermediaryJar(): Promise<string> {
 }
 
 describe('jar remap service', () => {
+  it('cancels an in-flight mapping download without publishing a cache', async () => {
+    const root = await scratch()
+    const controller = new AbortController()
+    let started!: () => void
+    const downloading = new Promise<void>(resolve => { started = resolve })
+    const operation = ensureYarnMappings(root, '1.21.1', {
+      signal: controller.signal,
+      listVersions: async () => YARN_ENTRIES,
+      download: async request => {
+        await fs.writeFile(request.destination, 'partial mapping download')
+        started()
+        return await new Promise<never>((_resolve, reject) => {
+          request.signal?.addEventListener('abort', () => reject(request.signal!.reason), { once: true })
+        })
+      }
+    })
+    const rejected = expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    await downloading
+    controller.abort()
+    await rejected
+    expect(await fs.readdir(path.join(root, 'yarn'))).toEqual([])
+  })
   it('rebuilds nonempty broken mappings and coalesces concurrent requests', async () => {
     const root = await scratch()
     const target = yarnMappingsCachePath(root, '1.21.1')
@@ -187,13 +200,13 @@ describe('jar remap service', () => {
     })).rejects.toThrow(/no yarn mappings published/i)
   })
 
-  it('remaps an intermediary-named jar end to end when a JDK is available', async () => {
+  it('remaps an intermediary-named jar end to end when a JDK is available', async context => {
     const javaPath = findJava()
-    if (!javaPath) return
+    if (!javaPath) { context.skip(); return }
     const jar = await fixtureIntermediaryJar()
-    if (!jar) return // no JDK compiler available
     const cacheRoot = await scratch()
     const mappingsPath = path.join(cacheRoot, 'yarn', 'test.tiny')
+    await fs.mkdir(path.dirname(mappingsPath), { recursive: true })
     await fs.writeFile(mappingsPath, SAMPLE_TINY, 'utf8')
     const outputJar = path.join(path.dirname(jar), 'remapped', 'named.jar')
     await fs.mkdir(path.dirname(outputJar), { recursive: true })
@@ -204,7 +217,8 @@ describe('jar remap service', () => {
   }, 120_000)
 
   it('rejects missing inputs before spawning Java', async () => {
-    const javaPath = findJava() ?? 'java'
+    // This branch checks input validation only; no Java process is started.
+    const javaPath = process.execPath
     const root = await scratch()
     await expect(remapJarWithTinyRemapper({
       inputJar: path.join(root, 'missing.jar'),

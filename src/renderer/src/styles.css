@@ -2028,6 +2028,7 @@ button { color: inherit; }
 .file-panel-actions, .editor-actions { display: flex; align-items: center; gap: 2px; }
 .editor-path { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-path svg { flex: 0 0 auto; }
+.editor-status { flex: 1; min-width: 0; margin-inline: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--theme-danger); font-weight: 400; }
 .editor-path i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--theme-action); }
 .editor-actions { flex: 0 0 auto; margin-left: 12px; }
 .icon-button.danger { color: var(--theme-danger); }
@@ -2729,7 +2730,7 @@ button { color: inherit; }
 .app-shell.dark-mode .patchouli-category-list button:hover, .app-shell.dark-mode .patchouli-entries button:hover { background: var(--theme-panel); }
 .app-shell.dark-mode .patchouli-category-list button.selected, .app-shell.dark-mode .patchouli-entries button.selected { border-color: var(--theme-line); color: var(--theme-accent); background: var(--theme-selected); }
 .app-shell.dark-mode .patchouli-message { border-color: var(--theme-line); color: var(--theme-success); background: var(--theme-surface); }
-@media (max-width: 960px) { .patchouli-book-layout { grid-template-columns: 210px minmax(0, 1fr); } .patchouli-entry-inspector { grid-column: 1 / -1; min-height: 350px; border-top: 1px solid var(--line); border-left: 0; } }
+@media (max-width: 1200px) { .patchouli-book-layout { grid-template-columns: 210px minmax(0, 1fr); } .patchouli-entry-inspector { grid-column: 1 / -1; min-height: 350px; border-top: 1px solid var(--line); border-left: 0; } }
 @media (max-width: 640px) { .main-content:has(.ftb-quest-host) { height: 100%; min-height: 0; overflow: hidden; } .ftb-quest-host, .ftb-quest-host .ftb-quest-editor { height: 100%; min-height: 0; } .ftb-quest-host .ftb-quest-layout { min-height: 0; overflow: auto; } .patchouli-toolbar { align-items: flex-start; flex-direction: column; gap: 12px; } .patchouli-book-meta { grid-template-columns: 1fr; padding: 16px; } .patchouli-book-layout { grid-template-columns: 1fr; margin: 16px; } .patchouli-categories { min-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); } .patchouli-category-list { display: flex; overflow-x: auto; } .patchouli-category-list button { min-width: 160px; } .patchouli-add-category { display: none; } }
 
 .server-panel-toolbar { align-items: center; }

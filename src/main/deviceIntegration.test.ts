@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import * as network from './networkRequest'
 import {
   normalizeSiteUrl,
   openAiV1BaseUrl,
@@ -17,6 +18,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('device integration protocol', () => {
+  it('uses the application network transport by default for device requests', async () => {
+    const transport = vi.spyOn(network, 'networkFetch').mockResolvedValue(jsonResponse({ success: true, data: { code: 'K7M3QX', authUrl: 'https://site.example.com/activate', expiresIn: 300 } }))
+    try {
+      const signal = new AbortController().signal
+      await expect(requestDeviceCode('https://site.example.com', signal)).resolves.toMatchObject({ code: 'K7M3QX' })
+      expect(transport).toHaveBeenCalledWith('https://site.example.com/api/device/code', expect.objectContaining({ method: 'POST', signal }))
+    } finally { transport.mockRestore() }
+  })
   it.each([false, true])('requests fresh image credentials using the account credential (envelope=%s)', async (envelope) => {
     let sequence = 0
     const fetcher = vi.fn(async () => {

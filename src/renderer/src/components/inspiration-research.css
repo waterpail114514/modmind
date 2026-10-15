@@ -7,9 +7,9 @@
   --agent-fill-3: var(--line);
   flex: 0 0 auto;
 }
-.inspiration-feature-trigger.agent-icon-button { display: flex; gap: 5px; width: auto; padding: 0 8px; border-radius: 6px; font: inherit; font-size: 12px; white-space: nowrap; }
+.inspiration-feature-trigger.agent-icon-button { display: flex; gap: 5px; width: auto; padding: 0 8px; border-radius: 6px; font: inherit; font-size: 14px; white-space: nowrap; }
 .agent-picker-menu.workbench-feature-menu.inspiration-feature-menu { width: min(300px, calc(100vw - 24px)); }
-.agent-picker-menu.workbench-feature-menu.inspiration-feature-menu > button { padding-block: 8px; }
+.agent-picker-menu.workbench-feature-menu.inspiration-feature-menu > button { padding-block: 8px; font-size: 14px; }
 .inspiration-research-shortcuts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
 .inspiration-research-shortcuts button, .inspiration-knowledge-button { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); padding: 6px 9px; font: inherit; font-size: 12px; cursor: pointer; }
 .inspiration-research-shortcuts button:hover, .inspiration-knowledge-button:hover { color: var(--text); background: var(--surface-alt); }

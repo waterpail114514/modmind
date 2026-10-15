@@ -45,6 +45,57 @@ function validManifest(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('PluginService', () => {
+  it('keeps newly discovered project plugins disabled and scopes explicit enablement to that project', async () => {
+    const root = roots.at(-1)!, globalDir = path.join(root, 'plugins')
+    const projectA = path.join(root, 'A'), projectB = path.join(root, 'B')
+    await writePlugin(path.join(projectA, '.modmind/plugins'), 'shared-plugin', validManifest({ id: 'shared-plugin' }), { 'panel/index.html': '<html>A</html>' })
+    await writePlugin(path.join(projectB, '.modmind/plugins'), 'shared-plugin', validManifest({ id: 'shared-plugin' }), { 'panel/index.html': '<html>B</html>' })
+    let current = projectA
+    const service = new PluginService({ globalDirectory: globalDir, projectRoot: () => current })
+    expect((await service.refresh()).plugins[0].enabled).toBe(false)
+    service.setEnabled('shared-plugin', true)
+    expect((await service.refresh()).plugins[0].enabled).toBe(true)
+    current = projectB
+    expect((await service.refresh()).plugins[0].enabled).toBe(false)
+    current = projectA
+    expect((await service.refresh()).plugins[0].enabled).toBe(true)
+    service.close()
+  })
+
+  it('keeps an import attached to its project while manifest validation is pending', async () => {
+    const root = roots.at(-1)!, globalDir = path.join(root, 'plugins')
+    const projectA = path.join(root, 'A'), projectB = path.join(root, 'B')
+    await fs.mkdir(projectA); await fs.mkdir(projectB)
+    const source = await writePlugin(path.join(globalDir, '.staging/import-race'), 'race-plugin', validManifest({ id: 'race-plugin' }), { 'panel/index.html': '<html>incoming</html>' })
+    let current = projectA
+    const service = new PluginService({ globalDirectory: globalDir, projectRoot: () => current })
+    const original = fs.readFile.bind(fs)
+    const spy = vi.spyOn(fs, 'readFile').mockImplementation((async (...args: Parameters<typeof fs.readFile>) => {
+      if (String(args[0]) === path.join(source, 'plugin.json')) current = projectB
+      return original(...args)
+    }) as typeof fs.readFile)
+    try {
+      await service.confirmImport(source, 'project')
+      expect(await fs.readFile(path.join(projectA, '.modmind/plugins/race-plugin/plugin.json'), 'utf8')).toContain('race-plugin')
+      expect(await fs.stat(path.join(projectB, '.modmind/plugins/race-plugin')).catch(() => null)).toBeNull()
+    } finally { spy.mockRestore(); service.close() }
+  })
+
+  it('rejects plugin writes through directory junctions and hard-linked leaves', async () => {
+    const root = roots.at(-1)!, globalDir = path.join(root, 'plugins')
+    const outside = path.join(root, 'outside'); await fs.mkdir(outside)
+    const directory = await writePlugin(globalDir, 'safe-plugin', validManifest({ id: 'safe-plugin' }), { 'panel/index.html': '<html></html>' })
+    await fs.writeFile(path.join(outside, 'original.txt'), 'preserve')
+    await fs.symlink(outside, path.join(directory, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
+    await fs.link(path.join(outside, 'original.txt'), path.join(directory, 'hard.txt'))
+    const service = new PluginService({ globalDirectory: globalDir, projectRoot: () => null })
+    await service.refresh()
+    await expect(service.writePluginFiles('safe-plugin', [{ path: 'linked/new.txt', content: 'bad' }])).rejects.toThrow(/link/)
+    await expect(service.writePluginFiles('safe-plugin', [{ path: 'hard.txt', content: 'bad' }])).rejects.toThrow(/link/)
+    expect(await fs.readFile(path.join(outside, 'original.txt'), 'utf8')).toBe('preserve')
+    expect(await fs.readdir(outside)).toEqual(['original.txt'])
+    service.close()
+  })
   it('loads overlay-only plugins and validates their entry', async () => {
     const globalDir = roots[roots.length - 1]
     await writePlugin(globalDir, 'desktop-pet', validManifest({
@@ -80,6 +131,8 @@ describe('PluginService', () => {
     expect(shared?.scope).toBe('project')
     expect(shared?.manifest.name).toBe('ProjectVersion')
     expect(snapshot.plugins.find((p) => p.manifest.id === 'global-only')?.scope).toBe('global')
+    expect(service.getEnabledPlugin('shared')).toBeUndefined()
+    service.setEnabled('shared', true)
     expect(service.getEnabledPlugin('shared')).toBeTruthy()
   })
 

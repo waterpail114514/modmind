@@ -28,6 +28,54 @@ async function writeTemplate(root: string, files: Record<string, string>): Promi
 }
 
 describe('Bedrock and NetEase addon templates', () => {
+  it('packages the latest canonical source edit into the behavior pack', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'addon-source-'))
+    try {
+      const info = { ...project('bedrock', '1.21.1'), path: root }
+      await writeTemplate(root, bedrockTemplateFiles(info, true))
+      await fs.writeFile(path.join(root, 'src/main.js'), '// edited source\n')
+      const artifact = await buildBedrockAddon(info)
+      const unpack = path.join(root, 'unpacked')
+      await extractZip(artifact, { dir: unpack })
+      const pack = path.join(root, 'unpacked-pack')
+      await extractZip(path.join(unpack, `${info.namespace}-behavior.mcpack`), { dir: pack })
+      expect(await fs.readFile(path.join(pack, 'scripts/main.js'), 'utf8')).toBe('// edited source\n')
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
+
+  it.each(['version', 'header', 'entry', 'dependency', 'module', 'escape'])('rejects an incomplete format-2 manifest: %s', async fault => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'addon-invalid-'))
+    try {
+      const info = { ...project('bedrock', '1.21.1'), path: root }
+      await writeTemplate(root, bedrockTemplateFiles(info, true))
+      const target = path.join(root, 'behavior_pack/manifest.json')
+      const manifest = JSON.parse(await fs.readFile(target, 'utf8'))
+      if (fault === 'version') manifest.header.version = ['0', 1, 0]
+      if (fault === 'header') delete manifest.header.min_engine_version
+      if (fault === 'entry') delete manifest.modules[1].entry
+      if (fault === 'dependency') manifest.dependencies[0].version = [9, 9, 9]
+      if (fault === 'module') delete manifest.modules[0].version
+      if (fault === 'escape') { manifest.modules[1].entry = '../outside.js'; await fs.writeFile(path.join(root, 'outside.js'), '// exists') }
+      await fs.writeFile(target, JSON.stringify(manifest))
+      expect((await inspectBedrockAddon(info)).success).toBe(false)
+      await expect(buildBedrockAddon(info)).rejects.toThrow(/validation failed/)
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
+
+  it.each(['bedrock', 'netease-pc', 'netease-mobile'] as const)('rejects unsafe archive names and output junctions for %s', async loader => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'addon-scope-'))
+    try {
+      const projectRoot = path.join(root, 'project'), outside = path.join(root, 'outside')
+      await fs.mkdir(projectRoot); await fs.mkdir(outside)
+      const info = { ...project(loader, loader === 'bedrock' ? '1.21.1' : '3.8'), path: projectRoot }
+      await writeTemplate(projectRoot, loader === 'bedrock' ? bedrockTemplateFiles(info, true) : neteaseTemplateFiles(info, true))
+      const build = loader === 'bedrock' ? buildBedrockAddon : buildNeteaseArchive
+      await expect(build({ ...info, namespace: '../../outside/existing' })).rejects.toThrow(/namespace/)
+      await fs.symlink(outside, path.join(projectRoot, 'build'), process.platform === 'win32' ? 'junction' : 'dir')
+      await expect(build(info)).rejects.toThrow(/link/)
+      expect(await fs.readdir(outside)).toEqual([])
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  })
   it('resolves nested snake-case entrypoints and exports only clean compressed game packs', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'netease 路径 '))
     try {

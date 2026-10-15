@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import type { DecompileReferenceReport, DecompileReferenceReportItem } from '../shared/decompile'
 
 /**

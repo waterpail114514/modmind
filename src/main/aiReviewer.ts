@@ -1,3 +1,4 @@
+import { requestAiTextResponse } from './aiTextRequest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -326,21 +327,10 @@ async function requestReview(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000)
     try {
-      const response = await fetch(`${config.baseUrl!.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({
-          model: config.model,
-          reasoning_effort: config.reasoningEffort,
-          stream: false,
-          temperature: 0,
-          messages: [
+      const response = await requestAiTextResponse({ baseUrl: config.baseUrl!, apiKey: config.apiKey!, model: config.model! }, [
             { role: 'system', content: 'You are ModMind Review Agent. You advise the coding Agent; you do not edit files or run commands.' },
             { role: 'user', content: prompt }
-          ]
-        }),
-        signal: requestSignal
-      })
+          ], { signal: requestSignal, reasoningEffort: config.reasoningEffort, temperature: 0 })
       if (response.ok) {
         const decision = parseDecision(extractContent(await response.json()))
         return decision ?? onUnavailable('审查模型返回格式无效')

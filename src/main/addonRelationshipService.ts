@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import type {
   AddonImportReview,
   AddonImportReviewItem,
@@ -243,7 +243,7 @@ async function githubSource(details: ModProjectDetails, file: ModFile, minecraft
  * unreachable without a proxy. ghfast.top mirrors GitHub archive downloads.
  */
 export function githubAcceleratedUrl(url: string): string {
-  return /^https:\/\/(codeload\.github\.com|github\.com)\//i.test(url) ? `https://ghfast.top/${url}` : url
+  return /^https:\/\/(codeload\.github\.com|github\.com)\//i.test(url) || /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/zipball\//i.test(url) ? `https://ghfast.top/${url}` : url
 }
 
 export class AddonRelationshipService {
@@ -868,8 +868,12 @@ export class AddonRelationshipService {
       dependencies: inspection.dependencies,
       api: { ...inspection.profile, sourceKind: 'project', sourcePath: target.path, sourceMatched: true }
     }
-    const ownedBefore = current.relationships.filter((entry) => replacedIds.has(entry.id) || entry.parentRelationshipIds?.some(parent => replacedIds.has(parent)))
-    const retained = current.relationships.filter((entry) => !replacedIds.has(entry.id) && !entry.parentRelationshipIds?.some(parent => replacedIds.has(parent)))
+    const exclusivelyOwned = (entry: AddonRelationship): boolean => Boolean(entry.parentRelationshipIds?.length && entry.parentRelationshipIds.every(parent => replacedIds.has(parent)))
+    const ownedBefore = current.relationships.filter((entry) => replacedIds.has(entry.id) || exclusivelyOwned(entry))
+    const retained = current.relationships.filter((entry) => !replacedIds.has(entry.id) && !exclusivelyOwned(entry)).map(entry => ({
+      ...entry,
+      ...(entry.parentRelationshipIds ? { parentRelationshipIds: entry.parentRelationshipIds.filter(parent => !replacedIds.has(parent)) } : {})
+    }))
     const occupiedRelationships = new Map(retained.flatMap((entry) => entry.modIds.map((modId) => [modId, entry] as const)))
     relationship.modIds.forEach((modId) => occupiedRelationships.set(modId, relationship))
     const stagedRelationships: Array<{ relationship: AddonRelationship; source: string; sha512: string }> = [{ relationship, source: artifactPath, sha512: inspection.sha512 }]
@@ -877,6 +881,7 @@ export class AddonRelationshipService {
       const existing = dependency.modIds.map((modId) => occupiedRelationships.get(modId)).find(Boolean)
       if (existing) {
         if (existing.version !== 'unknown' && dependency.version !== 'unknown' && existing.version !== dependency.version) throw new Error(`${target.name} 需要 ${dependency.name} ${dependency.version}，但当前项目已经使用 ${existing.version}`)
+        if (existing.automatic && existing.parentRelationshipIds) existing.parentRelationshipIds = [...new Set([...existing.parentRelationshipIds, id])]
         continue
       }
       const source = path.join(target.path, ...dependency.relativePath.split('/'))
@@ -1058,9 +1063,11 @@ export class AddonRelationshipService {
       return this.applyPlan(plan, new Map(), [], this.roleMap(seeds))
     }
     const project = this.project()
-    const removed = current.relationships.filter((entry) => entry.id === relationshipId || entry.parentRelationshipIds?.includes(relationshipId))
+    const removed = current.relationships.filter((entry) => entry.id === relationshipId || entry.parentRelationshipIds?.length && entry.parentRelationshipIds.every(parent => parent === relationshipId))
     const removedIds = new Set(removed.map((entry) => entry.id))
-    const relationships = current.relationships.filter((entry) => !removedIds.has(entry.id))
+    const relationships = current.relationships.filter((entry) => !removedIds.has(entry.id)).map(entry => ({ ...entry,
+      ...(entry.parentRelationshipIds ? { parentRelationshipIds: entry.parentRelationshipIds.filter(parent => parent !== relationshipId) } : {})
+    }))
     const previousDependencies = await readManagedDependencies(project)
     const dependencies = previousDependencies.filter((entry) => !entry.relationshipId || !removedIds.has(entry.relationshipId))
     const descriptorTarget = path.join(project.path, ...descriptorPath(project.loader, project.minecraftVersion).split('/'))

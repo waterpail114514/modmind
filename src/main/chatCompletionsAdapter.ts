@@ -4,6 +4,8 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import { promisify } from 'node:util'
 import { Decompress as ZstdDecompress } from 'fzstd'
 import { fetchWithApprovalModelFallback } from './agentApproval'
+import { networkFetch } from './networkRequest'
+import { apiEndpoint } from './apiEndpoint'
 import { diagnosticJournal } from './diagnosticLog'
 import { MCP_PROBE_TOOL } from './agentToolReadiness'
 import type { ReasoningEffort } from '../shared/types'
@@ -78,7 +80,7 @@ function normalizedBaseUrl(value: string): string {
 }
 
 function endpoint(baseUrl: string, suffix: 'responses' | 'chat/completions' | 'models'): string {
-  return `${baseUrl.replace(/\/$/, '')}/${suffix}`
+  return apiEndpoint(baseUrl, suffix)
 }
 
 function uniqueChatToolName(preferred: string, used: Set<string>): string {
@@ -223,21 +225,30 @@ function translateInput(input: unknown, descriptors: Map<string, ChatToolDescrip
   if (!Array.isArray(input)) return messages
 
   let toolImages: JsonRecord[] = []
+  let reasoning = ''
   const flushToolImages = (): void => {
     if (toolImages.length) messages.push({ role: 'user', content: toolImages })
     toolImages = []
   }
   for (const entry of input) {
     if (!isRecord(entry)) continue
+    if (entry.type === 'reasoning') {
+      reasoning += Array.isArray(entry.content) ? entry.content.filter(part => isRecord(part) && part.type === 'reasoning_text').map(part => stringValue((part as JsonRecord).text)).join('') : ''
+      continue
+    }
     if (entry.type !== 'function_call_output' && entry.type !== 'custom_tool_call_output') flushToolImages()
     if (entry.type === 'message') {
       const role = entry.role === 'assistant' ? 'assistant' : entry.role === 'system' || entry.role === 'developer' ? 'system' : 'user'
-      messages.push({ role, content: messageContent(entry.content) })
+      messages.push({ role, content: messageContent(entry.content), ...(role === 'assistant' && reasoning ? { reasoning_content: reasoning } : {}) })
+      reasoning = ''
       continue
     }
     if (entry.type === 'function_call' || entry.type === 'custom_tool_call') {
       const descriptor = descriptorForResponseItem(entry, descriptors)
-      if (descriptor) appendAssistantToolCall(messages, entry, descriptor)
+      if (descriptor) {
+        appendAssistantToolCall(messages, entry, descriptor)
+        if (reasoning) { messages.at(-1)!.reasoning_content = reasoning; reasoning = '' }
+      }
       continue
     }
     if (entry.type === 'function_call_output' || entry.type === 'custom_tool_call_output') {
@@ -336,6 +347,11 @@ export function chatCompletionToResponsesEvents(value: unknown, tools: Map<strin
   const message = isRecord(choice.message) ? choice.message : {}
   const responseId = typeof value.id === 'string' && value.id ? value.id : `resp_${randomUUID().replaceAll('-', '')}`
   const events: JsonRecord[] = [{ type: 'response.created', response: { id: responseId } }]
+  if (typeof message.reasoning_content === 'string' && message.reasoning_content) {
+    // Keep provider-required tool-turn state in native Responses history so it
+    // survives adapter and application restarts, without an in-memory cache.
+    events.push({ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs_${randomUUID().replaceAll('-', '')}`, summary: [], content: [{ type: 'reasoning_text', text: message.reasoning_content }] } })
+  }
   const text = chatMessageText(message.content)
   if (text) {
     events.push({
@@ -565,7 +581,7 @@ function shouldFallbackToChat(status: number, body: string): boolean {
   return /invalid_request|invalid (?:api )?parameter|unsupported parameter|请求(?:格式|参数)无效|参数错误/i.test(body)
 }
 
-function shouldFallbackToResponses(status: number, body: string): boolean {
+export function shouldFallbackToResponses(status: number, body: string): boolean {
   if (status === 404 || status === 405 || status === 501) return true
   if (status === 415) return /(?:chat\/completions|chat completions endpoint|chat completions api)/i.test(body)
     && /(?:unsupported|not supported|not found|unknown|unrecognized|not implemented|does not exist|only supports|use responses)/i.test(body)
@@ -666,7 +682,7 @@ export class ChatCompletionsAdapter {
         disconnected.signal, AbortSignal.timeout(timeout), ...(route.signal ? [route.signal] : [])
       ])
       if (match[2] === 'models' && request.method === 'GET') {
-        const upstream = await fetch(endpoint(route.upstreamBaseUrl, 'models'), { headers: requestHeaders(request.headers), signal: upstreamSignal(20_000) })
+        const upstream = await networkFetch(endpoint(route.upstreamBaseUrl, 'models'), { headers: requestHeaders(request.headers), signal: upstreamSignal(20_000) })
         return void await relayResponse(upstream, response)
       }
       if (match[2] !== 'responses' || request.method !== 'POST') {

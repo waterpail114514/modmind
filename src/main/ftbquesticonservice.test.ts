@@ -26,10 +26,11 @@ async function fixture() {
 async function pixels(url: string) { return sharp(Buffer.from(url.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer() }
 
 describe('FTB resource/model rendering', () => {
-  it('loads remote vanilla icon assets through the proxy-aware transport', async () => {
+  it.each([false, true])('loads remote icon assets and automatically recovers from CDN failure: %s', async failCdn => {
     const f = await fixture()
     const image = await f.png('#00ff00')
     const request = vi.spyOn(httpTransport, 'request').mockImplementation(async url => {
+      if (failCdn && url.startsWith('https://cdn.jsdelivr.net/')) throw new Error('CDN unavailable')
       const bytes = url.endsWith('/models/item/iron_ingot.json')
         ? Buffer.from(JSON.stringify({ parent: 'item/generated', textures: { layer0: 'minecraft:item/iron_ingot' } }))
         : url.endsWith('/textures/item/iron_ingot.png') ? image : null
@@ -39,6 +40,7 @@ describe('FTB resource/model rendering', () => {
     expect(result.icon?.quality).toBe('resolved')
     expect([...(await pixels(result.icon!.url)).subarray(0, 3)]).toEqual([0, 255, 0])
     expect(request).toHaveBeenCalled()
+    if (failCdn) expect(request.mock.calls.some(([url]) => url.startsWith('https://raw.githubusercontent.com/misode/mcmeta/1.20.1-assets/'))).toBe(true)
   })
   it('retains NBT and canonicalizes description keys without merging appearances', () => {
     expect(ftbIconDescriptor('test:thing{CustomModelData:7}')).toEqual({ id: 'test:thing', tag: { CustomModelData: 7 } })

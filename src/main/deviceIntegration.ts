@@ -3,6 +3,7 @@ import { parseReasoningCapabilities } from '../shared/modelReasoning'
 import { parseModelImageCapability } from '../shared/modelImageCapability'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
+import { networkFetch } from './networkRequest'
 
 export const DEFAULT_DEVICE_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_REASONING_EFFORT = 'high' as const
@@ -35,7 +36,7 @@ export class DeviceApiError extends Error {
   }
 }
 
-type FetchLike = typeof fetch
+type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
 function isLocalHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
@@ -151,7 +152,7 @@ async function requestEnvelope<T>(fetcher: FetchLike, url: string, init: Request
   return envelope.data as T
 }
 
-export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<DeviceCodeResult> {
+export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fetcher: FetchLike = networkFetch): Promise<DeviceCodeResult> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/code`, {
     method: 'POST',
@@ -168,7 +169,7 @@ export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fe
   return { code, authUrl: auth.toString(), expiresIn: Math.min(expiresIn, 600) }
 }
 
-export async function pollDeviceCode(siteUrl: string, code: string, signal: AbortSignal, fetcher: FetchLike = fetch, customLocal = false): Promise<DevicePollResult> {
+export async function pollDeviceCode(siteUrl: string, code: string, signal: AbortSignal, fetcher: FetchLike = networkFetch, customLocal = false): Promise<DevicePollResult> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/poll`, {
     method: 'POST',
@@ -201,7 +202,7 @@ function stringInteger(record: Record<string, unknown>, key: string): string {
   return value
 }
 
-export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<DeviceUsage> {
+export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: AbortSignal, fetcher: FetchLike = networkFetch): Promise<DeviceUsage> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/usage`, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -226,7 +227,7 @@ export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: 
 export async function requestDeviceImageLease(
   credentials: { siteUrl: string; apiKey: string; username: string },
   signal: AbortSignal,
-  fetcher: FetchLike = fetch
+  fetcher: FetchLike = networkFetch
 ): Promise<{ baseUrl: string; apiKey: string }> {
   const site = normalizeSiteUrl(credentials.siteUrl)
   let response: Response
@@ -260,7 +261,7 @@ export async function sendDeviceFastMode(
   apiKey: string,
   enabled: boolean,
   signal: AbortSignal,
-  fetcher: FetchLike = fetch
+  fetcher: FetchLike = networkFetch
 ): Promise<void> {
   const site = normalizeSiteUrl(siteUrl)
   let response: Response
@@ -283,7 +284,7 @@ export async function sendDeviceFastMode(
   }
 }
 
-export async function checkAppVersion(siteUrl: string, currentVersion: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<AppVersionCheckResult> {
+export async function checkAppVersion(siteUrl: string, currentVersion: string, signal: AbortSignal, fetcher: FetchLike = networkFetch): Promise<AppVersionCheckResult> {
   const site = normalizeSiteUrl(siteUrl)
   let response: Response
   try {

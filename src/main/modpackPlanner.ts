@@ -6,6 +6,7 @@ import { addModpackFiles, readModpackManifest, writeModpackManifest } from './mo
 import { modpackModsRoot } from './modpackPaths'
 import { auditModpackLock, lockedModFromFile, MODPACK_LOCK_FILE, readModpackLock, writeModpackLock, type ModpackLock } from './modpackLockService'
 import { safeModJarFileName } from './modpackFilename'
+import { withProjectMutation } from './projectMutation'
 import { candidateRuntimeSide, type AutomaticModPlatform, type ModCandidate, type ModDependency, type ModDependencyKind, type ModFile, type ModProviderRegistry } from './modProviderService'
 
 export interface ModpackConcept {
@@ -118,7 +119,7 @@ async function planEntry(registry: ModProviderRegistry, options: ResolveEntryOpt
       }
     }
     const versions = await registry.versions(candidate.provider, candidate.projectId, { minecraftVersion: project.minecraftVersion, loader: project.loader as 'fabric' | 'quilt' | 'forge' | 'neoforge' })
-    const selected = (versionId ? versions.find((version) => version.versionId === versionId) : undefined) ?? versions.find((version) => version.primary) ?? versions[0]
+    const selected = versionId ? versions.find((version) => version.versionId === versionId) : versions.find((version) => version.primary) ?? versions[0]
     if (!selected) return { request, ...(parent ? { parent } : {}), ...(dependencyKind ? { dependencyKind } : {}), ...(blocking !== undefined ? { blocking } : {}), candidate, versions, reason: versionId ? `required version ${versionId} is not compatible` : 'compatible project has no downloadable JAR' }
     return { request, ...(parent ? { parent } : {}), ...(dependencyKind ? { dependencyKind } : {}), ...(blocking !== undefined ? { blocking } : {}), candidate, versions, selected: selected.side === 'unknown' ? { ...selected, side: candidateRuntimeSide(candidate) } : selected }
   } catch (error) {
@@ -274,6 +275,10 @@ function safeModFileName(value: string): string {
 }
 
 export async function applyModpackPlan(registry: ModProviderRegistry, project: ProjectInfo, plan: ModpackPlan, signal?: AbortSignal): Promise<ApplyPlanResult> {
+  return withProjectMutation(project.path, () => applyModpackPlanUnlocked(registry, project, plan, signal))
+}
+
+async function applyModpackPlanUnlocked(registry: ModProviderRegistry, project: ProjectInfo, plan: ModpackPlan, signal?: AbortSignal): Promise<ApplyPlanResult> {
   if (project.kind !== 'modpack') throw new Error('a modpack project is required')
   if (!plan.success) throw new Error(`cannot apply an unresolved modpack plan: ${[...plan.conflicts, ...plan.warnings].join('; ')}`)
   const current = await readModpackLock(project)

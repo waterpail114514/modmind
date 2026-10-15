@@ -3,6 +3,27 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { listVanillaItems } from './itemCatalogService'
+import { httpTransport } from './networkRequest'
+import { Readable } from 'node:stream'
+
+it('automatically switches to the same GitHub ref when the reference CDN fails', async () => {
+  const calls: string[] = []
+  const request = vi.spyOn(httpTransport, 'request').mockImplementation(async url => {
+    calls.push(url)
+    if (url.startsWith('https://cdn.jsdelivr.net/')) throw new Error('CDN unavailable')
+    const value = url.endsWith('dataPaths.json') ? { pc: { '1.19.4': { items: 'pc/1.19.4', blocks: 'pc/1.19.4' } } }
+      : url.endsWith('items.json') ? [{ name: 'stone', displayName: 'Stone', stackSize: 64 }]
+        : url.endsWith('blocks.json') ? [{ name: 'stone' }] : { 'block.minecraft.stone': '石头' }
+    const bytes = Buffer.from(JSON.stringify(value))
+    const body = Object.assign(Readable.from([bytes]), { text: async () => bytes.toString() })
+    return { ok: true, statusCode: 200, headers: { get: () => null }, body }
+  })
+  try {
+    expect((await listVanillaItems('1.19.4'))[0].name).toBe('石头')
+    expect(calls).toContain('https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master/data/pc/1.19.4/items.json')
+    expect(calls).toContain('https://raw.githubusercontent.com/misode/mcmeta/1.19.4-assets/assets/minecraft/lang/zh_cn.json')
+  } finally { request.mockRestore() }
+})
 
 it('loads a versioned vanilla item catalog with localized names and caches it', async () => {
   const getJson = vi.fn(async (url: string) => url.includes('dataPaths.json') ? { pc: { '1.21.9': { items: 'pc/1.21.9', blocks: 'pc/1.21.9' } } } : url.includes('blocks.json') ? [{ name: 'stone' }] : url.includes('items.json') ? [

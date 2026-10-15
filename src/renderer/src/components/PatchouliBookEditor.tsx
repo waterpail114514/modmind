@@ -1,10 +1,11 @@
 import { reportClientFailure } from '../lib/clientFailure'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BookOpen, FilePlus2, FolderPlus, LibraryBig, LoaderCircle, Plus, Save, Trash2 } from 'lucide-react'
 import { useConfirmDialog } from './InteractionDialogs'
+import type { PatchouliBookInput } from '../../../shared/patchouli'
 
-type PatchouliEntry = { id: string; name: string; icon: string; text: string }
-type PatchouliCategory = { id: string; name: string; description: string; icon: string; entries: PatchouliEntry[] }
+type PatchouliCategory = PatchouliBookInput['categories'][number]
+type PatchouliEntry = PatchouliCategory['entries'][number]
 
 function nextId(prefix: string): string { return `${prefix}_${crypto.randomUUID().slice(0, 8)}` }
 
@@ -18,12 +19,41 @@ export default function PatchouliBookEditor(): React.JSX.Element {
   const [selectedEntryId, setSelectedEntryId] = useState('welcome')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [books, setBooks] = useState<PatchouliBookInput[]>([])
+  const [source, setSource] = useState<PatchouliBookInput | null>(null)
+  const applyBook = (book: PatchouliBookInput): void => {
+    setSource(book); setBookId(book.bookId); setName(book.name); setLandingText(book.landingText); setCategories(book.categories)
+    setSelectedCategoryId(book.categories[0]?.id ?? ''); setSelectedEntryId(book.categories[0]?.entries[0]?.id ?? '')
+  }
+  const newBook = (): void => {
+    const categoryId = nextId('category'), entryId = nextId('entry')
+    setSource(null); setBookId(nextId('guide')); setName('整合包指南'); setLandingText('从这里开始你的旅程')
+    setCategories([{ id: categoryId, name: '入门', icon: 'minecraft:book', entries: [{ id: entryId, name: '欢迎', icon: 'minecraft:book', text: '' }] }])
+    setSelectedCategoryId(categoryId); setSelectedEntryId(entryId); setMessage('')
+  }
+  useEffect(() => {
+    let active = true
+    void window.modmind.modpack.readPatchouliBooks().then(values => {
+      if (!active) return
+      setBooks(values); if (values[0]) applyBook(values[0]); setLoaded(true)
+    }).catch(error => { if (active) setMessage(reportClientFailure(error)) })
+    return () => { active = false }
+  }, [])
 
   const category = categories.find((item) => item.id === selectedCategoryId) ?? categories[0]
   const entry = category?.entries.find((item) => item.id === selectedEntryId) ?? category?.entries[0]
   const entryCount = useMemo(() => categories.reduce((count, item) => count + item.entries.length, 0), [categories])
   const updateCategory = (id: string, patch: Partial<PatchouliCategory>): void => setCategories((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item))
-  const updateEntry = (categoryId: string, entryId: string, patch: Partial<PatchouliEntry>): void => setCategories((current) => current.map((item) => item.id !== categoryId ? item : { ...item, entries: item.entries.map((child) => child.id === entryId ? { ...child, ...patch } : child) }))
+  const updateEntry = (categoryId: string, entryId: string, patch: Partial<PatchouliEntry>): void => setCategories((current) => current.map((item) => item.id !== categoryId ? item : { ...item, entries: item.entries.map((child) => {
+    if (child.id !== entryId) return child
+    const next = { ...child, ...patch }
+    if (patch.text !== undefined && child.pages) {
+      const index = child.pages.findIndex(page => page.type === 'patchouli:text')
+      next.pages = index < 0 ? [...child.pages, { type: 'patchouli:text', text: patch.text }] : child.pages.map((page, i) => i === index ? { ...page, text: patch.text } : page)
+    }
+    return next
+  }) }))
   const chooseCategory = (id: string): void => { const next = categories.find((item) => item.id === id); setSelectedCategoryId(id); setSelectedEntryId(next?.entries[0]?.id ?? '') }
   const addCategory = (): void => {
     const id = nextId('category'); const next: PatchouliCategory = { id, name: '新分类', description: '', icon: 'minecraft:book', entries: [] }
@@ -47,15 +77,18 @@ export default function PatchouliBookEditor(): React.JSX.Element {
   const save = async (): Promise<void> => {
     setBusy(true); setMessage('')
     try {
-      const files = await window.modmind.modpack.writePatchouliBook({ bookId, name, landingText, categories })
+      const files = await window.modmind.modpack.writePatchouliBook({ ...source, bookId, name, landingText, categories })
+      const values = await window.modmind.modpack.readPatchouliBooks()
+      setBooks(values)
+      setSource(values.find(book => book.bookId === bookId && book.locale === (source?.locale ?? 'zh_cn')) ?? null)
       setMessage(`已写入 ${files.length} 个指南文件`)
     } catch (error) { setMessage(reportClientFailure(error)) }
     finally { setBusy(false) }
   }
 
   return <div className="patchouli-book-editor">
-    <header className="content-toolbar patchouli-toolbar"><h1 className="visually-hidden">Patchouli 指南书</h1><div className="patchouli-toolbar-actions"><span>{categories.length} 个分类 · {entryCount} 个条目</span><button className="primary-button" disabled={busy} onClick={() => void save()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}写入指南书</button></div></header>
-    <div className="patchouli-book-meta"><label>书籍标识<input value={bookId} onChange={(event) => setBookId(event.target.value)} /></label><label>书籍名称<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>首页文本<textarea value={landingText} onChange={(event) => setLandingText(event.target.value)} /></label></div>
+    <header className="content-toolbar patchouli-toolbar"><h1 className="visually-hidden">Patchouli 指南书</h1><div className="patchouli-toolbar-actions">{books.length ? <select aria-label="打开指南书" value={source ? `${source.bookId}/${source.locale}` : ''} disabled={busy || !loaded} onChange={event => { const selected = books.find(book => `${book.bookId}/${book.locale}` === event.target.value); if (selected) applyBook(selected) }}>{!source ? <option value="">新指南</option> : null}{books.map(book => <option key={`${book.bookId}/${book.locale}`} value={`${book.bookId}/${book.locale}`}>{book.name} · {book.locale}</option>)}</select> : null}<button className="icon-button" title="新建指南书" disabled={busy || !loaded} onClick={newBook}><FilePlus2 size={15} /></button><span>{categories.length} 个分类 · {entryCount} 个条目</span><button className="primary-button" disabled={busy || !loaded} onClick={() => void save()}>{busy || !loaded ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}写入指南书</button></div></header>
+    <div className="patchouli-book-meta"><label>书籍标识<input value={bookId} disabled={!!source || !loaded} onChange={(event) => setBookId(event.target.value)} /></label><label>书籍名称<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>首页文本<textarea value={landingText} onChange={(event) => setLandingText(event.target.value)} /></label></div>
     <div className="patchouli-book-layout">
       <aside className="patchouli-categories"><div className="patchouli-panel-title"><span><LibraryBig size={16} />分类</span><button className="icon-button" title="新增分类" onClick={addCategory}><FolderPlus size={15} /></button></div><div className="patchouli-category-list">{categories.map((item) => <button className={item.id === category?.id ? 'selected' : ''} key={item.id} onClick={() => chooseCategory(item.id)}><BookOpen size={15} /><span><strong>{item.name}</strong><small>{item.entries.length} 个条目</small></span></button>)}</div><button className="secondary-button compact patchouli-add-category" onClick={addCategory}><Plus size={14} />新增分类</button></aside>
       <section className="patchouli-entry-list-panel"><div className="patchouli-panel-title"><span>{category?.name || '分类条目'}</span><div><button className="icon-button" title="新增条目" disabled={!category} onClick={addEntry}><FilePlus2 size={15} /></button><button className="icon-button" title="删除分类" disabled={!category || categories.length <= 1} onClick={removeCategory}><Trash2 size={15} /></button></div></div>{category ? <><div className="patchouli-category-fields"><label className="field-label">分类名称<input value={category.name} onChange={(event) => updateCategory(category.id, { name: event.target.value })} /></label><label className="field-label">分类图标<input value={category.icon} onChange={(event) => updateCategory(category.id, { icon: event.target.value })} /></label><label className="field-label">分类说明<textarea value={category.description} onChange={(event) => updateCategory(category.id, { description: event.target.value })} /></label></div><div className="patchouli-entries">{category.entries.map((item) => <button key={item.id} className={item.id === entry?.id ? 'selected' : ''} onClick={() => setSelectedEntryId(item.id)}><FilePlus2 size={14} /><span><strong>{item.name}</strong><small>{item.text || '未填写正文'}</small></span></button>)}{!category.entries.length ? <div className="patchouli-empty">此分类还没有条目</div> : null}</div></> : null}</section>

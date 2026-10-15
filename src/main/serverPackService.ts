@@ -15,6 +15,8 @@ import { windowsCmdInvocation } from './windowsCommand'
 import { createStoredZip } from './bedrockAddon'
 import { isSafeModJarFileName, safeModJarFileName } from './modpackFilename'
 import { validateJavaArchive } from './javaArchive'
+import { quiltOfficialInstallerChecksum } from './quiltInstallerChecksum'
+import { validateQuiltServerLauncher } from './quiltServerLauncher'
 
 export interface ServerPackOptions {
   outputDirectory: string
@@ -269,9 +271,13 @@ function loaderSources(loader: JavaLoaderKind, minecraftVersion: string, loaderV
   if (loader === 'quilt') {
     return { direct: false, sources: [{ id: 'quilt-meta', label: 'Quilt Installer 元数据', url: 'https://meta.quiltmc.org/v3/versions/installer' }] }
   }
-  const file = loader === 'forge' ? `forge-${minecraftVersion}-${loaderVersion}-installer.jar` : `neoforge-${loaderVersion}-installer.jar`
-  const primary = loader === 'forge' ? `https://maven.minecraftforge.net/net/minecraftforge/forge/${minecraftVersion}-${loaderVersion}/${file}` : `https://maven.neoforged.net/releases/net/neoforged/neoforge/${loaderVersion}/${file}`
-  const mirror = loader === 'forge' ? `https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/${minecraftVersion}-${loaderVersion}/${file}` : `https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/${loaderVersion}/${file}`
+  const artifact = loader === 'forge' || minecraftVersion === '1.20.1' ? 'forge' : 'neoforge'
+  const version = loader === 'forge'
+    ? `${minecraftVersion}-${loaderVersion}${/^1\.(?:7|8)\./.test(minecraftVersion) && !loaderVersion.endsWith(`-${minecraftVersion}`) ? `-${minecraftVersion}` : ''}`
+    : minecraftVersion === '1.20.1' && !loaderVersion.startsWith('1.20.1-') ? `1.20.1-${loaderVersion}` : loaderVersion
+  const coordinate = `${loader === 'forge' ? 'net/minecraftforge' : 'net/neoforged'}/${artifact}/${version}/${artifact}-${version}-installer.jar`
+  const primary = `${loader === 'forge' ? 'https://maven.minecraftforge.net' : 'https://maven.neoforged.net/releases'}/${coordinate}`
+  const mirror = `https://bmclapi2.bangbang93.com/maven/${coordinate}`
   return { direct: false, sources: [{ id: 'official', label: `${loader} 官方 Maven`, url: primary }, { id: 'bmclapi', label: 'BMCLAPI 镜像', url: mirror }] }
 }
 
@@ -287,12 +293,13 @@ async function detectInstalledServerRuntime(root: string, project: ProjectInfo, 
   const jarCandidates = project.loader === 'quilt' ? ['quilt-server-launch.jar'] : ['server.jar', `${project.loader}-server.jar`, 'forge-server.jar', 'neoforge-server.jar']
   const serverJar = (await Promise.all(jarCandidates.map(async (name) => {
     const file = path.join(root, name)
-    return await validateJavaArchive(file, { executable: true }).then(() => true, () => false) ? file : null
+    const validate = project.loader === 'quilt' ? validateQuiltServerLauncher(file) : validateJavaArchive(file, { executable: true })
+    return await validate.then(() => true, () => false) ? file : null
   }))).find((value): value is string => Boolean(value))
   if (serverJar) {
     await fs.writeFile(path.join(root, 'start-server.cmd'), `@echo off\n"${javaPath.replaceAll('"', '')}" -Xms2G -Xmx4G -jar "${path.basename(serverJar)}" nogui\n`, 'utf8')
     await fs.writeFile(path.join(root, 'start-server.sh'), `#!/bin/sh\nexec "${javaPath.replaceAll('"', '')}" -Xms2G -Xmx4G -jar "$(dirname "$0")/${path.basename(serverJar)}" nogui\n`, 'utf8')
-    return { serverJar, launchCommand: [javaPath, '-Xms2G', '-Xmx4G', '-jar', serverJar, 'nogui'], loader: project.loader as JavaLoaderKind, loaderVersion: expectedLoaderVersion }
+    return { serverJar, javaPath, launchCommand: [javaPath, '-Xms2G', '-Xmx4G', '-jar', serverJar, 'nogui'], loader: project.loader as JavaLoaderKind, loaderVersion: expectedLoaderVersion }
   }
   const generatedWindows = path.join(root, 'run.bat')
   const generatedUnix = path.join(root, 'run.sh')
@@ -300,9 +307,9 @@ async function detectInstalledServerRuntime(root: string, project: ProjectInfo, 
   const script = process.platform === 'win32' ? generatedWindows : generatedUnix
   if (process.platform === 'win32') {
     const invocation = windowsCmdInvocation(script, ['nogui'])
-    return { launchCommand: [invocation.command, ...invocation.args], windowsVerbatimArguments: invocation.windowsVerbatimArguments, loader: project.loader as JavaLoaderKind, loaderVersion: expectedLoaderVersion }
+    return { javaPath, launchCommand: [invocation.command, ...invocation.args], windowsVerbatimArguments: invocation.windowsVerbatimArguments, loader: project.loader as JavaLoaderKind, loaderVersion: expectedLoaderVersion }
   }
-  return { launchCommand: ['sh', script, 'nogui'], loader: project.loader as JavaLoaderKind, loaderVersion: expectedLoaderVersion }
+  return { javaPath, launchCommand: ['sh', script, 'nogui'], loader: project.loader as JavaLoaderKind, loaderVersion: expectedLoaderVersion }
 }
 
 export function serverRuntimeDownloadDescription(project: Pick<ProjectInfo, 'loader' | 'minecraftVersion' | 'loaderVersion'>): { label: string; sources: string[] } {
@@ -377,7 +384,7 @@ export async function buildServerPack(project: ProjectInfo, options: ServerPackO
       copiedMods.push(module.fileName)
       directMods.push(module.fileName)
     }
-    const overrides = await syncModpackOverrides(project, staging)
+    const overrides = await syncModpackOverrides(project, staging, [], 'server')
     const properties = ['server-ip=127.0.0.1', `server-port=${port}`, `online-mode=${options.onlineMode !== false}`, 'enable-command-block=true', ' motd=ModMind Server'.replace(/^ /, '')].join('\n') + '\n'
     await fs.writeFile(path.join(staging, 'server.properties'), properties, 'utf8')
     await fs.writeFile(path.join(staging, 'eula.txt'), `eula=${options.acceptEula ? 'true' : 'false'}\n`, 'utf8')
@@ -409,13 +416,41 @@ export async function installServerRuntime(options: ServerRuntimeInstallOptions,
   const target = path.join(options.serverPack.root, selected.direct ? 'server.jar' : 'installer.jar')
   if (project.loader === 'quilt') {
     const installers = await fetchJsonWithRetry<Array<{ url: string; hashes?: { sha256?: string } }>>('https://meta.quiltmc.org/v3/versions/installer', { signal: options.signal })
-    const installer = installers.find(entry => /^https:\/\//.test(entry.url) && /^[a-f0-9]{64}$/i.test(entry.hashes?.sha256 ?? ''))
-    if (!installer) throw new Error('Quilt Installer 目录没有可校验的发行文件')
-    await verifiedDownload.download({ sources: [{ id: 'quilt-installer', label: 'Quilt 官方安装器', url: installer.url }], expectedHash: { algorithm: 'sha256', value: installer.hashes!.sha256! }, destination: target, validate: file => validateJavaArchive(file, { executable: true }), signal: options.signal, onProgress: options.onDownloadProgress })
+    const candidates = installers.filter(entry => /^https:\/\//.test(entry.url) && /^[a-f0-9]{64}$/i.test(entry.hashes?.sha256 ?? '')).slice(0, 4)
+    if (!candidates.length) throw new Error('Quilt Installer 目录没有可校验的发行文件')
+    const failures: string[] = []
+    let installed = false
+    for (const installer of candidates) {
+      options.signal?.throwIfAborted()
+      try {
+        await verifiedDownload.download({ sources: [{ id: 'quilt-installer', label: 'Quilt 官方安装器', url: installer.url }], expectedHash: { algorithm: 'sha256', value: installer.hashes!.sha256! }, destination: target, validate: file => validateJavaArchive(file, { executable: true }), signal: options.signal, onProgress: options.onDownloadProgress })
+        installed = true
+        break
+      } catch (error) {
+        options.signal?.throwIfAborted()
+        // Meta is a generated catalog, while the exact-version Maven sidecar is
+        // published alongside the official artifact. Never trust a downloaded
+        // payload's own hash or weaken a caller-supplied/pinned checksum.
+        try {
+          const checksum = await quiltOfficialInstallerChecksum(installer.url, options.signal)
+          if (checksum !== installer.hashes!.sha256!.toLowerCase()) {
+            await verifiedDownload.download({ sources: [{ id: 'quilt-installer-maven', label: 'Quilt 官方 Maven 校验恢复', url: installer.url }], expectedHash: { algorithm: 'sha256', value: checksum }, destination: target, validate: file => validateJavaArchive(file, { executable: true }), signal: options.signal, onProgress: options.onDownloadProgress })
+            await fs.writeFile(path.join(options.serverPack.root, '.modmind-quilt-checksum-recovery.json'), `${JSON.stringify({ url: installer.url, metadataSha256: installer.hashes!.sha256, officialMavenSha256: checksum, recoveredAt: new Date().toISOString() }, null, 2)}\n`, 'utf8')
+            installed = true
+            break
+          }
+        } catch (recoveryError) {
+          options.signal?.throwIfAborted()
+          failures.push(recoveryError instanceof Error ? recoveryError.message : String(recoveryError))
+        }
+        failures.push(error instanceof Error ? error.message : String(error))
+      }
+    }
+    if (!installed) throw new Error(`Quilt 官方安装器均未通过校验：${failures.join('; ')}`)
   } else await verifiedDownload.download({ sources: selected.sources, destination: target, validate: file => validateJavaArchive(file, { executable: true, installer: !selected.direct }), maxBytes: 512 * 1024 * 1024, retriesPerSource: 2, signal: options.signal, onProgress: options.onDownloadProgress })
   if (!selected.direct) {
     const args = project.loader === 'quilt'
-      ? ['-jar', target, 'install', 'server', project.minecraftVersion, loaderVersion, `--install-dir="${options.serverPack.root}"`, '--download-server']
+        ? ['-jar', target, 'install', 'server', project.minecraftVersion, loaderVersion, `--install-dir=${options.serverPack.root}`, '--download-server']
       : ['-jar', target, '--installServer']
     await runJava(options.javaPath, args, options.serverPack.root, options.signal)
     await fs.rm(target, { force: true })

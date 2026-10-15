@@ -63,12 +63,18 @@ describe('one-click game testing', () => {
   })
   it('reuses a running game and reports launch failures', async () => {
     const running = fixture()
-    running.api.minecraft.getState.mockResolvedValue({ running: true })
+    running.api.minecraft.getState.mockResolvedValue({ running: true, projectPath: project.path } as never)
     await running.start()
     expect(running.calls).toEqual([])
     const failed = fixture()
     failed.api.minecraft.launch.mockResolvedValue({ projectPath: project.path, stage: 'error', running: false, message: 'launch failed' })
     await expect(failed.start()).rejects.toThrow('launch failed')
+  })
+  it('does not count another project\'s running game as this project\'s test', async () => {
+    const running = fixture()
+    running.api.minecraft.getState.mockResolvedValue({ running: true, projectPath: '/another-project' } as never)
+    await expect(running.start()).rejects.toThrow('本项目尚未完成测试')
+    expect(running.calls).toEqual([])
   })
   it('explains unsupported platforms before starting any process', async () => {
     for (const loader of ['bedrock', 'netease-pc', 'netease-mobile', 'velocity'] as const) {

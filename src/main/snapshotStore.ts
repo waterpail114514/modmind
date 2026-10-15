@@ -85,7 +85,10 @@ export async function copySnapshotFilesIncremental(
         ? managedDestination(baseline.root, relative)
         : ''
       await fs.mkdir(path.dirname(destination), { recursive: true })
-      if (baselineFile && await fs.stat(baselineFile).then((stat) => stat.isFile() && stat.size === sourceInfo.size).catch(() => false)) {
+      const baselineValid = baselineFile && await fs.lstat(baselineFile)
+        .then(async stat => stat.isFile() && !stat.isSymbolicLink() && stat.size === sourceInfo.size
+          && (await snapshotFileHash(baselineFile)).sha256 === sourceInfo.sha256).catch(() => false)
+      if (baselineValid) {
         try {
           await fs.link(baselineFile, destination)
         } catch {

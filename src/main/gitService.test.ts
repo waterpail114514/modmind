@@ -2,10 +2,33 @@ import { describe, expect, it } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { parseStatus } from './gitService'
+import { parseStatus, assertGitRepositoryRoot } from './gitService'
 import { GitService } from './gitService'
 
 describe('Git status parsing', () => {
+  it('preserves Unicode, arrow text and newlines in NUL-delimited records', () => {
+    expect(parseStatus('## main\0?? 中文 -> b.txt\0 M line\nbreak.txt\0R  renamed.txt\0old.txt\0').changes).toEqual([
+      { index: '?', worktree: '?', path: '中文 -> b.txt' },
+      { index: ' ', worktree: 'M', path: 'line\nbreak.txt' },
+      { index: 'R', worktree: ' ', path: 'renamed.txt' }
+    ])
+  })
+  it('rejects a parent repository before mutations', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'git-boundary-'))
+    try {
+      await fs.mkdir(path.join(root, 'nested'))
+      const { execFile } = await import('node:child_process')
+      const run = (args: string[]): Promise<string> => new Promise((resolve, reject) => execFile('git', args, { cwd: root, windowsHide: true }, (error, stdout) => error ? reject(error) : resolve(stdout)))
+      await run(['init', '-b', 'main'])
+      await fs.writeFile(path.join(root, 'sibling.txt'), 'untouched')
+      const service = new GitService(() => ({ name: 'Nested', path: path.join(root, 'nested'), loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'nested', createdAt: '' }))
+      await expect(service.commit({ message: 'must not stage the parent' })).rejects.toThrow(/根目录/)
+      expect(await run(['diff', '--cached', '--name-only'])).toBe('')
+      expect(await run(['status', '--porcelain'])).toContain('?? sibling.txt')
+      await expect(assertGitRepositoryRoot(path.join(root, 'nested'), root)).rejects.toThrow(/根目录/)
+      await expect(assertGitRepositoryRoot(root, root + '\n')).resolves.toBeUndefined()
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
+  }, 30_000)
   it('parses branches, divergence, and changed paths', () => {
     const result = parseStatus('## main...origin/main [ahead 2, behind 1]\n M src/Main.java\nA  README.md\n')
     expect(result).toMatchObject({ initialized: true, branch: 'main', ahead: 2, behind: 1 })
@@ -43,5 +66,5 @@ describe('Git status parsing', () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })

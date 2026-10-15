@@ -9,7 +9,22 @@ const execFileAsync = promisify(execFile)
 const MAX_OUTPUT = 2 * 1024 * 1024
 const MAX_UNTRACKED_PREVIEW = 256 * 1024
 
+export async function assertGitRepositoryRoot(projectRoot: string, repositoryRoot: string): Promise<void> {
+  const canonical = async (value: string): Promise<string> => {
+    const absolute = path.resolve(value)
+    const real = await fs.realpath(absolute).catch(() => absolute)
+    return process.platform === 'win32' ? real.toLowerCase() : real
+  }
+  if (await canonical(projectRoot) !== await canonical(repositoryRoot.trim())) {
+    throw new Error('Git 仓库根目录与当前项目不一致，已停止操作以保护父仓库')
+  }
+}
+
 async function git(cwd: string, args: string[], allowFailure = false): Promise<{ stdout: string; stderr: string; code: number }> {
+  if (args[0] !== '--version') {
+    const root = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd, windowsHide: true, maxBuffer: MAX_OUTPUT, encoding: 'utf8' }).catch(() => null)
+    if (root) await assertGitRepositoryRoot(cwd, root.stdout)
+  }
   try {
     const result = await execFileAsync('git', args, { cwd, windowsHide: true, maxBuffer: MAX_OUTPUT, encoding: 'utf8' })
     return { stdout: result.stdout, stderr: result.stderr, code: 0 }
@@ -22,22 +37,27 @@ async function git(cwd: string, args: string[], allowFailure = false): Promise<{
 }
 
 function parseStatus(output: string, available = true): GitStatus {
-  const lines = output.split(/\r?\n/).filter(Boolean)
+  const nul = output.includes('\0')
+  const lines = output.split(nul ? '\0' : /\r?\n/).filter(Boolean)
   const header = lines.find((line) => line.startsWith('## '))?.slice(3) ?? ''
   const branch = header.split('...')[0].replace('No commits yet on ', '').trim()
   const ahead = Number(header.match(/ahead (\d+)/)?.[1] ?? 0)
   const behind = Number(header.match(/behind (\d+)/)?.[1] ?? 0)
+  const changes: GitStatus['changes'] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.startsWith('## ')) continue
+    changes.push({ index: line[0] ?? ' ', worktree: line[1] ?? ' ', path: line.slice(3) })
+    // In porcelain -z rename/copy records contain destination then source.
+    if (nul && /[RC]/.test(line.slice(0, 2))) i++
+  }
   return {
     available,
     initialized: true,
     branch,
     ahead,
     behind,
-    changes: lines.filter((line) => !line.startsWith('## ')).map((line) => ({
-      index: line[0] ?? ' ',
-      worktree: line[1] ?? ' ',
-      path: line.slice(3).replace(/^.* -> /, '')
-    }))
+    changes
   }
 }
 
@@ -95,7 +115,7 @@ export class GitService {
     const project = this.getProject()
     const version = await git(project.path, ['--version'], true)
     if (version.code !== 0) return { available: false, initialized: false, branch: '', ahead: 0, behind: 0, changes: [] }
-    const result = await git(project.path, ['status', '--porcelain=v1', '--branch'], true)
+    const result = await git(project.path, ['status', '--porcelain=v1', '--branch', '-z'], true)
     if (result.code !== 0 && /not a git repository/i.test(result.stderr)) {
       return { available: true, initialized: false, branch: '', ahead: 0, behind: 0, changes: [] }
     }

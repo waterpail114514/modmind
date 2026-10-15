@@ -148,7 +148,13 @@ describe('native turn readiness gate', () => {
       const run = runExternalAgent({ ...f, kind: 'codex', forceCodexAppServer: true, prompt: 'original task', persistentRetry: true, signal: AbortSignal.timeout(10000), onOutput: vi.fn(), onProgress: vi.fn() })
       if (mode === 'unsafe-loss') {
         await expect(run).rejects.toMatchObject({ name: 'ExternalAgentUnsafeInterruptionError' })
-        expect(await fs.readFile(f.counter, 'utf8')).toBe('1')
+        // Two fresh app servers only read the persisted native turn. Neither
+        // may replay the user task while the write remains unconfirmed.
+        expect(await fs.readFile(f.counter, 'utf8')).toBe('3')
+        const calls = (await fs.readFile(f.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+        expect(calls.filter(call => call.method === 'turn/start')).toHaveLength(1)
+        expect(calls.filter(call => call.method === 'thread/read')).toHaveLength(2)
+        expect(calls.filter(call => call.attempt > 1).every(call => ['initialize', 'initialized', 'thread/read'].includes(call.method))).toBe(true)
       } else {
         await expect(run).resolves.toMatchObject({ summary: 'done' })
         const calls = (await fs.readFile(f.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))

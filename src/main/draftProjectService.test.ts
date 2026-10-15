@@ -20,6 +20,15 @@ const scaffold = async (project: ProjectInfo): Promise<void> => {
 }
 
 describe('conversation-only projects', () => {
+  it('does not create empty override directories through an ancestor junction', async () => {
+    const parent = await documents()
+    const draft = await createDraftProject(parent, 'Fabric 1.21.1 整合包')
+    const outside = path.join(parent, 'outside'); await fs.mkdir(outside)
+    await fs.symlink(outside, path.join(draft.path, 'overrides'), process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(initializeDraftProject(draft.path, { resolve: async () => compatibility, scaffold: createModpackTemplate })).rejects.toThrow(/link/)
+    expect(await fs.readdir(outside)).toEqual([])
+    expect(JSON.parse(await fs.readFile(path.join(draft.path, 'modmind.project.json'), 'utf8')).draft).toBeDefined()
+  })
   it('names the default namespace before scaffolding and keeps it stable after initialization', async () => {
     const draft = await createDraftProject(await documents(), 'Fabric 1.21.1 \u95ea\u7535\u5251\u6a21\u7ec4')
     const history = path.join(draft.path, '.modmind', 'history.json')

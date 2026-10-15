@@ -16,6 +16,8 @@ import { isSafeModJarFileName } from './modpackFilename'
 import { readModpackManifest, writeModpackManifest } from './modpackService'
 import { modpackModsRoot } from './modpackPaths'
 import { isJavaLoader } from '../shared/projectPlatform'
+import { withProjectMutation } from './projectMutation'
+import { assertContentTarget } from './contentInstallTransaction'
 
 const MCMOD_ORIGIN = 'https://www.mcmod.cn'
 const MCMOD_SEARCH_ORIGIN = 'https://search.mcmod.cn'
@@ -468,18 +470,26 @@ export class McmodService {
   }
 
   private async installVerified(project: ProjectInfo, file: McmodFileInfo, downloadUrl: string, signal?: AbortSignal): Promise<{ fileName: string; sha256: string }> {
+    return withProjectMutation(project.path, () => this.installVerifiedUnlocked(project, file, downloadUrl, signal))
+  }
+
+  private async installVerifiedUnlocked(project: ProjectInfo, file: McmodFileInfo, downloadUrl: string, signal?: AbortSignal): Promise<{ fileName: string; sha256: string }> {
     const targetName = file.filename
     if (!isSafeModJarFileName(targetName)) throw new Error('MC百科返回了不安全的文件名')
     const stagingRoot = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'mcmod-downloads', randomUUID())
     const staged = path.join(stagingRoot, targetName)
     const backup = path.join(stagingRoot, `${targetName}.backup`)
-    await fs.mkdir(stagingRoot, { recursive: true })
+    await assertContentTarget(project.path, stagingRoot)
     const originalManifest = await readModpackManifest(project)
     const modsRoot = modpackModsRoot(project, originalManifest)
     const target = path.join(modsRoot, targetName)
+    await assertContentTarget(project.path, target)
     const originalLock = await readModpackLock(project)
     let backedUp = false
+    let committed = false
+    let recoveryFailed = false
     try {
+      await fs.mkdir(stagingRoot, { recursive: true })
       const result = await verifiedDownload.download({ sources: [{ id: 'mcmod-user-download', label: 'MC百科用户下载', url: downloadUrl }], destination: staged, expectedHash: { algorithm: 'sha256', value: file.sha256 }, maxBytes: 256 * 1024 * 1024, signal })
       if (result.bytes < 1_024) throw new Error('下载文件过小，不是有效的 Mod JAR')
       await fs.mkdir(path.dirname(target), { recursive: true })
@@ -488,6 +498,7 @@ export class McmodService {
         backedUp = true
       }
       await fs.rename(staged, target)
+      committed = true
       const previous = originalLock.mods.find((mod) => mod.provider === 'mcmod' && mod.projectId === file.projectId)
       const obsoleteName = previous?.fileName
       const manifestEntry = { fileName: targetName, sha256: file.sha256, size: result.bytes, addedAt: new Date().toISOString() }
@@ -517,13 +528,20 @@ export class McmodService {
       await clearManualRequirement(project, file.projectId)
       return { fileName: targetName, sha256: file.sha256 }
     } catch (error) {
-      await fs.rm(target, { force: true }).catch(() => undefined)
-      if (backedUp) await fs.rename(backup, target).catch(() => undefined)
-      await writeModpackManifest(project, originalManifest).catch(() => undefined)
-      await writeModpackLock(project, originalLock).catch(() => undefined)
+      const recoveryErrors: unknown[] = []
+      if (committed) await fs.rm(target, { force: true }).catch(value => recoveryErrors.push(value))
+      if (backedUp) await fs.rename(backup, target).catch(value => recoveryErrors.push(value))
+      if (committed) {
+        await writeModpackManifest(project, originalManifest).catch(value => recoveryErrors.push(value))
+        await writeModpackLock(project, originalLock).catch(value => recoveryErrors.push(value))
+      }
+      if (recoveryErrors.length) {
+        recoveryFailed = true
+        throw new AggregateError([error, ...recoveryErrors], `下载失败且自动恢复未完成，恢复文件保留在 ${stagingRoot}`)
+      }
       throw error
     } finally {
-      await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
+      if (!recoveryFailed) await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 
@@ -531,6 +549,7 @@ export class McmodService {
     if (!isSafeModJarFileName(file.filename)) throw new Error('MC百科返回了不安全的文件名')
     const root = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'mcmod-addon-staging', randomUUID())
     const target = path.join(root, file.filename)
+    await assertContentTarget(project.path, target)
     await fs.mkdir(root, { recursive: true })
     try {
       const result = await verifiedDownload.download({ sources: [{ id: 'mcmod-user-download', label: 'MC百科用户下载', url: downloadUrl }], destination: target, expectedHash: { algorithm: 'sha256', value: file.sha256 }, maxBytes: 256 * 1024 * 1024, signal })

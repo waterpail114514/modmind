@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import type {
   ManagedDependency,
   ReleasePreflightResult,
@@ -207,8 +207,7 @@ export class ReleaseService {
     private readonly productVersion = 'development'
   ) {}
 
-  async getSettings(): Promise<ReleaseSettings> {
-    const project = this.getProject()
+  async getSettings(project = this.getProject()): Promise<ReleaseSettings> {
     const secrets = await this.readSecrets()
     const stored = await fs.readFile(configPath(project), 'utf8').then((value) => JSON.parse(value) as ReleaseSettings).catch(() => defaults(project))
     return {
@@ -220,8 +219,7 @@ export class ReleaseService {
     }
   }
 
-  async saveSettings(input: ReleaseSettings): Promise<ReleaseSettings> {
-    const project = this.getProject()
+  async saveSettings(input: ReleaseSettings, project = this.getProject()): Promise<ReleaseSettings> {
     const settings = cleanSettings(project, input)
     const previous = await this.readSecrets()
     await this.writeSecrets({
@@ -230,19 +228,19 @@ export class ReleaseService {
       githubToken: input.githubToken?.trim() || previous.githubToken
     })
     await fs.writeFile(configPath(project), `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-    return this.getSettings()
+    return this.getSettings(project)
   }
 
   async prepareExport(): Promise<ReleaseSettings> {
     const project = this.getProject()
-    const settings = await this.getSettings()
+    const settings = await this.getSettings(project)
     await writeModVersion(project, settings.version)
     return settings
   }
 
   async markExported(): Promise<ReleaseSettings> {
     const project = this.getProject()
-    const settings = await this.getSettings()
+    const settings = await this.getSettings(project)
     if (!settings.autoBump) return settings
     const next = nextVersion(settings.version, settings.bumpMode ?? 'patch')
     if (!next) return settings
@@ -250,7 +248,7 @@ export class ReleaseService {
       ...settings,
       version: next,
       displayName: displayNameForVersion(project, settings.version, next, settings.displayName)
-    })
+    }, project)
   }
 
   async suggestSummary(): Promise<ReleaseSummaryDraft> {
@@ -284,9 +282,8 @@ export class ReleaseService {
     }
   }
 
-  async preflight(): Promise<ReleasePreflightResult> {
-    const project = this.getProject()
-    const settings = await this.getSettings()
+  async preflight(project = this.getProject(), settings?: ReleaseSettings): Promise<ReleasePreflightResult> {
+    settings ??= await this.getSettings(project)
     if (isModpackProject(project)) {
       const checks: ReleasePreflightResult['checks'] = []
       let artifact: { path: string; size: number } | null = null
@@ -355,9 +352,8 @@ export class ReleaseService {
     return latest ? { path: latest.path, size: latest.stat.size } : null
   }
 
-  private async publishModrinth(settings: ReleaseSettings, secrets: ReleaseSecrets, artifactPath: string): Promise<ReleasePublishResult> {
+  private async publishModrinth(project: ProjectInfo, settings: ReleaseSettings, secrets: ReleaseSecrets, artifactPath: string): Promise<ReleasePublishResult> {
     if (!settings.modrinthProjectId || !secrets.modrinthToken) throw new Error('Modrinth 项目 ID 或令牌未配置')
-    const project = this.getProject()
     const addonDependencies = await platformRelationships(project, 'modrinth')
     const legacyDependencies = (await readDependencies(project)).filter((entry) => !entry.relationshipId && entry.source === 'modrinth')
     const dependencies = new Map<string, 'required' | 'optional'>()
@@ -386,9 +382,8 @@ export class ReleaseService {
     return { target: 'modrinth', success: true, url: `https://modrinth.com/mod/${settings.modrinthProjectId}/version/${value.id ?? ''}`, detail: `已发布 ${settings.version}` }
   }
 
-  private async publishCurseForge(settings: ReleaseSettings, secrets: ReleaseSecrets, artifactPath: string): Promise<ReleasePublishResult> {
+  private async publishCurseForge(project: ProjectInfo, settings: ReleaseSettings, secrets: ReleaseSecrets, artifactPath: string): Promise<ReleasePublishResult> {
     if (!/^\d+$/.test(settings.curseForgeProjectId) || !secrets.curseForgeToken) throw new Error('CurseForge 项目 ID 或令牌未配置')
-    const project = this.getProject()
     const dependencies = await platformRelationships(project, 'curseforge')
     if (dependencies.some((entry) => !entry.slug)) throw new Error('部分 CurseForge 前置缺少可发布的项目短名称，请重新识别目标模组')
     const bytes = await fs.readFile(artifactPath)
@@ -431,17 +426,17 @@ export class ReleaseService {
     if (!input.confirmed) throw new Error('发布操作需要明确确认')
     const targets = [...new Set(input.targets)].filter((target) => target === 'modrinth' || target === 'curseforge' || target === 'github')
     if (!targets.length) throw new Error('请选择至少一个发布平台')
-    const preflight = await this.preflight()
+    const settings = await this.getSettings(project)
+    const preflight = await this.preflight(project, settings)
     if (!preflight.ready || !preflight.artifactPath) throw new Error('发布预检未通过')
-    const settings = await this.getSettings()
     const secrets = await this.readSecrets()
     const results: ReleasePublishResult[] = []
     for (const target of targets) {
       try {
         const result = target === 'modrinth'
-          ? await this.publishModrinth(settings, secrets, preflight.artifactPath)
+          ? await this.publishModrinth(project, settings, secrets, preflight.artifactPath)
           : target === 'curseforge'
-            ? await this.publishCurseForge(settings, secrets, preflight.artifactPath)
+            ? await this.publishCurseForge(project, settings, secrets, preflight.artifactPath)
             : await this.publishGithub(settings, secrets, preflight.artifactPath)
         results.push(result)
       } catch (error) {

@@ -1,7 +1,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ProjectInfo } from '../shared/types'
 import { sameProjectPath } from './projectPath'
+import { serializeProjectMutation } from './projectMutation'
 
 type JsonRecord = Record<string, unknown>
 
@@ -46,9 +48,13 @@ async function readJson(target: string): Promise<JsonRecord | null> {
 }
 
 async function writeJson(target: string, value: JsonRecord): Promise<void> {
-  const temporary = `${target}.tmp-${process.pid}`
-  await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await fs.rename(temporary, target)
+  const temporary = `${target}.tmp-${randomUUID()}`
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+    await fs.rename(temporary, target)
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+  }
 }
 
 async function migrateSnapshotManifests(root: string, currentPath: string): Promise<boolean> {
@@ -91,7 +97,7 @@ async function clearPersistedExternalSessions(root: string): Promise<void> {
  * updated in place, while checkpoints copied from another live project are
  * discarded rather than resumed.
  */
-export async function migrateMovedProjectMetadata(project: ProjectInfo): Promise<ProjectMetadataMigrationResult> {
+export const migrateMovedProjectMetadata = serializeProjectMutation(async (project: ProjectInfo): Promise<ProjectMetadataMigrationResult> => {
   const root = path.join(project.path, dataDirectory(project))
   let relocated = await migrateSnapshotManifests(root, project.path)
   let discardedActiveTask = false
@@ -122,4 +128,4 @@ export async function migrateMovedProjectMetadata(project: ProjectInfo): Promise
   relocated = (await migrateAgentContext(root, project.path)) || relocated
   if (relocated) await clearPersistedExternalSessions(root)
   return { relocated, discardedActiveTask }
-}
+})

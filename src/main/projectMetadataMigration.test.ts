@@ -12,6 +12,21 @@ afterEach(async () => {
 })
 
 describe('moved project metadata', () => {
+  it('serializes concurrent relocation requests without losing an active checkpoint', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-metadata-concurrent-'))
+    roots.push(root)
+    const project: ProjectInfo = { name: 'Moved', path: root, namespace: 'moved', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: 'T' }
+    const data = path.join(root, '.modmind')
+    const snapshot = path.join(data, 'snapshots', 'saved')
+    await fs.mkdir(snapshot, { recursive: true })
+    const previous = path.join(root, 'missing-old-root')
+    await fs.writeFile(path.join(snapshot, 'snapshot.json'), JSON.stringify({ id: 'saved', taskId: 'task', projectPath: previous }))
+    await fs.writeFile(path.join(data, 'active-ai-task.json'), JSON.stringify({ taskId: 'task', snapshotId: 'saved', projectPath: previous }))
+    await Promise.all(Array.from({ length: 8 }, () => migrateMovedProjectMetadata(project)))
+    expect(JSON.parse(await fs.readFile(path.join(data, 'active-ai-task.json'), 'utf8')).projectPath).toBe(root)
+    expect(JSON.parse(await fs.readFile(path.join(snapshot, 'snapshot.json'), 'utf8')).projectPath).toBe(root)
+    expect((await fs.readdir(snapshot)).filter(name => name.includes('.tmp-'))).toEqual([])
+  })
   it('relocates checkpoints and removes the old external session', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-metadata-move-'))
     roots.push(root)

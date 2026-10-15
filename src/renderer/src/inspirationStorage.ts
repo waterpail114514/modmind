@@ -85,7 +85,7 @@ export function normalizeStoredInspirationMessages(messages: InspirationChatMess
       return {
         ...message,
         role: 'assistant',
-        content: '上次灵感回答在完成前中断，请重新发送问题。',
+        content: message.content.trimStart().startsWith('<modmind-inspiration>') ? message.content : '上次灵感回答在完成前中断，请重新发送问题。',
         status: 'error',
         isFinal: true,
         ...(message.sessionId ? { sessionId: message.sessionId } : {})

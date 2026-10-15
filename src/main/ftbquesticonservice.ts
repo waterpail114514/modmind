@@ -6,6 +6,7 @@ import type { FtbQuestIconInspection, FtbQuestIconResult, FtbQuestShapeSet, Proj
 import { archiveEntries, archiveRead } from './ftbResourceArchive'
 import { constantSpawnEggColors } from './ftbSpawnEggColors'
 import { disposeResponseBody, proxiedUndiciRequest } from './networkRequest'
+import { referenceDownloadSources } from './referenceDownloadSources'
 
 type RecordValue = Record<string, unknown>
 const record = (v: unknown): RecordValue => v && typeof v === 'object' && !Array.isArray(v) ? v as RecordValue : {}
@@ -134,8 +135,19 @@ async function read(index: ResourceIndex, entry: string): Promise<Buffer | null>
   return boundedSet(index.reads, entry, task, 512)
 }
 async function remoteRead(version: string, entry: string): Promise<Buffer | null> {
+  let lastError: unknown
+  for (const url of referenceDownloadSources(`https://cdn.jsdelivr.net/gh/misode/mcmeta@${version}-assets/${entry}`)) {
+    try {
+      const result = await readRemoteResource(url)
+      if (result) return result
+    } catch (error) { lastError = error }
+  }
+  if (lastError) throw new Error(`Remote network failure (${entry}): ${String(lastError)}`)
+  return null
+}
+async function readRemoteResource(url: string): Promise<Buffer | null> {
   try {
-    const response = await proxiedUndiciRequest(`https://cdn.jsdelivr.net/gh/misode/mcmeta@${version}-assets/${entry}`, { signal: AbortSignal.timeout(8000), bodyTimeout: 8000, headersTimeout: 8000 })
+    const response = await proxiedUndiciRequest(url, { signal: AbortSignal.timeout(8000), bodyTimeout: 8000, headersTimeout: 8000 })
     if (response.statusCode === 404) { disposeResponseBody(response); return null }
     if (!response.ok) { disposeResponseBody(response); throw new Error(`HTTP ${response.statusCode}`) }
     const chunks: Buffer[] = []
@@ -148,7 +160,7 @@ async function remoteRead(version: string, entry: string): Promise<Buffer | null
       }
     } finally { disposeResponseBody(response) }
     return Buffer.concat(chunks)
-  } catch (error) { throw new Error(`Remote network failure (${entry}): ${String(error)}`) }
+  } catch (error) { throw new Error(`Remote network failure (${url}): ${String(error)}`) }
 }
 function location(value: string, kind: 'models' | 'textures'): string {
   const parts = value.includes(':') ? value.split(':') : ['minecraft', value]

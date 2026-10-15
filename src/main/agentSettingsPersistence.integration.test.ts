@@ -4,6 +4,7 @@ import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
 import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows } from '../shared/modelContext'
 import { isReasoningEffort, normalizeReasoningEffortOptions, selectedReasoningEfforts } from '../shared/modelReasoning'
+import { mergeAgentSettingsPatch } from '../shared/agentSettingsPatch'
 
 function fixture() {
   const ast = ts.createSourceFile('index.ts', readFileSync('src/main/index.ts', 'utf8'), ts.ScriptTarget.Latest, true)
@@ -20,12 +21,12 @@ function fixture() {
     reasoningSelectionEffort: vi.fn(),
     safeStorage: { isEncryptionAvailable: () => true, encryptString: (key: string) => Buffer.from(key) },
     writeAgentSettingsAtomically: vi.fn(async (value: any) => { stored = value }),
-    readSettings: async () => stored,
+    readSettings: async () => { const { encryptedAgentKeys: _keys, ...settings } = stored; return settings }, mergeAgentSettingsPatch,
     pruneSavedBackgroundMedia: vi.fn(() => new Promise(() => {})),
     app: { getPath: () => '/fixture' }, BrowserWindow: { getAllWindows: () => [] }
   }
   vm.runInNewContext(ts.transpileModule(fn.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, state)
-  return { state, readStored: () => stored }
+  return { state, readStored: () => { const { encryptedAgentKeys: _keys, ...settings } = stored; return settings }, rawStored: () => stored }
 }
 
 it('allows unrelated preferences to save despite invalid historical model settings and pending media cleanup', async () => {
@@ -56,10 +57,10 @@ it('does not let an old invalid context threshold block changes to reasoning or 
 })
 
 it('clears the encrypted old endpoint key and does not persist save-only flags or plaintext', async () => {
-  const { state, readStored } = fixture()
+  const { state, readStored, rawStored } = fixture()
   const settings = readStored()
   await state.saveAgentSettings({ ...settings, externalAgents: { codex: { mode: 'hosted', baseUrl: 'https://new.example/v1', apiKey: '', clearApiKey: true } } }, false)
-  expect(readStored().encryptedAgentKeys).toBeUndefined()
+  expect(rawStored().encryptedAgentKeys).toBeUndefined()
   expect(JSON.stringify(readStored())).not.toContain('clearApiKey')
   expect(readStored().externalAgents.codex.apiKey).toBeUndefined()
 })

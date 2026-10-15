@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
+import { finished } from 'node:stream/promises'
 import type { JavaLoaderKind, ProjectInfo } from '../shared/types'
 import type { HeadlessSmokeTestResult, MinecraftRuntimeEvent } from '../shared/minecraft'
 import { verifiedDownload } from './downloadService'
@@ -127,28 +129,45 @@ export class HeadlessMcService {
     const lines: string[] = []
     let transcriptSize = 0
     let launchObserved = false
+    let gameStartedAt = 0
     let joinObserved = false
     let authenticationFailure = ''
     let processError = ''
+    let gameFailure = ''
+    let transcriptFailure = ''
     let aborted = false
+    const logFinished = finished(log).catch(() => undefined)
+    log.on('error', error => {
+      transcriptFailure = `HeadlessMC 日志写入失败：${error.message}`
+      void this.stop().catch(() => undefined)
+    })
     // The launcher downloads missing vanilla libraries/assets itself; surface
     // that fallback traffic in the global download indicator.
     let launcherDownloadActivityId: string | null = null
 
-    const append = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
-      const text = chunk.toString('utf8')
+    const append = (text: string, level: MinecraftRuntimeEvent['level']): void => {
       if (transcriptSize < MAX_TRANSCRIPT_BYTES) {
         const remaining = MAX_TRANSCRIPT_BYTES - transcriptSize
         const output = text.slice(0, remaining)
         transcriptSize += Buffer.byteLength(output, 'utf8')
-        log.write(output)
+        if (!log.destroyed && !log.writableEnded) log.write(output)
       }
       const nextLines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line) => line.split(/\r+\s*/)).filter(Boolean)
       for (const line of nextLines) {
         lines.push(line)
         if (lines.length > 80) lines.shift()
-        if (/(?:launch(?:ing|ed).*minecraft|starting minecraft|starting game|game process)/i.test(line)) launchObserved = true
-        if (/(?:joined the game|joining.*server|connected to.*server|logged in.*server|player joined)/i.test(line)) joinObserved = true
+        // Launcher "Launching version" lines precede downloads and can occur
+        // without a game process. Start the stable window on actual client logs.
+        if (/\[(?:Render|Client) thread\/INFO\].*(?:Setting user:|Backend library:|Reloading ResourceManager:|LWJGL Version:|Created:.*minecraft:)/i.test(line)) {
+          launchObserved = true
+          if (!gameStartedAt) gameStartedAt = Date.now()
+        }
+        if (/(?:joined the game|connected to.*server|logged in.*server|player joined)/i.test(line)
+          && !/(?:not connected|disconnected|failed|could not|unable to)/i.test(line)) joinObserved = true
+        if (/(?:connection (?:refused|reset)|failed to connect|could(?: not|n't) connect|disconnected|game process.*(?:exit|terminat)|minecraft.*(?:exited|crashed)|could(?: not|n't) launch|LaunchException)/i.test(line)) {
+          gameFailure = line
+          joinObserved = false
+        }
         if (/(?:not logged in|please log in|login required|no account|authentication failed)/i.test(line)) authenticationFailure = line
 
         const libraryProgress = /Downloading Libraries\s+(\d+)%/.exec(line)
@@ -172,8 +191,20 @@ export class HeadlessMcService {
         this.emit('headless-testing', line.slice(0, 1_000), level)
       }
     }
-    child.stdout.on('data', (chunk: Buffer) => append(chunk, 'info'))
-    child.stderr.on('data', (chunk: Buffer) => append(chunk, 'warning'))
+    for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'warning']] as const) {
+      const decoder = new StringDecoder('utf8')
+      let pending = ''
+      stream.on('data', (chunk: Buffer) => {
+        pending += decoder.write(chunk)
+        const lines = pending.split(/\r?\n|\r/)
+        pending = lines.pop() ?? ''
+        if (pending.length > 64_000) { lines.push(pending.slice(0, 64_000)); pending = pending.slice(64_000) }
+        for (const line of lines) append(`${line}\n`, level)
+      })
+      stream.once('end', () => append(pending + decoder.end(), level))
+      stream.on('error', error => { processError = error.message })
+    }
+    child.stdin.on('error', error => { processError = error.message })
     child.once('error', (error) => { processError = error.message })
 
     const abort = (): void => {
@@ -185,29 +216,42 @@ export class HeadlessMcService {
       await waitForSpawn(child)
       if (signal?.aborted) throw abortError()
       child.stdin.write(`${command}\n`)
-      const startedAt = Date.now()
-      while (Date.now() - startedAt < stableWindowMs) {
+      const launchDeadline = Date.now() + 10 * 60_000
+      while (!gameStartedAt || Date.now() - gameStartedAt < stableWindowMs) {
         if (aborted || this.stopRequested || signal?.aborted) throw abortError()
+        if (transcriptFailure) throw new Error(transcriptFailure)
+        if (gameFailure) throw new Error(`Minecraft 测试失败：${gameFailure}`)
         if (authenticationFailure) throw new Error(`HeadlessMC 需要先登录正版 Minecraft 账号：${authenticationFailure}`)
         if (processError) throw new Error(`HeadlessMC 无法启动：${processError}`)
         if (child.exitCode !== null) throw new Error(this.exitError(child.exitCode, lines))
+        if (!gameStartedAt && Date.now() >= launchDeadline) throw new Error(`HeadlessMC 启动超时；下载与启动日志：${transcriptPath}`)
         await delay(250)
       }
       if (input.serverAddress) {
         if (!/^\[?[A-Za-z0-9_.:-]+\]?:\d{1,5}$/.test(input.serverAddress)) throw new Error('server address must be host:port')
+        joinObserved = false
         child.stdin.write(`connect ${input.serverAddress}\n`)
         const joinDeadline = Date.now() + Math.min(Math.max(input.joinTimeoutMs ?? 30_000, 5_000), 120_000)
         while (!joinObserved && Date.now() < joinDeadline) {
+          if (aborted || this.stopRequested || signal?.aborted) throw abortError()
+          if (transcriptFailure) throw new Error(transcriptFailure)
+          if (gameFailure) throw new Error(`Minecraft 连接失败：${gameFailure}`)
           if (authenticationFailure) throw new Error(`HeadlessMC login failed: ${authenticationFailure}`)
           if (processError) throw new Error(`HeadlessMC could not start: ${processError}`)
           if (child.exitCode !== null) throw new Error(this.exitError(child.exitCode, lines))
           await delay(250)
         }
+        if (gameFailure) throw new Error(`Minecraft 连接失败：${gameFailure}`)
         if (!joinObserved) throw new Error(`HeadlessMC did not observe a server join for ${input.serverAddress}; transcript: ${transcriptPath}`)
       }
       if (!launchObserved) {
         throw new Error(`HeadlessMC 未确认 Minecraft 已启动。请检查日志：${transcriptPath}`)
       }
+      if (aborted || this.stopRequested || signal?.aborted) throw abortError()
+      if (transcriptFailure) throw new Error(transcriptFailure)
+      if (gameFailure) throw new Error(`Minecraft 测试失败：${gameFailure}`)
+      if (processError) throw new Error(`HeadlessMC 无法启动：${processError}`)
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error(this.exitError(child.exitCode, lines))
       this.emit('headless-testing', `HeadlessMC 已稳定运行 ${Math.round(stableWindowMs / 1_000)} 秒`, 'info')
       return {
         success: true,
@@ -221,12 +265,14 @@ export class HeadlessMcService {
     } finally {
       signal?.removeEventListener('abort', abort)
       await this.stop()
-      await new Promise<void>((resolve) => log.end(resolve))
+      if (!log.destroyed && !log.writableEnded) log.end()
+      await logFinished
       if (this.child === child) this.child = null
       if (launcherDownloadActivityId) {
         downloadActivities.fail(launcherDownloadActivityId, 'HeadlessMC 在补全游戏库时退出')
         launcherDownloadActivityId = null
       }
+      if (transcriptFailure) throw new Error(transcriptFailure)
     }
   }
 

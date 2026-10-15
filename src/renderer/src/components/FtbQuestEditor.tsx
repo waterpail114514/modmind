@@ -8,6 +8,7 @@ import { AlertTriangle, BookOpen, ChevronLeft, ChevronRight, CirclePlus, Clipboa
 import type { FtbQuestBook, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestIconInspection, FtbQuestRewardDocument, FtbQuestRewardTable, FtbQuestShapeSet, FtbQuestTaskDocument, ProjectInfo } from '../../../shared/types'
 import { ftbIconDescriptor, ftbIconKey, type FtbIconDescriptor } from '../../../shared/ftbIcon'
 import { requestFtbIcon } from '../lib/ftbIconClient'
+import { vanillaLang } from '../lib/vanillaItemNames'
 import { ftbObjectIds, rewriteFtbQuestReferences } from '../../../shared/ftbQuestReferences'
 import { validateFtbQuestBook } from '../../../shared/ftbQuestValidation'
 import { useConfirmDialog } from './InteractionDialogs'
@@ -107,20 +108,7 @@ function useFtbDependencyTexture(): string | null {
 function newId(): string { return crypto.randomUUID().replaceAll('-', '').toUpperCase() }
 function newTableId(): string { return newId().slice(0, 16) }
 // 物品显示名缓存：模组物品走主进程（mod jar 语言文件），原版物品走 CDN 语言文件（zh_cn 优先）。
-const ftbItemNameCache = new Map<string, string | null>()
-const ftbVanillaLangState: { promise: Promise<Record<string, string>> | null; version: string } = { promise: null, version: '' }
-function vanillaLang(mcVersion: string): Promise<Record<string, string>> {
-  if (ftbVanillaLangState.promise && ftbVanillaLangState.version === mcVersion) return ftbVanillaLangState.promise
-  // mcmeta 仓库的版本标签格式为 "<版本>-assets"（如 1.20.1-assets），不带 -assets 后缀的引用会 404。
-  const base = `https://cdn.jsdelivr.net/gh/misode/mcmeta@${mcVersion}-assets/assets/minecraft/lang`
-  // zh_cn 拉取失败（该版本无翻译）时回退 en_us，再失败返回空表。
-  ftbVanillaLangState.promise = fetch(`${base}/zh_cn.json`, { mode: 'cors' })
-    .then((response) => response.ok ? response.json() as Promise<Record<string, string>> : Promise.reject(new Error(`zh_cn ${response.status}`)))
-    .catch(() => fetch(`${base}/en_us.json`, { mode: 'cors' }).then((response) => response.ok ? response.json() as Promise<Record<string, string>> : {}))
-    .catch(() => ({}))
-  ftbVanillaLangState.version = mcVersion
-  return ftbVanillaLangState.promise
-}
+const ftbItemNameCache = new Map<string, { name: string | null; expires: number }>()
 /** 统一的物品 ID 清洗：剥离 NBT（后缀 {…} / 整体对象 {id:"mod:item",…}）与容器 [...]，小写。 */
 function cleanItemId(rawId: string): string {
   let clean = rawId.trim()
@@ -133,22 +121,29 @@ function cleanItemId(rawId: string): string {
 function useFtbItemName(itemId: string, mcVersion: string, enabled = true): string | null {
   const { projectPath, scope } = useContext(FtbResources)
   const clean = cleanItemId(itemId)
-  const cacheKey = `${scope}\u0000${clean}`
+  const cacheKey = `${projectPath}\u0000${scope}\u0000${mcVersion}\u0000${clean}`
   const [name, setName] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
   useEffect(() => {
     if (!enabled || !clean) { setName(null); return }
     const cached = ftbItemNameCache.get(cacheKey)
-    if (cached !== undefined) { setName(cached); return }
+    if (cached && cached.expires > Date.now()) { setName(cached.name); return }
     const [namespace = 'minecraft', ...rest] = clean.split(':')
     const shortName = rest.join(':')
     const resolve = namespace === 'minecraft'
       ? vanillaLang(mcVersion).then((lang) => lang[`item.minecraft.${shortName}`] ?? lang[`block.minecraft.${shortName}`] ?? null)
       : window.modmind.modpack.ftbQuestItemNames([clean], projectPath).then((map) => map[clean] ?? null)
     let alive = true
-    resolve.then((value) => { ftbItemNameCache.set(cacheKey, value); if (alive) setName(value) })
-      .catch(() => { ftbItemNameCache.set(cacheKey, null); if (alive) setName(null) })
-    return () => { alive = false }
-  }, [clean, mcVersion, enabled, scope, projectPath])
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    resolve.then((value) => {
+      ftbItemNameCache.set(cacheKey, { name: value, expires: Date.now() + (value ? 24 * 60 * 60 * 1000 : 60_000) })
+      while (ftbItemNameCache.size > 2048) ftbItemNameCache.delete(ftbItemNameCache.keys().next().value!)
+      if (alive) setName(value)
+    }).catch(() => {
+      if (alive) { setName(null); if (retry < 2) retryTimer = setTimeout(() => setRetry(value => value + 1), 15_000 * (retry + 1)) }
+    })
+    return () => { alive = false; if (retryTimer) clearTimeout(retryTimer) }
+  }, [clean, mcVersion, enabled, scope, projectPath, retry])
   return name
 }
 /** Minecraft 颜色代码 &0-&f 的实际颜色（§ 变体同样支持）。 */

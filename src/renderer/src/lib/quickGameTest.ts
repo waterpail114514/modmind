@@ -49,7 +49,10 @@ export async function launchQuickGameTest(
   }
   const state = await api.minecraft.getState()
   await checkProject()
-  if (state.running) return state
+  if (state.running) {
+    if (state.projectPath === project.path) return state
+    throw new Error('另一个项目的游戏仍在运行，本项目尚未完成测试。')
+  }
   if (project.kind === 'modpack') await api.minecraft.syncModpack()
   else await api.minecraft.buildProject(project.path)
   await checkProject()

@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
+import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -30,6 +31,8 @@ interface AppUpdateServiceOptions {
   quit: () => void
   notifyDownloaded: (version: string) => void
   launchInstaller?: (installerPath: string) => Promise<void>
+  /** Override only when the updater was configured with a custom cache root. */
+  updateCachePath?: string
 }
 
 function describeError(error: unknown): string {
@@ -234,7 +237,7 @@ export class AppUpdateService {
         this.updater.quitAndInstall(silent, true)
         return true
       }
-      return await this.launchInstaller(pending, silent)
+      return await this.resumeInstaller(pending, silent)
     } catch (error) {
       // Keep the validated marker so the install can be retried from the UI.
       this.setState({
@@ -269,11 +272,12 @@ export class AppUpdateService {
       message: '更新已下载，正在启动安装程序'
     })
     try {
-      return await this.launchInstaller(pending)
+      return await this.resumeInstaller(pending)
     } catch (error) {
       // Startup must never be blocked by a failed installer launch (antivirus locks, file in use).
       // Keep the marker so the next startup retries, but let the app boot normally.
       console.warn('[update] failed to launch pending update on startup', error)
+      this.setState({ ...this.state, phase: 'downloaded', message: `更新已保留，安装暂未完成：${describeError(error)}` })
       return false
     }
   }
@@ -353,10 +357,10 @@ export class AppUpdateService {
       if (!files.length) {
         throw differentialError instanceof Error ? differentialError : new Error('更新器未返回安装包路径')
       }
-      const extension = (this.options.platform ?? process.platform) === 'win32' ? '.exe' : '.zip'
-      const installerPath = files.find((file) => file.toLowerCase().endsWith(extension)) ?? files[0]
+      const extension = this.installerExtension()
+      const installerPath = files.find((file) => file.toLowerCase().endsWith(extension))
       if (!installerPath) throw new Error('更新器没有返回已下载的安装包')
-      const installerInfo = checked.updateInfo.files.find((file) => file.url.toLowerCase().endsWith(extension)) ?? checked.updateInfo.files[0]
+      const installerInfo = checked.updateInfo.files.find((file) => new URL(file.url, updateBaseUrl).pathname.toLowerCase().endsWith(extension))
       const expectedSha512 = installerInfo?.sha512 ?? checked.updateInfo.sha512
       if (!expectedSha512) throw new Error('更新清单缺少安装包 SHA-512')
 
@@ -408,18 +412,28 @@ export class AppUpdateService {
   }
 
   private updateCacheRoot(): string {
+    if (this.options.updateCachePath) return path.resolve(this.options.updateCachePath)
     const platform = this.options.platform ?? process.platform
-    const base = platform === 'win32' ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local') : path.join(this.options.userDataPath, 'updater-cache')
+    // Match electron-updater's ElectronAppAdapter/getAppCacheDir on each OS.
+    const base = platform === 'win32'
+      ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+      : platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Caches')
+        : process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache')
     return path.join(base, 'modmind-updater', 'pending')
+  }
+
+  private installerExtension(): string {
+    const platform = this.options.platform ?? process.platform
+    return platform === 'win32' ? '.exe' : platform === 'darwin' ? '.zip' : '.appimage'
   }
 
   private async writePendingUpdate(pending: PendingAppUpdate): Promise<void> {
     const target = this.pendingMarkerPath()
-    const temporary = `${target}.tmp`
+    const temporary = `${target}.tmp-${randomUUID()}`
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.writeFile(temporary, JSON.stringify(pending, null, 2), { encoding: 'utf8', mode: 0o600 })
-    await fs.rm(target, { force: true })
-    await fs.rename(temporary, target)
+    try { await fs.rename(temporary, target) }
+    finally { await fs.rm(temporary, { force: true }).catch(() => undefined) }
   }
 
   private async readPendingUpdate(): Promise<PendingAppUpdate | null> {
@@ -437,7 +451,7 @@ export class AppUpdateService {
   }
 
   private async validatePendingUpdate(pending: PendingAppUpdate): Promise<boolean> {
-    const extension = (this.options.platform ?? process.platform) === 'win32' ? '.exe' : '.zip'
+    const extension = this.installerExtension()
     if (!isPathInside(this.updateCacheRoot(), pending.installerPath) || path.extname(pending.installerPath).toLowerCase() !== extension) return false
     return this.validateInstallerIntegrity(pending)
   }
@@ -456,6 +470,74 @@ export class AppUpdateService {
     this.pending = null
     this.downloadedInCurrentProcess = false
     await fs.rm(this.pendingMarkerPath(), { force: true })
+  }
+
+  private async resumeInstaller(pending: PendingAppUpdate, silent = false): Promise<boolean> {
+    if ((this.options.platform ?? process.platform) === 'win32') return this.launchInstaller(pending, silent)
+
+    // A ZIP is not an executable, and AppImage replacement belongs to its updater.
+    // Rehydrate the platform updater from the already verified local artifact.
+    // The private loopback feed also allows a downloaded update to resume offline.
+    const token = randomUUID()
+    const fileName = path.basename(pending.installerPath)
+    const fileUrl = `${token}/${encodeURIComponent(fileName)}`
+    const stat = await fs.stat(pending.installerPath)
+    const directory = await fs.mkdtemp(path.join(this.options.userDataPath, 'update-resume-'))
+    const backup = path.join(directory, fileName)
+    let preserveBackup = false
+    try { await fs.copyFile(pending.installerPath, backup) }
+    catch (error) { await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined); throw error }
+    // The updater can clear its old cache when update-info.json is missing or
+    // damaged. Serve an independent copy so that recovery never deletes its input.
+    const manifest = JSON.stringify({ version: pending.targetVersion, files: [{ url: encodeURIComponent(fileName), size: stat.size, sha512: pending.sha512 }], path: encodeURIComponent(fileName), sha512: pending.sha512, releaseDate: pending.downloadedAt })
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname
+      if (request.method !== 'GET') { response.writeHead(405); response.end(); return }
+      if (pathname.startsWith(`/${token}/`) && pathname.endsWith('.yml')) {
+        response.writeHead(200, { 'Content-Type': 'text/yaml', 'Content-Length': Buffer.byteLength(manifest) })
+        response.end(manifest)
+      } else if (pathname === `/${fileUrl}`) {
+        response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': stat.size })
+        const stream = createReadStream(backup)
+        stream.once('error', () => response.destroy())
+        response.once('close', () => stream.destroy())
+        stream.pipe(response)
+      } else { response.writeHead(404); response.end() }
+    })
+    try {
+      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+      const decision = decideAppUpdate(this.options.currentVersion, pending.targetVersion)!
+      const address = server.address() as { port: number }
+      this.updater.setFeedURL({ provider: 'generic', url: `http://127.0.0.1:${address.port}/${token}/`, channel: decision.targetChannel === 'beta' ? 'beta' : 'latest', useMultipleRangeRequest: false })
+      this.updater.allowPrerelease = decision.targetChannel === 'beta'
+      this.updater.allowDowngrade = decision.currentChannel === 'beta' && decision.targetChannel === 'stable'
+      this.updater.disableDifferentialDownload = true
+      const checked = await this.updater.checkForUpdates()
+      if (!checked?.isUpdateAvailable || checked.updateInfo.version !== pending.targetVersion) throw new Error('无法恢复已下载的更新')
+      const files = await this.updater.downloadUpdate()
+      const installer = files.find(file => file.toLowerCase().endsWith(this.installerExtension()))
+      if (!installer || !await this.validateInstallerIntegrity({ ...pending, installerPath: installer })) throw new Error('恢复的安装包校验失败')
+      this.downloadedInCurrentProcess = true
+      this.setState({ ...this.state, phase: 'installing', message: '正在重启并安装更新…' })
+      this.options.beforeInstall()
+      this.updater.quitAndInstall(silent, true)
+      return true
+    } catch (error) {
+      if (!await this.validateInstallerIntegrity(pending)) {
+        try {
+          await fs.mkdir(path.dirname(pending.installerPath), { recursive: true })
+          await fs.copyFile(backup, pending.installerPath)
+        } catch (restoreError) {
+          preserveBackup = true
+          throw new AggregateError([error, restoreError], `更新恢复失败，完整安装包保留在：${backup}`)
+        }
+      }
+      throw error
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      if (!preserveBackup) await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 
   private async launchInstaller(pending: PendingAppUpdate, silent = false): Promise<boolean> {

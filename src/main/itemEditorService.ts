@@ -6,6 +6,7 @@ import type { ItemEditorSaveInput, ItemEditorState, ManagedItem, ManagedItemKind
 import type { ProjectInfo } from '../shared/types'
 import { compareMinecraftVersions } from './loaderCompatibility'
 import { generatedItemJava, itemEditorPaths, itemEditorSupportReason } from './itemEditorGenerator'
+import { assertContentTarget, installContentTransaction } from './contentInstallTransaction'
 
 const metadataPath = '.modmind/item-editor.json'
 
@@ -25,6 +26,7 @@ function target(project: ProjectInfo, relative: string): string {
 }
 
 async function assertNoSymlinks(project: ProjectInfo, relative: string): Promise<void> {
+  await assertContentTarget(project.path, target(project, relative))
   let current = project.path
   for (const part of relative.split('/')) {
     current = path.join(current, part)
@@ -208,29 +210,20 @@ async function applyItems(project: ProjectInfo, document: ItemDocument, nextItem
   const next = { revision: document.revision + 1, items: nextItems }
   writes.set(metadataPath, `${JSON.stringify(next, null, 2)}\n`)
   const removals = document.items.filter(item => !nextItems.some(nextItem => nextItem.id === item.id)).map(item => modelPath(project, item.id))
-  const originals = new Map<string, string | null>()
-  for (const relative of [...writes.keys(), ...removals]) originals.set(relative, await readOptional(target(project, relative)))
-  const applied: string[] = []
+  const stagingRoot = target(project, '.modmind/item-editor-staging')
+  await assertContentTarget(project.path, stagingRoot)
+  await fs.mkdir(stagingRoot, { recursive: true })
+  const staging = await fs.mkdtemp(path.join(stagingRoot, 'save-'))
   try {
+    const entries: Array<{ source: string | null; destination: string }> = []
     for (const [relative, content] of writes) {
-      const file = target(project, relative)
-      await fs.mkdir(path.dirname(file), { recursive: true })
-      await fs.writeFile(file, content, 'utf8')
-      applied.push(relative)
+      const source = path.join(staging, String(entries.length))
+      await fs.writeFile(source, content, 'utf8')
+      entries.push({ source, destination: target(project, relative) })
     }
-    for (const relative of removals) {
-      await fs.rm(target(project, relative), { force: true })
-      applied.push(relative)
-    }
-  } catch (error) {
-    for (const relative of applied.reverse()) {
-      const original = originals.get(relative)
-      if (original === null) await fs.rm(target(project, relative), { force: true }).catch(() => undefined)
-      else if (original !== undefined) await fs.writeFile(target(project, relative), original, 'utf8').catch(() => undefined)
-    }
-    throw error
-  }
-  return listManagedItems(project)
+    entries.push(...removals.map(relative => ({ source: null, destination: target(project, relative) })))
+    return await installContentTransaction(project.path, entries, () => listManagedItems(project))
+  } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined) }
 }
 
 export async function saveManagedItem(project: ProjectInfo, input: ItemEditorSaveInput): Promise<ItemEditorState> {

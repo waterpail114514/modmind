@@ -10,7 +10,10 @@ import type { StudioDraft } from '../shared/soundStudio'
 
 const services = new Map<string, SoundLibraryService>()
 export function soundServiceForProject(project: ProjectInfo, minecraftRoot: string, cacheRoot: string): SoundLibraryService {
-  const key = path.resolve(project.path) + '|' + project.minecraftVersion
+  const key = JSON.stringify([path.resolve(project.path), project.namespace, project.minecraftVersion, project.kind, project.loader, project.name, minecraftRoot, cacheRoot])
+  for (const [previousKey, previous] of services) {
+    if (previousKey !== key && sameProjectPath(JSON.parse(previousKey)[0], project.path)) { previous.cancel(); services.delete(previousKey) }
+  }
   if (!services.has(key)) services.set(key, new SoundLibraryService({ ...project }, minecraftRoot, cacheRoot))
   while (services.size > 4) { const first = services.keys().next().value!; services.get(first)?.cancel(); services.delete(first) }
   return services.get(key)!

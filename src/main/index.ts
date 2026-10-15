@@ -1,13 +1,18 @@
 import { readProjectImage } from './projectImages'
+import { scopedFilePath } from './scopedFilePath'
 import { readProjectModel } from './projectModels'
 import { readProjectTextFile } from './projectTextRead'
 import type { InspirationEvidenceRequest } from '../shared/inspirationEvidence'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
+import { InspirationWorkflowStore, type InspirationWorkflowIdentity } from './inspirationWorkflowStore'
+import { inspirationWorkflowInstruction, parseInspirationWorkflow } from '../shared/inspirationWorkflow'
 import { assignDefaultProjectNamespace, projectNamespacePrompt } from './projectNamespace'
 import { requestAiName } from './aiNaming'
 import { importAiAttachmentSources } from './aiAttachmentImport'
 import type { AiAttachmentSource } from '../shared/aiAttachments'
 import { normalizeThemePreset, normalizeAppearance, normalizeCustomThemeColors } from '../shared/appTheme'
+import { mergeAgentSettingsPatch, type AgentSettingsPatch } from '../shared/agentSettingsPatch'
+import { writeSettingsFile } from './settingsFile'
 import { importBackgroundMedia, pruneSavedBackgroundMedia, serveBackgroundMedia } from './appearanceMedia'
 import { summarizeLog } from '../shared/creationFeedback'
 import { CreationFeedbackService } from './creationFeedbackService'
@@ -46,7 +51,7 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import { BlockbenchBridge } from './blockbenchBridge'
 import { readYsmSource } from './modelSourceService'
 import { MinecraftRuntimeManager, detectInstalledJavaHomes, probeJavaHomeInfo } from './minecraftRuntime'
@@ -74,7 +79,8 @@ import { archiveSignatureForFile, extractTar } from './tarArchive'
 import { inferMinecraftVersions, inferGradleLoader, parseGradleProperties } from './existingProjectMetadata'
 import { extractSevenZipArchive } from './sevenZipArchive'
 import { windowsCmdInvocation } from './windowsCommand'
-import { setNetworkProxy, shutdownNetwork } from './networkRequest'
+import { networkFetch, setNetworkProxy, shutdownNetwork } from './networkRequest'
+import { requestAiTextResponse } from './aiTextRequest'
 import { migrateMovedProjectMetadata } from './projectMetadataMigration'
 import { renameProjectFiles } from './projectRename'
 import { convertLegacyModtoolProject, readLegacyModtoolProject } from './legacyProjectImport'
@@ -187,6 +193,7 @@ import type {
   AiExecutionProfile,
   BeginnerAiPreferences,
   AgentSettings,
+  AppDialogRequest,
   AppVersionCheckResult,
   CodingResult,
   ExistingProjectAdoptInput,
@@ -238,7 +245,7 @@ import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState 
 import { ModProviderRegistry } from './modProviderService'
 import { applyModpackPlan, planModpack } from './modpackPlanner'
 import { auditModpackLock, lockedModFromFile, readModpackLock, writeModpackLock } from './modpackLockService'
-import { applyKeybindPreset, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
+import { applyKeybindPreset, readKeybindState, readPatchouliBooks, writeFtbQuestChapter, writePatchouliBook } from './modpackContentService'
 import { listFtbQuestBackups, readFtbQuestBook, restoreFtbQuestBackup, saveFtbQuestBook } from './ftbQuestBookService'
 import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestDependencyTexture, resolveFtbQuestIcon, resolveFtbQuestItemNames, resolveFtbQuestShapes } from './ftbquesticonservice'
 import { downloadModpackContent, importModpackContent, listModpackContent, modpackContentProjectPath, removeModpackContent } from './modpackContentInventoryService'
@@ -305,6 +312,53 @@ const workbenchApprovals = new WorkbenchApprovals(owner => {
 })
 
 let mainWindow: BrowserWindow | null = null
+type PendingAppDialog = {
+  window: BrowserWindow
+  resolve: (confirmed: boolean) => void
+  timer: ReturnType<typeof setTimeout>
+}
+const pendingAppDialogs = new Map<string, PendingAppDialog>()
+
+function requestRendererDialog(request: Omit<AppDialogRequest, 'id'>): Promise<boolean> {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(false)
+  const id = randomUUID()
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      const pending = pendingAppDialogs.get(id)
+      if (!pending) return
+      pendingAppDialogs.delete(id)
+      resolve(false)
+    }, 120_000)
+    pendingAppDialogs.set(id, { window, resolve, timer })
+    try {
+      window.webContents.send('app:dialogRequested', { id, ...request } satisfies AppDialogRequest)
+    } catch {
+      pendingAppDialogs.delete(id)
+      clearTimeout(timer)
+      resolve(false)
+    }
+  })
+}
+
+function resolveRendererDialog(sender: Electron.WebContents, requestId: unknown, confirmed: unknown): void {
+  if (typeof requestId !== 'string' || requestId.length > 100 || typeof confirmed !== 'boolean') return
+  const pending = pendingAppDialogs.get(requestId)
+  if (!pending || pending.window.isDestroyed() || pending.window.webContents !== sender) return
+  pendingAppDialogs.delete(requestId)
+  clearTimeout(pending.timer)
+  pending.resolve(confirmed)
+}
+
+function cancelRendererDialogsForWindow(window: BrowserWindow): void {
+  for (const [id, pending] of pendingAppDialogs) {
+    if (pending.window !== window) continue
+    pendingAppDialogs.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve(false)
+  }
+}
+
 let resizeObserverDiagnosticAt = 0
 let suppressedResizeObserverDiagnostics = 0
 let tray: Tray | null = null
@@ -351,6 +405,11 @@ function projectKnowledgeStore(): InspirationKnowledgeStore {
     }
   })
 }
+let inspirationWorkflowStore: InspirationWorkflowStore | undefined
+function projectInspirationWorkflowStore(): InspirationWorkflowStore {
+  return inspirationWorkflowStore ??= new InspirationWorkflowStore(path.join(app.getPath('userData'), 'inspiration-workflows'), projectKnowledgeStore())
+}
+
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
   'workspace', 'sounds', 'relationships', 'modpack-content', 'ftb-quests', 'patchouli', 'modpack-automation', 'modpack-server',
@@ -1680,8 +1739,7 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
     }
     case 'set_workbench_agent': {
       if (activeAiRuns.size) throw new Error('存在运行中的 AI 任务，暂时不能切换 Agent')
-      const settings = await readSettings()
-      const saved = await saveAgentSettings({ ...settings, codingBackend: action.agent })
+      const saved = await saveAgentSettings(current => ({ ...current, codingBackend: action.agent }))
       return { success: true, agent: saved.codingBackend }
     }
     case 'set_workbench_model': {
@@ -1692,12 +1750,12 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
         const saved = await saveBeginnerAiPreferences({ ...preferences, model: action.model })
         return { success: true, model: saved.model }
       }
-      const current = settings.externalAgents?.[settings.codingBackend] ?? {}
-      const saved = await saveAgentSettings({
-        ...settings,
-        externalAgents: { ...settings.externalAgents, [settings.codingBackend]: { ...current, model: action.model } }
-      })
-      return { success: true, model: saved.externalAgents?.[settings.codingBackend]?.model }
+      const backend = settings.codingBackend
+      const saved = await saveAgentSettings(current => ({
+        ...current,
+        externalAgents: { ...current.externalAgents, [backend]: { ...current.externalAgents?.[backend], model: action.model } }
+      }))
+      return { success: true, model: saved.externalAgents?.[backend]?.model }
     }
     case 'set_app_setting': {
       const result = await applyAppSettingWrite({ key: action.key, value: action.value })
@@ -1714,12 +1772,12 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
 }
 
 type AppSettingKey =
-  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'allowLongerContext'
-  | 'preferLocalGradle' | 'closeBehavior' | 'gradleDownloadSource'
+  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowLongerContext'
+  | 'closeBehavior' | 'gradleDownloadSource'
 
 const APP_SETTING_KEYS: readonly AppSettingKey[] = [
-  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowBuildScriptChanges', 'allowLongerContext',
-  'preferLocalGradle', 'closeBehavior', 'gradleDownloadSource'
+  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowLongerContext',
+  'closeBehavior', 'gradleDownloadSource'
 ]
 
 /** Shared write path for the remote controller and the MCP app-setting tool. */
@@ -1727,11 +1785,11 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
   const key = String(input.key ?? '') as AppSettingKey
   const value = input.value
   if (!APP_SETTING_KEYS.includes(key)) throw new Error(`不支持的应用设置键：${key || '(空)'}`)
-  const next = { ...await readSettings() } as AgentSettings
+  const next: Partial<AgentSettings> = {}
   if (key === 'javaPreferences') {
     if (typeof value !== 'object' || value === null) throw new Error('Java 偏好需要对象值')
     next.javaPreferences = normalizeJavaPreferences(value)
-  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowBuildScriptChanges' || key === 'allowLongerContext' || key === 'preferLocalGradle') {
+  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowLongerContext') {
     if (typeof value !== 'boolean') throw new Error(`应用设置 ${key} 需要布尔值`)
     next[key] = value
   } else if (key === 'closeBehavior') {
@@ -1741,7 +1799,7 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
     if (value !== 'auto' && value !== 'china' && value !== 'official') throw new Error('Gradle 下载源无效')
     next.gradleDownloadSource = value
   }
-  return await saveAgentSettings(next)
+  return await saveAgentSettings(current => ({ ...current, ...next }))
 }
 
 async function remoteQuotaConfig(): Promise<RemoteQuotaConfig> {
@@ -1782,20 +1840,7 @@ async function readStoredBeginnerAiPreferences(): Promise<StoredQuotaModelPrefer
 }
 
 async function writeStoredBeginnerAiPreferences(value: StoredQuotaModelPreferences): Promise<void> {
-  const target = beginnerAiPreferencesFile()
-  const temporary = `${target}.${randomUUID()}.tmp`
-  await fs.mkdir(path.dirname(target), { recursive: true })
-  try {
-    await fs.writeFile(temporary, JSON.stringify(value, null, 2), 'utf8')
-    await fs.rename(temporary, target).catch(async (error) => {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
-      if (code !== 'EEXIST' && code !== 'EPERM') throw error
-      await fs.rm(target, { force: true })
-      await fs.rename(temporary, target)
-    })
-  } finally {
-    await fs.rm(temporary, { force: true }).catch(() => undefined)
-  }
+  await writeSettingsFile(beginnerAiPreferencesFile(), value)
 }
 
 async function readBeginnerAiPreferences(): Promise<BeginnerAiPreferences> {
@@ -1930,6 +1975,7 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
 }
 
 const managedCodexPreparations = new Map<string, ReturnType<typeof prepareCodex>>()
+const managedCodexPreparationUsers = new Map<string, { controller: AbortController; count: number }>()
 const managedCodexPreparationListeners = new Map<string, Set<(progress: CodexSetupProgress) => void>>()
 let managedCodexPreparationTail = Promise.resolve()
 
@@ -2009,21 +2055,29 @@ async function prepareManagedCodex(
   onProgress?: (progress: CodexSetupProgress) => void,
   signal?: AbortSignal
 ): ReturnType<typeof prepareCodex> {
+  signal?.throwIfAborted()
   const home = managedCodexHome(project, sessionScope, configSource)
   await migrateLegacyManagedCodexSessions(home)
   const routeRevision = configSource === 'device' ? quotaConfiguration.current() : undefined
   const configurationId = createHash('sha256').update(JSON.stringify(serverConfig)).digest('hex')
   const key = `${process.platform === 'win32' ? home.toLowerCase() : home}:${configurationId}:${routeRevision?.sequence ?? 0}:${existingExecutable ?? ''}`
+  if (managedCodexPreparationUsers.get(key)?.controller.signal.aborted) {
+    await managedCodexPreparations.get(key)?.catch(() => undefined)
+    signal?.throwIfAborted()
+  }
   const listeners = managedCodexPreparationListeners.get(key) ?? new Set<(progress: CodexSetupProgress) => void>()
   managedCodexPreparationListeners.set(key, listeners)
   if (onProgress) listeners.add(onProgress)
   if (!managedCodexPreparations.has(key)) {
+    const users = { controller: new AbortController(), count: 0 }
+    managedCodexPreparationUsers.set(key, users)
     const previousPreparation = managedCodexPreparationTail
     let releasePreparation!: () => void
     managedCodexPreparationTail = new Promise<void>((resolve) => { releasePreparation = resolve })
     const preparation = (async () => {
       await previousPreparation
       try {
+        users.controller.signal.throwIfAborted()
         const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow })
         if (contextBudget.source === 'inferred') diagnosticJournal.record({
           subsystem: 'ai', operation: 'model-context-budget', phase: 'inferred',
@@ -2044,6 +2098,7 @@ async function prepareManagedCodex(
           bundledSkillNames: workbenchSkillNames(project),
           imageToolsEnabled: true,
           rememberPrepared: false,
+          signal: users.controller.signal,
           onProgress: (progress) => {
             for (const listener of listeners) listener(progress)
           }
@@ -2054,14 +2109,21 @@ async function prepareManagedCodex(
     })()
     managedCodexPreparations.set(key, preparation)
     const release = (): void => {
-      if (managedCodexPreparations.get(key) === preparation) managedCodexPreparations.delete(key)
+      if (managedCodexPreparations.get(key) === preparation) {
+        managedCodexPreparations.delete(key)
+        managedCodexPreparationUsers.delete(key)
+      }
       if (!listeners.size) managedCodexPreparationListeners.delete(key)
     }
     void preparation.then(release, release)
   }
   const activePreparation = managedCodexPreparations.get(key)!
+  const users = managedCodexPreparationUsers.get(key)!
+  users.count += 1
   const observedPreparation = signal ? awaitWithAbort(activePreparation, signal, 'Codex 准备已停止') : activePreparation
   return observedPreparation.finally(() => {
+    users.count -= 1
+    if (users.count === 0 && managedCodexPreparations.get(key) === activePreparation) users.controller.abort()
     if (onProgress) listeners.delete(onProgress)
     if (!listeners.size && !managedCodexPreparations.has(key)) managedCodexPreparationListeners.delete(key)
   })
@@ -2409,6 +2471,7 @@ function createDetachedWindow(target: DetachedWindowTarget, rawTitle: string): B
       nodeIntegration: false
     }
   })
+  if (process.platform !== 'darwin') window.setMenuBarVisibility(false)
   detachedWindows.set(target, window)
   window.on('ready-to-show', () => window.show())
   window.on('unresponsive', () => {
@@ -2468,6 +2531,7 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+  if (process.platform !== 'darwin') mainWindow.setMenuBarVisibility(false)
   // Electron uses the window icon on Windows; macOS takes the bundle icon.
   if (process.platform === 'win32') mainWindow.setIcon(nativeImage.createFromPath(iconPath))
 
@@ -2599,6 +2663,7 @@ function createWindow(): void {
     }
   })
   mainWindow.on('closed', () => {
+    cancelRendererDialogsForWindow(mainWindow!)
     for (const window of detachedWindows.values()) window.close()
     detachedWindows.clear()
     for (const window of pluginOverlayWindows.values()) window.close()
@@ -2945,15 +3010,17 @@ function requireImageStudio(): ImageStudioService {
   return imageStudioService
 }
 
-function generateStudioImage(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent') {
-  return runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(input, source), { source })
+function generateStudioImage(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent', signal?: AbortSignal) {
+  signal?.throwIfAborted()
+  return runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(input, source, signal), { source })
 }
 
-async function createHostedImageLease(request?: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
+async function createHostedImageLease(request?: ImageGenerationRequest, signal?: AbortSignal): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
+  signal?.throwIfAborted()
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号，或在专业设置中保存图片 API Key')
   if (credentials.provider === 'custom') throw new Error('自定义 API 模式下请配置图片 API，无法使用 ModMind 额度图像服务')
-  const { baseUrl, apiKey } = await requestDeviceImageLease(credentials, AbortSignal.timeout(20_000))
+  const { baseUrl, apiKey } = await requestDeviceImageLease(credentials, signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000))
   if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请重新运行图像任务')
   const jobId = randomUUID()
   const reservedCredits = request ? Math.max(1, request.count) : 0
@@ -2984,29 +3051,27 @@ async function readProjectInfo(root: string): Promise<ProjectInfo | null> {
 async function offerProjectVersionMigration(project: ProjectInfo): Promise<ProjectInfo> {
   if (project.draft) return project
   if (await detectedProjectVersion(project) !== MIGRATABLE_PROJECT_VERSION) return project
-  const choice = await dialog.showMessageBox(mainWindow!, {
-    type: 'warning',
+  const shouldMigrate = await requestRendererDialog({
+    kind: 'confirm',
     title: '项目模板需要迁移',
     message: `检测到 ModMind ${MIGRATABLE_PROJECT_VERSION} 项目`,
     detail: `旧版 Gradle 和 Loader 模板可能无法构建。可以自动备份原配置并迁移到 ${CURRENT_PROJECT_VERSION}；源码和自定义入口不会被覆盖`,
-    buttons: [`自动迁移到 ${CURRENT_PROJECT_VERSION}`, '暂不迁移'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true
+    confirmLabel: `自动迁移到 ${CURRENT_PROJECT_VERSION}`,
+    cancelLabel: '暂不迁移'
   })
-  if (choice.response !== 0) return project
+  if (!shouldMigrate) return project
   let migrationProject = project
   if (project.loader === 'quilt' && !project.qslVersion) {
     const compatibility = await requireLoaderCatalog().resolve(project.loader, project.minecraftVersion)
     migrationProject = { ...project, qslVersion: compatibility.qslVersion }
   }
   const result = await migrateProjectVersion112(migrationProject, copyBundledGradleWrapper)
-  await dialog.showMessageBox(mainWindow!, {
-    type: 'info',
+  await requestRendererDialog({
+    kind: 'info',
     title: '项目迁移完成',
     message: `项目已迁移到 ModMind ${CURRENT_PROJECT_VERSION}`,
     detail: `旧配置已备份到 ${path.relative(project.path, result.backupDirectory)}`,
-    buttons: ['确定']
+    confirmLabel: '知道了'
   })
   return result.project
 }
@@ -3596,25 +3661,10 @@ function normalizeNetworkProxyUrl(value: unknown): string {
 let agentSettingsWriteTail = Promise.resolve()
 
 async function writeAgentSettingsAtomically(stored: Record<string, unknown>): Promise<void> {
-  const target = settingsFile()
-  const temporary = `${target}.tmp-${randomUUID()}`
-  await fs.mkdir(path.dirname(target), { recursive: true })
-  try {
-    await fs.writeFile(temporary, JSON.stringify(stored, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try {
-      await fs.rename(temporary, target)
-    } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
-      if (code !== 'EEXIST' && code !== 'EPERM') throw error
-      await fs.rm(target, { force: true })
-      await fs.rename(temporary, target)
-    }
-  } finally {
-    await fs.rm(temporary, { force: true }).catch(() => undefined)
-  }
+  await writeSettingsFile(settingsFile(), stored)
 }
 
-async function saveAgentSettings(value: AgentSettings, validatePreferences = true): Promise<AgentSettings> {
+async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSettings) => AgentSettings), validatePreferences = true): Promise<AgentSettings> {
   let resolveWrite!: (settings: AgentSettings) => void
   let rejectWrite!: (error: unknown) => void
   const result = new Promise<AgentSettings>((resolve, reject) => {
@@ -3623,14 +3673,16 @@ async function saveAgentSettings(value: AgentSettings, validatePreferences = tru
   })
   agentSettingsWriteTail = agentSettingsWriteTail.catch(() => undefined).then(async () => {
     try {
+  const current = await readSettings(true)
+  const value = typeof input === 'function' ? input(current) : mergeAgentSettingsPatch(current, input)
   const kinds = ['codex'] as const
   const normalized: AgentSettings = {
     ...value,
     allowLongerContext: value.allowLongerContext === true,
     codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
     codexApprovalMode: normalizeAgentApprovalMode(value.codexApprovalMode),
-    allowBuildScriptChanges: value.allowBuildScriptChanges !== false,
-    preferLocalGradle: Boolean(value.preferLocalGradle),
+    allowBuildScriptChanges: true,
+    preferLocalGradle: false,
     gradleExecutable: typeof value.gradleExecutable === 'string' ? value.gradleExecutable.trim().slice(0, 4096) : '',
     gradleDownloadSource: value.gradleDownloadSource === 'china' || value.gradleDownloadSource === 'official' ? value.gradleDownloadSource : 'auto',
     networkProxyUrl: normalizeNetworkProxyUrl(value.networkProxyUrl),
@@ -3648,8 +3700,8 @@ async function saveAgentSettings(value: AgentSettings, validatePreferences = tru
     if (existing.encryptedKey && existing.externalAgentProvider && !existingAgentKeys[existing.externalAgentProvider]) {
       existingAgentKeys[existing.externalAgentProvider] = existing.encryptedKey
     }
-  } catch {
-    // First save has no existing settings file.
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('原配置当前无法读取，已保留原文件；请重试保存', { cause: error })
   }
   const agentEntries: NonNullable<AgentSettings['externalAgents']> = {}
   const encryptedAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
@@ -3683,7 +3735,7 @@ async function saveAgentSettings(value: AgentSettings, validatePreferences = tru
   if (Object.keys(encryptedAgentKeys).length) stored.encryptedAgentKeys = encryptedAgentKeys
       await writeAgentSettingsAtomically(stored)
       void pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
-      const savedSettings = await readSettings()
+      const savedSettings = await readSettings(true)
       const appearance = normalizeAppearance(savedSettings)
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send('settings:appearance', appearance)
@@ -4019,7 +4071,7 @@ async function migrateLegacyUserData(): Promise<void> {
   }
 }
 
-async function readSettings(): Promise<AgentSettings> {
+async function readSettings(strict = false): Promise<AgentSettings> {
   const defaults: AgentSettings = {
     codingBackend: 'quota',
     allowLongerContext: false,
@@ -4045,6 +4097,7 @@ async function readSettings(): Promise<AgentSettings> {
       model?: string
       reasoningEffort?: unknown
     }
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('配置内容需要对象值')
     let legacyApiKey = ''
     if (stored.encryptedKey && safeStorage.isEncryptionAvailable()) {
       try { legacyApiKey = safeStorage.decryptString(Buffer.from(stored.encryptedKey, 'base64')) } catch { /* Ignore an unreadable legacy credential. */ }
@@ -4085,8 +4138,8 @@ async function readSettings(): Promise<AgentSettings> {
       codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
         : 'quota',
-      allowBuildScriptChanges: stored.allowBuildScriptChanges !== false,
-      preferLocalGradle: Boolean(stored.preferLocalGradle),
+      allowBuildScriptChanges: true,
+      preferLocalGradle: false,
       gradleExecutable: typeof stored.gradleExecutable === 'string' ? stored.gradleExecutable.slice(0, 4096) : '',
       gradleDownloadSource: stored.gradleDownloadSource === 'china' || stored.gradleDownloadSource === 'official'
         ? stored.gradleDownloadSource
@@ -4097,7 +4150,8 @@ async function readSettings(): Promise<AgentSettings> {
       closeBehavior: stored.closeBehavior === 'tray' || stored.closeBehavior === 'quit' ? stored.closeBehavior : 'ask',
       notificationsEnabled: stored.notificationsEnabled !== false
     }
-  } catch {
+  } catch (error) {
+    if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('原配置当前无法读取，已保留原文件；请重试保存', { cause: error })
     settings = defaults
   }
   if (settings.externalAgents?.codex?.mode !== 'hosted' && !settings.externalAgents?.codex?.model) {
@@ -4179,11 +4233,9 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
   if (nextConfiguration.mode === 'hosted') {
     nextConfiguration.baseUrl = targetBaseUrl
   }
-  const current = await readSettings()
-  const next: AgentSettings = {
-    ...current,
+  const next: AgentSettingsPatch = {
     codingBackend: kind,
-    externalAgents: { ...current.externalAgents, [kind]: nextConfiguration }
+    externalAgents: { [kind]: nextConfiguration }
   }
   // Persist first; availability, model discovery and CLI detection belong to refresh/run.
   const saved = await saveAgentSettings(next, false)
@@ -4269,7 +4321,7 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
       endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/${suffix}`
       let response: Response
       try {
-        response = await fetch(endpoint.toString(), {
+        response = await networkFetch(endpoint.toString(), {
           headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
           signal: AbortSignal.timeout(20_000)
         })
@@ -4732,7 +4784,7 @@ function sendAiOutput(
   const actualBackend = options?.backend ?? run?.backend
   const terminalError = kind === 'error' && options?.terminal !== false
   const notice = options?.notice ?? ((kind === 'error' || kind === 'warning') && options?.terminal === true ? aiNoticeDetails(kind, safeContent) : undefined)
-  const payload: AiOutputEvent = { kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(run?.conversationId ? { conversationId: run.conversationId } : {}), ...(run?.generation !== undefined ? { generation: run.generation } : {}), ...(run?.turnId ? { turnId: run.turnId } : {}), ...(options?.itemId ? { itemId: options.itemId } : {}), ...(options?.streamId ? { streamId: options.streamId } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
+  const payload: AiOutputEvent = { ...(run?.surface === 'inspiration' ? { inspirationFeatures: run.inspirationFeatures } : {}), kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(run?.conversationId ? { conversationId: run.conversationId } : {}), ...(run?.generation !== undefined ? { generation: run.generation } : {}), ...(run?.turnId ? { turnId: run.turnId } : {}), ...(options?.itemId ? { itemId: options.itemId } : {}), ...(options?.streamId ? { streamId: options.streamId } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
   if (kind !== 'delta') {
     if (notice) payload.notice = notice
     diagnosticJournal.record({
@@ -4778,6 +4830,7 @@ interface AgentTodoItem {
 const MAX_READ_ONLY_AI_TASKS_PER_PROJECT = 4
 
 interface ActiveAiRun {
+  inspirationFeatures?: import('../shared/inspirationFeatures').InspirationFeatures
   id: string
   senderId: number
   startedAt: string
@@ -5206,13 +5259,14 @@ async function listSnapshotManagedFiles(root: string): Promise<string[]> {
   return listManagedFiles(root, ignoreSnapshotDirectory)
 }
 
-async function restoreSnapshotFilesExact(snapshotRoot: string, destinationRoot: string, expectedFiles: string[]): Promise<void> {
+async function restoreSnapshotFilesExact(snapshotRoot: string, destinationRoot: string, expectedFiles: string[], hashes?: Record<string, string>): Promise<void> {
   await restoreManagedTreeExact(
     snapshotRoot,
     destinationRoot,
     expectedFiles,
     ignoreSnapshotDirectory,
-    (source, destination) => copySnapshotFiles(source, destination, ignoreSnapshotDirectory)
+    (source, destination) => copySnapshotFiles(source, destination, ignoreSnapshotDirectory),
+    hashes
   )
 }
 
@@ -5220,6 +5274,7 @@ async function readSnapshotManifest(project: ProjectInfo, id: string): Promise<{
   const validId = validateSnapshotId(id)
   const directory = path.join(project.path, projectDataDirectory(project), 'snapshots', validId)
   const root = path.join(directory, 'files')
+  assertAgentWriteAllowed(project.path, path.relative(project.path, root))
   const manifest = await fs.readFile(path.join(directory, 'snapshot.json'), 'utf8')
     .then((value) => JSON.parse(value) as SnapshotManifest)
     .catch(() => null)
@@ -5237,7 +5292,7 @@ async function restoreSnapshotTree(project: ProjectInfo, snapshot: { manifest: S
   if (!expectedFiles.some((file) => manifestNames.has(file))) {
     throw new Error('快照缺少 ModMind 项目清单，无法恢复')
   }
-  await restoreSnapshotFilesExact(snapshot.root, project.path, expectedFiles)
+  await restoreSnapshotFilesExact(snapshot.root, project.path, expectedFiles, snapshot.manifest.hashes)
 }
 
 async function restoreProjectSnapshot(id: string, projectPath?: string): Promise<SnapshotRestoreResult> {
@@ -5346,6 +5401,7 @@ async function applyModpackMigrationInPlace(
   let sourceSnapshotTree: Awaited<ReturnType<typeof readSnapshotManifest>> | undefined
   let rollbackFiles: string[] = []
   let commitStarted = false
+  let preserveRecoveryFiles = false
   try {
     if (mode === 'backup') {
       sourceSnapshot = await createProjectSnapshot(`整合包迁移前：${project.loader} ${project.minecraftVersion} -> ${target.loader} ${target.minecraftVersion}`)
@@ -5434,13 +5490,15 @@ async function applyModpackMigrationInPlace(
         currentProject = project
         emitProjectChanged()
       } catch (rollbackError) {
-        throw new Error(`整合包迁移失败，自动回滚也失败。\n迁移错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`)
+        preserveRecoveryFiles = true
+        const backupPath = sourceSnapshotTree?.root ?? rollbackRoot
+        throw new Error(`整合包迁移失败，自动回滚也失败。恢复文件已保留在：${backupPath}\n迁移错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`)
       }
     }
     if (mode === 'direct') await fs.rm(modpackMigrationDirectory(project, migrationId), { recursive: true, force: true }).catch(() => undefined)
     throw error
   } finally {
-    await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
+    if (!preserveRecoveryFiles) await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 
@@ -5975,7 +6033,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     },
     modpackDownloadContent: (input) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-      return downloadModpackContent(project, input as unknown as ModpackContentDownloadInput)
+      return downloadModpackContent(project, input as unknown as ModpackContentDownloadInput, signal)
     },
     mcmodSearch: (query, limit) => mcmodService.search(query, Math.min(Math.max(limit ?? 10, 1), 20), signal),
     mcmodFiles: async (projectId) => {
@@ -5995,6 +6053,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const paths = await writePatchouliBook(project, input as unknown as Parameters<typeof writePatchouliBook>[1])
       return { success: true, paths }
     },
+    modpackReadPatchouliBooks: () => readPatchouliBooks(project),
     modpackApplyKeybindPreset: async (input, allowConflicts) => {
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
       return applyKeybindPreset(project, input as unknown as Parameters<typeof applyKeybindPreset>[1], allowConflicts)
@@ -6037,7 +6096,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       return withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
     imageGenerate: async (input) => {
-      return generateStudioImage(input, 'agent')
+      return generateStudioImage(input, 'agent', signal)
     },
     imageStudioInfo: (includeModels) => requireImageStudio().describe(includeModels),
     imageProcess: (operation, dataUrl, options) => requireImageStudio().process(operation, dataUrl, options),
@@ -6066,7 +6125,7 @@ async function startPublicMcpBridge(projectPath?: string): Promise<{ projectPath
   await refreshExternalAgentContext(project).catch(() => undefined)
   const controller = new AbortController()
   const handlers = await createPublicMcpBridgeHandlers(project, controller.signal)
-  const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget())
+  const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget(project.path))
   try {
     const { mcpConfigPath, contextPath } = await bridge.start()
     await bridge.writeMcpConfig(mcpConfigPath)
@@ -6218,9 +6277,11 @@ async function restoreAiRecovery(): Promise<SnapshotInfo | null> {
   if (!active) return null
   const recovery = await getAiRecoveryInfo()
   if (!recovery.snapshot || recovery.snapshot.id !== active.snapshotId) return null
+  const selected = await readSnapshotManifest(project, active.snapshotId)
+  if (!selected.manifest.files) throw new Error('恢复快照缺少文件清单，当前项目和恢复点已保留')
   const backup = await createProjectSnapshot('Recovery backup before restoring interrupted AI task')
   const snapshotRoot = path.join(project.path, projectDataDirectory(project), 'snapshots', recovery.snapshot.id, 'files')
-  await restoreManagedPathsFromSnapshot(snapshotRoot, project.path, active.changedFiles ?? [])
+  await restoreManagedPathsFromSnapshot(snapshotRoot, project.path, active.changedFiles ?? [], { files: selected.manifest.files, hashes: selected.manifest.hashes })
   await clearActiveAiTask(project, active.taskId)
   diagnosticJournal.record({
     subsystem: 'ai',
@@ -6358,25 +6419,16 @@ function parseReleaseSummary(content: string, fallback: ReleaseSummaryDraft): Re
 }
 
 async function generateAiReleaseSummary(): Promise<ReleaseSummaryDraft> {
+  const project = requireProject()
   const fallback = await requireReleaseService().suggestSummary()
   const settings = await readSettings()
   const backend = settings.codingBackend
   const config = await getAiReviewerConfig(backend === 'quota', backend === 'quota' ? 'codex' : backend, settings).catch(() => null)
   if (!config?.baseUrl || !config.apiKey || !config.model) return fallback
-  const project = requireProject()
-  const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: 0.25,
-      messages: [
+  const response = await requestAiTextResponse({ baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model }, [
         { role: 'system', content: 'You write concise Minecraft release notes in Simplified Chinese. Return only JSON with string fields summary and changelog. Do not claim unverified gameplay changes.' },
         { role: 'user', content: `Create a release summary from this local metadata. Do not request files or make edits.\n${JSON.stringify({ project: project.name, minecraft: project.minecraftVersion, loader: project.loader, fallback }, null, 2)}` }
-      ]
-    }),
-    signal: AbortSignal.timeout(30_000)
-  })
+      ], { temperature: 0.25, signal: AbortSignal.timeout(30_000) })
   if (!response.ok) return fallback
   const body = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: unknown } }> } | null
   const content = typeof body?.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : ''
@@ -6592,6 +6644,7 @@ async function runExternalCodingAgent(
     lifecycle.onProgress?.(item)
   }
   const inspirationFeatures = surface === 'inspiration' ? normalizeInspirationFeatures(context.inspirationFeatures) : undefined
+  const inspirationKnowledgeBaseline = inspirationFeatures?.knowledgeOrganization ? await projectKnowledgeStore().read(project.path) : []
   const savedExternalConfiguration = settings.externalAgents?.[externalBackend] ?? {}
   const runExternalConfiguration = savedExternalConfiguration
   const localCodexConfig = !usesQuota && runExternalConfiguration.mode !== 'hosted'
@@ -6859,9 +6912,9 @@ async function runExternalCodingAgent(
       } : {}),
       project,
       workflowSourceDirectory: bundledCodexSkillsDirectory(),
-      pluginTarget: createPluginBridgeTarget(),
+      pluginTarget: createPluginBridgeTarget(project.path),
       systemPrompt: isInspiration
-        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
+        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures) + '\n' + inspirationWorkflowInstruction(`${context.turnId}:user`) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
         : `${WORKBENCH_REQUEST_GUIDANCE}\n\n${beginnerAgent ? BEGINNER_AGENT_WORKFLOW_GUIDANCE : ''}\n\n${project.draft ? `当前工程尚未创建。已记录的选择：${JSON.stringify(project.draft.target)}。结合本次对话补齐必要信息后使用 modmind_project_setup；不要手写模板或修改占位项目配置。` : codingWorkflowPrompt(project)}`,
       sessionScope,
       sessionLane: backend,
@@ -6980,7 +7033,7 @@ async function runExternalCodingAgent(
       bridge: {
         research: input => runInspirationResearch(project, input, {
           cacheRoot: path.join(app.getPath('userData'), 'decompile'), signal,
-          ensureJava: () => requireMinecraftRuntime().ensureJavaRuntimeForTools(DECOMPILE_MIN_JAVA),
+          ensureJava: () => requireMinecraftRuntime().ensureJavaRuntimeForTools(DECOMPILE_MIN_JAVA, undefined, undefined, signal),
           onProgress: detail => { sendCodingProgress(pipelineEvent('planning', '分析材料', detail, 'running')); if (isInspiration) sendAiOutput(event, 'tool', detail, sessionId, project.path, context.runId) }
         }),
         modpackModules: input => inspectModpackModules(project, input),
@@ -7239,7 +7292,7 @@ async function runExternalCodingAgent(
         modpackDownloadContent: async (input) => {
           try {
             if (!isModpackProject(project)) throw new Error('current project is not a modpack')
-            const result = await downloadModpackContent(project, input as unknown as ModpackContentDownloadInput)
+            const result = await downloadModpackContent(project, input as unknown as ModpackContentDownloadInput, signal)
             recordManagedDownload('modpack_download_content')
             activeTask.changedFiles = [...new Set([...activeTask.changedFiles, result.item.path])]
             await writeTask()
@@ -7271,6 +7324,7 @@ async function runExternalCodingAgent(
           await writeTask()
           return { success: true, paths }
         },
+        modpackReadPatchouliBooks: () => readPatchouliBooks(project),
         modpackApplyKeybindPreset: async (input, allowConflicts) => {
           if (!isModpackProject(project)) throw new Error('current project is not a modpack')
           const result = await applyKeybindPreset(project, input as unknown as Parameters<typeof applyKeybindPreset>[1], allowConflicts)
@@ -7485,8 +7539,14 @@ async function runExternalCodingAgent(
         modelImageCapability: input => modelImageCapabilityOperation(backend, input.model, input.verify === true),
         appSettingsWrite: (input) => applyAppSettingWrite(input)
         ,imageGenerate: async (input) => {
-          const generated = await generateStudioImage(input, 'agent')
-          const outputRoot = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated')
+          signal?.throwIfAborted()
+          const toolDirectory = (project.toolDataDirectory ?? '.modmind').replaceAll('\\', '/')
+          await scopedFilePath(project.path, toolDirectory)
+          const outputRelative = path.posix.join(toolDirectory, 'image-studio', 'generated')
+          const outputRoot = await scopedFilePath(project.path, outputRelative)
+          const generated = await generateStudioImage(input, 'agent', signal)
+          // Cancelling a later batch stops remote work, but already paid images
+          // still need to be preserved locally before returning the final result.
           await fs.mkdir(outputRoot, { recursive: true })
           const files: string[] = []
           const assets: Array<{ path?: string; dataUrl?: string; handoffAvailable: boolean }> = []
@@ -7495,8 +7555,8 @@ async function runExternalCodingAgent(
             let relative: string | undefined
             if (match) {
               const extension = asset.dataUrl.startsWith('data:image/jpeg;') ? 'jpg' : asset.dataUrl.startsWith('data:image/webp;') ? 'webp' : 'png'
-              relative = path.posix.join(project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated', `${generated.jobId}-${index + 1}.${extension}`)
-              await fs.writeFile(path.join(project.path, ...relative.split('/')), Buffer.from(match[1], 'base64'))
+              relative = path.posix.join(outputRelative, `${generated.jobId}-${index + 1}.${extension}`)
+              await fs.writeFile(await scopedFilePath(project.path, relative), Buffer.from(match[1], 'base64'))
               files.push(relative)
             }
             // Blockbench accepts a maximum 8 MiB PNG data URL. Give the
@@ -7505,7 +7565,9 @@ async function runExternalCodingAgent(
             const handoffAvailable = asset.dataUrl.startsWith('data:image/') && asset.dataUrl.length <= 8 * 1024 * 1024
             assets.push({ ...(relative ? { path: relative } : {}), ...(handoffAvailable ? { dataUrl: asset.dataUrl } : {}), handoffAvailable })
           }
-          return { success: !generated.error, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(generated.error ? { error: generated.error } : {}) }
+          const cancelled = signal?.aborted === true
+          const error = generated.error ?? (cancelled ? '生成已停止，已完成的图片已保存' : undefined)
+          return { success: !error, cancelled, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(error ? { error } : {}) }
         },
         imageStudioInfo: (includeModels) => requireImageStudio().describe(includeModels),
         imageProcess: (operation, dataUrl, options) => requireImageStudio().process(operation, dataUrl, options),
@@ -7547,6 +7609,23 @@ async function runExternalCodingAgent(
     const finalIntent = hasTargetChanges ? 'engineering' : declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational')
     activeTask.changedFiles = changedFiles
     const finalResponse = completedAnswer(result).slice(-120_000)
+    if (surface === 'inspiration' && inspirationFeatures && context.conversationId && context.turnId) {
+      // Only the host's terminal answer may commit knowledge. Streaming/replay have no side effects.
+      const parsed = parseInspirationWorkflow(finalResponse, inspirationFeatures)
+      if (!parsed.complete) activeTask.state.warnings.push(parsed.error ?? '灵感回答未按结构化格式完成，不能交接或自动保存')
+      else {
+        try {
+          throwIfAborted(signal, '灵感任务已停止')
+          const currentConversation = await conversationStore.read(project.path, context.conversationId)
+          if (currentConversation?.generation !== (context.generation ?? 0)) throw new Error('对话已回退或删除，知识变更未保存')
+          await projectInspirationWorkflowStore().register(project.path, { conversationId: context.conversationId, turnId: context.turnId, generation: context.generation ?? 0 },
+            finalResponse, inspirationFeatures, context.inspirationQuestion ?? '', inspirationKnowledgeBaseline, signal)
+        } catch (error) {
+          if (signal?.aborted) throw error
+          activeTask.state.warnings.push(`项目知识未同步：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+    }
     const summary = finalResponse.slice(0, 4_000)
     const tests = [
       ...(buildUsed ? ['已使用 ModMind 托管构建'] : []),
@@ -7869,6 +7948,9 @@ function registerIpc(): void {
     return appUpdateService.reinstallLatest(async () => confirmed === true,
       report => prepareCleanReinstall({ ...options, report }),
       report => prepareOverwriteReinstall({ ...options, report }))
+  })
+  diagnosticHandle('app:resolveDialog', (event, requestId: unknown, confirmed: unknown) => {
+    resolveRendererDialog(event.sender, requestId, confirmed)
   })
   diagnosticHandle('downloads:list', () => downloadActivities.snapshot())
   diagnosticHandle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))
@@ -8702,6 +8784,7 @@ function registerIpc(): void {
   })
   diagnosticHandle('modpack:writeFtbQuest', (_event, input: unknown) => writeFtbQuestChapter(requireProject(), input as Parameters<typeof writeFtbQuestChapter>[1]))
   diagnosticHandle('modpack:writePatchouliBook', (_event, input: unknown) => writePatchouliBook(requireProject(), input as Parameters<typeof writePatchouliBook>[1]))
+  diagnosticHandle('modpack:readPatchouliBooks', () => readPatchouliBooks(requireProject()))
   diagnosticHandle('modpack:configModIdentities', (_event, projectPath: string) => {
     const project = requireProject()
     if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('整合包项目已切换，请重新打开页面')
@@ -9098,13 +9181,11 @@ function registerIpc(): void {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     if (runsForProject(project.path).some(run => run.conversationId === conversationId)) throw new Error('请先停止当前任务，再删除对话')
-    const document = await conversationStore.read(project.path, conversationId)
-    if (document) {
-      await Promise.allSettled(Object.entries(document.native).map(([backend, state]) => state?.sessionId
+    return conversationStore.delete(project.path, conversationId, async (sessions) => {
+      await Promise.allSettled(Object.entries(sessions).map(([backend, state]) => state?.sessionId
         ? deleteExternalAgentSession(project, backend === 'quota' ? 'codex' : backend as ExternalAgentKind, state.sessionId, state.sessionHome, backend === 'quota' || backend === 'codex' ? managedCodexExecutablePath(app.getPath('userData')) : undefined)
         : Promise.resolve()))
-    }
-    return conversationStore.delete(project.path, conversationId)
+    })
   })
   diagnosticHandle('conversations:flush', () => conversationStore.flush())
   diagnosticHandle('project:writeFile', async (_event, relativePath: string, content: string, projectPath?: string) => {
@@ -9125,7 +9206,7 @@ function registerIpc(): void {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
-    const target = resolveProjectPathFor(project, normalized)
+    const target = await resolveSafeCodingTarget(normalized, project)
     if (await pathExists(target)) throw new Error('目标路径已存在')
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.writeFile(target, content, 'utf8')
@@ -9135,7 +9216,7 @@ function registerIpc(): void {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
-    const target = resolveProjectPathFor(project, normalized)
+    const target = await resolveSafeCodingTarget(normalized, project)
     if (await pathExists(target)) throw new Error('目标路径已存在')
     await fs.mkdir(target, { recursive: true })
     return { project, path: normalized }
@@ -9143,8 +9224,8 @@ function registerIpc(): void {
   diagnosticHandle('project:renamePath', async (_event, from: string, to: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-    const source = resolveProjectPathFor(project, normalizeReadablePath(from, project))
-    const destination = resolveProjectPathFor(project, normalizeReadablePath(to, project))
+    const source = await resolveSafeCodingTarget(normalizeReadablePath(from, project), project)
+    const destination = await resolveSafeCodingTarget(normalizeReadablePath(to, project), project)
     if (!(await pathExists(source))) throw new Error('源路径不存在')
     if (await pathExists(destination)) throw new Error('目标路径已存在')
     await fs.mkdir(path.dirname(destination), { recursive: true })
@@ -9156,7 +9237,7 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
     if (isToolDataDirectory(normalized.split('/')[0]) || ignoredDirectories.has(normalized.split('/')[0])) throw new Error('不能删除受保护的项目目录')
-    const target = resolveProjectPathFor(project, normalized)
+    const target = await resolveSafeCodingTarget(normalized, project)
     try { await shell.trashItem(target) } catch (error) {
       const failure = new Error('文件无法放入系统回收站，需要再次确认后永久删除') as Error & { code?: string; cause?: unknown }
       failure.code = 'TRASH_UNAVAILABLE'; failure.cause = error; throw failure
@@ -9167,7 +9248,7 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
     if (isToolDataDirectory(normalized.split('/')[0]) || ignoredDirectories.has(normalized.split('/')[0])) throw new Error('不能删除受保护的项目目录')
-    await fs.rm(resolveProjectPathFor(project, normalized), { recursive: true, force: true })
+    await fs.rm(await resolveSafeCodingTarget(normalized, project), { recursive: true, force: true })
   })
   // The generic delete path refuses everything under .modmind; workbench data
   // cleanup needs a narrow exception for exactly the files ModMind owns.
@@ -9517,6 +9598,23 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在')
     return inspirationKnowledge.read(project.path)
   })
+  const resolveInspirationRecord = async (projectPath: string, identity: InspirationWorkflowIdentity): Promise<ProjectInfo> => {
+    if (!identity || typeof identity.conversationId !== 'string' || typeof identity.turnId !== 'string' || !Number.isInteger(identity.generation)) throw new Error('灵感会话身份无效')
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在')
+    const conversation = await conversationStore.read(project.path, identity.conversationId)
+    if (!conversation || conversation.surface !== 'inspiration' || conversation.generation !== identity.generation) throw new Error('灵感会话版本已变化，请重新整理')
+    return project
+  }
+  diagnosticHandle('inspiration:readWorkflow', async (_event, projectPath: string, identity: InspirationWorkflowIdentity) => {
+    const project = await resolveInspirationRecord(projectPath, identity)
+    return projectInspirationWorkflowStore().read(project.path, identity)
+  })
+  diagnosticHandle('inspiration:commitWorkflow', async (_event, projectPath: string, identity: InspirationWorkflowIdentity, edits: Array<{ index: number; title: string; content: string }>, undo = false) => {
+    const project = await resolveInspirationRecord(projectPath, identity)
+    if (!Array.isArray(edits) || edits.length > 8 || typeof undo !== 'boolean') throw new Error('知识变更参数无效')
+    return projectInspirationWorkflowStore().commit(project.path, identity, edits, undo)
+  })
   diagnosticHandle('inspiration:updateKnowledge', async (_event, projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!input || typeof input !== 'object') throw new Error('知识条目无效')
@@ -9545,13 +9643,16 @@ function registerIpc(): void {
       skipRemap: value.skipRemap === true,
       ...(typeof value.minecraftVersion === 'string' && value.minecraftVersion.trim() ? { minecraftVersion: value.minecraftVersion.trim() } : {})
     }
+    const runKey = process.platform === 'win32' ? path.resolve(request.jarPath).toLowerCase() : path.resolve(request.jarPath)
+    if (activeDecompileRuns.has(runKey)) throw new Error('这个 JAR 正在反编译，请等待当前任务完成')
     const controller = new AbortController()
-    activeDecompileRuns.set(request.jarPath, controller)
+    activeDecompileRuns.set(runKey, controller)
     try {
       const javaPath = await requireMinecraftRuntime().ensureJavaRuntimeForTools(
         DECOMPILE_MIN_JAVA,
         (message) => sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'inspecting', message }),
-        ({ source, downloaded, total }) => sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'downloading-mappings', message: `正在从 ${source} 下载托管 Java`, ...(total > 0 ? { ratio: Math.min(0.05, 0.05 * downloaded / total) } : {}) })
+        ({ source, downloaded, total }) => sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'downloading-mappings', message: `正在从 ${source} 下载托管 Java`, ...(total > 0 ? { ratio: Math.min(0.05, 0.05 * downloaded / total) } : {}) }),
+        controller.signal
       )
       return await runDecompilation(request, {
         cacheRoot: decompileCacheRoot(),
@@ -9561,13 +9662,15 @@ function registerIpc(): void {
         onOutput: (output) => diagnosticJournal.record({ subsystem: 'decompile', operation: 'engine-output', phase: 'output', level: 'debug', message: redactDiagnosticText(output.slice(-2000)) })
       })
     } finally {
-      activeDecompileRuns.delete(request.jarPath)
+      if (activeDecompileRuns.get(runKey) === controller) activeDecompileRuns.delete(runKey)
     }
   }))
   diagnosticHandle('decompile:cancel', (_event, jarPath: unknown) => {
     if (typeof jarPath !== 'string') throw new Error('缺少 JAR 路径')
-    activeDecompileRuns.get(jarPath)?.abort()
-    return true
+    const runKey = process.platform === 'win32' ? path.resolve(jarPath).toLowerCase() : path.resolve(jarPath)
+    const controller = activeDecompileRuns.get(runKey)
+    controller?.abort()
+    return Boolean(controller)
   })
   diagnosticHandle('decompile:listFiles', (_event, sourceSha256: unknown) => runDiagnosticOperation('decompile', 'listFiles', 'List decompiled sources', async () => {
     if (typeof sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sourceSha256)) throw new Error('非法的缓存键')
@@ -9714,7 +9817,7 @@ function registerIpc(): void {
     if (result.canceled || !result.filePaths[0]) return null
     return importBackgroundMedia(result.filePaths[0], path.join(app.getPath('userData'), 'appearance-media'))
   })
-  diagnosticHandle('settings:saveAgent', async (_event, settings: AgentSettings) => {
+  diagnosticHandle('settings:saveAgent', async (_event, settings: AgentSettingsPatch) => {
     const saved = await saveAgentSettings(settings)
     setNetworkProxy(saved.networkProxyUrl ?? '')
     return publicAgentSettings(saved)
@@ -9805,13 +9908,8 @@ function registerIpc(): void {
     const executable = await ensureManagedCodexRuntime({rootDir: app.getPath('userData')})
     const status = await detectExternalAgent('codex', {executables: [executable], includeDefaults: false})
     if (!status.installed || !isManagedCodexVersion(status.version)) throw new Error('Codex 托管运行时版本校验失败')
-    const settings = await readSettings()
     await saveAgentSettings({
-      ...settings,
-      externalAgents: {
-        ...settings.externalAgents,
-        codex: {...settings.externalAgents?.codex, executable}
-      }
+      externalAgents: { codex: { executable } }
     })
     return status
   })
@@ -9922,6 +10020,7 @@ function registerIpc(): void {
     const run: ActiveAiRun = {
       id: aiRunId(event.sender.id, project.path, sessionId), senderId: event.sender.id, startedAt: recovery?.startedAt ?? new Date().toISOString(), sessionId, sessionScope: conversationOptions.sessionScope, projectPath: project.path,
       executionProfile: normalizedExecutionProfile, backend: selectedBackend, surface: requestedSurface,
+      ...(requestedSurface === 'inspiration' ? { inspirationFeatures: normalizeInspirationFeatures(conversationOptions.inspirationFeatures) } : {}),
       ...(conversationOptions.agentMode !== 'beginner' && options?.workbenchPhase === 'discussion' ? { workbenchPhase: 'discussion' as const } : {}),
       conversationId: conversationOptions.conversationId,
       generation: conversationOptions.generation,
@@ -10077,7 +10176,7 @@ function registerIpc(): void {
       if (!aiBackendSwitchCoordinator.isCurrent(switchState)) return { status: 'superseded', backend: requestedBackend }
       recovery = await awaitWithAbort(readActiveAiTask(project), controller.signal, 'Agent 切换已停止')
       if (previousSettings.codingBackend !== requestedBackend) {
-        await awaitWithAbort(saveAgentSettings({ ...previousSettings, codingBackend: requestedBackend }), controller.signal, 'Agent 切换已停止')
+        await awaitWithAbort(saveAgentSettings(current => ({ ...current, codingBackend: requestedBackend })), controller.signal, 'Agent 切换已停止')
       }
       if (!recovery) {
         if (!aiBackendSwitchCoordinator.markReady(switchState)) return { status: 'superseded', backend: requestedBackend }
@@ -10126,7 +10225,8 @@ function registerIpc(): void {
     } catch (error) {
       if (!backendReady && aiBackendSwitchCoordinator.isCurrent(switchState)) {
         if (switchState.rollbackValue.codingBackend !== requestedBackend) {
-          await awaitWithAbort(saveAgentSettings(switchState.rollbackValue), AbortSignal.timeout(10_000)).catch(() => undefined)
+          await awaitWithAbort(saveAgentSettings(current => current.codingBackend === requestedBackend
+            ? { ...current, codingBackend: switchState.rollbackValue.codingBackend } : current), AbortSignal.timeout(10_000)).catch(() => undefined)
         }
         if (recovery) await awaitWithAbort(writeActiveAiTask(recovery, project), AbortSignal.timeout(10_000)).catch(() => undefined)
         aiBackendSwitchCoordinator.fail(switchState)

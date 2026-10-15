@@ -34,6 +34,79 @@ async function fixture(): Promise<{ project: string; userData: string; data: Wor
 }
 
 describe('ConversationStore', () => {
+  it('reads and appends beyond the JavaScript argument-count limit from a real journal', async () => {
+    const { project, store, userData } = await fixture()
+    await store.create(project, { id: 'ws-large', surface: 'workspace' })
+    const count = 150_000
+    const lines = Array.from({ length: count }, (_, index) => JSON.stringify({ eventId: `e-${index}`, conversationId: 'ws-large', generation: 0, turnId: 'turn', sequence: index + 1, kind: 'user', time: 'T', payload: { prompt: 'retained' } })).join('\n') + '\n'
+    const journal = path.join(project, '.modmind', 'conversations-v3', 'ws-large.jsonl')
+    await fs.mkdir(path.dirname(journal), { recursive: true })
+    await fs.writeFile(journal, lines)
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    const page = await reopened.eventsSince(project, 'ws-large', 0, count - 1, 1)
+    expect(page.events.map(event => event.sequence)).toEqual([count])
+    expect((await reopened.appendUser(project, 'ws-large', 0, 'new-turn', { prompt: 'next' })).sequence).toBe(count + 1)
+  }, 30_000)
+  it('retains borrowed and shared native sessions when deleting conversation records', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native', undefined, undefined, 'managed-home')
+    const branch = await store.fork(project, { sourceConversationId: 'ws-parent', backend: 'codex', view: {} })
+    expect(await store.nativeSessionsForDeletion(project, branch.id)).toEqual({})
+    expect(await store.nativeSessionsForDeletion(project, 'ws-parent')).toEqual({})
+    await store.setNativeState(project, branch.id, branch.generation, 'codex', 'branch-native', undefined, undefined, 'managed-home')
+    expect((await store.nativeSessionsForDeletion(project, branch.id)).codex?.sessionId).toBe('branch-native')
+    expect((await store.nativeSessionsForDeletion(project, 'ws-parent')).codex?.sessionId).toBe('parent-native')
+  })
+  it('blocks a fork until native deletion and parent removal finish', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native')
+    const nativeFile = path.join(project, 'native-session.jsonl')
+    await fs.writeFile(nativeFile, 'native history')
+    let started!: () => void
+    let release!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    const deletion = store.delete(project, 'ws-parent', async sessions => {
+      expect(sessions.codex?.sessionId).toBe('parent-native')
+      started()
+      await barrier
+      await fs.unlink(nativeFile)
+    })
+    await deleting
+    const fork = store.fork(project, { sourceConversationId: 'ws-parent', id: 'ws-branch', backend: 'codex', view: {} })
+      .then(value => ({ value }), error => ({ error }))
+    release()
+    await deletion
+    expect(await fork).toEqual({ error: expect.objectContaining({ message: '要分支的原对话不存在' }) })
+    expect(await store.read(project, 'ws-branch')).toBeNull()
+    await expect(fs.stat(nativeFile)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it('preserves the native session when a fork precedes parent deletion', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native')
+    const nativeFile = path.join(project, 'native-session.jsonl')
+    await fs.writeFile(nativeFile, 'native history')
+    const fork = store.fork(project, { sourceConversationId: 'ws-parent', id: 'ws-branch', backend: 'codex', view: {} })
+    const deletion = store.delete(project, 'ws-parent', async sessions => {
+      expect(sessions).toEqual({})
+      if (sessions.codex) await fs.unlink(nativeFile)
+    })
+    await Promise.all([fork, deletion])
+    expect((await store.read(project, 'ws-branch'))?.native.codex?.sessionId).toBe('parent-native')
+    expect(await fs.readFile(nativeFile, 'utf8')).toBe('native history')
+  })
+  it('preserves the parent and releases the lifecycle lane if native deletion fails', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native')
+    await expect(store.delete(project, 'ws-parent', async () => { throw new Error('native unavailable') })).rejects.toThrow('native unavailable')
+    const branch = await store.fork(project, { sourceConversationId: 'ws-parent', backend: 'codex', view: {} })
+    expect(branch.native.codex?.sessionId).toBe('parent-native')
+    expect(await store.read(project, 'ws-parent')).not.toBeNull()
+  })
   it('keeps pinned conversations first and protects manual names from late AI or view saves', async () => {
     const { project, store, userData } = await fixture()
     await store.create(project, { id: 'ws-first', surface: 'workspace', title: '用户首问' })

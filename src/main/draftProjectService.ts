@@ -6,6 +6,7 @@ import { draftTargetFromMessage, missingDraftDetails } from '../shared/draftProj
 import { isJavaLoader, isServerPluginPlatform, PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { CURRENT_PROJECT_VERSION } from './projectVersion'
 import { assignDefaultProjectNamespace } from './projectNamespace'
+import { scopedFilePath } from './scopedFilePath'
 
 const manifest = 'modmind.project.json'
 const pending = new Map<string, Promise<unknown>>()
@@ -122,7 +123,7 @@ export async function initializeDraftProject(root: string, services: {
       }
       if (project.kind === 'modpack') {
         for (const relative of ['mods', 'modules', path.join('overrides', 'config')]) {
-          const target = path.join(root, relative)
+          const target = await scopedFilePath(root, relative)
           const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
           if (stat?.isSymbolicLink() || (stat && !stat.isDirectory())) throw new Error(`不能写入已有路径：${relative}`)
           await fs.mkdir(target, { recursive: true })

@@ -7,6 +7,7 @@ import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_pr
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { finished } from 'node:stream/promises'
 import { diagnoseAssets, LaunchPrecheck, MinecraftFolder, Version, launch } from '@xmcl/core'
 import {
   fetchJavaRuntimeManifest,
@@ -69,6 +70,7 @@ import { detectToolchainRequirements, mergeToolchainJavaHomes } from './toolchai
 import { applyNarratorPreference, gameDirectoryForLaunch, validateJvmArguments } from './minecraftLaunchPreferences'
 import { minecraftDownloadDispatcher } from './minecraftDownloadNetwork'
 import { validManagedJavaCache, MANAGED_JAVA_MANIFEST } from './managedJavaIntegrity'
+import { loaderMetadataFetch } from './loaderMetadataDownload'
 
 const BMCLAPI = BMCLAPI_BASE_URL
 const MINECRAFT_ASSET_HOSTS = [`${BMCLAPI}/assets`, 'https://resources.download.minecraft.net']
@@ -385,11 +387,18 @@ async function replaceModArtifact(source: string, target: string, loader: Loader
   }
 }
 
-async function fetchCompatibleJavaRuntimeManifest(target: string) {
+async function fetchCompatibleJavaRuntimeManifest(target: string, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   const dispatcher = minecraftDownloadDispatcher()
+  const abort = (): void => { void dispatcher.destroy().catch(() => undefined) }
+  signal?.addEventListener('abort', abort, { once: true })
   try {
     return await fetchJavaRuntimeManifest({ target: target as JavaRuntimeTargetType, dispatcher })
+  } catch (error) {
+    signal?.throwIfAborted()
+    throw error
   } finally {
+    signal?.removeEventListener('abort', abort)
     await dispatcher.close()
   }
 }
@@ -843,8 +852,10 @@ export class MinecraftRuntimeManager {
   async ensureJavaRuntimeForTools(
     minimumMajor = 21,
     onProgress?: (message: string) => void,
-    onDownloadProgress?: (progress: ManagedJdkProgress) => void
+    onDownloadProgress?: (progress: ManagedJdkProgress) => void,
+    signal?: AbortSignal
   ): Promise<string> {
+    signal?.throwIfAborted()
     const requiredMajor = Number.isInteger(minimumMajor) ? Math.max(8, minimumMajor) : 21
     const runtimeTarget = javaRuntimeTargetForJavaVersion(requiredMajor)
     const preferredToolsJava = await this.preferredJavaHome('tools')
@@ -871,7 +882,8 @@ export class MinecraftRuntimeManager {
         reportedSource = progress.source
         onProgress?.(message)
       }
-    })
+    }, signal)
+    signal?.throwIfAborted()
     const candidate = await probeJavaHome(managed.home, requiredMajor, false)
     if (!candidate) throw new Error(`已下载的 JDK 无法运行反编译工具：${managed.home}`)
     onProgress?.(`Java ${candidate.major} 已就绪：${managed.source}`)
@@ -1041,11 +1053,22 @@ export class MinecraftRuntimeManager {
     }
     this.process = child
     const launcherLog = createWriteStream(path.join(gameDirectory, 'launcher-console.log'), { flags: 'w' })
+    let transcriptFailure = ''
+    const logFinished = finished(launcherLog).catch(() => undefined)
+    launcherLog.on('error', error => {
+      transcriptFailure = `Minecraft 日志写入失败：${error.message}`
+      child.stdout?.unpipe(launcherLog)
+      child.stderr?.unpipe(launcherLog)
+      this.updateState({ stage: 'error', running: false, message: transcriptFailure })
+      this.emit('error', transcriptFailure, 'error')
+      this.killProcessTree(child)
+    })
     child.stdout?.pipe(launcherLog, { end: false })
     child.stderr?.pipe(launcherLog, { end: false })
     child.stdout?.on('data', (chunk: Buffer) => this.emit('running', chunk.toString('utf8').trim(), 'info', false))
     child.stderr?.on('data', (chunk: Buffer) => this.emit('running', chunk.toString('utf8').trim(), 'warning', false))
     child.once('spawn', () => {
+      if (transcriptFailure) { this.killProcessTree(child); return }
       this.updateState({ stage: 'running', running: true, pid: child.pid, instancePath: gameDirectory, mods: withoutProjectMod ? [] : this.state.mods, message: withoutProjectMod ? 'Minecraft 游戏运行中（未加载项目 Mod）' : 'Minecraft 测试实例运行中' })
       this.emit('running', `Minecraft 已启动，进程 ID ${child.pid ?? '-'}`)
     })
@@ -1058,9 +1081,14 @@ export class MinecraftRuntimeManager {
     child.once('close', (code, signal) => {
       this.process = null
       const intentionallyStopped = this.stopRequested
-      launcherLog.end(() => {
-        void this.handleMinecraftExit(project, launchedAt, code, signal, intentionallyStopped, gameDirectory)
-      })
+      if (!launcherLog.destroyed && !launcherLog.writableEnded) launcherLog.end()
+      void logFinished.then(() => {
+        if (transcriptFailure) {
+          this.updateState({ stage: 'error', running: false, pid: undefined, message: transcriptFailure })
+          return
+        }
+        return this.handleMinecraftExit(project, launchedAt, code, signal, intentionallyStopped, gameDirectory)
+      }).catch(error => this.emit('error', error instanceof Error ? error.message : String(error), 'error'))
     })
     return this.getState()
   }
@@ -1294,8 +1322,8 @@ export class MinecraftRuntimeManager {
     }
   }
 
-  private async gradleRuntime(project: ProjectInfo): Promise<GradleRuntimeSelection> {
-    const javaPath = await this.ensureBuildJava(project)
+  private async gradleRuntime(project: ProjectInfo, signal?: AbortSignal): Promise<GradleRuntimeSelection> {
+    const javaPath = await this.ensureBuildJava(project, signal)
     const wrapperPath = projectGradleWrapperExecutable(project.path)
     if (!(await exists(wrapperPath))) {
       throw new Error(`项目缺少 Gradle Wrapper：${path.basename(wrapperPath)}。请先在项目根目录提供可用的 Wrapper`)
@@ -1304,7 +1332,8 @@ export class MinecraftRuntimeManager {
     return { executable: wrapperPath, javaHome: path.dirname(path.dirname(javaPath)), usesWrapper: true, source: 'wrapper' }
   }
 
-  private async ensureBuildJava(project: ProjectInfo): Promise<string> {
+  private async ensureBuildJava(project: ProjectInfo, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
     const range = buildJavaRangeForProject(project)
     const preferredBuildJava = await this.preferredJavaHome('build')
     if (preferredBuildJava) {
@@ -1321,6 +1350,7 @@ export class MinecraftRuntimeManager {
       )
     }
     for (const home of await configuredBuildJavaHomes(project)) {
+      signal?.throwIfAborted()
       const candidate = await probeJavaHome(home, range.minimum, true, range.maximum)
       if (candidate) {
         this.buildToolchainHomes.set(candidate.major, path.dirname(path.dirname(candidate.javaPath)))
@@ -1331,7 +1361,8 @@ export class MinecraftRuntimeManager {
     }
     const managed = await ensureManagedJdk(path.join(app.getPath('userData'), 'build-jdks'), range.minimum, (progress) => {
       this.emitProgress('downloading-java', `正在从${progress.source}下载完整 JDK ${range.minimum}`, progress.downloaded, progress.total)
-    })
+    }, signal)
+    signal?.throwIfAborted()
     const candidate = await probeJavaHome(managed.home, range.minimum, true, range.maximum)
     if (!candidate) {
       throw new Error(`ModMind 下载的 JDK 无法用于 Gradle 编译：${managed.home}。请设置有效的 JDK（包含 javac）或修复 JDK 缓存`)
@@ -1346,11 +1377,13 @@ export class MinecraftRuntimeManager {
    * already started. Resolve those versions from the actual failure output,
    * register their homes with Gradle, and let the caller retry the same task.
    */
-  private async ensureDetectedBuildToolchains(logText: string, project?: ProjectInfo): Promise<boolean> {
+  private async ensureDetectedBuildToolchains(logText: string, project?: ProjectInfo, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
     const requirements = detectToolchainRequirements(logText)
     const configuredHomes = project ? await configuredBuildJavaHomes(project) : []
     let changed = false
     for (const major of requirements.javaMajors) {
+      signal?.throwIfAborted()
       if (this.buildToolchainHomes.has(major)) continue
       const existing = await Promise.all(configuredHomes.map((home) => probeJavaHome(home, major, true, major)))
       const configured = existing.find((candidate): candidate is JavaProbeResult => Boolean(candidate))
@@ -1363,7 +1396,8 @@ export class MinecraftRuntimeManager {
       this.emit('building-mod', `构建日志要求 Java ${major}，正在自动准备对应 JDK`, 'warning')
       const managed = await ensureManagedJdk(path.join(app.getPath('userData'), 'build-jdks'), major, (progress) => {
         this.emitProgress('downloading-java', `正在为构建下载 JDK ${major}（${progress.source}）`, progress.downloaded, progress.total)
-      })
+      }, signal)
+      signal?.throwIfAborted()
       const candidate = await probeJavaHome(managed.home, major, true)
       if (!candidate) throw new Error(`自动下载的 JDK ${major} 未通过 javac 验证：${managed.home}`)
       this.buildToolchainHomes.set(major, path.dirname(path.dirname(candidate.javaPath)))
@@ -1386,7 +1420,7 @@ export class MinecraftRuntimeManager {
     if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
     await this.prepareGradleMavenFallback(project)
     await this.prepareGradleWrapperDownload(project, 0, signal)
-    const runtime = await this.gradleRuntime(project)
+    const runtime = await this.gradleRuntime(project, signal)
     const env = this.gradleEnvironment(runtime)
     if (signal?.aborted) throw Object.assign(new Error('Gradle 验证已取消'), { name: 'AbortError' })
     const taskList = this.spawnGradle(runtime, project, ['tasks', '--all', '--console=plain', '--no-daemon'], env)
@@ -1476,7 +1510,7 @@ export class MinecraftRuntimeManager {
 
   private async retryGradleVerification(project: ProjectInfo, logText: string, signal: AbortSignal | undefined, toolchainRetryAttempt: number, distributionRetryAttempt: number): Promise<{ toolchainRetryAttempt: number; distributionRetryAttempt: number } | null> {
     if (signal?.aborted) return null
-    if (toolchainRetryAttempt < 4 && await this.ensureDetectedBuildToolchains(logText, project)) {
+      if (toolchainRetryAttempt < 4 && await this.ensureDetectedBuildToolchains(logText, project, signal)) {
       this.emit('testing-server', '已根据验证日志补齐工具链，正在重试 Gradle 任务', 'warning')
       return { toolchainRetryAttempt: toolchainRetryAttempt + 1, distributionRetryAttempt }
     }
@@ -1694,7 +1728,7 @@ export class MinecraftRuntimeManager {
     if (project.kind === 'server-plugin') {
       if (!isServerPluginPlatform(project.loader)) throw new Error('插件工程平台无效')
       if (await exists(path.join(project.path, 'pom.xml')) && !await exists(path.join(project.path, 'build.gradle')) && !await exists(path.join(project.path, 'build.gradle.kts'))) {
-        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
+        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project, signal), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
       } else await this.runGradleBuild(project, signal)
       const artifact = await findPluginArtifact(project)
       this.updateState({ stage: 'idle', message: `插件构建完成：${artifact.name}`, mods: [artifact] })
@@ -1720,7 +1754,7 @@ export class MinecraftRuntimeManager {
     await this.prepareProjectDependencies?.(project, signal)
     await this.prepareGradleMavenFallback(project)
     await this.prepareGradleWrapperDownload(project, 0, signal)
-    const runtime = await this.gradleRuntime(project)
+    const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
     await fs.mkdir(logDirectory, { recursive: true })
@@ -1780,7 +1814,7 @@ export class MinecraftRuntimeManager {
     if (spawnError) throw new Error(`无法启动 Gradle Wrapper：${spawnError}\nJava: ${javaPath}\nWrapper: ${runtime.executable}\n工作目录：${project.path}`)
     if (termination.code !== 0) {
       if (!aborted && toolchainRetryAttempt < 4) {
-        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project)
+        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project, signal)
         if (toolchainsPrepared) {
           this.emit('building-mod', '已根据构建日志补齐工具链，正在重试原构建任务', 'warning')
           return this.buildProjectInternal(signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
@@ -1875,7 +1909,7 @@ export class MinecraftRuntimeManager {
   private async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolchainRetryAttempt = 0, distributionRetryAttempt = 0): Promise<void> {
     await this.prepareGradleMavenFallback(project)
     await this.prepareGradleWrapperDownload(project, 0, signal)
-    const runtime = await this.gradleRuntime(project)
+    const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
     await fs.mkdir(logDirectory, { recursive: true })
@@ -1928,7 +1962,7 @@ export class MinecraftRuntimeManager {
     if (spawnError) throw new Error(`无法启动 Gradle Wrapper：${spawnError}\nJava: ${javaPath}\nWrapper: ${runtime.executable}`)
     if (termination.code !== 0) {
       if (!aborted && toolchainRetryAttempt < 4) {
-        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project)
+        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project, signal)
         if (toolchainsPrepared) {
           this.emit('building-mod', '已根据构建日志补齐工具链，正在重试原构建任务', 'warning')
           return this.runGradleBuild(project, signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
@@ -2204,7 +2238,8 @@ export class MinecraftRuntimeManager {
         loaderVersion = 'vanilla'
         loaderVersionId = project.minecraftVersion
       } else if (project.loader === 'fabric') {
-        const loaders = await getFabricLoaders({ signal, fetch: (url, init) => domesticMinecraftFetch(`${BMCLAPI}/fabric-meta${new URL(url).pathname}`, init) })
+        const fetchMetadata = loaderMetadataFetch('fabric', domesticMinecraftFetch, loaderVersion)
+        const loaders = await getFabricLoaders({ signal, fetch: fetchMetadata })
         const loader = loaderVersion
           ? loaders.find((item) => item.version === loaderVersion)
           : loaders.find((item) => item.stable) ?? loaders[0]
@@ -2216,10 +2251,11 @@ export class MinecraftRuntimeManager {
           minecraft: this.resourceRoot(),
           side: 'client',
           signal,
-          fetch: (url, init) => domesticMinecraftFetch(`${BMCLAPI}/fabric-meta${new URL(url).pathname}`, init)
+          fetch: fetchMetadata
         })
       } else if (project.loader === 'quilt') {
-        const loaders = await getQuiltLoaders({ signal, fetch: (url, init) => domesticMinecraftFetch(`${BMCLAPI}/quilt-meta${new URL(url).pathname}`, init) })
+        const fetchMetadata = loaderMetadataFetch('quilt', domesticMinecraftFetch, loaderVersion)
+        const loaders = await getQuiltLoaders({ signal, fetch: fetchMetadata })
         const loader = loaderVersion
           ? loaders.find((item) => item.version === loaderVersion)
           : loaders.find((item) => !/(?:alpha|beta|rc)/i.test(item.version)) ?? loaders[0]
@@ -2231,7 +2267,7 @@ export class MinecraftRuntimeManager {
           minecraft: this.resourceRoot(),
           side: 'client',
           signal,
-          fetch: (url, init) => domesticMinecraftFetch(`${BMCLAPI}/quilt-meta${new URL(url).pathname}`, init)
+          fetch: fetchMetadata
         })
       } else if (project.loader === 'forge') {
         if (!loaderVersion) {
@@ -2435,7 +2471,7 @@ export class MinecraftRuntimeManager {
     if (!await validManagedJavaCache(javaHome) || !(await probeJavaHome(javaHome, minimumMajor, false).catch(() => null))) {
       const stagingHome = `${javaHome}.staging-${randomUUID()}`
       this.emit('downloading-java', `正在下载托管 Java：${target}`)
-      const manifest = await fetchCompatibleJavaRuntimeManifest(target)
+      const manifest = await fetchCompatibleJavaRuntimeManifest(target, signal)
       await fs.rm(stagingHome, { recursive: true, force: true })
       const dispatcher = minecraftDownloadDispatcher()
       try {
@@ -2485,7 +2521,9 @@ export class MinecraftRuntimeManager {
     const installedVersion = await fs.readFile(marker, 'utf8').catch(() => '')
     if (installedVersion.trim() === version && (await exists(target))) return
 
-    const encodedVersion = encodeURIComponent(version)
+    // Quilt's Maven front end treats an encoded '+' as a different artifact.
+    // '+' is safe in a path segment; keep all separators and query markers encoded.
+    const encodedVersion = encodeURIComponent(version).replaceAll('%2B', '+')
     const relativePath = project.loader === 'quilt'
       ? `org/quiltmc/quilted-fabric-api/quilted-fabric-api/${encodedVersion}/quilted-fabric-api-${encodedVersion}.jar`
       : `net/fabricmc/fabric-api/fabric-api/${encodedVersion}/fabric-api-${encodedVersion}.jar`

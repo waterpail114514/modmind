@@ -62,7 +62,7 @@ function normalizeDocument(value: unknown): ConversationDocument | null {
       && event.generation === summary.generation && typeof event.turnId === 'string'
       && Number.isSafeInteger(event.sequence))).sort((left, right) => left.sequence - right.sequence)
     : []
-  const lastSequence = Math.max(Number.isSafeInteger(entry.lastSequence) ? Number(entry.lastSequence) : 0, ...events.map((event) => event.sequence), 0)
+  const lastSequence = events.reduce((maximum, event) => Math.max(maximum, event.sequence), Math.max(0, Number.isSafeInteger(entry.lastSequence) ? Number(entry.lastSequence) : 0))
   const native = entry.native && typeof entry.native === 'object' ? entry.native : {}
   const nativeTurns = entry.nativeTurns && typeof entry.nativeTurns === 'object' ? entry.nativeTurns : {}
   const view = entry.view && typeof entry.view === 'object' ? entry.view : {}
@@ -91,7 +91,7 @@ function storedDocument(document: ConversationDocument): ConversationDocument { 
 
 function viewSequence(view: ConversationDocument['view']): number {
   const entries = Array.isArray(view.timeline) ? view.timeline : Array.isArray(view.messages) ? view.messages : []
-  return Math.max(0, ...entries.map((entry) => entry && typeof entry === 'object' && Number.isSafeInteger((entry as { sequence?: number }).sequence) ? Number((entry as { sequence?: number }).sequence) : 0))
+  return entries.reduce<number>((maximum, entry) => Math.max(maximum, entry && typeof entry === 'object' && Number.isSafeInteger((entry as { sequence?: number }).sequence) ? Number((entry as { sequence?: number }).sequence) : 0), 0)
 }
 
 function viewTurnIds(view: ConversationDocument['view']): Set<string> {
@@ -215,6 +215,10 @@ export class ConversationStore {
   }
 
   async fork(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
+    return this.enqueue(projectPath, '$conversation-lifecycle', () => this.forkUnlocked(projectPath, input))
+  }
+
+  private async forkUnlocked(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
     const source = await this.read(projectPath, input.sourceConversationId)
     if (!source) throw new Error('要分支的原对话不存在')
     const id = input.id?.trim() || newId(source.surface)
@@ -277,12 +281,28 @@ export class ConversationStore {
     return this.update(projectPath, conversationId, (document) => document.titleSource
       ? document : { ...document, title: clean, titleSource: 'ai' })
   }
-  async delete(projectPath: string, conversationId: string): Promise<void> {
-    await this.enqueue(projectPath, conversationId, async () => {
-      await this.data.delete(projectPath, documentKey(conversationId))
-      await this.data.deleteJournal(projectPath, journalKey(conversationId))
-      await this.mutateIndex(projectPath, (entries) => entries.filter((entry) => entry.id !== conversationId))
+  async delete(projectPath: string, conversationId: string, deleteNative?: (sessions: ConversationDocument['native']) => Promise<void>): Promise<void> {
+    // A branch must not borrow a native session after it has been selected for
+    // deletion. Keep the ownership check, external deletion, and document
+    // removal in the same project lane used by the complete fork operation.
+    await this.enqueue(projectPath, '$conversation-lifecycle', async () => {
+      if (deleteNative) await deleteNative(await this.nativeSessionsForDeletion(projectPath, conversationId))
+      await this.enqueue(projectPath, conversationId, async () => {
+        await this.data.delete(projectPath, documentKey(conversationId))
+        await this.data.deleteJournal(projectPath, journalKey(conversationId))
+        await this.mutateIndex(projectPath, (entries) => entries.filter((entry) => entry.id !== conversationId))
+      })
     })
+  }
+  async nativeSessionsForDeletion(projectPath: string, conversationId: string): Promise<ConversationDocument['native']> {
+    const document = await this.read(projectPath, conversationId)
+    // An unmaterialized branch borrows its parent's native session.
+    if (!document || document.nativeForkPending) return {}
+    const others = await Promise.all((await this.list(projectPath, undefined, true))
+      .filter(entry => entry.id !== conversationId).map(entry => this.read(projectPath, entry.id)))
+    return Object.fromEntries(Object.entries(document.native).filter(([, state]) => state?.sessionId
+      && !others.some(other => Object.values(other?.native ?? {}).some(candidate => candidate?.sessionId === state.sessionId
+        && candidate.sessionHome === state.sessionHome))))
   }
   setNativeState(projectPath: string, conversationId: string, generation: number, backend: CodingBackend, sessionId: string, lastTurnId?: string, modmindTurnId?: string, sessionHome?: string): Promise<ConversationDocument> {
     return this.update(projectPath, conversationId, (document) => {
@@ -352,7 +372,7 @@ export class ConversationStore {
         const document = await this.readUnlocked(batch.projectPath, batch.conversationId)
         if (!document) throw new Error('瀵硅瘽涓嶅瓨鍦?')
         if (document.generation !== batch.generation) throw new Error('事件属于旧对话分支，已拒绝写入')
-        let sequence = Math.max(document.lastSequence, ...document.events.map((event) => event.sequence), 0)
+        let sequence = document.events.reduce((maximum, event) => Math.max(maximum, event.sequence), Math.max(0, document.lastSequence))
         for (const item of batch.items) {
           sequence += 1
           const record: ConversationEventRecord = { eventId: randomUUID(), conversationId: batch.conversationId, generation: batch.generation, turnId: item.turnId, ...(item.runId ? { runId: item.runId } : {}), sequence, kind: item.kind, time: new Date().toISOString(), payload: item.payload }
@@ -395,7 +415,7 @@ export class ConversationStore {
       await this.data.appendJournal(projectPath, journalKey(conversationId), `${JSON.stringify(event)}\n`)
     }
     const events = [...merged.values()].sort((left, right) => left.sequence - right.sequence || left.eventId.localeCompare(right.eventId))
-    return { ...document, events, lastSequence: Math.max(document.lastSequence, ...events.map((event) => event.sequence), 0) }
+    return { ...document, events, lastSequence: events.reduce((maximum, event) => Math.max(maximum, event.sequence), Math.max(0, document.lastSequence)) }
   }
 
   private mutateIndex(projectPath: string, transform: (entries: ConversationSummary[]) => ConversationSummary[]): Promise<void> {

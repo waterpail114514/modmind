@@ -159,7 +159,7 @@ async function materializeClientInstance(project: ProjectInfo, root: string): Pr
     if (!stat?.isFile()) throw new Error(`missing mod ${mod.fileName}`)
     await fs.copyFile(source, path.join(root, 'mods', mod.fileName))
   }
-  await syncModpackOverrides(project, root)
+  await syncModpackOverrides(project, root, [], 'server')
   return manifest
 }
 

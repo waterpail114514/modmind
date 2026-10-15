@@ -49,6 +49,7 @@ const temporaryRoots: string[] = []
 const originalLocalAppData = process.env.LOCALAPPDATA
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   process.env.LOCALAPPDATA = originalLocalAppData
   await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
 })
@@ -337,5 +338,66 @@ describe('AppUpdateService', () => {
     expect(updater.feeds.map((feed) => (feed as { useMultipleRangeRequest?: boolean }).useMultipleRangeRequest)).toEqual([true, true, false, false])
     expect(updater.feed).toMatchObject({ useMultipleRangeRequest: false })
     expect(updater.disableDifferentialDownload).toBe(true)
+  })
+
+  it.each(['darwin', 'linux'] as const)('resumes a %s update offline through its native updater, even if the updater rebuilds its cache', async platform => {
+    const files = await fixture('1.4.11')
+    vi.spyOn(os, 'homedir').mockReturnValue(files.root)
+    const originalXdg = process.env.XDG_CACHE_HOME
+    if (platform === 'linux') process.env.XDG_CACHE_HOME = path.join(files.root, 'custom-xdg-cache')
+    try {
+      const cache = platform === 'darwin' ? path.join(files.root, 'Library', 'Caches') : process.env.XDG_CACHE_HOME!
+      const name = platform === 'darwin' ? 'ModMind-1.4.11-x64.zip' : 'ModMind-1.4.11.AppImage'
+      const installer = path.join(cache, 'modmind-updater', 'pending', name)
+      await fs.mkdir(path.dirname(installer), { recursive: true })
+      await fs.rename(files.installer, installer)
+      await fs.mkdir(files.userData, { recursive: true })
+      await fs.writeFile(path.join(files.userData, 'pending-app-update.json'), JSON.stringify({ schemaVersion: 1, targetVersion: '1.4.11', installerPath: installer, sha512: files.sha512, downloadedAt: '2026-10-10T00:00:00.000Z' }))
+      const info = { version: '1.4.11', files: [{ url: name, sha512: files.sha512, size: 10 * 1024 * 1024 + 1 }], path: name, sha512: files.sha512, releaseDate: '' }
+      const updater = new FakeUpdater({ isUpdateAvailable: true, updateInfo: info, versionInfo: info }, installer)
+      let localManifest: typeof info
+      vi.spyOn(updater, 'checkForUpdates').mockImplementation(async () => {
+        const base = (updater.feed as { url: string }).url
+        expect(base).toMatch(/^http:\/\/127\.0\.0\.1:/)
+        localManifest = await (await fetch(new URL(platform === 'darwin' ? 'latest-mac.yml' : 'latest-linux.yml', base))).json() as typeof info
+        return { isUpdateAvailable: true, updateInfo: localManifest, versionInfo: localManifest } as UpdateCheckResult
+      })
+      vi.spyOn(updater, 'downloadUpdate').mockImplementation(async () => {
+        await fs.rm(installer)
+        const body = Buffer.from(await (await fetch(new URL(localManifest.files[0].url, (updater.feed as { url: string }).url))).arrayBuffer())
+        expect(createHash('sha512').update(body).digest('base64')).toBe(files.sha512)
+        await fs.writeFile(installer, body)
+        return [installer]
+      })
+      const launchInstaller = vi.fn(), quit = vi.fn(), beforeInstall = vi.fn()
+      const service = new AppUpdateService({ currentVersion: '1.4.10', updateUrl: 'https://unreachable.invalid/', userDataPath: files.userData, isPackaged: true, platform, updater: updater as unknown as AppUpdater, beforeInstall, quit, notifyDownloaded: vi.fn(), launchInstaller })
+      expect(await service.installPendingUpdateOnStartup()).toBe(true)
+      expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+      expect(beforeInstall).toHaveBeenCalledOnce()
+      expect(launchInstaller).not.toHaveBeenCalled()
+      expect(quit).not.toHaveBeenCalled()
+      expect((await fs.readdir(files.userData)).filter(name => name.startsWith('update-resume-'))).toEqual([])
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_CACHE_HOME
+      else process.env.XDG_CACHE_HOME = originalXdg
+    }
+  })
+
+  it('preserves the verified download and marker when native cache recovery fails', async () => {
+    const files = await fixture('1.4.11')
+    const installer = files.installer.replace(/\.exe$/, '.zip')
+    await fs.rename(files.installer, installer)
+    await fs.mkdir(files.userData, { recursive: true })
+    const marker = path.join(files.userData, 'pending-app-update.json')
+    await fs.writeFile(marker, JSON.stringify({ schemaVersion: 1, targetVersion: '1.4.11', installerPath: installer, sha512: files.sha512, downloadedAt: '2026-10-10T00:00:00.000Z' }))
+    const info = { version: '1.4.11', files: [{ url: path.basename(installer), sha512: files.sha512, size: 10 * 1024 * 1024 + 1 }], path: path.basename(installer), sha512: files.sha512, releaseDate: '' }
+    const updater = new FakeUpdater({ isUpdateAvailable: true, updateInfo: info, versionInfo: info }, installer)
+    vi.spyOn(updater, 'downloadUpdate').mockImplementation(async () => { await fs.rm(installer); throw new Error('cache rewrite failed') })
+    const service = new AppUpdateService({ currentVersion: '1.4.10', updateUrl: 'https://unreachable.invalid/', userDataPath: files.userData, updateCachePath: path.dirname(installer), isPackaged: true, platform: 'darwin', updater: updater as unknown as AppUpdater, beforeInstall: vi.fn(), quit: vi.fn(), notifyDownloaded: vi.fn() })
+    expect(await service.installPendingUpdateOnStartup()).toBe(false)
+    expect(createHash('sha512').update(await fs.readFile(installer)).digest('base64')).toBe(files.sha512)
+    expect(await fs.readFile(marker, 'utf8')).toContain('1.4.11')
+    expect(service.snapshot()).toMatchObject({ phase: 'downloaded', message: expect.stringContaining('cache rewrite failed') })
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
   })
 })

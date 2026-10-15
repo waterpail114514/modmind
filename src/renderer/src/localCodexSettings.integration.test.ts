@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { afterEach, expect, it, vi } from 'vitest'
+import { agentSettingsPatch, mergeAgentSettingsPatch } from '../../shared/agentSettingsPatch'
 
 const source = readFileSync('src/renderer/src/App.tsx', 'utf8')
 const ast = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -26,6 +27,8 @@ function fixture() {
     Number, Promise, Error, setTimeout, clearTimeout, externalAgentLabel: () => 'Codex',
     settingsRef: { current: { externalAgents: { codex: configuration } } },
     settingsMutationRef: { current: 0 }, settingsSaveTailRef: { current: Promise.resolve() },
+    settingsConfirmedRef: { current: { externalAgents: { codex: configuration } } }, settingsPendingPatchesRef: { current: new Map() },
+    agentSettingsPatch, mergeAgentSettingsPatch,
     localCodexScanInFlight: { current: null }, localCodexScanGeneration: { current: 0 },
     aiSettingsSelectionGeneration: { current: 0 },
     agentDraft: { baseUrl: 'https://new.example/v1', apiKey: 'fixture-key' },
@@ -129,7 +132,8 @@ it('keeps unrelated preference writes queued during connection save from restori
   state.settingsSavePendingRef = { current: 0 }
   state.setSettingsFeedback = vi.fn()
   state.verifySettingsSave = vi.fn()
-  state.window.modmind.settings.saveAgent = vi.fn(async (settings: any) => settings)
+  state.window.modmind.settings.saveAgent = vi.fn(async (patch: any) => mergeAgentSettingsPatch(savedSettings(), patch))
+  const savedSettings = () => state.settingsConfirmedRef.current
   vm.runInNewContext(ts.transpileModule(`const ${preferenceDeclaration}; globalThis.performPreferenceSave = saveSettingsPatch;`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText, state)
@@ -139,8 +143,6 @@ it('keeps unrelated preference writes queued during connection save from restori
   const preferenceSave = state.performPreferenceSave({ darkMode: true })
   pending.resolve({ settings: { externalAgents: { codex: { mode: 'hosted', baseUrl: 'https://new.example/v1', model: 'manual-id' } } } })
   await Promise.all([connectionSave, preferenceSave])
-  expect(state.window.modmind.settings.saveAgent.mock.calls[0][0]).toMatchObject({
-    darkMode: true, externalAgents: { codex: { baseUrl: 'https://new.example/v1' } }
-  })
+  expect(state.window.modmind.settings.saveAgent.mock.calls[0][0]).toEqual({ darkMode: true })
   expect(state.settingsRef.current.externalAgents.codex.baseUrl).toBe('https://new.example/v1')
 })

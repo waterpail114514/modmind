@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { assertAgentWriteAllowed } from './agentProtection'
+import { snapshotFileHash } from './snapshotStore'
 
 export function redactSensitiveContent(relativePath: string, content: string): string {
   const lower = relativePath.toLowerCase()
@@ -68,12 +70,35 @@ export async function restoreManagedTreeExact(
   destinationRoot: string,
   expectedFiles: string[],
   ignoreDirectory: (name: string) => boolean,
-  copyTree: (source: string, destination: string) => Promise<unknown>
+  _copyTree: (source: string, destination: string) => Promise<unknown>,
+  hashes?: Record<string, string>
 ): Promise<void> {
   const expected = new Set(expectedFiles.map((file) => file.replaceAll('\\', '/')))
-  const expectedDirectories = new Set(await listManagedDirectories(snapshotRoot, ignoreDirectory))
-  await copyTree(snapshotRoot, destinationRoot)
+  await validateSnapshotFiles(snapshotRoot, [...expected], hashes)
+  const expectedDirectories = new Set<string>()
+  const inspect = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name)
+      const relative = path.relative(snapshotRoot, absolute).replaceAll('\\', '/')
+      if (entry.isSymbolicLink()) throw new Error(`Snapshot contains a link: ${relative}`)
+      if (ignoreDirectory(entry.name)) continue
+      if (entry.isDirectory()) {
+        expectedDirectories.add(relative)
+        await inspect(absolute)
+      } else if (!entry.isFile() || !expected.has(relative)) {
+        throw new Error(`Snapshot contains an unlisted file: ${relative}`)
+      }
+    }
+  }
+  await inspect(snapshotRoot)
   const currentFiles = await listManagedFiles(destinationRoot, ignoreDirectory)
+  for (const relative of [...expected, ...expectedDirectories, ...currentFiles]) assertAgentWriteAllowed(destinationRoot, relative)
+  for (const relative of expectedDirectories) await fs.mkdir(resolveManagedPath(destinationRoot, relative), { recursive: true })
+  for (const relative of expected) {
+    const destination = resolveManagedPath(destinationRoot, relative)
+    await fs.mkdir(path.dirname(destination), { recursive: true })
+    await fs.copyFile(resolveManagedPath(snapshotRoot, relative), destination)
+  }
   const root = path.resolve(destinationRoot)
   for (const relative of currentFiles) {
     if (expected.has(relative)) continue
@@ -95,7 +120,7 @@ export async function restoreManagedTreeExact(
 
 function resolveManagedPath(root: string, relativePath: string): string {
   const normalized = relativePath.trim().replaceAll('\\', '/')
-  if (!normalized || path.posix.isAbsolute(normalized) || path.win32.isAbsolute(relativePath)) {
+  if (!normalized || /[\0\r\n:]/.test(normalized) || path.posix.isAbsolute(normalized) || path.win32.isAbsolute(relativePath)) {
     throw new Error(`Unsafe managed recovery path: ${relativePath}`)
   }
   const segments = normalized.split('/')
@@ -111,6 +136,26 @@ function resolveManagedPath(root: string, relativePath: string): string {
   return target
 }
 
+export async function validateSnapshotFiles(root: string, files: string[], hashes?: Record<string, string>): Promise<void> {
+  const rootStat = await fs.lstat(root)
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Snapshot files directory is missing or linked')
+  for (const relative of files) {
+    const target = resolveManagedPath(root, relative)
+    let current = path.resolve(root)
+    for (const segment of relative.replaceAll('\\', '/').split('/')) {
+      current = path.join(current, segment)
+      if ((await fs.lstat(current)).isSymbolicLink()) throw new Error(`Snapshot contains a link: ${relative}`)
+    }
+    if (!(await fs.lstat(target)).isFile()) throw new Error(`Snapshot file is missing: ${relative}`)
+    if (hashes) {
+      const expected = hashes[relative]
+      if (!expected || !/^[a-f0-9]{64}$/i.test(expected) || (await snapshotFileHash(target)).sha256 !== expected.toLowerCase()) {
+        throw new Error(`Snapshot checksum mismatch: ${relative}`)
+      }
+    }
+  }
+}
+
 /**
  * Rolls back only files attributed to an interrupted Agent task. A path that
  * existed in the snapshot is restored; a path created after the snapshot is
@@ -119,22 +164,39 @@ function resolveManagedPath(root: string, relativePath: string): string {
 export async function restoreManagedPathsFromSnapshot(
   snapshotRoot: string,
   destinationRoot: string,
-  changedFiles: string[]
+  changedFiles: string[],
+  manifest?: { files: string[]; hashes?: Record<string, string> }
 ): Promise<void> {
-  const uniquePaths = [...new Set(changedFiles.map((file) => file.trim()).filter(Boolean))]
+  const uniquePaths = [...new Set(changedFiles.map((file) => file.trim().replaceAll('\\', '/')).filter(Boolean))]
+  // Validate every path before the first restore or deletion. A missing backup
+  // for a recorded original must never be interpreted as a task-created file.
+  for (const relativePath of uniquePaths) {
+    resolveManagedPath(snapshotRoot, relativePath)
+    resolveManagedPath(destinationRoot, relativePath)
+    assertAgentWriteAllowed(destinationRoot, relativePath)
+  }
+  if (manifest) await validateSnapshotFiles(snapshotRoot, manifest.files, manifest.hashes)
+  const originals = manifest ? new Set(manifest.files.map((file) => file.replaceAll('\\', '/'))) : new Set<string>()
+  if (!manifest) {
+    for (const relativePath of uniquePaths) {
+      const source = resolveManagedPath(snapshotRoot, relativePath)
+      const exists = await fs.lstat(source).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return false
+        throw error
+      })
+      if (exists) {
+        await validateSnapshotFiles(snapshotRoot, [relativePath])
+        originals.add(relativePath)
+      }
+    }
+  }
   for (const relativePath of uniquePaths) {
     const source = resolveManagedPath(snapshotRoot, relativePath)
     const destination = resolveManagedPath(destinationRoot, relativePath)
-    const sourceStat = await fs.stat(source).catch((error: unknown) => {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
-      if (code === 'ENOENT') return null
-      throw error
-    })
-    if (!sourceStat) {
+    if (!originals.has(relativePath)) {
       await fs.rm(destination, { recursive: true, force: true })
       continue
     }
-    if (!sourceStat.isFile()) throw new Error(`Snapshot recovery path is not a file: ${relativePath}`)
     await fs.mkdir(path.dirname(destination), { recursive: true })
     await fs.copyFile(source, destination)
   }

@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSource } from '../shared/aiAttachments'
 import { diagnosticErrorPayload } from '../shared/diagnostics'
 import { presentClientResult } from '../shared/clientResult'
-import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
+import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, AppDialogRequest, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
@@ -128,6 +128,12 @@ const api: ModMindApi = {
       ipcRenderer.on('window:detachedClosed', handler)
       return () => ipcRenderer.removeListener('window:detachedClosed', handler)
     },
+    onDialogRequest: (listener: (request: AppDialogRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: AppDialogRequest): void => listener(presentResult(request, 'app:dialogRequested'))
+      ipcRenderer.on('app:dialogRequested', handler)
+      return () => ipcRenderer.removeListener('app:dialogRequested', handler)
+    },
+    resolveDialog: (requestId: string, confirmed: boolean) => invoke('app:resolveDialog', requestId, confirmed),
     onCloseRequested: (listener: () => void) => {
       closeRequestListeners.add(listener)
       if (pendingCloseRequest) {
@@ -268,6 +274,7 @@ const api: ModMindApi = {
     saveFtbQuestBook: (book, projectPath) => invoke('modpack:saveFtbQuestBook', book, projectPath),
     writeFtbQuest: (input: unknown) => invoke('modpack:writeFtbQuest', input),
     writePatchouliBook: (input: unknown) => invoke('modpack:writePatchouliBook', input),
+    readPatchouliBooks: () => invoke('modpack:readPatchouliBooks'),
     applyKeybindPreset: (input: unknown, allowConflicts?: boolean) => invoke('modpack:applyKeybindPreset', input, allowConflicts),
     buildServerPack: (input: unknown) => invoke('modpack:buildServerPack', input),
     installServerRuntime: (input: unknown) => invoke('modpack:installServerRuntime', input),
@@ -323,7 +330,7 @@ const api: ModMindApi = {
     pickBackground: () => invoke('settings:pickBackground'),
     revealSecret: (key) => invoke('settings:revealSecret', key),
     getAgent: () => invoke('settings:getAgent'),
-    saveAgent: (settings: AgentSettings) => invoke('settings:saveAgent', settings),
+    saveAgent: (settings) => invoke('settings:saveAgent', settings),
     onAppearanceChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, appearance: import('../shared/appTheme').AppAppearance): void => listener(appearance)
       ipcRenderer.on('settings:appearance', handler)
@@ -652,6 +659,8 @@ const api: ModMindApi = {
   }
   ,
   inspiration: {
+    readWorkflow: (projectPath, identity) => invoke('inspiration:readWorkflow', projectPath, identity),
+    commitWorkflow: (projectPath, identity, edits, undo) => invoke('inspiration:commitWorkflow', projectPath, identity, edits, undo),
     listModels: (backend: import('../shared/types').CodingBackend) => invoke('inspiration:listModels', backend),
     verifyImageInput: (backend: import('../shared/types').CodingBackend, model: string) => invoke('ai:verifyImageInput', backend, model),
     onKnowledgeChanged: listener => {

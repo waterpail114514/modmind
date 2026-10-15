@@ -1,6 +1,8 @@
 import { blockbenchThemeColors, getThemePalette, normalizeThemePreset, normalizeCustomThemeColors, type ThemePreset, type CustomThemeColors } from '../shared/appTheme'
 import { scrollbarStyles } from '../shared/scrollbars'
 import { promises as fs } from 'node:fs'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { scopedFilePath } from './scopedFilePath'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1049,6 +1051,7 @@ const PAGE_DISPATCHER = String.raw`async function dispatchBlockbenchAction(actio
 }`
 
 export class BlockbenchBridge {
+  private readonly operationProject = new AsyncLocalStorage<string | null>()
   private readonly window: BrowserWindow
   private readonly entryPath: string
   private readonly getProjectRoot: () => string | null
@@ -1463,8 +1466,12 @@ export class BlockbenchBridge {
       if (!textureContent.length || textureContent.length > 8 * 1024 * 1024) throw new Error('Blockbench PNG size is invalid')
       const projectPath = await this.resolveProjectFile(normalized.projectRelativePath)
       const texturePath = await this.resolveProjectFile(normalized.textureRelativePath)
-      const previousProject = await fs.readFile(projectPath).catch(() => null)
-      const previousTexture = await fs.readFile(texturePath).catch(() => null)
+      const readPrevious = (file: string): Promise<Buffer | null> => fs.readFile(file).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
+      const previousProject = await readPrevious(projectPath)
+      const previousTexture = await readPrevious(texturePath)
       try {
         await fs.writeFile(projectPath, projectContent, 'utf8')
         await fs.writeFile(texturePath, textureContent)
@@ -1561,7 +1568,8 @@ export class BlockbenchBridge {
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const queued = this.actionQueue.then(operation)
+    const project = this.getProjectRoot()
+    const queued = this.actionQueue.then(() => this.operationProject.run(project, operation))
     this.actionQueue = queued.then(
       () => undefined,
       () => undefined
@@ -1731,10 +1739,12 @@ export class BlockbenchBridge {
   }
 
   private async resolveProjectFile(relativePath: string): Promise<string> {
-    const projectRoot = this.getProjectRoot()
+    const capturedProject = this.operationProject.getStore()
+    const projectRoot = capturedProject === undefined ? this.getProjectRoot() : capturedProject
     if (!projectRoot) throw new Error('No ModMind project is open')
+    if (projectRoot !== this.getProjectRoot()) throw new Error('Blockbench save belongs to a project that is no longer active')
     const realRoot = await fs.realpath(projectRoot)
-    const target = path.resolve(realRoot, relativePath)
+    const target = await scopedFilePath(realRoot, relativePath)
     if (!isInside(realRoot, target)) throw new Error('Blockbench save path leaves the current project')
 
     const parent = path.dirname(target)

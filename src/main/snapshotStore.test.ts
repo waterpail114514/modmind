@@ -16,6 +16,18 @@ function sha256(value: string): string {
 }
 
 describe('incremental snapshot storage', () => {
+  it('replaces same-size corrupted baseline bytes from the live original', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-snapshot-corrupt-'))
+    roots.push(root)
+    const project = path.join(root, 'project'), first = path.join(root, 'first'), second = path.join(root, 'second')
+    await fs.mkdir(project)
+    await fs.writeFile(path.join(project, 'file.txt'), 'GOOD')
+    const original = await copySnapshotFilesIncremental(project, first, () => false)
+    await fs.writeFile(path.join(first, 'file.txt'), 'EVIL')
+    await copySnapshotFilesIncremental(project, second, () => false, { root: first, hashes: original.hashes, metadata: original.metadata })
+    expect(await fs.readFile(path.join(second, 'file.txt'), 'utf8')).toBe('GOOD')
+    expect((await fs.stat(path.join(second, 'file.txt'))).ino).not.toBe((await fs.stat(path.join(first, 'file.txt'))).ino)
+  })
   it('reuses unchanged snapshot files without linking the live project', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-snapshot-store-'))
     roots.push(root)

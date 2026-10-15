@@ -57,6 +57,35 @@ function registry(files: Record<string, { candidate: ModCandidate; file: ModFile
 }
 
 describe('add-on relationship service', () => {
+  it('retains a shared linked dependency until its final parent is removed, including relinking', async () => {
+    const project = await projectFixture()
+    const parents = [
+      { ...await projectFixture(), name: 'Parent A', namespace: 'parent_a' },
+      { ...await projectFixture(), name: 'Parent B', namespace: 'parent_b' }
+    ]
+    const jars: string[] = []
+    for (const parent of parents) {
+      const dependency = await modJar(parent.path, 'shared-source.jar', 'shared_mod', '1.0.0')
+      const file: ModFile = { provider: 'modrinth', projectId: 'shared', versionId: 'v1', versionName: '1.0.0', filename: 'shared.jar', primary: true, side: 'both', sources: [] }
+      const parentService = new AddonRelationshipService({ getProject: () => parent, registry: () => registry({ shared: { candidate: candidate('shared', 'Shared'), file, source: dependency } }), cacheRoot: path.join(parent.path, '.cache'), importRuntime: async () => undefined, removeRuntime: async () => undefined, readProject: async () => null })
+      await parentService.installPlatform({ provider: 'modrinth', projectId: 'shared', versionId: 'v1', role: 'required' })
+      jars.push(await modJar(parent.path, 'parent.jar', parent.namespace, '1.0.0', { minecraft: '1.21.1', shared_mod: '*' }))
+    }
+    const service = new AddonRelationshipService({ getProject: () => project, registry: () => registry({}), cacheRoot: path.join(project.path, '.cache'), importRuntime: async () => undefined, removeRuntime: async () => undefined, readProject: async root => parents.find(parent => parent.path === root) ?? null })
+    await service.linkProject(parents[0], jars[0])
+    await service.linkProject(parents[1], jars[1])
+    const linked = await service.linkProject(parents[0], jars[0])
+    const shared = linked.relationships.find(entry => entry.primaryModId === 'shared_mod')!
+    expect(shared.parentRelationshipIds).toHaveLength(2)
+    const first = linked.relationships.find(entry => entry.primaryModId === 'parent_a')!
+    const second = linked.relationships.find(entry => entry.primaryModId === 'parent_b')!
+    const remaining = await service.remove(first.id)
+    expect(remaining.relationships.find(entry => entry.id === shared.id)?.parentRelationshipIds).toEqual([second.id])
+    await expect(fs.access(path.join(project.path, shared.relativePath))).resolves.toBeUndefined()
+    const empty = await service.remove(second.id)
+    expect(empty.relationships.find(entry => entry.id === shared.id)).toBeUndefined()
+    await expect(fs.access(path.join(project.path, shared.relativePath))).rejects.toThrow()
+  })
   it('relocates a legacy linked project without duplicating the target or its descriptor', async () => {
     const project = await projectFixture()
     const target = { ...await projectFixture(), namespace: 'engine', name: 'Engine' }
@@ -260,6 +289,8 @@ describe('githubAcceleratedUrl', () => {
       .toBe('https://ghfast.top/https://github.com/example/repo/archive/refs/tags/v1.0.0.zip')
     expect(githubAcceleratedUrl('https://codeload.github.com/example/repo/zip/refs/tags/v1.0.0'))
       .toBe('https://ghfast.top/https://codeload.github.com/example/repo/zip/refs/tags/v1.0.0')
+    expect(githubAcceleratedUrl('https://api.github.com/repos/example/repo/zipball/refs/tags/v1.0.0'))
+      .toBe('https://ghfast.top/https://api.github.com/repos/example/repo/zipball/refs/tags/v1.0.0')
   })
 
   it('leaves non-GitHub URLs untouched', () => {

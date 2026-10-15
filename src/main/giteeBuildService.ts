@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { assertGitRepositoryRoot } from './gitService'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import type { GiteeBuildResult, GiteeBuildSettings, GiteeBuildValidation } from '../shared/production'
@@ -146,10 +147,10 @@ export class GiteeBuildService {
     const projectRoot = path.resolve(project.path)
     const branch = normalizeBranch(settings.branch || validation.defaultBranch || 'main')
     const configPath = path.join(projectRoot, '.gitee-ci.yml')
-    if (!(await fileExists(configPath))) await fs.writeFile(configPath, defaultGiteeCi, 'utf8')
-
     const gitRoot = await runGit(projectRoot, ['rev-parse', '--show-toplevel'], undefined, true)
+    if (gitRoot.code === 0) await assertGitRepositoryRoot(projectRoot, gitRoot.stdout)
     if (gitRoot.code !== 0) await runGit(projectRoot, ['init', '-b', branch])
+    if (!(await fileExists(configPath))) await fs.writeFile(configPath, defaultGiteeCi, 'utf8')
     const currentBranch = (await runGit(projectRoot, ['branch', '--show-current'], undefined, true)).stdout.trim()
     if (!currentBranch) await runGit(projectRoot, ['switch', '-c', branch], undefined, true)
     await runGit(projectRoot, ['add', '--all'])

@@ -5,6 +5,7 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { diagnosticJournal } from './diagnosticLog'
 import { downloadActivities } from './downloadActivityService'
+import { retryTransientFileLock } from './fileLockRetry'
 import { disposeResponseBody, proxiedUndiciRequest, retryAfterDelay } from './networkRequest'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -52,6 +53,34 @@ const DEFAULT_TIMEOUT_MS = 15 * 60_000
 // Total attempts per source. Defaults: one retry for permanent responses,
 // two retries for transient network failures.
 const DEFAULT_RETRIES = 3
+const destinationQueues = new Map<string, Promise<void>>()
+
+function destinationQueueKey(destination: string): string {
+  const normalized = path.normalize(destination)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+/**
+ * Serialize promotion of files to the same destination across all managers in
+ * this process. Windows can report EPERM when two partial files are renamed to
+ * one target at the same time; the queue keeps that normal user action from
+ * becoming a failed download while still allowing different destinations to
+ * transfer in parallel.
+ */
+async function withDestinationQueue<T>(destination: string, operation: () => Promise<T>): Promise<T> {
+  const key = destinationQueueKey(destination)
+  const previous = destinationQueues.get(key) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>((resolve) => { release = resolve })
+  destinationQueues.set(key, current)
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (destinationQueues.get(key) === current) destinationQueues.delete(key)
+  }
+}
 
 function isPermanentDownloadError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
@@ -269,8 +298,10 @@ export class DownloadManager {
               }
             }, maxBytes, timeoutMs)
             await fs.mkdir(path.dirname(destination), { recursive: true })
-            request.signal?.throwIfAborted()
-            await fs.rename(partial, destination)
+            await withDestinationQueue(destination, async () => {
+              request.signal?.throwIfAborted()
+              await retryTransientFileLock(() => fs.rename(partial, destination))
+            })
             diagnosticJournal.record({
               subsystem: 'download',
               operation: 'verified-download',

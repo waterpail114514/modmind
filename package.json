@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.4.19",
+  "version": "1.4.20",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -11,6 +11,7 @@
     "models:sync": "node scripts/sync-model-context-registry.mjs && node scripts/sync-model-reasoning-registry.mjs",
     "verify:workspace": "node scripts/verify-workspace.mjs --mcp",
     "setup:tests": "node scripts/setup-mcp-tests.mjs",
+    "sync:mcp": "node scripts/sync-mcp-server.mjs --write",
     "predev": "node scripts/verify-workspace.mjs",
     "dev": "electron-vite dev",
     "prebuild": "node scripts/verify-workspace.mjs && node scripts/verify-gradle-wrapper.mjs && npm run theme:check && node scripts/clean-build-output.mjs",
@@ -19,7 +20,7 @@
     "preview": "electron-vite preview",
     "pretest": "node scripts/verify-workspace.mjs --mcp",
     "test": "vitest run src && npm run test:mcp && npm run test:mac-policy && npm run test:update-artifacts && npm run test:gradle-wrapper && npm run test:workspace",
-    "pretest:mcp": "node scripts/verify-workspace.mjs --mcp",
+    "pretest:mcp": "node scripts/verify-workspace.mjs --mcp && node scripts/sync-mcp-server.mjs",
     "test:mcp": "npm --prefix modmind-mcp-open-source test",
     "test:workspace": "node --test scripts/verify-workspace.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.web.json --pretty false",
@@ -59,22 +60,23 @@
     "cheerio": "^1.1.2",
     "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1",
-    "fast-xml-parser": "^5.2.5",
+    "fast-xml-parser": "^5.11.2",
     "ffmpeg-static": "^5.3.0",
     "ftbq-nbt": "^1.4.1",
     "fzstd": "^0.1.1",
     "jfxr": "^0.13.0",
     "json5": "^2.2.3",
+    "partial-json": "0.1.7",
     "pdfjs-dist": "4.10.38",
     "proper-lockfile": "^4.1.2",
     "react-virtuoso": "^4.18.13",
     "react-zoom-pan-pinch": "4.2.0",
     "semver": "7.8.5",
-    "sharp": "^0.33.5",
-    "smol-toml": "^1.8.0",
+    "sharp": "^0.35.5",
+    "smol-toml": "^1.9.1",
     "three": "^0.180.0",
     "tone": "^15.1.22",
-    "undici": "7.2.3",
+    "undici": "7.30.0",
     "yauzl": "^2.10.0"
   },
   "devDependencies": {
@@ -87,18 +89,18 @@
     "@types/three": "^0.180.0",
     "@types/yauzl": "^2.10.3",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.3.1",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
     "lucide-react": "^0.468.0",
     "marked": "^15.0.7",
     "monaco-editor": "^0.56.0",
-    "playwright": "^1.54.1",
+    "playwright": "^1.64.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.11",
     "yaml": "^2.8.1"
   },
   "build": {
@@ -270,5 +272,9 @@
       "icon": "resources/icon.png",
       "category": "Development"
     }
+  },
+  "overrides": {
+    "dompurify": "3.4.16",
+    "undici": "$undici"
   }
 }

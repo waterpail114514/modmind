@@ -1,4 +1,4 @@
-import { Agent, ProxyAgent, request } from 'undici'
+import { Agent, ProxyAgent, request, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
 import { setTimeout as delay } from 'node:timers/promises'
 
 export interface FetchTextOptions {
@@ -191,6 +191,16 @@ async function requestRoute(url: string): Promise<{ dispatcher: Agent | ProxyAge
     systemAgents.set(proxy, agent)
   }
   return { dispatcher: agent, proxyMode: 'system' }
+}
+
+/** Fetch-compatible streaming transport for AI/media requests using the same
+ * configured proxy policy as managed downloads. Unlike the process global fetch,
+ * this does not silently bypass the application's selected proxy. */
+export async function networkFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+  init.signal?.throwIfAborted()
+  const url = input.toString()
+  const { dispatcher } = await requestRoute(url)
+  return await undiciFetch(url, { ...init, dispatcher } as UndiciRequestInit) as unknown as Response
 }
 
 export function proxyDispatcher(url?: string): ProxyAgent | undefined {

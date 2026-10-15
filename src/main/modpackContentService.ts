@@ -1,8 +1,13 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ModpackKeybindConflict, ModpackKeybindState, ProjectInfo } from '../shared/types'
 import { readModpackManifest } from './modpackService'
+import { modpackOverridesRoot } from './modpackPaths'
+import { assertContentTarget, installContentTransaction } from './contentInstallTransaction'
+import { withProjectMutation } from './projectMutation'
+import type { PatchouliBookInput } from '../shared/patchouli'
+export type { PatchouliBookInput } from '../shared/patchouli'
 
 export interface FtbQuestTask {
   id: string
@@ -29,14 +34,6 @@ export interface FtbQuestInput {
   quests: Array<{ id: string; title: string; description?: string; tasks: FtbQuestTask[]; rewards?: FtbQuestReward[]; x?: number; y?: number }>
 }
 
-export interface PatchouliBookInput {
-  bookId: string
-  name: string
-  landingText: string
-  locale?: string
-  categories: Array<{ id: string; name: string; description?: string; icon: string; entries: Array<{ id: string; name: string; icon: string; text: string; pages?: Array<Record<string, unknown>> }> }>
-}
-
 export interface KeybindPreset {
   id: string
   name: string
@@ -51,7 +48,7 @@ export interface KeybindApplyResult {
 
 function safeId(value: string, label: string): string {
   const normalized = value.trim().toLowerCase()
-  if (!/^[a-z0-9_.-]+$/.test(normalized)) throw new Error(`${label} must contain only lowercase letters, numbers, dots and hyphens`)
+  if (!/^[a-z0-9_.-]+$/.test(normalized) || normalized === '.' || normalized === '..') throw new Error(`${label} must contain only lowercase letters, numbers, dots and hyphens; relative path segments are invalid`)
   return normalized
 }
 
@@ -86,7 +83,7 @@ function packRoot(project: ProjectInfo): string {
 
 async function atomicWrite(target: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
-  const pending = `${target}.pending-${process.pid}`
+  const pending = `${target}.pending-${randomUUID()}`
   await fs.writeFile(pending, content, 'utf8')
   try { await fs.rename(pending, target) } finally { await fs.rm(pending, { force: true }).catch(() => undefined) }
 }
@@ -106,7 +103,7 @@ async function requirePackMods(project: ProjectInfo, ...modIds: string[]): Promi
   if (missing.length) throw new Error(`此内容需要先安装：${missing.join('、')}`)
 }
 
-export function buildFtbQuestSnbt(project: ProjectInfo, input: FtbQuestInput): { relativePath: string; content: string } {
+export function buildFtbQuestSnbt(project: ProjectInfo, input: FtbQuestInput, prefix = 'overrides/'): { relativePath: string; content: string } {
   requireModpack(project)
   const chapterId = safeId(input.chapterId, 'chapter ID')
   if (!input.title.trim() || !Array.isArray(input.quests) || !input.quests.length) throw new Error('FTB chapter requires a title and at least one quest')
@@ -132,44 +129,141 @@ export function buildFtbQuestSnbt(project: ProjectInfo, input: FtbQuestInput): {
       })
     }
   })
-  const relativePath = `overrides/config/ftbquests/quests/chapters/${input.filename?.trim() || chapterId}.snbt`
+  const filename = safeId(input.filename?.trim() || chapterId, 'chapter filename')
+  const relativePath = `${prefix}config/ftbquests/quests/chapters/${filename}.snbt`
   return { relativePath, content: snbt({ id: stableQuestId(project.namespace, 'chapter', chapterId), filename: input.filename?.trim() || chapterId, title: input.title.trim(), default_quest_shape: 'square', quests }) }
 }
 
 export async function writeFtbQuestChapter(project: ProjectInfo, input: FtbQuestInput): Promise<string> {
   await requirePackMods(project, 'ftbquests')
-  const built = buildFtbQuestSnbt(project, input)
+  const built = buildFtbQuestSnbt(project, input, await contentPrefix(project))
+  await assertContentTarget(project.path, resourcePath(project, built.relativePath))
   await atomicWrite(resourcePath(project, built.relativePath), `${built.content}\n`)
   return built.relativePath
 }
 
-export function buildPatchouliBook(project: ProjectInfo, input: PatchouliBookInput): Array<{ relativePath: string; content: string }> {
+async function contentPrefix(project: ProjectInfo): Promise<string> {
+  const root = modpackOverridesRoot(project, await readModpackManifest(project))
+  const relative = path.relative(project.path, root).replaceAll('\\', '/')
+  return relative ? `${relative}/` : ''
+}
+
+export function buildPatchouliBook(project: ProjectInfo, input: PatchouliBookInput, prefix = 'overrides/'): Array<{ relativePath: string; content: string }> {
   requireModpack(project)
   const bookId = safeId(input.bookId, 'book ID')
   const locale = safeId(input.locale ?? 'zh_cn', 'book locale')
-  if (!input.name.trim() || !input.landingText.trim() || !Array.isArray(input.categories) || !input.categories.length) throw new Error('Patchouli book requires a name, landing text and category')
-  const dataRoot = `overrides/kubejs/data/${project.namespace}/patchouli_books/${bookId}`
-  const assetsRoot = `overrides/kubejs/assets/${project.namespace}/patchouli_books/${bookId}/${locale}`
-  const output = [{ relativePath: `${dataRoot}/book.json`, content: `${JSON.stringify({ name: input.name.trim(), landing_text: input.landingText.trim(), version: '1', show_progress: true, use_resource_pack: true, pause_game: true }, null, 2)}\n` }]
+  if (!input.name.trim() || !input.landingText.trim() || !Array.isArray(input.categories)) throw new Error('Patchouli book requires a name, landing text and category list')
+  const dataRoot = `${prefix}kubejs/data/${project.namespace}/patchouli_books/${bookId}`
+  const assetsRoot = `${prefix}kubejs/assets/${project.namespace}/patchouli_books/${bookId}/${locale}`
+  const output = [{ relativePath: `${dataRoot}/book.json`, content: `${JSON.stringify({ version: '1', show_progress: true, use_resource_pack: true, pause_game: true, ...input.raw, name: input.name.trim(), landing_text: input.landingText.trim() }, null, 2)}\n` }]
   for (const category of input.categories) {
     const categoryId = safeId(category.id, 'category ID')
-    if (!category.name.trim() || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(category.icon) || !category.entries.length) throw new Error(`Patchouli category ${categoryId} is incomplete`)
-    output.push({ relativePath: `${assetsRoot}/categories/${categoryId}.json`, content: `${JSON.stringify({ name: category.name.trim(), description: category.description?.trim() ?? '', icon: category.icon, sortnum: output.length }, null, 2)}\n` })
+    if (!category.name.trim() || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(category.icon)) throw new Error(`Patchouli category ${categoryId} is incomplete`)
+    output.push({ relativePath: `${assetsRoot}/categories/${categoryId}.json`, content: `${JSON.stringify({ sortnum: output.length, ...category.raw, name: category.name.trim(), description: category.description?.trim() ?? '', icon: category.icon }, null, 2)}\n` })
     for (const entry of category.entries) {
       const entryId = safeId(entry.id, 'entry ID')
-      if (!entry.name.trim() || !entry.text.trim() || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(entry.icon)) throw new Error(`Patchouli entry ${entryId} is incomplete`)
+      if (!entry.name.trim() || (!entry.text.trim() && !entry.pages?.length) || !/^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(entry.icon)) throw new Error(`Patchouli entry ${entryId} is incomplete`)
       const pages = entry.pages?.length ? entry.pages : [{ type: 'patchouli:text', text: entry.text.trim() }]
-      output.push({ relativePath: `${assetsRoot}/entries/${categoryId}/${entryId}.json`, content: `${JSON.stringify({ name: entry.name.trim(), icon: entry.icon, category: `${project.namespace}:${categoryId}`, pages }, null, 2)}\n` })
+      output.push({ relativePath: `${assetsRoot}/entries/${categoryId}/${entryId}.json`, content: `${JSON.stringify({ ...entry.raw, name: entry.name.trim(), icon: entry.icon, category: `${project.namespace}:${categoryId}`, pages }, null, 2)}\n` })
     }
   }
   return output
 }
 
 export async function writePatchouliBook(project: ProjectInfo, input: PatchouliBookInput): Promise<string[]> {
-  await requirePackMods(project, 'patchouli', 'kubejs')
-  const files = buildPatchouliBook(project, input)
-  for (const file of files) await atomicWrite(resourcePath(project, file.relativePath), file.content)
-  return files.map((file) => file.relativePath)
+  return withProjectMutation(project.path, async () => {
+    await requirePackMods(project, 'patchouli', 'kubejs')
+    const prefix = await contentPrefix(project)
+    const files = buildPatchouliBook(project, input, prefix)
+    const bookId = safeId(input.bookId, 'book ID'), locale = safeId(input.locale ?? 'zh_cn', 'book locale')
+    const current = await readPatchouliBook(project, prefix, bookId, locale)
+    if (current && input.baseline === undefined) throw new Error('指南书已存在，请重新加载后保存，避免覆盖已有内容')
+    if (input.baseline !== undefined && input.baseline !== current?.baseline) throw new Error('指南书已在磁盘上变化，请重新加载后保存')
+    const stagingRoot = resourcePath(project, '.modmind/patchouli-staging')
+    await assertContentTarget(project.path, stagingRoot)
+    await fs.mkdir(stagingRoot, { recursive: true })
+    const staging = await fs.mkdtemp(path.join(stagingRoot, 'save-'))
+    try {
+      const roots = [`${prefix}kubejs/data/${project.namespace}/patchouli_books/${bookId}/book.json`, ...['categories', 'entries'].map(kind => `${prefix}kubejs/assets/${project.namespace}/patchouli_books/${bookId}/${locale}/${kind}`)]
+      const entries: Array<{ source: string; destination: string }> = []
+      for (const [index, relative] of roots.entries()) {
+        const source = path.join(staging, String(index))
+        if (index > 0) await fs.mkdir(source, { recursive: true })
+        for (const file of files.filter(file => file.relativePath === relative || file.relativePath.startsWith(`${relative}/`))) {
+          const destination = file.relativePath === relative ? source : path.join(source, file.relativePath.slice(relative.length + 1))
+          await fs.mkdir(path.dirname(destination), { recursive: true })
+          await fs.writeFile(destination, file.content)
+        }
+        entries.push({ source, destination: resourcePath(project, relative) })
+      }
+      await installContentTransaction(project.path, entries, async () => undefined)
+      return files.map(file => file.relativePath)
+    } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined) }
+  })
+}
+
+async function jsonFiles(project: ProjectInfo, root: string): Promise<Array<{ id: string; raw: Record<string, unknown>; content: string }>> {
+  await assertContentTarget(project.path, root)
+  const result: Array<{ id: string; raw: Record<string, unknown>; content: string }> = []
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error })) {
+      const file = path.join(directory, entry.name)
+      await assertContentTarget(project.path, file)
+      if (entry.isDirectory()) await visit(file)
+      else if (entry.isFile()) {
+        if (!entry.name.endsWith('.json')) throw new Error(`指南书包含暂不支持编辑的文件：${file}`)
+        const content = await fs.readFile(file, 'utf8'), raw = JSON.parse(content.replace(/^\uFEFF/, '')) as Record<string, unknown>
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`指南书 JSON 无效：${file}`)
+        result.push({ id: path.relative(root, file).replaceAll('\\', '/').slice(0, -5), raw, content })
+      }
+    }
+  }
+  await visit(root)
+  return result.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+async function readPatchouliBook(project: ProjectInfo, prefix: string, bookId: string, locale: string): Promise<PatchouliBookInput | null> {
+  const bookPath = resourcePath(project, `${prefix}kubejs/data/${project.namespace}/patchouli_books/${bookId}/book.json`)
+  await assertContentTarget(project.path, bookPath)
+  const content = await fs.readFile(bookPath, 'utf8').catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
+  if (content === null) return null
+  const raw = JSON.parse(content.replace(/^\uFEFF/, '')) as Record<string, unknown>
+  if (!raw || typeof raw.name !== 'string' || typeof raw.landing_text !== 'string') throw new Error('指南书主文件格式暂不支持编辑')
+  const assets = resourcePath(project, `${prefix}kubejs/assets/${project.namespace}/patchouli_books/${bookId}/${locale}`)
+  const categories = await jsonFiles(project, path.join(assets, 'categories')), entries = await jsonFiles(project, path.join(assets, 'entries'))
+  const books: PatchouliBookInput['categories'] = categories.map(category => {
+    if (safeId(category.id, 'category ID') !== category.id || typeof category.raw.name !== 'string' || typeof category.raw.icon !== 'string') throw new Error('指南书分类格式暂不支持编辑')
+    return { id: category.id, name: category.raw.name, description: String(category.raw.description ?? ''), icon: category.raw.icon, raw: category.raw, entries: [] }
+  })
+  for (const entry of entries) {
+    const category = books.find(category => entry.raw.category === `${project.namespace}:${category.id}` || entry.raw.category === category.id)
+    const id = entry.id.split('/').at(-1)!
+    if (!category || entry.id !== `${category.id}/${id}` || safeId(id, 'entry ID') !== id || typeof entry.raw.name !== 'string' || typeof entry.raw.icon !== 'string' || !Array.isArray(entry.raw.pages)) throw new Error('指南书条目格式暂不支持编辑，原文件已保留')
+    const pages = entry.raw.pages as Array<Record<string, unknown>>
+    category.entries.push({ id, name: entry.raw.name, icon: entry.raw.icon, text: String(pages.find(page => page.type === 'patchouli:text')?.text ?? ''), pages, raw: entry.raw })
+  }
+  const baseline = createHash('sha256').update(JSON.stringify([content, categories, entries])).digest('hex')
+  return { bookId, locale, name: raw.name, landingText: raw.landing_text, raw, baseline, categories: books }
+}
+
+export async function readPatchouliBooks(project: ProjectInfo): Promise<PatchouliBookInput[]> {
+  requireModpack(project)
+  const prefix = await contentPrefix(project)
+  const root = resourcePath(project, `${prefix}kubejs/data/${project.namespace}/patchouli_books`)
+  await assertContentTarget(project.path, root)
+  const result: PatchouliBookInput[] = []
+  for (const entry of await fs.readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error })) {
+    if (!entry.isDirectory()) continue
+    const id = safeId(entry.name, 'book ID')
+    const assets = resourcePath(project, `${prefix}kubejs/assets/${project.namespace}/patchouli_books/${id}`)
+    await assertContentTarget(project.path, assets)
+    const locales = await fs.readdir(assets, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error })
+    for (const locale of locales.filter(item => item.isDirectory()).map(item => safeId(item.name, 'locale')).concat(locales.length ? [] : ['zh_cn'])) {
+      const book = await readPatchouliBook(project, prefix, id, locale)
+      if (book) result.push(book)
+    }
+  }
+  return result
 }
 
 async function keybindPath(project: ProjectInfo): Promise<{ relative: string; target: string }> {

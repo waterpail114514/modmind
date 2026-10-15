@@ -3,6 +3,7 @@ import { replayUserText } from '../../shared/aiReplay'
 import { latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 import { aiNoticeDetails, presentLegacyAiNotice } from '../../shared/aiNotice'
+import { isInspirationProtocol } from '../../shared/inspirationWorkflow'
 
 type IdFactory = () => string
 
@@ -112,7 +113,7 @@ function* replayInspirationSteps(messages: InspirationChatMessage[], events: Con
       continue
     }
     if (event.kind === 'delta' || event.kind === 'response') {
-      if (index < 0) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
+      if (index < 0) result.push({ role: 'assistant', inspirationFeatures: event.inspirationFeatures, generation: event.generation, id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
       else {
         const message = result[index]
         result[index] = { ...message, content: event.kind === 'delta' ? mergeOutputText(message.content, event.content) : event.content || message.content, sequence: record.sequence }
@@ -120,7 +121,7 @@ function* replayInspirationSteps(messages: InspirationChatMessage[], events: Con
       continue
     }
     if (event.kind === 'answer') {
-      const completed: InspirationChatMessage = { role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence, ...(event.usage || (index >= 0 && result[index].usage) ? { usage: event.usage ?? result[index].usage } : {}) }
+      const completed: InspirationChatMessage = { ...(index >= 0 ? result[index] : {}), inspirationFeatures: event.inspirationFeatures ?? (index >= 0 ? result[index].inspirationFeatures : undefined), generation: event.generation, role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence, ...(event.usage || (index >= 0 && result[index].usage) ? { usage: event.usage ?? result[index].usage } : {}) }
       if (index < 0) result.push(completed)
       else result[index] = completed
       continue
@@ -172,7 +173,7 @@ function defaultId(): string {
 }
 
 function progressStep(message: InspirationChatMessage, sessionId: string, createId: IdFactory): InspirationChatMessage | null {
-  if (!message.content.trim()) return null
+  if (!message.content.trim() || isInspirationProtocol(message.content)) return null
   return {
     role: 'assistant', kind: 'tool', id: createId(), content: message.content,
     status: 'completed', isFinal: false, sessionId
@@ -213,6 +214,7 @@ export function settleInspirationReply(
     return [
       ...(progress ? [progress] : []),
       {
+        ...message,
         id: message.id,
         ...(message.usage ? { usage: message.usage } : {}),
         turnId: message.turnId,
@@ -249,7 +251,7 @@ export function settleInspirationCancellation(
     const progress = message.content.trim() && message.content !== '正在停止任务…' ? progressStep(message, sessionId, createId) : null
     return [
       ...(progress ? [progress] : []),
-      { ...message, role: 'assistant' as const, content: '请求已暂停', status: 'cancelled' as const, isFinal: true, sessionId, time: new Date().toISOString() }
+      { ...message, role: 'assistant' as const, content: isInspirationProtocol(message.content) ? message.content : '请求已暂停', status: 'cancelled' as const, isFinal: true, sessionId, time: new Date().toISOString() }
     ]
   })
 }
