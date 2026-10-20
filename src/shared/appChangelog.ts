@@ -16,6 +16,7 @@ export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
     version: '1.5.0-preview.5',
     sections: [
+      { title: '重要提示', items: ['根据相关法律法规，本软件原则上将在新版本不提供MC本体下载功能，但是ai操作不可完全控制，请各位用户自觉不使用相关功能'] },
       { title: '改进', items: ['整合包导入保留原文件，无法确认的模组兼容性改为警告；继续校验文件哈希与路径安全，并在启动前重新检查实际运行文件。'] },
       { title: '修复', items: ['修复整合包导入时遗漏小体积 JAR，以及旧同步记录导致启动前漏检实例文件的问题。'] }
     ]
