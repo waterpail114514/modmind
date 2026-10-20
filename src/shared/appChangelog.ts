@@ -14,6 +14,13 @@ export interface AppChangelogSnapshot {
 // These notes ship with the app so the first launch works fully offline.
 export const APP_CHANGELOG: AppChangelogRelease[] = [
   {
+    version: '1.5.0-preview.4',
+    sections: [
+      { title: '改进', items: ['整合包导入保留原文件，无法确认的模组兼容性改为警告；继续校验文件哈希与路径安全，并在启动前重新检查实际运行文件。'] },
+      { title: '修复', items: ['修复整合包导入时遗漏小体积 JAR，以及旧同步记录导致启动前漏检实例文件的问题。'] }
+    ]
+  },
+  {
     version: '1.5.0-preview.1',
     sections: [
       { title: '主要更新', items: [

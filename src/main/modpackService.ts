@@ -1,3 +1,4 @@
+import { assertContentTarget } from './contentInstallTransaction'
 import { createHash } from 'node:crypto'
 import { createReadStream, type Dirent } from 'node:fs'
 import { promises as fs } from 'node:fs'
@@ -11,7 +12,7 @@ import { isRemoteModpackContent, readManagedModpackContent, registerImportedPack
 import { readCurseForgePackState, reconcileCurseForgePack } from './curseForgePackMetadata'
 import { readImportedModrinthFiles } from './modpackImportService'
 import { resolveImportedModrinthIdentity } from './modrinthImportIdentity'
-import { hasConnectorBridge, validateRuntimeModArtifact } from './modpackArtifactValidation'
+import { hasConnectorBridge, inspectImportedModArtifact } from './modpackArtifactValidation'
 import { excludesModsFromOverrides, modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
 
 export const MODPACK_MANIFEST = 'modmind.pack.json'
@@ -62,7 +63,7 @@ function normalizeMod(value: unknown): ModpackManagedMod | null {
     || !isSafeModJarFileName(record.fileName)
     || !/^[a-f0-9]{64}$/.test(record.sha256)
     || !Number.isSafeInteger(record.size)
-    || record.size < 1
+    || record.size < 0
   ) return null
   return { fileName: record.fileName, sha256: record.sha256, size: record.size, addedAt: record.addedAt }
 }
@@ -190,9 +191,9 @@ export async function adoptExternalModpack(project: ProjectInfo, source: Modpack
     .filter((entry) => entry.isFile() && isSafeModJarFileName(entry.name))
     .map(async (entry) => {
       const sourcePath = path.join(modsDirectory, entry.name)
-      const stat = await fs.stat(sourcePath)
-      return stat.size >= 1_024 ? fileRecord(sourcePath, entry.name) : null
-    }))).filter((entry): entry is ModpackManagedMod => Boolean(entry))
+      await assertContentTarget(project.path, sourcePath)
+      return fileRecord(sourcePath, entry.name, 0)
+    })))
   const previous = await fs.access(manifestPath(project)).then(() => readModpackManifest(project), () => null)
   await writeModpackManifest(project, { ...createModpackManifest(project), mods: mods.sort((left, right) => left.fileName.localeCompare(right.fileName)), modules: previous?.modules ?? [], source })
   if (source.format === 'modrinth') await registerImportedModrinthFiles(project)
@@ -250,7 +251,7 @@ export async function reconcileImportedModpack(project: ProjectInfo): Promise<Mo
     const fileName = entry.installedPath.slice(5)
     let mod = manifest.mods.find(item => item.fileName === fileName)
     if (!mod) {
-      mod = await fileRecord(path.join(modpackModsRoot(project, manifest), fileName), fileName)
+      mod = await fileRecord(path.join(modpackModsRoot(project, manifest), fileName), fileName, 0)
       manifest.mods.push(mod)
     }
     // A manually supplied exact replacement can have a translated filename.
@@ -277,9 +278,13 @@ export async function auditImportedPackArtifacts(project: ProjectInfo): Promise<
   const manifest = await readModpackManifest(project)
   const warnings: string[] = []
   const artifacts = manifest.mods.map(mod => path.join(modpackModsRoot(project, manifest), mod.fileName))
+  for (const artifact of artifacts) await assertContentTarget(project.path, artifact)
   const connectorBridge = await hasConnectorBridge(artifacts, project.loader)
-  for (const [index, mod] of manifest.mods.entries()) warnings.push(...await validateRuntimeModArtifact(artifacts[index], project.loader, mod.fileName, true, connectorBridge))
+  for (const [index, mod] of manifest.mods.entries()) {
+    warnings.push(...await inspectImportedModArtifact(artifacts[index], project.loader, mod.fileName, connectorBridge))
+  }
   const target = path.join(project.path, '.modmind', 'import', 'artifact-report.json')
+  await assertContentTarget(project.path, target)
   await fs.mkdir(path.dirname(target), { recursive: true })
   await fs.writeFile(target, JSON.stringify({ checked: manifest.mods.length, connectorBridge, warnings }, null, 2), 'utf8')
   return warnings
@@ -313,9 +318,9 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest('hex')
 }
 
-async function fileRecord(filePath: string, fileName: string): Promise<ModpackManagedMod> {
+async function fileRecord(filePath: string, fileName: string, minimumSize = 1_024): Promise<ModpackManagedMod> {
   const stat = await fs.stat(filePath)
-  if (!stat.isFile() || stat.size < 1_024) throw new Error(`${fileName} is too small to be a Minecraft mod JAR`)
+  if (!stat.isFile() || stat.size < minimumSize) throw new Error(`${fileName} is too small to be a Minecraft mod JAR`)
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(filePath)) hash.update(chunk as Buffer)
   return {
@@ -636,7 +641,7 @@ export async function createModrinthPackArchive(project: ProjectInfo, release: {
   }
   for (const mod of manifest.mods) {
     const source = path.join(modpackModsRoot(project, manifest), mod.fileName)
-    const record = await fileRecord(source, mod.fileName).catch((error) => { throw new Error(`整合包清单中的 Mod ${mod.fileName} 无法读取：${error instanceof Error ? error.message : String(error)}`) })
+    const record = await fileRecord(source, mod.fileName, manifest.source ? 0 : 1_024).catch((error) => { throw new Error(`整合包清单中的 Mod ${mod.fileName} 无法读取：${error instanceof Error ? error.message : String(error)}`) })
     if (record.size !== mod.size || record.sha256 !== mod.sha256) throw new Error(`整合包清单中的 Mod ${mod.fileName} 已被修改，请重新导入或更新清单`)
     const locked = lockedByFile.get(mod.fileName.toLowerCase())
     if (locked?.sources.length) {

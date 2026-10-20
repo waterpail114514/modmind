@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createStoredZip } from './bedrockAddon'
-import { hasConnectorBridge, validateRuntimeModArtifact } from './modpackArtifactValidation'
+import { hasConnectorBridge, inspectImportedModArtifact, validateRuntimeModArtifact } from './modpackArtifactValidation'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -15,6 +15,22 @@ async function jar(files: Record<string, string | Buffer>): Promise<string> {
 }
 
 describe('launcher-compatible modpack JAR validation', () => {
+  it.each<Record<string, string | Buffer>>([
+    { 'example/Unknown.class': Buffer.alloc(2048) },
+    { 'META-INF/mods.toml': 'modLoader="javafml"' },
+    { 'META-INF/mods.toml': 'not valid TOML', 'example/Test.class': Buffer.alloc(2048) }
+  ])('preserves unrecognized imports with warnings while runtime validation stays strict (%#)', async files => {
+    const target = await jar(files)
+    const original = await fs.readFile(target)
+    await expect(inspectImportedModArtifact(target, 'forge')).resolves.toEqual([expect.stringContaining('已按原包保留')])
+    await expect(validateRuntimeModArtifact(target, 'forge', target, true)).rejects.toThrow('Invalid Mod JAR')
+    expect(await fs.readFile(target)).toEqual(original)
+  })
+  it('does not hide a missing import file as a compatibility warning', async () => {
+    const target = await jar({})
+    await fs.unlink(target)
+    await expect(inspectImportedModArtifact(target, 'forge')).rejects.toThrow()
+  })
   const forgeLocator = 'META-INF/services/net.minecraftforge.forgespi.locating.IModLocator'
   it.each([
     'net.minecraftforge.forgespi.locating.IModLocator',

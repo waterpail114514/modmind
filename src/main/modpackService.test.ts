@@ -5,7 +5,8 @@ import path from 'node:path'
 import extractZip from 'extract-zip'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
-import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, readModpackManifest, readModpackImportStatus, removeModpackFile, removeModpackModule, syncModpackOverrides, syncReloadableKubeJsScripts, updateModpackModuleSide } from './modpackService'
+import { addModpackFiles, addModpackModule, adoptExternalModpack, auditImportedPackArtifacts, createModpackTemplate, createModrinthPackArchive, readModpackManifest, readModpackImportStatus, removeModpackFile, removeModpackModule, syncModpackOverrides, syncReloadableKubeJsScripts, updateModpackModuleSide } from './modpackService'
+import { createStoredZip } from './bedrockAddon'
 import { auditModpackLock, createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { inspectExternalModpack, materializeExternalModpack } from './modpackImportService'
 import { readManagedModpackContent } from "../../feature-plugins/modpack-content/src/main/modpackContentInventoryService"
@@ -29,6 +30,63 @@ afterEach(async () => {
 })
 
 describe('modpack manifests', () => {
+  it('retains every original JAR and reports compatibility warnings without aborting adoption', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-advisory-'))
+    roots.push(root)
+    const source = path.join(root, 'source')
+    const info = project(path.join(root, 'project'))
+    const files = {
+      'valid.jar': createStoredZip([
+        { name: 'fabric.mod.json', data: Buffer.from('{}') },
+        { name: 'example/Mod.class', data: Buffer.alloc(2048) }
+      ]),
+      'unknown.jar': createStoredZip([{ name: 'example/Mod.class', data: Buffer.alloc(2048) }]),
+      'tiny.jar': Buffer.from('original custom artifact'),
+      'empty.jar': Buffer.alloc(0)
+    }
+    await fs.mkdir(path.join(source, 'mods'), { recursive: true })
+    for (const [name, bytes] of Object.entries(files)) await fs.writeFile(path.join(source, 'mods', name), bytes)
+    const inspection = (await inspectExternalModpack(source))!
+    await materializeExternalModpack(inspection, info.path, { trackDownloadActivities: false })
+    const manifest = await adoptExternalModpack(info, { format: 'instance', layout: inspection.layout, importedAt: info.createdAt })
+    expect(manifest.mods).toHaveLength(4)
+    const warnings = await auditImportedPackArtifacts(info)
+    expect(warnings).toHaveLength(3)
+    expect(warnings.join('\n')).not.toContain('valid.jar')
+    expect(await readModpackImportStatus(info)).toMatchObject({ installed: 4, compatibilityWarnings: warnings })
+    expect((await readModpackManifest(info)).mods).toHaveLength(4)
+    for (const [name, bytes] of Object.entries(files)) {
+      expect(await fs.readFile(path.join(info.path, 'mods', name))).toEqual(bytes)
+      expect(await fs.readFile(path.join(source, 'mods', name))).toEqual(bytes)
+      expect(manifest.mods.find(mod => mod.fileName === name)?.sha256).toBe(createHash('sha256').update(bytes).digest('hex'))
+    }
+    const exported = path.join(root, 'preserved.mrpack')
+    await fs.writeFile(exported, await createModrinthPackArchive(info))
+    const extracted = path.join(root, 'exported')
+    await extractZip(exported, { dir: extracted })
+    for (const [name, bytes] of Object.entries(files)) expect(await fs.readFile(path.join(extracted, 'overrides', 'mods', name))).toEqual(bytes)
+  })
+
+  it('keeps path and link failures fatal during advisory compatibility inspection', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-advisory-path-'))
+    roots.push(root)
+    const info = project(path.join(root, 'project'))
+    await fs.mkdir(info.path)
+    await createModpackTemplate(info)
+    const external = path.join(root, 'outside.jar')
+    await fs.writeFile(external, Buffer.alloc(2048))
+    const target = path.join(info.path, 'mods', 'linked.jar')
+    await fs.link(external, target)
+    await expect(adoptExternalModpack(info, { format: 'instance', layout: 'instance', importedAt: info.createdAt })).rejects.toThrow('包含链接')
+    await fs.unlink(target)
+    await fs.writeFile(target, Buffer.alloc(2048))
+    await adoptExternalModpack(info, { format: 'instance', layout: 'instance', importedAt: info.createdAt })
+    await fs.unlink(target)
+    await fs.link(external, target)
+    await expect(auditImportedPackArtifacts(info)).rejects.toThrow('包含链接')
+    expect(await fs.readFile(external)).toEqual(Buffer.alloc(2048))
+  })
+
   it('removes pack-owned modules and only unlinks external modules', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-pack-remove-module-'))
     roots.push(root)

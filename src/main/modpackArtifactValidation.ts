@@ -82,6 +82,17 @@ async function isNeoForgeBootstrap(filePath: string, files: string[]): Promise<b
   return false
 }
 
+/** Import preserves the original files; runtime recognition is advisory at this stage. */
+export async function inspectImportedModArtifact(filePath: string, loader: LoaderKind, displayPath = filePath, connectorBridge = false): Promise<string[]> {
+  // Missing or unreadable project files are not compatibility questions.
+  await fs.access(filePath, fs.constants.R_OK)
+  try {
+    return await validateRuntimeModArtifact(filePath, loader, displayPath, true, connectorBridge)
+  } catch (error) {
+    return [`${path.basename(displayPath)}：无法确认运行兼容性，已按原包保留；启动前将重新检查。详情：${error instanceof Error ? error.message : String(error)}`]
+  }
+}
+
 /** Match launcher-accepted archive shapes without unpacking every texture and sound. */
 export async function validateRuntimeModArtifact(filePath: string, loader: LoaderKind, displayPath = filePath, importedPack = false, connectorBridge = false): Promise<string[]> {
   try {

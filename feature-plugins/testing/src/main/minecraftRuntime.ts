@@ -1,3 +1,5 @@
+import { hasConnectorBridge, validateRuntimeModArtifact } from '../../../../src/main/modpackArtifactValidation'
+import { isSafeModJarFileName } from '../../../../src/main/modpackFilename'
 import { isGradleNetworkFailure } from '../../../../src/main/gradleFailure'
 import { gradleRunDirectory, normalizeProcessExitCode } from '../../../../src/main/gradleProcess'
 import { diagnoseAssets,launch,LaunchPrecheck,MinecraftFolder,Version } from '@xmcl/core'
@@ -479,11 +481,23 @@ async launch(options: MinecraftLaunchOptions, signal?: AbortSignal): Promise<Min
       if (!(await exists(syncedArtifact))) throw new Error('测试实例中没有已同步的项目 Mod，请先点击“构建并同步”')
       await validateModArtifact(syncedArtifact, project.loader)
     } else if (!this.vanillaClient && project.kind === 'modpack') {
-      const manifest = await readModpackManifest(project)
+      const manifest = await assertModpackDependenciesReady(project)
       const synced = await fs.readFile(path.join(this.instanceRoot(project), 'modmind-pack-sync.json'), 'utf8')
         .then((value) => JSON.parse(value) as { files?: unknown })
         .catch(() => null)
       if (!synced || !Array.isArray(synced.files)) throw new Error('整合包尚未同步，请先点击“同步整合包”')
+      // Validate the files that will actually run, even when a previous sync receipt exists.
+      const mods = await this.listMods()
+      const installedNames = new Set(mods.map(mod => mod.name.toLowerCase()))
+      if (synced.files.some(name => !isSafeModJarFileName(name) || !installedNames.has(name.toLowerCase()))) {
+        throw new Error('测试实例缺少已同步的整合包 Mod 或同步记录无效，请重新同步整合包')
+      }
+      const connectorBridge = await hasConnectorBridge(mods.map(mod => mod.path), project.loader)
+      for (const mod of mods) {
+        signal?.throwIfAborted()
+        const warnings = await validateRuntimeModArtifact(mod.path, project.loader, mod.name, true, connectorBridge)
+        for (const warning of warnings) this.emit('launching', warning, 'warning')
+      }
       if (!manifest.mods.length && !manifest.modules.length) this.emit('launching', '正在启动空整合包实例')
     }
     if (signal?.aborted) throw Object.assign(new Error('Minecraft 启动已取消'), { name: 'AbortError' })
