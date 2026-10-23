@@ -58,7 +58,7 @@ import type {
 } from "../../src/shared/types"
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, Tray } from "electron"
 import { sameProjectPath } from "../../src/main/projectPath"
-import { modpackConfigIdentities, modpackContentFeatures } from "../../src/main/modpackConfigIdentities"
+import { modpackConfigIdentities } from "../../src/main/modpackConfigIdentities"
 import path from "node:path"
 import { promises as fs, readFileSync, createReadStream } from "node:fs"
 import type { NativeFeatureHost } from '../../src/main/index'
@@ -98,12 +98,6 @@ diagnosticHandle('modpack:configModIdentities', (_event, projectPath: string) =>
         throw new Error('整合包项目已切换，请重新打开页面');
     return modpackConfigIdentities(project);
 });
-diagnosticHandle('modpack:contentFeatures', (_event, projectPath: string) => {
-    const project = host.requireProject();
-    if (project.kind !== 'modpack' || typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath))
-        throw new Error('整合包项目已切换，请重新打开页面');
-    return modpackContentFeatures(project);
-});
 diagnosticHandle('modpack:contentProjectPath', (_event, contentPath: unknown) => {
     const project = host.requireProject();
     if (!isModpackProject(project))
@@ -125,7 +119,7 @@ const createMcpHandlers = (project: import('../../src/shared/types').ProjectInfo
 return { modpackDownloadContent: (input) => {
     if (!isModpackProject(project))
         throw new Error('current project is not a modpack');
-    return downloadModpackContent(project, input as unknown as ModpackContentDownloadInput);
+    return downloadModpackContent(project, input as unknown as ModpackContentDownloadInput, signal);
 },
 modpackApplyKeybindPreset: async (input, allowConflicts) => {
     if (!isModpackProject(project))

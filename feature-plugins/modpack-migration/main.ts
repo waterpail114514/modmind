@@ -98,6 +98,7 @@ async function applyModpackMigrationInPlace(project: ProjectInfo, target: Awaite
     let sourceSnapshotTree: Awaited<ReturnType<typeof host.readSnapshotManifest>> | undefined;
     let rollbackFiles: string[] = [];
     let commitStarted = false;
+    let preserveRecoveryFiles = false;
     try {
         if (mode === 'backup') {
             sourceSnapshot = await host.createProjectSnapshot(`整合包迁移前：${project.loader} ${project.minecraftVersion} -> ${target.loader} ${target.minecraftVersion}`);
@@ -181,7 +182,9 @@ async function applyModpackMigrationInPlace(project: ProjectInfo, target: Awaite
                 host.emitProjectChanged();
             }
             catch (rollbackError) {
-                throw new Error(`整合包迁移失败，自动回滚也失败。\n迁移错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+                preserveRecoveryFiles = true;
+                const backupPath = sourceSnapshotTree?.root ?? rollbackRoot;
+                throw new Error(`整合包迁移失败，自动回滚也失败。恢复文件已保留在：${backupPath}\n迁移错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
             }
         }
         if (mode === 'direct')
@@ -189,7 +192,7 @@ async function applyModpackMigrationInPlace(project: ProjectInfo, target: Awaite
         throw error;
     }
     finally {
-        await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
+        if (!preserveRecoveryFiles) await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
     }
 }
 async function undoModpackMigration(project: ProjectInfo, migrationId: string): Promise<ModpackMigrationUndoResult> {

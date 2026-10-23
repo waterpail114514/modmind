@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "decompile",
   "name": "反编译",
-  "version": "1.5.0-plugintest",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -27,5 +27,20 @@
   ],
   "assets": {
     "decompile-tools": "feature-plugins/decompile/assets/decompile-tools"
-  }
+  },
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack",
+    "minecraft-server-plugin"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge",
+    "paper",
+    "spigot",
+    "folia",
+    "velocity"
+  ]
 }

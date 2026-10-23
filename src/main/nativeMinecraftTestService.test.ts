@@ -36,12 +36,16 @@ it('validates native actions and translates coordinates, keys, view and build co
   expect(() => nativeAction({ operation: 'command', command: 'say hi\nstop' })).toThrow('文字')
   expect(() => nativeAction({ operation: 'operator' })).toThrow('不支持')
 })
-async function fixture() {
+async function fixture(kind: 'mod' | 'modpack' = 'mod') {
   const directory = await root()
-  const project = { path: directory, kind: 'mod', loader: 'fabric', minecraftVersion: '1.20.1' } as ProjectInfo
+  const project = { path: directory, kind, loader: 'fabric', minecraftVersion: '1.20.1' } as ProjectInfo
   const mods = path.join(directory, '.modmind', 'minecraft', 'mods'); await fs.mkdir(mods, { recursive: true })
   const artifact = { name: 'target.jar', path: path.join(mods, 'target.jar'), size: 3, modifiedAt: '', projectArtifact: true }
   await fs.writeFile(artifact.path, 'jar')
+  if (kind === 'modpack') {
+    artifact.path = path.join(path.dirname(mods), 'modmind-pack-sync.json')
+    await fs.writeFile(artifact.path, JSON.stringify({ files: ['target.jar'] }))
+  }
   let state = { running: false, stage: 'idle', message: '' } as MinecraftRuntimeState
   let screen = 'title'; let port = 0
   const commands: string[] = []
@@ -86,6 +90,11 @@ it('starts an isolated mod client, guards stale UI actions, observes results and
   await f.service.projectChanged('another-project')
   expect(f.stop).toHaveBeenCalledOnce()
   await expect(f.service.execute(f.project, 'capture', { sessionId: started.sessionId })).rejects.toThrow('过期')
+})
+it('copies the pack instance mods when the managed build returns its synchronization receipt', async () => {
+  const f = await fixture('modpack')
+  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }) as { directory: string }
+  expect(await fs.readFile(path.join(started.directory, 'mods/target.jar'), 'utf8')).toBe('jar')
 })
 it('rejects unsupported versions and hidden/headless mode before building', async () => {
   const f = await fixture()

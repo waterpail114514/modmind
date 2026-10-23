@@ -9,7 +9,7 @@ import { useConfirmDialog } from '../../../src/renderer/src/components/Interacti
 type SortMode = 'name' | 'size' | 'added'
 type AuditState = { success: boolean; checked: number; errors: string[] } | null
 type LockDependency = { provider?: 'modrinth' | 'curseforge'; projectId?: string; versionId?: string; kind?: string }
-type LockMod = { fileName?: string; dependencies?: LockDependency[] }
+type LockMod = { fileName?: string; sha256?: string; size?: number; dependencies?: LockDependency[] }
 type LockState = { mods?: LockMod[] } | null
 
 function formatBytes(value: number): string {
@@ -42,7 +42,7 @@ export default function ModpackModListWorkspace({ project, onOpenModule, onDecom
   const load = async (): Promise<void> => {
     setBusy('refresh'); setNotice('')
     try {
-      const result = await Promise.all([window.modmind.modpack.get(), window.modmind.modpack.readLock(), window.modmind.modpack.importStatus()])
+      const result = await Promise.all([window.modmind.modpack.refreshMods(), window.modmind.modpack.readLock(), window.modmind.modpack.importStatus()])
       setManifest(result[0]); setLock(result[1] as LockState); setSelected(new Set()); setAudit(null)
       setImportStatus(result[2])
     } catch (error) { setNotice(errorMessage(error)) } finally { setBusy('') }
@@ -116,7 +116,8 @@ export default function ModpackModListWorkspace({ project, onOpenModule, onDecom
   useEffect(() => {
     let active = true
     setBusy('initial')
-    void Promise.all([window.modmind.modpack.get(), window.modmind.modpack.readLock(), window.modmind.modpack.importStatus()]).then(([nextManifest, nextLock, nextStatus]) => {
+    setManifest(null); setLock(null); setSelected(new Set()); setNotice(''); setImportStatus(null)
+    void Promise.all([window.modmind.modpack.refreshMods(), window.modmind.modpack.readLock(), window.modmind.modpack.importStatus()]).then(([nextManifest, nextLock, nextStatus]) => {
       if (!active) return
       setManifest(nextManifest); setLock(nextLock as LockState); setAudit(null)
       setImportStatus(nextStatus)
@@ -127,8 +128,7 @@ export default function ModpackModListWorkspace({ project, onOpenModule, onDecom
   const modsDirectory = manifest?.source?.layout === 'archive' ? 'overrides/mods' : 'mods'
   const mods = manifest?.mods ?? []
   const modules = manifest?.modules ?? []
-  const manifestFiles = useMemo(() => new Set(mods.map((mod) => mod.fileName.toLowerCase())), [mods])
-  const lockFiles = useMemo(() => new Set((lock?.mods ?? []).map((mod) => mod.fileName?.toLowerCase()).filter((name): name is string => name !== undefined && manifestFiles.has(name))), [lock, manifestFiles])
+  const lockFiles = useMemo(() => new Set((lock?.mods ?? []).filter(entry => mods.some(mod => mod.fileName.toLowerCase() === entry.fileName?.toLowerCase() && mod.sha256 === entry.sha256 && mod.size === entry.size)).map(entry => entry.fileName!.toLowerCase())), [lock, mods])
   const filteredMods = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return mods.filter((mod) => !needle || mod.fileName.toLowerCase().includes(needle)).sort((left, right) => {

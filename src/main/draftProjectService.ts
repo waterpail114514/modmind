@@ -3,9 +3,12 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type { LoaderVersionOption, ProjectCreateInput, ProjectInfo } from '../shared/types'
 import { draftTargetFromMessage, missingDraftDetails } from '../shared/draftProject'
-import { isJavaLoader, isServerPluginPlatform, PROJECT_PLATFORMS } from '../shared/projectPlatform'
+import { PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { CURRENT_PROJECT_VERSION } from './projectVersion'
 import { assignDefaultProjectNamespace } from './projectNamespace'
+import { studios } from './studioRegistry'
+import { studioFormValues } from '../shared/studios'
+import { scopedFilePath } from './scopedFilePath'
 
 const manifest = 'modmind.project.json'
 const pending = new Map<string, Promise<unknown>>()
@@ -59,13 +62,13 @@ export async function recordDraftMessage(root: string, message: string): Promise
   })
 }
 
-async function templateFiles(root: string, relative = ''): Promise<string[]> {
+async function templateFiles(root: string, relative = '', directories: string[] = []): Promise<string[]> {
   const result: string[] = []
   for (const entry of await fs.readdir(path.join(root, relative), { withFileTypes: true })) {
     if (!relative && (entry.name === '.modmind' || entry.name === manifest)) continue
     const item = path.join(relative, entry.name)
     if (entry.isSymbolicLink()) throw new Error('工程模板包含不支持的符号链接')
-    if (entry.isDirectory()) result.push(...await templateFiles(root, item))
+    if (entry.isDirectory()) { directories.push(item); result.push(...await templateFiles(root, item, directories)) }
     else if (entry.isFile()) result.push(item)
   }
   return result
@@ -75,12 +78,13 @@ export async function initializeDraftProject(root: string, services: {
   resolve: (loader: ProjectCreateInput['loader'], version: string) => Promise<LoaderVersionOption>
   scaffold: (project: ProjectInfo) => Promise<void>
   suggestNamespace?: (project: ProjectInfo) => Promise<string>
-}, selection?: Pick<Required<ProjectCreateInput>, 'kind' | 'loader' | 'minecraftVersion'>): Promise<ProjectInfo> {
+}, selection?: Pick<Required<ProjectCreateInput>, 'kind' | 'loader' | 'minecraftVersion'> & Pick<ProjectCreateInput, 'studioId' | 'studioValues'>): Promise<ProjectInfo> {
   return serial(root, async () => {
     const original = await readProject(root)
     const initialManifest = JSON.stringify(original)
     if (!original.draft) {
       if (selection && (selection.kind !== original.kind || selection.loader !== original.loader || selection.minecraftVersion !== original.minecraftVersion)) throw new Error('项目已经创建；更换平台或版本需要迁移，不能重新初始化')
+      if (selection?.studioId && selection.studioId !== studios().resolve(original)?.definition.id) throw new Error('项目已经创建；不能通过初始化更换领域工作台')
       return original
     }
     if (selection) {
@@ -90,20 +94,27 @@ export async function initializeDraftProject(root: string, services: {
     const missing = missingDraftDetails(original)
     if (missing.length) throw new Error(`请先在对话中补充：${missing.join('、')}`)
     const target = original.draft.target as ProjectCreateInput
-    if (!(PROJECT_PLATFORMS as readonly string[]).includes(target.loader) || !['mod', 'modpack', 'server-plugin'].includes(target.kind ?? '')) throw new Error('不支持的工程类型或平台')
-    if (target.kind === 'modpack' && !isJavaLoader(target.loader)) throw new Error('整合包目前仅支持 Java 版平台')
-    if ((target.kind === 'server-plugin') !== isServerPluginPlatform(target.loader)) throw new Error('服务端插件需要 Paper、Spigot、Folia 或 Velocity 平台；模组需要对应的模组平台')
-    const compatibility = await services.resolve(target.loader, target.minecraftVersion)
+    const selectedStudio = studios().select({ ...target, name: original.name })
+    const compatibility: Partial<LoaderVersionOption> = (PROJECT_PLATFORMS as readonly string[]).includes(target.loader) ? await services.resolve(target.loader, target.minecraftVersion) : {}
     const named = services.suggestNamespace ? await assignDefaultProjectNamespace(original, services.suggestNamespace) : original
     if (JSON.stringify(await readProject(root)) !== initialManifest) throw new Error('项目信息已变化，请重试创建工程')
-    const project: ProjectInfo = { ...named, kind: target.kind, loader: target.loader, minecraftVersion: target.minecraftVersion, loaderVersion: compatibility.loaderVersion, apiVersion: compatibility.apiVersion, qslVersion: compatibility.qslVersion, javaVersion: compatibility.javaVersion }
+    const project: ProjectInfo = { ...named, studioId: selectedStudio.definition.id, studioName: selectedStudio.definition.name, studioValues: selectedStudio.definition.creation ? studioFormValues(selectedStudio.definition, { ...target, name: named.name }) : target.studioValues, kind: target.kind, loader: target.loader, minecraftVersion: target.minecraftVersion, loaderVersion: compatibility.loaderVersion, apiVersion: compatibility.apiVersion, qslVersion: compatibility.qslVersion, javaVersion: compatibility.javaVersion }
     delete project.draft
     // Generate away from the live conversation; publish new files exclusively and commit metadata last.
     const stage = await fs.mkdtemp(path.join(path.dirname(root), '.modmind-init-'))
     const published: string[] = []
     try {
       await services.scaffold({ ...project, path: stage })
-      const files = await templateFiles(stage)
+      const directories: string[] = []
+      const files = await templateFiles(stage, '', directories)
+      for (const relative of directories) {
+        let parent = root
+        for (const segment of relative.split(path.sep)) {
+          parent = path.join(parent, segment)
+          const stat = await fs.lstat(parent).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
+          if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) throw new Error(`不能写入已有路径：${relative}`)
+        }
+      }
       for (const relative of files) {
         const segments = relative.split(path.sep)
         let parent = root
@@ -120,13 +131,11 @@ export async function initializeDraftProject(root: string, services: {
         await fs.copyFile(path.join(stage, relative), destination, constants.COPYFILE_EXCL)
         published.push(destination)
       }
-      if (project.kind === 'modpack') {
-        for (const relative of ['mods', 'modules', path.join('overrides', 'config')]) {
-          const target = path.join(root, relative)
-          const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
-          if (stat?.isSymbolicLink() || (stat && !stat.isDirectory())) throw new Error(`不能写入已有路径：${relative}`)
-          await fs.mkdir(target, { recursive: true })
-        }
+      for (const relative of directories) {
+        const target = await scopedFilePath(root, relative)
+        const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
+        if (stat?.isSymbolicLink() || (stat && !stat.isDirectory())) throw new Error(`不能写入已有路径：${relative}`)
+        await fs.mkdir(target, { recursive: true })
       }
       if (JSON.stringify(await readProject(root)) !== initialManifest) throw new Error('项目信息已变化，请重试创建工程')
       await writeManifest(project)

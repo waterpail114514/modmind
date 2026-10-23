@@ -1,0 +1,223 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "mc-preview",
+  "name": "3D 建筑预览",
+  "version": "1.14.13",
+  "description": "使用当前项目采集的数据进行建筑预览与编辑，支持放置、删除、撤销以及 NBT、Schem v2、Litematic 导入导出。",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": [
+    "runtime"
+  ],
+  "dependencies": [],
+  "views": [
+    {
+      "id": "preview",
+      "label": "3D 建筑预览",
+      "component": "PreviewWorkspace",
+      "icon": "Boxes",
+      "group": "创作",
+      "order": 61
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "mc-preview",
+      "name": "3D 建筑预览",
+      "description": "本地游戏数据的 3D 预览与建造（物品栏/编辑/导入导出）。"
+    }
+  ],
+  "actions": [
+    {
+      "id": "preview:open",
+      "handler": "preview_open",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "id": "preview:scene",
+      "handler": "preview_scene",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "states"
+        ],
+        "properties": {
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "maxItems": 20000
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:items",
+      "handler": "preview_items",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:icons",
+      "handler": "preview_icons",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "maxItems": 200
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:import",
+      "handler": "preview_import",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "dataBase64"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "dataBase64": {
+            "type": "string",
+            "maxLength": 33554432
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:export",
+      "handler": "preview_export",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "build"
+        ],
+        "properties": {
+          "format": {
+            "enum": [
+              "schem",
+              "litematic"
+            ]
+          },
+          "build": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  ],
+  "assetFiles": {
+    "third-party.txt": "feature-plugins/mc-preview/THIRD-PARTY.md",
+    "pako-license.txt": "feature-plugins/mc-preview/pako-license.txt"
+  },
+  "tools": [
+    {
+      "name": "modmind_mc_preview_items",
+      "action": "preview:items",
+      "description": "按名称或 ID 查询当前项目采集的物品和方块，分页最多 500 条。缺数据时先调用 mc_capture_status 和 mc_capture_run。"
+    },
+    {
+      "name": "modmind_mc_preview_scene",
+      "action": "preview:scene",
+      "description": "读取当前采集实例中的指定方块状态模型、贴图图集与缺失报告；最多 20000 个状态。"
+    },
+    {
+      "name": "modmind_mc_preview_import",
+      "action": "preview:import",
+      "description": "解析 NBT、Schem v2 或 Litematic 建筑文件的 base64 字节，返回可编辑的建筑数据。"
+    },
+    {
+      "name": "modmind_mc_preview_export",
+      "action": "preview:export",
+      "description": "把建筑数据转换为 Schem v2 或 Litematic，返回 base64 文件与材料清单。"
+    }
+  ]
+}

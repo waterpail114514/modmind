@@ -50,6 +50,10 @@
 .composer-ai-models .model-catalog-rows { height: 240px; min-height: 180px; max-height: 240px; overflow-y: auto; }
 .composer-ai-panel button:focus-visible, .composer-ai-pill:focus-visible, .composer-ai-panel input:focus-visible { outline: 2px solid var(--theme-action); outline-offset: 2px; }
 .composer-ai-models > div:first-child { display: flex; gap: 6px; }
+.composer-model-toolbar { min-width: 0; }
+.composer-model-search { display: flex; flex: 1; min-width: 0; align-items: center; gap: 5px; padding: 7px; border: 1px solid var(--theme-line); border-radius: 6px; color: var(--theme-muted); background: var(--theme-surface); }
+.composer-ai-models .composer-model-search input { padding: 0; border: 0; background: transparent; }
+.composer-model-search svg { flex-shrink: 0; }
 .composer-ai-models input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); color: var(--theme-text); font-size: 12px; }
 .composer-ai-models [role='group'] { display: grid; gap: 3px; max-height: 180px; overflow-y: auto; }
 .composer-ai-models button { padding: 7px; border: 0; border-radius: 5px; background: transparent; color: var(--theme-text); font-size: 12px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }

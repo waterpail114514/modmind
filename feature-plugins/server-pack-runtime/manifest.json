@@ -4,14 +4,16 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "server-pack-runtime",
   "name": "服务端打包组件",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
   "hostCapabilities": [
     "testingV1"
   ],
-  "dependencies": ["server-pack-runtime-data"],
+  "dependencies": [
+    "server-pack-runtime-data"
+  ],
   "capabilities": [
     {
       "id": "server-pack-creator",
@@ -23,10 +25,33 @@
     "server-pack-creator": "resources/server-pack-creator"
   },
   "assetFiles": {
-    "server-pack-creator": ["LICENSE", "UPSTREAM.md", "checksum.txt"]
+    "server-pack-creator": [
+      "LICENSE",
+      "UPSTREAM.md",
+      "checksum.txt"
+    ]
   },
   "assetChunks": {
-    "server-pack-creator": {"source": "resources/server-pack-creator/ServerPackCreator-8.1.2.jar", "offset": 0, "length": 41943040}
+    "server-pack-creator": {
+      "source": "resources/server-pack-creator/ServerPackCreator-8.1.2.jar",
+      "offset": 0,
+      "length": 41943040
+    }
   },
-  "files": {}
+  "files": {},
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack",
+    "minecraft-server-plugin"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge",
+    "paper",
+    "spigot",
+    "folia",
+    "velocity"
+  ]
 }

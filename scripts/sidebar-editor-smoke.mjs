@@ -171,20 +171,18 @@ try {
     await page.evaluate(async darkMode => { const current = await window.modmind.settings.getAgent(); await window.modmind.settings.saveAgent({ ...current, darkMode }) }, dark)
     await page.reload()
     await openEditor()
-    for (const width of [1440, 640, 390]) {
+    for (const width of [1440, 1080]) {
       await page.setViewportSize({ width, height: 1000 })
-      if (width === 390) await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
       await snapshot(`${dark ? 'dark' : 'light'}-${width}`)
-      if (width === 640 && !dark) {
+      if (width === 1080 && !dark) {
         await editor.getByRole('button', { name: '重命名分类：创作', exact: true }).click()
-        await page.screenshot({ path: path.join(work, 'rename-inline-640.png') })
+        await page.screenshot({ path: path.join(work, 'rename-inline-1080.png') })
         await editor.getByLabel('分类名称：创作', { exact: true }).press('Escape')
       }
       // Exercise a control at the actual narrow width, not only a screenshot.
       await editor.getByLabel('显示灵感台', { exact: true }).uncheck()
       assert.equal(await sidebar.locator('.sidebar-nav-item').filter({ hasText: '灵感台' }).count(), 0)
       await editor.getByLabel('显示灵感台', { exact: true }).check()
-      if (width === 390) await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
     }
   }
 

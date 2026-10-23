@@ -72,7 +72,7 @@ try {
   assert.equal(await page.locator('.agent-workbench').isVisible(), true)
   assert.equal(await page.locator('.minecraft-test-workspace:visible').count(), 0)
   await page.screenshot({ path: path.join(work, 'desktop.png') })
-  await page.setViewportSize({ width: 760, height: 800 })
+  await page.setViewportSize({ width: 1080, height: 800 })
   await page.screenshot({ path: path.join(work, 'narrow.png') })
   assert.equal(await dialog.evaluate(node => node.scrollWidth > node.clientWidth + 1), false)
   await dialog.getByRole('button', { name: '返回创作', exact: true }).last().click()

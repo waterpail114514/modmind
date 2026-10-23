@@ -20,7 +20,7 @@ export function validateOfficialFeatureIndex(value: unknown): OfficialFeatureInd
   const seen = new Set<string>()
   const features = value.features.map(raw => {
     if (!object(raw) || !text(raw.id,64) || !idPattern.test(raw.id) || seen.has(raw.id) || !text(raw.name,80) || !text(raw.description,1500) || !text(raw.version,80) || !parseAppVersion(raw.version) || !text(raw.hostVersion,80) || !Number.isSafeInteger(raw.apiVersion) || !text(raw.sha256,64) || !/^[a-f0-9]{64}$/.test(raw.sha256) || !Number.isSafeInteger(raw.size) || Number(raw.size) <= 0 || Number(raw.size) > packageLimit || !text(raw.publishedAt,50) || !Number.isFinite(Date.parse(raw.publishedAt)) || !strings(raw.changelog,20,500) || !strings(raw.dependencies,32,64) || raw.dependencies.some(id => !idPattern.test(id) || id === raw.id) || new Set(raw.dependencies).size !== raw.dependencies.length || !strings(raw.groups,16,40)) throw new Error('官方功能目录包含无效或重复的功能')
-    if (raw.path !== `features/packages/${raw.id}/${raw.version}/${raw.sha256}.mmfeature` || /[\\/%?#]/.test(raw.version)) throw new Error('官方功能下载路径无效')
+    if (!['mmfeature', 'mmstudio'].some(extension => raw.path === `features/packages/${raw.id}/${raw.version}/${raw.sha256}.${extension}`) || /[\\/%?#]/.test(raw.version)) throw new Error('官方功能下载路径无效')
     if (raw.target !== undefined && (!object(raw.target) || !text(raw.target.platform,20) || !text(raw.target.arch,20))) throw new Error('官方功能平台信息无效')
     seen.add(raw.id)
     return structuredClone(raw) as unknown as OfficialFeatureRelease
@@ -56,7 +56,7 @@ export class FeatureStoreService {
     } catch { /* A missing or invalid cache is rebuilt from the public index. */ }
     try { const file = path.join(this.root,'receipts.json'); if ((await fs.stat(file)).size > 64 * 1024) throw new Error('Receipts too large'); const rows: unknown = JSON.parse(await fs.readFile(file,'utf8')); if (object(rows)) for (const [id,digest] of Object.entries(rows)) if (idPattern.test(id) && typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest)) this.receipts.set(id,digest) } catch { /* Local imports have no official receipt. */ }
     // Only our disposable downloads are cleared; installed features live elsewhere.
-    for (const name of await fs.readdir(this.root)) if (/^download-[a-f0-9-]+\.mmfeature(?:\.partial[-\w]*)?$/.test(name)) await fs.rm(path.join(this.root,name),{force:true}).catch(()=>undefined)
+    for (const name of await fs.readdir(this.root)) if (/^download-[a-f0-9-]+\.(?:mmfeature|mmstudio)(?:\.partial[-\w]*)?$/.test(name)) await fs.rm(path.join(this.root,name),{force:true}).catch(()=>undefined)
   }
   private incompatible(entry: OfficialFeatureRelease): string | undefined {
     if (entry.apiVersion !== FEATURE_PLUGIN_API || entry.hostVersion !== FEATURE_PLUGIN_HOST) return '需要其他版本的 ModMind'
@@ -68,7 +68,7 @@ export class FeatureStoreService {
     const remote = new Map(this.index?.features.map(entry => [entry.id,entry]) ?? [])
     return {
       entries: [...new Set([...local.keys(),...remote.keys()])].map(id => {
-        const entry = local.get(id), release = remote.get(id)
+        const entry = local.get(id), release = entry?.builtin ? undefined : remote.get(id)
         const base: FeaturePluginCatalogEntry = entry ?? { id, name: release!.name, version: release!.version, enabled:false, installed:false, available:false, state:'not-installed', installHint:'侧边栏 → 功能' }
         const groups = entry?.manifest ? featureGroups(entry.manifest) : release?.groups ?? []
         const incompatible = release ? this.incompatible(release) : undefined
@@ -139,7 +139,7 @@ export class FeatureStoreService {
           continue
         }
         if(installed?.installed&&(compareSemanticAppVersions(release.version,installed.version)??0)<0)throw new Error('已安装版本更新，未自动降级')
-        const file=path.join(this.root,`download-${randomUUID()}.mmfeature`)
+        const file=path.join(this.root,`download-${randomUUID()}${path.extname(release.path)}`)
         this.job={id:release.id,name:release.name,phase:'downloading',downloaded:0,total:release.size};this.publish()
         let lastProgress=0
         try {

@@ -1,15 +1,18 @@
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { dialog, type BrowserWindow } from 'electron'
-import type { ProjectInfo } from "../../../../src/shared/types"
-import type { SoundEventSave, SoundImportOptions, SoundProcessOptions } from "../../../../src/shared/soundLibrary"
-import { SoundLibraryService } from "./soundLibraryService"
-import { sameProjectPath } from "../../../../src/main/projectPath"
-import type { StudioDraft } from "../../../../src/shared/soundStudio"
+import type { ProjectInfo } from '../../../../src/shared/types'
+import type { SoundEventSave, SoundImportOptions, SoundProcessOptions } from '../../../../src/shared/soundLibrary'
+import { SoundLibraryService } from './soundLibraryService'
+import { sameProjectPath } from '../../../../src/main/projectPath'
+import type { StudioDraft } from '../../../../src/shared/soundStudio'
 
 const services = new Map<string, SoundLibraryService>()
 export function soundServiceForProject(project: ProjectInfo, minecraftRoot: string, cacheRoot: string): SoundLibraryService {
-  const key = path.resolve(project.path) + '|' + project.minecraftVersion
+  const key = JSON.stringify([path.resolve(project.path), project.namespace, project.minecraftVersion, project.kind, project.loader, project.name, minecraftRoot, cacheRoot])
+  for (const [previousKey, previous] of services) {
+    if (previousKey !== key && sameProjectPath(JSON.parse(previousKey)[0], project.path)) { previous.cancel(); services.delete(previousKey) }
+  }
   if (!services.has(key)) services.set(key, new SoundLibraryService({ ...project }, minecraftRoot, cacheRoot))
   while (services.size > 4) { const first = services.keys().next().value!; services.get(first)?.cancel(); services.delete(first) }
   return services.get(key)!

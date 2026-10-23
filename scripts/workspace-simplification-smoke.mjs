@@ -177,7 +177,7 @@ try {
       await page.getByRole('switch', { name: '深色模式', exact: true }).click()
       await page.locator('.app-shell.dark-mode').waitFor()
     }
-    for (const width of [1440, 900, 640]) {
+    for (const width of [1440, 1080]) {
       await page.setViewportSize({ width, height: 900 })
       for (const name of ['设置', '配置与默认项', '脚本与 KubeJS', '数据包', '界面资源', '服务端配置', '图像工坊', '服务端测试', '模组列表', '资源包', 'FTB 任务书', '管理插件', '发布']) {
         await navigate(name)
@@ -226,7 +226,7 @@ try {
             await page.screenshot({ path: path.join(work, `palette-focus-${dark ? 'dark' : 'light'}.png`) })
           }
         }
-        if (width === 640 || (dark && width === 1440)) await page.screenshot({ path: path.join(work, `${name}-${width}-${dark ? 'dark' : 'light'}.png`) })
+        if (width === 1080 || (dark && width === 1440)) await page.screenshot({ path: path.join(work, `${name}-${width}-${dark ? 'dark' : 'light'}.png`) })
       }
     }
   }

@@ -3,9 +3,11 @@
   "apiVersion": 2,
   "hostVersion": "1.5.0-plugintest",
   "id": "publishing",
-  "dependencies": ["media-runtime"],
+  "dependencies": [
+    "media-runtime"
+  ],
   "name": "发布",
-  "version": "1.5.0-plugintest-r7",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -32,7 +34,34 @@
       "label": "发布平台",
       "component": "settings-release",
       "category": "integrations",
-      "keywords": "发布平台 平台绑定 Modrinth CurseForge GitHub Token 令牌 项目 ID 仓库 release publish"
+      "keywords": "发布平台 平台绑定 Modrinth CurseForge GitHub Token 令牌 项目 ID 仓库 release publish",
+      "studioIds": [
+        "minecraft-mod"
+      ],
+      "loaders": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ]
     }
+  ],
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack",
+    "minecraft-server-plugin"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge",
+    "bedrock",
+    "netease-pc",
+    "netease-mobile",
+    "paper",
+    "spigot",
+    "folia",
+    "velocity"
   ]
 }

@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
-import type { DecompileReferenceReport, DecompileReferenceReportItem } from "../../../../src/shared/decompile"
+import extractZip from '../../../../src/main/safeExtractZip'
+import type { DecompileReferenceReport, DecompileReferenceReportItem } from '../../../../src/shared/decompile'
 
 /**
  * Lightweight JVM class-file constant-pool scanner. Extracts UTF8 constants that look

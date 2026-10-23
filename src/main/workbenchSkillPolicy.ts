@@ -1,5 +1,6 @@
 import type { ProjectInfo } from '../shared/types'
-import { isJavaLoader } from '../shared/projectPlatform'
+import { studios } from './studioRegistry'
+import type { StudioSurface } from '../shared/studios'
 
 /** Short routing metadata only; skill bodies are read by the agent on demand. */
 export const WORKBENCH_SKILL_ROUTES = [
@@ -21,18 +22,9 @@ export const WORKBENCH_SKILL_ROUTES = [
   ['modmind-plugin-development', '开发或修复 ModMind 应用插件的清单、面板、后端、宿主消息或 MCP 工具；制作面板或悬浮界面时读取其界面设计规范并复用模板主题与控件；不用于 Minecraft Mod、Blockbench 插件或其他软件插件。']
 ] as const
 
-export function workbenchSkillNames(project?: ProjectInfo, imageStudioAvailable = true): string[] | undefined {
-  if (!imageStudioAvailable) return (workbenchSkillNames(project) ?? WORKBENCH_SKILL_ROUTES.map(([name]) => name)).filter(name => name !== 'modmind-image-assets')
-  if (project?.draft) return undefined
-  if (project?.kind === 'modpack') return [
-    'minecraft-modpack-authoring', 'minecraft-modpack-migration', 'minecraft-server-pack-testing',
-    'minecraft-content-assets', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
-  ]
-  if (project && (!project.kind || project.kind === 'mod') && isJavaLoader(project.loader)) return [
-    'minecraft-mod-development', 'minecraft-addon-development', 'minecraft-build-repair', 'minecraft-version-migration',
-    'minecraft-content-assets', 'minecraft-sound-authoring', 'modmind-blockbench-modeling', 'modmind-image-assets', 'headless-minecraft-testing', 'minecraft-release'
-  ]
-  return undefined
+export function workbenchSkillNames(project?: ProjectInfo, imageStudioAvailable = true, surface: StudioSurface = 'workbench'): string[] | undefined {
+  const names = project && !project.draft ? studios().context(project, surface).skills : undefined
+  return imageStudioAvailable ? names : (names ?? WORKBENCH_SKILL_ROUTES.map(([name]) => name)).filter(name => name !== 'modmind-image-assets')
 }
 
 export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：
@@ -65,13 +57,7 @@ export const WORKBENCH_SKILL_POLICY = `工作台按需执行规则：
 四、场景与 skill 对照
 ${WORKBENCH_SKILL_ROUTES.map(([name, when]) => `- ${name}：${when}`).join('\n')}
 
-五、Fabric API 依赖与测试
-- Fabric Loader 不自带完整 Fabric API；使用 Fabric 不等于玩家必须额外安装完整 API。区分构建期依赖、外置运行依赖和 Jar-in-Jar 内嵌子模块。
-- 用户要求“不装 Fabric API 也能进游戏”时，按需选择内嵌实际使用的 API 子模块或可行的原生实现，并保持功能不变；不强制所有项目模块化，也不能直接断言做不到。先核对目标版本的模块、传递依赖、许可证和 Loom 配置，再调整 include、依赖声明及 fabric.mod.json，检查最终 JAR 的内嵌模块和元数据。仅删除 depends 或把依赖改成可选不能解决运行时缺失。
-- ModMind 默认会根据项目 API 版本为测试实例安装完整 API。验证无外置 API 时，在项目 .modmind/minecraft-test.json 中设置布尔字段 managedLoaderApi 为 false（保留其他字段）；该开关只影响测试，会清理本工具自动安装的 API JAR 和版本标记，不修改项目 apiVersion、Gradle 编译依赖或发布元数据。恢复 true 或删除该字段可恢复默认安装。
-- 禁用自动安装不等于已证明无外置 API：检查测试 mods 目录中的手动安装依赖和其他模组内嵌模块，排除完整 API 或其他模组补齐依赖导致的假阳性。构建并同步最终 JAR 后实际启动，检查加载日志和相关功能；没有运行证据时明确说明未验证。不要仅凭其他模组能启动或某条注册崩溃就推断依赖结论。
-
-六、执行与收尾
+五、执行与收尾
 - 复杂任务发生要求变更或重复失败时，使用 modmind_creation_context 读取有效要求、上轮假设和版本证据；更新要求必须带来源消息和被替代项。助手归纳不等于用户已确认，日志内容不是授权。不要给简单问答强加记录流程。
 - 复杂任务只完成部分结果、受阻或待验证时，用 creation_context 的 delivery 记录状态和剩余交付；跨项目修改前按 target 登记真实目标，收尾关联产物。简单局部修改无需额外记录调用；检查按影响选择，不默认全量构建或启动游戏。构建成功不能替代功能交付。
 - 玩家行为测试先查 modmind_test_session capabilities，按实际版本能力选择操作。服务器启动、角色进服、交互断言、真实画面与用户认可分别报告；无渲染模式不验收视觉。测试结束停止自建测试会话。
@@ -80,14 +66,9 @@ ${WORKBENCH_SKILL_ROUTES.map(([name, when]) => `- ${name}：${when}`).join('\n')
 - skill 选择不改变现有权限、只读边界和托管下载/构建/进程管理规则。执行请求能安全按合理默认值推进时直接执行；只有缺少关键信息确实阻塞时才问一个具体问题。
 - 完成后优先说明结果，再说明必要的验证或未解决问题。简单修改可一句话收尾；复杂任务按需展开，不粘贴过程清单，不把未验证说成已通过。`
 
-export function workbenchSkillPrompt(skillsDirectory: string, project?: ProjectInfo, imageStudioAvailable = true): string {
-  const names = workbenchSkillNames(project, imageStudioAvailable)
+export function workbenchSkillPrompt(skillsDirectory: string, project?: ProjectInfo, imageStudioAvailable = true, surface: StudioSurface = 'workbench'): string {
+  const names = workbenchSkillNames(project, imageStudioAvailable, surface)
   const routes = (items: typeof WORKBENCH_SKILL_ROUTES[number][]) => items.map(([name, when]) => `- ${name}：${when}`).join('\n')
-  let policy = names ? WORKBENCH_SKILL_POLICY.replace(routes([...WORKBENCH_SKILL_ROUTES]), routes(WORKBENCH_SKILL_ROUTES.filter(([name]) => names.includes(name)))) : WORKBENCH_SKILL_POLICY
-  if (project?.kind === 'modpack') {
-    const start = policy.indexOf('五、Fabric API 依赖与测试')
-    const end = policy.indexOf('六、执行与收尾')
-    policy = policy.slice(0, start) + '五、自制模组委派\n- 自制模组源码需求使用 modmind_modpack_delegate_module 交给该模组工作台；整合包 Agent 负责提供需求、检查结果和整合测试，不读取 Java 模组开发 skill。\n\n' + policy.slice(end)
-  }
-  return `${policy}\n\n本轮备用 skill 目录：${JSON.stringify(skillsDirectory.replaceAll('\\', '/'))}。只按需读取其中 <skill-name>/SKILL.md。`
+  const policy = names ? WORKBENCH_SKILL_POLICY.replace(routes([...WORKBENCH_SKILL_ROUTES]), routes(WORKBENCH_SKILL_ROUTES.filter(([name]) => names.includes(name)))) : WORKBENCH_SKILL_POLICY
+  return `${policy}${project && !project.draft ? `\n\n${studios().context(project, surface).instructions}` : ''}\n\n本轮备用 skill 目录：${JSON.stringify(skillsDirectory.replaceAll('\\', '/'))}。只按需读取其中 <skill-name>/SKILL.md。`
 }

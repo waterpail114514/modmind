@@ -217,7 +217,7 @@ try {
     if (label === '前置与联动') await page.getByRole('tab', { name: '开发依赖', exact: true }).click()
     if (label === '资源包') await page.getByRole('tab', { name: '内容与数据', exact: true }).click()
     if (label === '游戏测试') await page.getByRole('tab', { name: '自动检查', exact: true }).click()
-    await page.setViewportSize({ width: 640, height: 900 })
+    await page.setViewportSize({ width: 1080, height: 900 })
     await snapshot(`${screenshot}-narrow`)
   }
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -229,7 +229,7 @@ try {
   await navigate('发布')
   await snapshot('release-dark')
   await navigate('声音')
-  await page.setViewportSize({ width: 640, height: 900 })
+  await page.setViewportSize({ width: 1080, height: 900 })
   await snapshot('sound-dark-narrow')
   assert.deepEqual(errors, [])
   await writeFile(path.join(work, 'result.json'), JSON.stringify({ success: true, errors, checks: 'navigation, draft preservation, save-before-preflight, failed-save guard, platform publish fixture, content/CI disk writes, dependencies, sounds, retained tests, narrow layouts' }, null, 2))

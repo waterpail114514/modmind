@@ -1,0 +1,170 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "studio-shader",
+  "name": "光影工作台",
+  "version": "1.2.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": [
+    "studioV1"
+  ],
+  "capabilities": [
+    {
+      "id": "studio-shader",
+      "name": "光影工作台",
+      "description": "创建和接管 Iris 光影工程，提供独立工作台与 AI 上下文；源码、选项、预览、游戏验证和导出可分别安装或启停。"
+    }
+  ],
+  "views": [],
+  "actions": [],
+  "tools": [],
+  "studios": [
+    {
+      "apiVersion": 1,
+      "id": "minecraft-shader",
+      "name": "光影工作台",
+      "projectKind": "shader",
+      "loaders": [
+        "iris"
+      ],
+      "defaultTarget": {
+        "loader": "iris",
+        "version": "1.21.1"
+      },
+      "templateHandler": "shader",
+      "navigation": {
+        "compactSidebar": true,
+        "hideCoreViews": [
+          "build"
+        ]
+      },
+      "creation": {
+        "fields": [
+          {
+            "id": "name",
+            "title": "项目名称",
+            "type": "input",
+            "bind": "name",
+            "required": true,
+            "maxLength": 80
+          },
+          {
+            "id": "loader",
+            "title": "运行环境",
+            "type": "options",
+            "bind": "loader",
+            "default": "iris",
+            "required": true,
+            "options": [
+              {
+                "value": "iris",
+                "title": "Iris · Java 版"
+              }
+            ]
+          },
+          {
+            "id": "version",
+            "title": "Minecraft 版本",
+            "type": "input",
+            "bind": "minecraftVersion",
+            "required": true,
+            "default": "1.21.1",
+            "maxLength": 80
+          },
+          {
+            "id": "quality",
+            "title": "初始色彩",
+            "type": "select",
+            "default": "balanced",
+            "options": [
+              {
+                "value": "balanced",
+                "title": "自然"
+              },
+              {
+                "value": "vivid",
+                "title": "鲜明"
+              }
+            ]
+          }
+        ]
+      },
+      "adoption": {
+        "handler": "shader",
+        "priority": 90,
+        "markers": []
+      },
+      "tasks": {
+        "check": {
+          "pluginId": "shader-export",
+          "action": "query",
+          "input": {
+            "operation": "validate"
+          }
+        },
+        "build": {
+          "pluginId": "shader-export",
+          "action": "package"
+        },
+        "export": {
+          "pluginId": "shader-export",
+          "action": "export"
+        },
+        "test": {
+          "pluginId": "shader-testing",
+          "action": "test",
+          "input": {
+            "operation": "deploy"
+          }
+        }
+      },
+      "ai": {
+        "workbench": {
+          "instructions": "IRIS SHADER STUDIO. The current project is a Java shader pack for Minecraft {{version}}. Inspect shaders, programs, includes, shaders.properties and option definitions before edits. Independently installed feature modules provide source inventory/read and save/undo; option inventory and options/undo; final-only previews; static validation/export; and game testing. Discover available tools first; a missing module does not expose its actions through this domain package. Read revisions before mutation. Option inventory includes define/toggle/supported const declarations, localized groups, expanded profiles, profilePrograms, profileIssues, programConditions and configurationConditional. Apply a profile only when valid, sending both profiles[name] and profilePrograms[name]; reject conflicting declarations, invalid values and stale revisions. Do not infer the highest preset from its name. Conditional source configuration is not runtime-effective state; program overrides in conditional properties require Iris confirmation. Preserve author licenses, reuse include files, and use ordinary project file tools for new shaders/textures. For game tests call modmind_shader_test_query capabilities first. Manual deploy uses only the interactively bound Iris instance. Isolated tests use modmind_shader_session start with an installed versionId returned by capabilities; poll session-state using sessionId/taskId, then observe actual pack name, pipeline/errors and effective options. reload stages/hash-checks the current source and invokes Iris; stop only the owned sessionId and report graceful/forced cleanup. Target adapter support is Minecraft 26.2 / Iris 1.11.2 / local Java 25; actual game acceptance is still pending. Missing runtime resources must remain an explicit unavailable state; never supply external paths, JVM arguments or arbitrary PIDs to bypass binding/ownership. No automatic runtime downloads, player save/config copying, scene control, screenshots or GPU timing are supplied by isolated sessions yet. Session startup acknowledgement is not readiness, and readiness is not rendering or visual approval. The standalone final preview is a sample and does not reproduce the full Iris pipeline. Runtime packaging may be structure-checked with parsed=0 so desktop GLSL reaches Iris; this is not syntax success. Report source revision, deployed hash, actual runtime state, log freshness and screenshot provenance separately; keep runtimeVerified/gameVerified false where no matching game evidence exists. Never replace real visual review with OCR, image statistics or successful numeric probes. Stop owned test sessions when finished. Do not run Gradle, Mod builds or Java API migration on shader packs.",
+          "skills": [],
+          "greetings": [
+            "这束光，想从哪里开始？"
+          ],
+          "starters": [
+            {
+              "title": "调整色彩与曝光",
+              "prompt": "检查当前光影选项，调整曝光和色彩，并验证导出。"
+            },
+            {
+              "title": "制作水面效果",
+              "prompt": "先检查已有渲染阶段和资源，给水面设计并实现可验证的效果。"
+            },
+            {
+              "title": "检查光影错误",
+              "prompt": "检查 include、GLSL 与游戏日志，定位并修复光影错误。"
+            }
+          ]
+        },
+        "inspiration": {
+          "instructions": "IRIS SHADER INSPIRATION. Discuss visual direction, readability, day/night/weather/water, performance tradeoffs and reproducible test plans for {{name}} targeting {{version}}. Discover separately installed tools first; missing modules do not expose actions through the domain package. Read source through modmind_shader_query, options/groups/profiles/profilePrograms/profileIssues through modmind_shader_options_query, final-only previews through modmind_shader_preview, static checks through modmind_shader_validate, and test evidence/capabilities/session-state/observe through modmind_shader_test_query. Source declarations and expanded presets are not actual runtime values; do not infer a highest preset from a name. An isolated session can report actual pack, pipeline/errors and effective options, but its startup/readiness and target adapter support do not prove real rendering, compatibility or visual quality. Target support is Minecraft 26.2 / Iris 1.11.2 / local Java 25; actual game acceptance is pending. Scene automation, isolated native captures and GPU timing are not delivered yet. Keep source, settings, bound instances and sessions read-only: do not bind, save, export, deploy, start, reload or stop. Separate concept art, final-only sample previews, structure/syntax diagnostics, numeric probes, actual screenshots and human visual decisions. OCR and pixel summaries cannot replace seeing the full image. Do not promise path tracing, accurate shadows or compatibility based on a sample preview.",
+          "skills": [],
+          "greetings": [
+            "先想清楚，这个世界的光应该是什么样。"
+          ],
+          "starters": [
+            {
+              "title": "确定视觉风格",
+              "prompt": "结合当前工程讨论一种可实现的光影视觉方向。"
+            },
+            {
+              "title": "画质与性能取舍",
+              "prompt": "分析目前效果的性能成本，提出画质分档方案。"
+            },
+            {
+              "title": "昼夜与天气",
+              "prompt": "规划昼夜、雨天、水面和维度的视觉与验证清单。"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

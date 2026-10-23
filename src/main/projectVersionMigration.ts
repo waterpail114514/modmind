@@ -115,15 +115,23 @@ export async function migrateProjectVersion112(
       changedFiles: [...new Set([...changedFiles, 'gradlew', 'gradlew.bat', 'gradle/wrapper/gradle-wrapper.jar'])]
     }, null, 2), 'utf8')
   } catch (error) {
+    const restoreErrors: Error[] = []
     for (const relative of replacementFiles) {
       const target = path.join(project.path, ...relative.split('/'))
-      if (existed.has(relative)) {
-        const backup = path.join(backupDirectory, ...relative.split('/'))
-        await fs.mkdir(path.dirname(target), { recursive: true })
-        await fs.copyFile(backup, target).catch(() => undefined)
-      } else {
-        await fs.rm(target, { force: true }).catch(() => undefined)
+      try {
+        if (existed.has(relative)) {
+          const backup = path.join(backupDirectory, ...relative.split('/'))
+          await fs.mkdir(path.dirname(target), { recursive: true })
+          await fs.copyFile(backup, target)
+        } else {
+          await fs.rm(target, { force: true })
+        }
+      } catch (restoreError) {
+        restoreErrors.push(new Error(`${relative}: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`))
       }
+    }
+    if (restoreErrors.length) {
+      throw new AggregateError([error, ...restoreErrors], `项目升级失败，部分文件未能恢复。原文件备份保留在 ${backupDirectory}；${restoreErrors.map(item => item.message).join('；')}`, { cause: error })
     }
     throw error
   }

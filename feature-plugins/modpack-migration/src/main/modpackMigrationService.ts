@@ -507,7 +507,7 @@ export async function inspectModpackMigrationJar(filePath: string, targetLoader:
     fileName: inspection.fileName,
     displayName: inspection.profile.displayName,
     version: inspection.profile.version,
-    loader: inspection.profile.loader,
+    loader: targetLoader,
     modIds: inspection.profile.modIds,
     sha256: inspection.sha256,
     warnings: inspection.warnings

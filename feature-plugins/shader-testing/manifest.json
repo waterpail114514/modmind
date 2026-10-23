@@ -1,0 +1,152 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "shader-testing",
+  "name": "游戏验证",
+  "version": "1.1.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "dependencies": [
+    "studio-shader"
+  ],
+  "capabilities": [
+    {
+      "id": "shader-testing",
+      "name": "游戏验证",
+      "description": "手动部署与实例证据读取；本地环境检测、独立 Iris 会话、重载、实际选项与管线查询及退出恢复。"
+    }
+  ],
+  "views": [
+    {
+      "id": "shader-test",
+      "label": "游戏验证",
+      "component": "ShaderTesting",
+      "icon": "Gamepad2",
+      "group": "测试与构建",
+      "order": 40,
+      "loaders": [
+        "iris"
+      ],
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "inventory",
+              "test-state",
+              "capabilities",
+              "session-state",
+              "observe"
+            ]
+          },
+          "sessionId": { "type": "string", "pattern": "^[a-f0-9-]{36}$" },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "allOf": [{ "if": { "properties": { "operation": { "const": "observe" } } }, "then": { "required": ["sessionId"] } }]
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    },
+    {
+      "id": "test",
+      "handler": "test",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "bind",
+              "bind-runtime",
+              "deploy",
+              "reveal"
+            ]
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    },
+    {
+      "id": "session",
+      "handler": "session",
+      "permission": "process",
+      "projectRequired": true,
+      "surfaces": ["workbench"],
+      "studioIds": ["minecraft-shader"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation"],
+        "properties": {
+          "operation": { "enum": ["start", "reload", "stop"] },
+          "versionId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]{0,150}$" },
+          "sessionId": { "type": "string", "pattern": "^[a-f0-9-]{36}$" },
+          "projectPath": { "type": "string", "maxLength": 1024 }
+        },
+        "allOf": [
+          { "if": { "properties": { "operation": { "const": "start" } } }, "then": { "required": ["versionId"] } },
+          { "if": { "properties": { "operation": { "enum": ["reload", "stop"] } } }, "then": { "required": ["sessionId"] } }
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_shader_test_query",
+      "action": "query",
+      "description": "Query shader inventory, manually deployed instance evidence (test-state), local installed Iris/runtime/Java capabilities, asynchronous owned session-state (optional sessionId), or actual running Iris state (observe, sessionId required). capabilities declares exact adapter support, installed profiles, missing dependencies and runtimeVerified false. observe returns actual pack name, pipeline/error and effective options; none prove visual quality. session-state contains a bounded log tail and preserves task identity after a disconnected call."
+    },
+    {
+      "name": "modmind_shader_test",
+      "action": "test",
+      "description": "Deploy a validated ZIP to the user-bound installed Iris instance (deploy), with backup and hash verification, or reveal that instance. bind and bind-runtime require the interactive page and do not accept external paths from MCP. Runtime bindings live in application state, not project-controlled metadata. Use modmind_shader_session for isolated process operations. No automatic game or runtime downloads."
+    },
+    {
+      "name": "modmind_shader_session",
+      "action": "session",
+      "description": "Manage an owned, isolated Iris game test: start with a versionId returned by capabilities; reload the current source by exporting/hash-checking a new ZIP and invoking Iris; stop only the exact sessionId. Start returns an accepted preparing task, not a running-game success: poll modmind_shader_test_query session-state, then observe. Reuses user-selected installed Fabric libraries and Iris dependencies, copies no player saves/configs/accounts, and installs no downloads. Adapter currently targets Minecraft 26.2 / Iris 1.11.2 / local Java 25. Visible game window, manual world entry; no hidden rendering or scene automation. Normal shutdown is attempted before recovering an unresponsive owned child; shutdown reports graceful/forced/not-started. Cancellation, project change, plugin shutdown and a 20-minute lease clean up owned processes. Game and visual verification remain false."
+    }
+  ],
+  "assets": { "licenses": "feature-plugins/shader-testing/licenses", "agent-source": "resources/shader-runtime" },
+  "studioIds": [
+    "minecraft-shader"
+  ],
+  "loaders": [
+    "iris"
+  ]
+}

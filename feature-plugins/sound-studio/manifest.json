@@ -3,9 +3,11 @@
   "apiVersion": 2,
   "hostVersion": "1.5.0-plugintest",
   "id": "sound-studio",
-  "dependencies": ["media-runtime"],
+  "dependencies": [
+    "media-runtime"
+  ],
   "name": "声音",
-  "version": "1.5.0-plugintest-r7",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -28,5 +30,14 @@
   ],
   "assets": {
     "beepbox": "feature-plugins/sound-studio/assets/beepbox"
-  }
+  },
+  "studioIds": [
+    "minecraft-mod"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge"
+  ]
 }

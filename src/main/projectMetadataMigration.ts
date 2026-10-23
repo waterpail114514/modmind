@@ -1,7 +1,10 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ProjectInfo } from '../shared/types'
 import { sameProjectPath } from './projectPath'
+import { serializeProjectMutation } from './projectMutation'
+import { invalidateSnapshotCatalog } from './snapshotStore'
 
 type JsonRecord = Record<string, unknown>
 
@@ -46,27 +49,53 @@ async function readJson(target: string): Promise<JsonRecord | null> {
 }
 
 async function writeJson(target: string, value: JsonRecord): Promise<void> {
-  const temporary = `${target}.tmp-${process.pid}`
-  await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await fs.rename(temporary, target)
+  const temporary = `${target}.tmp-${randomUUID()}`
+  try {
+    await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+    await fs.rename(temporary, target)
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+  }
 }
 
 async function migrateSnapshotManifests(root: string, currentPath: string): Promise<boolean> {
   const snapshots = path.join(root, 'snapshots')
   const entries = await fs.readdir(snapshots, { withFileTypes: true }).catch(() => [])
   let relocated = false
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    const target = path.join(snapshots, entry.name, 'snapshot.json')
-    const manifest = await readJson(target)
-    if (!manifest || typeof manifest.projectPath !== 'string') continue
-    if (!await canRelocate(manifest.projectPath, currentPath)) continue
-    manifest.projectPath = currentPath
-    await writeJson(target, manifest)
-    relocated = true
-  }
+  const sources = new Map<string, Promise<boolean>>()
+  let cursor = 0
+  await Promise.all(Array.from({ length: Math.min(8, entries.length) }, async () => {
+    while (cursor < entries.length) {
+      const entry = entries[cursor++]
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue
+      const target = path.join(snapshots, entry.name, 'snapshot.json')
+      const manifest = await readJson(target)
+      if (!manifest || typeof manifest.projectPath !== 'string') continue
+      let allowed = sources.get(manifest.projectPath)
+      if (!allowed) { allowed = canRelocate(manifest.projectPath, currentPath); sources.set(manifest.projectPath, allowed) }
+      if (!await allowed) continue
+      manifest.projectPath = currentPath
+      await writeJson(target, manifest)
+      relocated = true
+    }
+  }))
   return relocated
 }
+
+/** An imported old backup can be repaired on selection without rescanning its siblings. */
+export const migrateSelectedSnapshotMetadata = serializeProjectMutation(async (project: ProjectInfo, id: string): Promise<void> => {
+  if (id === '.' || id === '..' || !/^[0-9A-Za-z._-]{1,120}$/.test(id)) throw new Error('Invalid snapshot ID')
+  const directory = path.join(project.path, dataDirectory(project), 'snapshots', id)
+  const stat = await fs.lstat(directory).catch(() => null)
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) return
+  const target = path.join(directory, 'snapshot.json')
+  const manifest = await readJson(target)
+  if (manifest?.id === id && await canRelocate(manifest.projectPath, project.path)) {
+    manifest.projectPath = project.path
+    await writeJson(target, manifest)
+    invalidateSnapshotCatalog(project.path, id)
+  }
+})
 
 async function migrateAgentContext(root: string, currentPath: string): Promise<boolean> {
   const target = path.join(root, 'external-agents', 'agent-context.md')
@@ -91,9 +120,12 @@ async function clearPersistedExternalSessions(root: string): Promise<void> {
  * updated in place, while checkpoints copied from another live project are
  * discarded rather than resumed.
  */
-export async function migrateMovedProjectMetadata(project: ProjectInfo): Promise<ProjectMetadataMigrationResult> {
+export const migrateMovedProjectMetadata = serializeProjectMutation(async (project: ProjectInfo): Promise<ProjectMetadataMigrationResult> => {
   const root = path.join(project.path, dataDirectory(project))
-  let relocated = await migrateSnapshotManifests(root, project.path)
+  const markerPath = path.join(root, 'metadata-migration.json')
+  const marker = await readJson(markerPath)
+  const checkedSnapshots = marker?.version === 1 && typeof marker.projectPath === 'string' && sameProjectPath(marker.projectPath, project.path)
+  let relocated = checkedSnapshots ? false : await migrateSnapshotManifests(root, project.path)
   let discardedActiveTask = false
 
   const activeTarget = path.join(root, 'active-ai-task.json')
@@ -121,5 +153,10 @@ export async function migrateMovedProjectMetadata(project: ProjectInfo): Promise
 
   relocated = (await migrateAgentContext(root, project.path)) || relocated
   if (relocated) await clearPersistedExternalSessions(root)
+  if (!checkedSnapshots) {
+    await fs.mkdir(root, { recursive: true })
+    await writeJson(markerPath, { version: 1, projectPath: path.resolve(project.path) }).catch(() => undefined)
+  }
+  if (relocated) invalidateSnapshotCatalog(project.path)
   return { relocated, discardedActiveTask }
-}
+})

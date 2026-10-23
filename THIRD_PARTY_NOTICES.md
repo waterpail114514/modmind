@@ -1,5 +1,37 @@
 # Third-Party Notices
 
+## Driver.js
+
+Interactive first-run tutorials use Driver.js 1.9.0 for spotlights, positioning,
+scroll tracking and keyboard focus. The library is bundled locally and does not
+require a network connection. Upstream: https://github.com/nilbuild/driver.js
+
+Copyright (c) Kamran Ahmed
+
+Provided under the MIT License; the MIT permission and warranty text reproduced
+in the React Zoom Pan Pinch section below applies.
+
+## node-semver
+
+Isolated server fixture dependency checks use `semver` 7.8.5.
+Upstream: https://github.com/npm/node-semver
+
+The ISC License
+
+Copyright (c) Isaac Z. Schlueter and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 ## Ajv
 
 Native feature plugin action schemas are validated by Ajv 8.20.0.
@@ -86,6 +118,12 @@ the corresponding Blockbench source available as required by its license. The li
 the combined distributed application should be reviewed before a public release.
 
 ## XMCL Launcher Core
+
+The optional `shader-testing` feature also bundles `@xmcl/core` 2.15.1
+for installed Fabric metadata and isolated client launch. It includes the
+upstream MIT license in its assets. The ModMind shader session Java adapter
+is independent AGPL-3.0-only source; it does not copy the handed-off Cleartrail
+agent or modify game JARs.
 
 ModMind's optional `testing` feature bundles `@xmcl/core` and `@xmcl/installer`
 for Minecraft metadata parsing, dependency installation, Fabric installation,
@@ -386,3 +424,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+# Shader Studio Optional Module
+
+The separately installed `studio-shader.mmstudio` bundles @shaderfrog/glsl-parser
+7.0.1 (ISC, Andrew Ray) and Three.js 0.180.0 (MIT). Full authorization notices
+are included in the module's `assets/licenses/` directory. GLSL parsing and
+final-pass sample rendering are local; the module does not bundle Minecraft,
+Iris, or any third-party shader pack.
+
+## ModMind Developer Workbench
+
+The optional in-app developer environment bundles a local development kit in
+`resources/developer-kit` (distributed as the `developer-kit` extra resource).
+Its editor uses the application's Monaco installation. The kit includes the
+locked esbuild and TypeScript compiler versions, React preview runtime, Lucide
+icons, Ajv schema validation and Archiver ZIP support. Upstream code and
+transitive dependency licenses are collected by
+`scripts/prepare-developer-kit.mjs` into `THIRD_PARTY_NOTICES.txt`; type packages
+also retain their own license files. No external compiler service is required.
+See `docs/developer-workbench.zh-CN.md` for versions, compatibility and scope.

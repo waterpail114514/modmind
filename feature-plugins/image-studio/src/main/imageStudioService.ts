@@ -4,9 +4,12 @@ import { randomUUID } from 'node:crypto'
 import { safeStorage } from 'electron'
 import sharp from 'sharp'
 import { downloadActivities } from '../../../../src/main/downloadActivityService'
+import { networkFetch } from '../../../../src/main/networkRequest'
+import { apiEndpoint } from '../../../../src/main/apiEndpoint'
 import { runEmbeddedPerfectPixel } from './perfectPixel'
 import { normalizeImageGenerationRequest, normalizePerfectPixelOptions } from '../../../../src/shared/imageStudioRequest'
 import { imageStudioPresets } from '../../../../src/shared/imageStudioPresets'
+import { readImageServiceErrorBody, sanitizeImageServiceError } from '../../../../src/shared/imageServiceErrors'
 import type {
   ImageGenerationRequest,
   ImageGenerationResult,
@@ -35,6 +38,9 @@ interface StoredSettings {
 interface HostedLease {
   baseUrl: string
   apiKey: string
+  model: string
+  provider?: 'primary' | 'secondary' | 'ls'
+  expiresAt?: string
   jobId: string
   reservedCredits: number
   capabilities?: Partial<ImageStudioCapabilities>
@@ -43,7 +49,9 @@ interface HostedLease {
 export interface ImageStudioServiceOptions {
   userDataDir: string
   projectRoot: () => string | null
-  getHostedLease: (request?: ImageGenerationRequest) => Promise<HostedLease>
+  getHostedLease: (request?: ImageGenerationRequest, signal?: AbortSignal) => Promise<HostedLease>
+  /** Read-only metadata; opening the model picker must never reserve image credit. */
+  getHostedImageProvider?: () => Promise<{ available: boolean; message?: string; model: string | null; provider?: string | null; selection?: string }>
   getSyncedImageApi?: () => Promise<{ customMode: boolean; imageApi: { baseUrl: string; apiKey: string; model: string } | null }>
 }
 
@@ -77,16 +85,31 @@ function dataUrlFromValue(value: unknown): string | null {
   return null
 }
 
-async function materializeImageValue(value: unknown): Promise<string | null> {
+async function materializeImageValue(value: unknown, signal?: AbortSignal): Promise<string | null> {
+  signal?.throwIfAborted()
   const dataUrl = dataUrlFromValue(value)
   if (!dataUrl) return null
   if (dataUrl.startsWith('data:')) return dataUrl
   const activityId = downloadActivities.start({ label: '生成的图片', detail: new URL(dataUrl).host })
   let bytes: Buffer
   try {
-    const response = await fetch(dataUrl, { signal: AbortSignal.timeout(120_000) })
+    const response = await networkFetch(dataUrl, { signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]) })
     if (!response.ok) throw new Error(`图片下载失败（HTTP ${response.status}）`)
-    bytes = Buffer.from(await response.arrayBuffer())
+    if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) { await response.body?.cancel(); throw new Error('上游图片超过 20 MB') }
+    const chunks: Uint8Array[] = []
+    let received = 0
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('上游图片为空')
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        received += value.byteLength
+        if (received > MAX_IMAGE_BYTES) throw new Error('上游图片超过 20 MB')
+        chunks.push(value)
+      }
+    } finally { await reader.cancel().catch(() => undefined) }
+    bytes = Buffer.concat(chunks)
     if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error('上游图片为空或超过 20 MB')
     downloadActivities.update(activityId, { downloadedBytes: bytes.length, totalBytes: Number(response.headers.get('content-length')) || bytes.length })
     downloadActivities.complete(activityId)
@@ -108,16 +131,111 @@ function parseReferenceImage(value: string): { buffer: Buffer; mime: string; ext
   return { buffer, mime, extension }
 }
 
-async function parseImagePayload(payload: unknown): Promise<{ dataUrl: string; revisedPrompt?: string }[]> {
+async function parseImagePayload(payload: unknown, signal?: AbortSignal): Promise<{ dataUrl: string; revisedPrompt?: string }[]> {
   const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
-  const entries = Array.isArray(root.data) ? root.data : []
+  const entries = Array.isArray(root.data) ? root.data : [root]
   const parsed = await Promise.all(entries.map(async (entry) => {
     const item = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {}
-    const dataUrl = await materializeImageValue(dataUrlFromValue(item.b64_json) ?? item.url)
+    let value = dataUrlFromValue(item.b64_json) ?? item.url
+    if (typeof value === 'string' && value.startsWith('data:image/png;') && (item.output_format === 'jpeg' || item.output_format === 'webp')) value = value.replace('data:image/png;', `data:image/${item.output_format};`)
+    const dataUrl = await materializeImageValue(value, signal)
     if (!dataUrl) return null
     return { dataUrl, ...(typeof item.revised_prompt === 'string' ? { revisedPrompt: item.revised_prompt } : {}) }
   }))
   return parsed.filter((entry): entry is { dataUrl: string; revisedPrompt?: string } => Boolean(entry))
+}
+
+/** Image streams contain previews as well as the completed output. Only completed images are assets. */
+async function parseImageResponse(response: Response, apiKey: string, signal?: AbortSignal): Promise<Awaited<ReturnType<typeof parseImagePayload>>> {
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (contentType.startsWith('image/')) {
+    if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) { await response.body?.cancel(); throw new Error('上游图片超过 20 MB') }
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('上游图片为空')
+    const chunks: Uint8Array[] = []
+    let received = 0
+    try {
+      while (true) {
+        signal?.throwIfAborted()
+        const { value, done } = await reader.read()
+        if (done) break
+        received += value.byteLength
+        if (received > MAX_IMAGE_BYTES) throw new Error('上游图片超过 20 MB')
+        chunks.push(value)
+      }
+    } finally { await reader.cancel().catch(() => undefined) }
+    if (!received) throw new Error('上游图片为空')
+    const normalized = await sharp(Buffer.concat(chunks)).png().toBuffer()
+    return [{ dataUrl: `data:image/png;base64,${normalized.toString('base64')}` }]
+  }
+  if (!contentType.includes('text/event-stream')) return parseImagePayload(await response.json().catch(() => null), signal)
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('图片流为空')
+  const decoder = new TextDecoder()
+  let pending = ''
+  let eventName = ''
+  let lines: string[] = []
+  let eventSize = 0
+  let received = 0
+  const maxEventSize = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 65_536
+  const dispatch = async () => {
+    const data = lines.join('\n')
+    const name = eventName
+    eventName = ''; lines = []; eventSize = 0
+    if (!data || data.trim() === '[DONE]') return []
+    let payload: Record<string, unknown>
+    try {
+      const parsed: unknown = JSON.parse(data)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid event')
+      payload = parsed as Record<string, unknown>
+    } catch { throw new Error('图片流返回了无效数据') }
+    const type = typeof payload.type === 'string' ? payload.type : name
+    if (name === 'error' || type === 'error' || type.endsWith('.failed') || payload.error) throw new Error(`图片生成失败：${await imageApiError(new Response(data), apiKey)}`)
+    if (type.includes('partial') || payload.partial_image_index !== undefined) return []
+    if (type && !type.endsWith('.completed') && type !== 'completed') return []
+    return parseImagePayload(payload, signal)
+  }
+  const consumeLine = async (line: string) => {
+    if (!line) return dispatch()
+    if (line.startsWith('event:')) eventName = line.slice(6).trim()
+    else if (line.startsWith('data:')) {
+      const data = line.slice(5).replace(/^ /, '')
+      eventSize += data.length
+      if (eventSize > maxEventSize) throw new Error('上游图片超过 20 MB')
+      lines.push(data)
+    }
+    return []
+  }
+  try {
+    while (true) {
+      signal?.throwIfAborted()
+      const { value, done } = await reader.read()
+      if (value) {
+        received += value.byteLength
+        if (received > maxEventSize * 5) throw new Error('图片流超过接收上限')
+      }
+      const scanFrom = Math.max(0, pending.length - 1)
+      pending += decoder.decode(value, { stream: !done })
+      // A chunk may end between CR and LF; retain the CR until the next chunk arrives.
+      let match: RegExpExecArray | null
+      const separator = /\r\n|\n|\r(?!$)/g
+      separator.lastIndex = scanFrom
+      while ((match = separator.exec(pending))) {
+        const line = pending.slice(0, match.index)
+        pending = pending.slice(match.index + match[0].length)
+        separator.lastIndex = 0
+        const parsed = await consumeLine(line)
+        if (parsed.length) return parsed
+      }
+      if (pending.length + eventSize > maxEventSize) throw new Error('上游图片超过 20 MB')
+      if (done) {
+        if (pending) { const parsed = await consumeLine(pending.replace(/\r$/, '')); if (parsed.length) return parsed }
+        const parsed = await dispatch()
+        if (parsed.length) return parsed
+        throw new Error('图片流未返回最终完整图片，请检查任务状态后再重新生成')
+      }
+    }
+  } finally { await reader.cancel().catch(() => undefined) }
 }
 
 function clampQuality(value: unknown): ImageStudioQuality {
@@ -127,7 +245,8 @@ function clampQuality(value: unknown): ImageStudioQuality {
 function clampModeration(value: unknown): ImageStudioModeration { return value === 'low' ? 'low' : 'auto' }
 
 async function imageApiError(response: Response, apiKey: string): Promise<string> {
-  const raw = await response.text().catch(() => '')
+  const raw = await readImageServiceErrorBody(response)
+  if (raw === null) return '上游错误信息过大或无法读取，已省略'
   let payload: unknown
   try { payload = JSON.parse(raw) } catch { payload = raw }
   const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
@@ -140,8 +259,7 @@ async function imageApiError(response: Response, apiKey: string): Promise<string
   })
   let detail = [message?.trim(), ...metadata].filter(Boolean).join('；') || '上游未返回可读错误'
   // Some providers echo authentication details in their error message.
-  if (apiKey) detail = detail.replaceAll(apiKey, '[REDACTED]')
-  return detail.replace(/\s+/g, ' ').slice(0, 2000)
+  return sanitizeImageServiceError(detail, [apiKey], 2000)
 }
 
 async function removeSolidBackground(source: Buffer): Promise<Buffer> {
@@ -185,6 +303,7 @@ async function removeSolidBackground(source: Buffer): Promise<Buffer> {
 }
 
 export class ImageStudioService {
+  private historyWrite = Promise.resolve()
   constructor(private readonly options: ImageStudioServiceOptions) {}
 
   private async readStored(): Promise<StoredSettings> {
@@ -254,15 +373,21 @@ export class ImageStudioService {
     const synced = await this.options.getSyncedImageApi?.()
     const ownKey = synced?.imageApi?.apiKey ?? await this.decryptKey(stored)
     if (synced?.customMode && !ownKey) throw new Error('自定义 API 模式下请配置图片 API')
-    const lease = ownKey ? null : await this.options.getHostedLease()
-    const key = lease?.apiKey ?? ownKey
-    const baseUrl = lease?.baseUrl ?? synced?.imageApi?.baseUrl ?? stored.baseUrl
+    const capabilities = { sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'] as ImageStudioQuality[], moderations: ['auto', 'low'] as ImageStudioModeration[], supportsImageInput: true, supportsMask: true }
+    if (!ownKey) {
+      if (!this.options.getHostedImageProvider) throw new Error('请刷新账号连接后读取生图配置')
+      const provider = await this.options.getHostedImageProvider()
+      if (!provider.available || !provider.model) throw new Error(provider.message || '当前生图供应商不可用，请在官网检查生图设置')
+      return { ...capabilities, models: [provider.model] }
+    }
+    const key = ownKey
+    const baseUrl = synced?.imageApi?.baseUrl ?? stored.baseUrl
     if (!baseUrl) throw new Error('请先在图像服务设置中填写并保存 Base URL')
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) })
+    const response = await networkFetch(apiEndpoint(baseUrl, 'models'), { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20_000) })
     if (!response.ok) throw new Error(`无法读取图片模型列表（HTTP ${response.status}）：${await imageApiError(response, key)}`)
     const payload = await response.json() as { data?: Array<{ id?: unknown }> }
     const models = [...new Set((Array.isArray(payload.data) ? payload.data : []).map((item) => typeof item?.id === 'string' ? item.id.trim() : '').filter(Boolean))]
-    return { models, sizes: ['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'], qualities: ['low', 'medium', 'high', 'auto'], moderations: ['auto', 'low'], supportsImageInput: true, supportsMask: true }
+    return { models, ...capabilities }
   }
 
   async describe(includeModels = false): Promise<unknown> {
@@ -273,14 +398,15 @@ export class ImageStudioService {
     catch (error) { return { ...info, capabilitiesError: error instanceof Error ? error.message : String(error) } }
   }
 
-  async generate(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent' = input.source === 'agent' ? 'agent' : 'manual'): Promise<ImageGenerationResult> {
+  async generate(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent' = input.source === 'agent' ? 'agent' : 'manual', signal?: AbortSignal): Promise<ImageGenerationResult> {
     const request = normalizeImageGenerationRequest(input, source)
     const count = Math.min(Math.max(Number.isInteger(request.count) ? request.count : 1, 1), 10)
     let result: ImageGenerationResult | undefined
     for (let index = 0; index < count; index += 1) {
       try {
+        signal?.throwIfAborted()
         // Acquire a fresh hosted lease immediately before each single-image request.
-        const next = await this.generateSingle({ ...request, count: 1 })
+        const next = await this.generateSingle({ ...request, count: 1 }, signal)
         if (!result) result = next
         else {
           result.assets.push(...next.assets)
@@ -295,7 +421,8 @@ export class ImageStudioService {
     return result!
   }
 
-  private async generateSingle(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
+  private async generateSingle(request: ImageGenerationRequest, signal?: AbortSignal): Promise<ImageGenerationResult> {
+    signal?.throwIfAborted()
     const prompt = String(request.prompt ?? '').trim()
     if (!prompt || prompt.length > 32_000) throw new Error('请输入 1 到 32000 个字符的图片描述')
     const count = 1
@@ -305,12 +432,17 @@ export class ImageStudioService {
     const ownKey = synced?.imageApi?.apiKey ?? await this.decryptKey(stored)
     if (synced?.customMode && !ownKey) throw new Error('自定义 API 模式下请配置图片 API')
     const hosted = !ownKey
-    const model = request.model || synced?.imageApi?.model || stored.model
-    if (!model) throw new Error('请先在图像服务设置中选择并保存图片模型，或为本次请求指定 model')
+    const configuredModel = request.model || synced?.imageApi?.model || stored.model
+    if (ownKey && !configuredModel) throw new Error('请先在图像服务设置中选择并保存图片模型，或为本次请求指定 model')
     if (ownKey && !(synced?.imageApi?.baseUrl ?? stored.baseUrl)) throw new Error('请先在图像服务设置中填写并保存 Base URL')
-    const lease = hosted ? await this.options.getHostedLease({ ...request, count }) : null
+    signal?.throwIfAborted()
+    const lease = hosted ? await this.options.getHostedLease({ ...request, count }, signal) : null
+    signal?.throwIfAborted()
     const baseUrl = lease?.baseUrl ?? synced?.imageApi?.baseUrl ?? stored.baseUrl
     const apiKey = lease?.apiKey ?? ownKey
+    const model = lease ? lease.model : configuredModel
+    if (!model) throw new Error('图片授权缺少模型，请刷新账号连接后重试')
+    const stream = lease?.provider === 'secondary' || lease?.provider === 'ls'
     const stylePrefix = request.style === 'minecraft'
       ? 'Minecraft pixel art asset, crisp hard-edged pixels, no gradients, no shadows. '
       : ''
@@ -321,7 +453,8 @@ export class ImageStudioService {
       n: count,
       size: String(request.size || '1024x1024'),
       quality: clampQuality(request.quality),
-      moderation: clampModeration(request.moderation)
+      moderation: clampModeration(request.moderation),
+      ...(stream ? { stream: true, partial_images: 3 } : {})
     }
     let requestBody: BodyInit = JSON.stringify(body)
     const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` }
@@ -334,6 +467,7 @@ export class ImageStudioService {
       form.append('size', body.size)
       form.append('quality', body.quality)
       form.append('moderation', body.moderation)
+      if (stream) { form.append('stream', 'true'); form.append('partial_images', '3') }
       references.forEach((reference, index) => {
         form.append(references.length === 1 ? 'image' : 'image[]', new Blob([new Uint8Array(reference.buffer)], { type: reference.mime }), `reference-${index + 1}.${reference.extension}`)
       })
@@ -341,10 +475,9 @@ export class ImageStudioService {
     } else {
       headers['Content-Type'] = 'application/json'
     }
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/${endpoint}`, { method: 'POST', headers, body: requestBody, signal: AbortSignal.timeout(300_000) })
+    const response = await networkFetch(apiEndpoint(baseUrl, endpoint), { method: 'POST', headers, body: requestBody, signal: AbortSignal.any([AbortSignal.timeout(300_000), ...(signal ? [signal] : [])]) })
     if (!response.ok) throw new Error(`图片生成失败（HTTP ${response.status}）：${await imageApiError(response, apiKey)}`)
-    const payload = await response.json().catch(() => null) as Record<string, unknown> | null
-    const parsed = await parseImagePayload(payload)
+    const parsed = await parseImageResponse(response, apiKey, signal)
     if (!parsed.length) throw new Error('图片服务没有返回可用图片数据')
     let processingError: string | undefined
     const processed = [] as typeof parsed
@@ -359,9 +492,22 @@ export class ImageStudioService {
     const jobId = lease?.jobId ?? randomUUID()
     const createdAt = new Date().toISOString()
     const assets: ImageHistoryItem[] = processed.map((item) => ({ id: randomUUID(), createdAt, model, style: request.style, size: body.size, quality: body.quality, hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0 }))
-    const history = await this.readHistory()
-    await fs.mkdir(this.options.userDataDir, { recursive: true })
-    await fs.writeFile(historyPath(this.options.userDataDir), JSON.stringify([...assets, ...history].slice(0, 100), null, 2), 'utf8')
+    const write = this.historyWrite.then(async () => {
+      const history = await this.readHistory()
+      await fs.mkdir(this.options.userDataDir, { recursive: true })
+      const target = historyPath(this.options.userDataDir)
+      const temporary = `${target}.${randomUUID()}.tmp`
+      try {
+        await fs.writeFile(temporary, JSON.stringify([...assets, ...history].slice(0, 100), null, 2), 'utf8')
+        await fs.rename(temporary, target)
+      } finally { await fs.rm(temporary, { force: true }).catch(() => undefined) }
+    })
+    this.historyWrite = write.catch(() => undefined)
+    await write.catch(error => {
+      // Generation may have been charged already. Return the generated image,
+      // keep the previous history, and do not repeat the upstream generation.
+      processingError = `${processingError ? `${processingError}；` : ''}图片已生成，历史记录保存失败，已保留本次图片并停止后续生成：${error instanceof Error ? error.message : String(error)}`
+    })
     return { jobId, assets: assets.map((asset, index) => ({ ...asset, dataUrl: processed[index].dataUrl })), hosted, credits: hosted ? (lease?.reservedCredits ?? count) : 0, ...(processed[0].revisedPrompt ? { revisedPrompt: processed[0].revisedPrompt } : {}), ...(processingError ? { error: processingError } : {}) }
   }
 

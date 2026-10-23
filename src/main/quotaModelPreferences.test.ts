@@ -14,6 +14,15 @@ import {
 const defaults: BeginnerAiPreferences = { model: 'terra', reasoningLevel: 'medium', fastMode: false }
 
 describe('quota model preferences', () => {
+  it('keeps native LS identity through current and profile storage reloads', () => {
+    const selection: BeginnerAiPreferences = { ...defaults, account: 'ls', billing: 'quota', group: '25' }
+    const key = quotaProfileKey('https://site.example', 'alice', 'https://ls.example/v1')
+    const saved = updateQuotaModelPreferences(parseStoredQuotaModelPreferences(defaults, defaults), selection, key)
+    const reloaded = parseStoredQuotaModelPreferences(JSON.parse(JSON.stringify(saved)), defaults)
+    expect(reloaded.current).toEqual(selection)
+    expect(activeQuotaModelPreferences(reloaded, key)).toEqual(selection)
+    expect(normalizeQuotaModelPreferences({ ...selection, billing: 'free' }, defaults).account).toBeUndefined()
+  })
   it('migrates old labels once and retains literal choices in the new format', () => {
     const legacy = { version: 2, current: { model: 'gpt-5.6-sol', reasoningLevel: 'low', fastMode: false }, profiles: {} }
     const migrated = parseStoredQuotaModelPreferences(legacy, defaults)

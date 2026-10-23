@@ -1,16 +1,25 @@
-import { electronApp,is,optimizer } from '@electron-toolkit/utils'
+import { developerHostConfig } from './developer/hostEnvironment'
+import { configureDeveloperHost } from './developer/hostRuntime'
+import { is,optimizer } from '@electron-toolkit/utils'
 import { app,BrowserWindow,dialog,ipcMain,Menu,nativeImage,Notification,protocol,safeStorage,screen,shell,Tray } from 'electron'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from 'node:child_process'
 import { createHash,randomUUID } from 'node:crypto'
 import { createReadStream,promises as fs,readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { type BlockbenchBridge } from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
+import { registerDeveloperIpc } from './developer/ipc'
+import { type BlockbenchBridge } from '../../feature-plugins/model-studio/src/main/blockbenchBridge'
 import { normalizeAgentApprovalMode } from '../shared/agentApproval'
+import { scopedFilePath } from './scopedFilePath'
+import { InspirationWorkflowStore, type InspirationWorkflowIdentity } from './inspirationWorkflowStore'
+import { inspirationWorkflowInstruction, parseInspirationWorkflow } from '../shared/inspirationWorkflow'
 import type { AiAttachmentSource } from '../shared/aiAttachments'
 import { normalizeAppearance } from '../shared/appTheme'
+import { mergeAgentSettingsPatch, type AgentSettingsPatch } from '../shared/agentSettingsPatch'
+import { writeSettingsFile } from './settingsFile'
+import { retryTransientFileLock } from './fileLockRetry'
 import { summarizeLog } from '../shared/creationFeedback'
 import type { InspirationEvidenceRequest } from '../shared/inspirationEvidence'
 import { runtimePlatformInfo } from '../shared/platform'
@@ -28,7 +37,6 @@ import { DeviceDeepLinkQueue } from './deviceDeepLinkQueue'
 import { verifiedDownload } from './downloadService'
 import { featureHostRuntime } from './featureHostRuntime'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
-import { MODPACK_AGENT_WORKFLOW_GUIDANCE } from './modpackAgentPolicy'
 import { delegateModpackModule,ModpackModuleTasks } from './modpackModuleDelegation'
 import { inspectModpackModules,resolveAgentModpackModule } from './modpackModuleTools'
 import { cleanupTerminalScripts } from './nativeTerminal'
@@ -48,40 +56,45 @@ import { UserSkillStore } from './userSkillStore'
 
 const readYsmSource: typeof import("../../feature-plugins/model-studio/src/main/modelSourceService").readYsmSource = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/model-studio/main').activate>>('model-studio').readYsmSource(...args)
 
-import { type MappingService } from "../../feature-plugins/mappings/src/main/mappingService"
-import type { MinecraftRuntimeManager } from "../../feature-plugins/testing/src/main/minecraftRuntime"
+import { type MappingService } from '../../feature-plugins/mappings/src/main/mappingService'
+import type { MinecraftRuntimeManager } from '../../feature-plugins/testing/src/main/minecraftRuntime'
 import type { HeadlessMcService } from '../../feature-plugins/testing/src/main/headlessMcService'
 
 
-import { type ContentService } from "../../feature-plugins/publishing/src/main/contentService"
+import { type ContentService } from '../../feature-plugins/publishing/src/main/contentService'
 import { LoaderCatalog } from './loaderCatalog'
 import { descriptorPath,projectTemplateFiles } from './projectTemplates'
+import { configureStudios, StudioRegistry, studios } from './studioRegistry'
+import { builtinStudioDirectories } from './bundledStudioService'
+import { studioFormValues, type StudioSurface } from '../shared/studios'
+import { featureDefinitionApplies } from '../shared/featureApplicability'
 const soundServiceForProject: typeof import("../../feature-plugins/sound-studio/src/main/soundLibraryIpc").soundServiceForProject = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/sound-studio/main').activate>>('sound-studio').soundServiceForProject(...args)
 
 const createSoundMcpHandlers: typeof import("../../feature-plugins/sound-studio/src/main/soundMcpService").createSoundMcpHandlers = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/sound-studio/main').activate>>('sound-studio').createSoundMcpHandlers(...args)
 
 const renderMusicInWindow: typeof import("../../feature-plugins/sound-studio/src/main/soundRenderBridge").renderMusicInWindow = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/sound-studio/main').activate>>('sound-studio').renderMusicInWindow(...args)
 
-import { type DependencyService } from "../../feature-plugins/relationships/src/main/dependencyService"
+import { type DependencyService } from '../../feature-plugins/relationships/src/main/dependencyService'
 
 
-import { type AddonRelationshipService } from "../../feature-plugins/relationships/src/main/addonRelationshipService"
+import { type AddonRelationshipService } from '../../feature-plugins/relationships/src/main/addonRelationshipService'
 const readAddonRelationships: typeof import("../../feature-plugins/relationships/src/main/addonRelationshipService").readAddonRelationships = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/relationships/main').activate>>('relationships').readAddonRelationships(...args)
 
-import { type GitService } from "../../feature-plugins/versions/src/main/gitService"
+import { type GitService } from '../../feature-plugins/versions/src/main/gitService'
 
 
-import { type ReleaseSecrets,type ReleaseService } from "../../feature-plugins/publishing/src/main/releaseService"
+import { type ReleaseSecrets,type ReleaseService } from '../../feature-plugins/publishing/src/main/releaseService'
 
 
 import { isJavaLoader,isServerPluginPlatform,platformLabel,PROJECT_PLATFORMS } from '../shared/projectPlatform'
 import { MODMIND_SOURCE_FINGERPRINT } from '../shared/sourceFingerprint'
 import { recordZipExpansion } from './archiveImportPolicy'
 import { buildScriptFingerprint } from './buildTrust'
-import { extractMinecraftVersion,inferGradleLoader,parseGradleProperties } from './existingProjectMetadata'
+import { inferMinecraftVersions,inferGradleLoader,parseGradleProperties } from './existingProjectMetadata'
 import { convertLegacyModtoolProject,readLegacyModtoolProject } from './legacyProjectImport'
-import { setNetworkProxy,shutdownNetwork } from './networkRequest'
-import { migrateMovedProjectMetadata } from './projectMetadataMigration'
+import { networkFetch,setNetworkProxy,shutdownNetwork } from './networkRequest'
+import { requestAiTextResponse } from './aiTextRequest'
+import { migrateMovedProjectMetadata, migrateSelectedSnapshotMetadata } from './projectMetadataMigration'
 import { sameProjectPath } from './projectPath'
 import { inspectProjectPreflight } from './projectPreflight'
 import { renameProjectFiles } from './projectRename'
@@ -90,8 +103,9 @@ import { detectedProjectVersion,migrateProjectVersion112 } from './projectVersio
 import { registerServerPluginIpc } from './serverPluginIpc'
 import { findPluginArtifact,parsePluginDescriptor } from './serverPluginService'
 import { extractSevenZipArchive } from './sevenZipArchive'
-import { ignoreSnapshotDirectory,repairLegacySnapshotCaches,snapshotStorageInfo } from './snapshotStorage'
-import { copySnapshotFilesIncremental,snapshotFileHash,type SnapshotFileMetadata } from './snapshotStore'
+import { ignoreSnapshotDirectory, repairLegacySnapshotCaches, snapshotStorageInfo, invalidateSnapshotStorage, canRefreshSnapshotStorageIncrementally } from './snapshotStorage'
+import { copySnapshotFilesIncremental, snapshotFileHash, listSnapshotSummaries, invalidateSnapshotCatalog, type SnapshotFileMetadata } from './snapshotStore'
+import { withProjectMutation } from './projectMutation'
 import { archiveSignatureForFile,extractTar } from './tarArchive'
 import { windowsCmdInvocation } from './windowsCommand'
 
@@ -104,7 +118,6 @@ const saveManagedItem: typeof import("../../feature-plugins/item-editor/src/main
 
 const listVanillaItems: typeof import("../../feature-plugins/item-editor/src/main/itemCatalogService").listVanillaItems = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/item-editor/main').activate>>('item-editor').listVanillaItems(...args)
 
-import { serverPluginContext } from '../shared/serverPluginContext'
 const createResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").createResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').createResourcePack(...args)
 const deployResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").deployResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').deployResourcePack(...args)
 const listResourcePacks: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").listResourcePacks = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').listResourcePacks(...args)
@@ -112,7 +125,7 @@ const resourcePackArchive: typeof import("../../feature-plugins/resource-packs/s
 const validateResourcePack: typeof import("../../feature-plugins/resource-packs/src/main/resourcePackService").validateResourcePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/resource-packs/main').activate>>('resource-packs').validateResourcePack(...args)
 
 import { normalizeAiModelSelection,settingsForAiSelection,type AiModelSelection } from '../shared/aiSelection'
-import { ProviderSyncService, parseProviderSnapshot, providerOwnerKey, type ProviderSnapshot } from './providerSync'
+import { ProviderSyncService, parseProviderSnapshot, providerOwnerKey, reconcileProviderSync, type ProviderSnapshot, type ProviderModelDiscovery } from './providerSync'
 import { normalizeModelAutoCompactTokenLimits,normalizeModelContextWindows,validModelContext } from '../shared/modelContext'
 import { codexReasoningCapabilities,isReasoningEffort,normalizeReasoningEffortOptions,reasoningSelectionEffort,selectedReasoningEfforts } from '../shared/modelReasoning'
 import type { PluginDiagnostics,PluginOverlayWindowState,PluginSnapshot } from '../shared/plugins'
@@ -126,11 +139,12 @@ import { clearPreparedCodexCredentials,ensureManagedCodexRuntime,isManagedCodexV
 import { deleteExternalAgentSession,detectExternalAgent,externalAgentDocsUrl,externalAgentLabel,externalAgentSupportsHostedConfiguration,launchExternalAgent,listLocalCodexModels,ModMindBridge,readExternalAgentHistory,refreshExternalAgentContext,runExternalAgent,type ExternalAgentAttemptAudit,type ExternalAgentBridgeHandlers,type ExternalAgentKind,type ExternalAgentRetryState,type ExternalAgentRunOptions } from './externalAgents'
 import { GiteeBuildService } from './giteeBuildService'
 import { LiveConfiguration,SerialState,type ConfigurationRevision } from './liveConfiguration'
-import { QuotaModelRouting } from './quotaModelRouting'
+import { QuotaModelRouting, type RoutingCredentials } from './quotaModelRouting'
 import { QuotaRoutingSessionStore } from './quotaRoutingSessionStore'
 import { validateQuotaModelSelection } from '../shared/quotaModels'
 import type { QuotaModelCatalog, QuotaModelSwitchResult } from '../shared/quotaModels'
 import { readLocalCodexApiKey,readLocalCodexConfig } from './localCodexConfig'
+import { sameApiBaseUrl } from '../shared/apiConnection'
 import { resolveModelContextBudget } from './modelContextRegistry'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { createPluginBridgeTarget,getPluginRuntime,getPluginService,importPluginZipInteractive,initializePlugins,refreshPluginRegistry,registerPluginProtocolSchemeEarly,shutdownPlugins,waitForPluginRegistry } from './pluginBridgeIntegration'
@@ -176,11 +190,14 @@ parseDeviceDeepLink,
 parseModelPayload,
 pollDeviceCode,
 queryDeviceUsage,
+queryDeviceImageProvider,
 requestDeviceCode,
 requestDeviceImageLease,
 sendDeviceFastMode,
-type CustomApiConfig
+type CustomApiConfig,
+type DeviceImageLease
 } from './deviceIntegration'
+import { PROVIDER_SYNC_CAPABILITY_HEADERS } from '../shared/providerAccounts'
 import { createDraftProject,initializeDraftProject,recordDraftMessage } from './draftProjectService'
 import { runInspirationResearch } from './inspirationResearch'
 import { WorkbenchDataStore } from './workbenchDataStore'
@@ -209,6 +226,7 @@ import type { ImageGenerationRequest,ImageStudioBackend } from '../shared/imageS
 import type { HeadlessSmokeTestResult,MinecraftManagedMod,MinecraftRuntimeEvent } from '../shared/minecraft'
 import type { AddonPrepareInput,GiteeBuildSettings,ReleaseSummaryDraft,TestMatrixResult,TestTarget } from '../shared/production'
 import type {
+AppDialogRequest,
 AgentSettings,
 AiAttachment,
 AiAttachmentSelectionKind,
@@ -258,7 +276,7 @@ SnapshotStorageInfo
 import { FeaturePluginService,prepareFeaturePlugin } from './featurePluginService'
 import { FeatureStoreService } from './featureStoreService'
 import { inspectExternalModpack,materializeExternalModpack } from './modpackImportService'
-import { addModpackModule,adoptExternalModpack,auditImportedPackArtifacts,createModpackTemplate,createModrinthPackArchive,isModpackProject,onModpackManifestChanged,readModpackManifest,readModpackImportStatus } from './modpackService'
+import { addModpackModule,adoptExternalModpack,auditImportedPackArtifacts,createModrinthPackArchive,isModpackProject,onModpackManifestChanged,readModpackManifest,readModpackImportStatus } from './modpackService'
 import { configureNativeFeatureServices } from './nativeFeatureServices'
 const curseForgePackResolver: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").curseForgePackResolver = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').curseForgePackResolver(...args)
 const installCurseForgePack: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").installCurseForgePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').installCurseForgePack(...args)
@@ -293,7 +311,7 @@ const removeModpackContent: typeof import("../../feature-plugins/modpack-content
 
 const SERVER_PACK_CREATOR_MIN_JAVA = 21
 const buildServerPack: typeof import('../../feature-plugins/testing/src/main/serverPackService').buildServerPack = (...args) => requireTestingService().buildServerPack(...args)
-import type { buildAndJoinServer,runServerScenario,ServerJoinVerificationResult } from "../../feature-plugins/testing/src/main/serverVerificationService"
+import type { buildAndJoinServer,runServerScenario,ServerJoinVerificationResult } from '../../feature-plugins/testing/src/main/serverVerificationService'
 const applyOptimizationProfile: typeof import("../../feature-plugins/modpack-automation/src/main/optimizationService").applyOptimizationProfile = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-automation/main').activate>>('modpack-automation').applyOptimizationProfile(...args)
 
 import { McmodService } from './mcmodService'
@@ -362,6 +380,53 @@ const workbenchApprovals = new WorkbenchApprovals(owner => {
 })
 
 let mainWindow: BrowserWindow | null = null
+type PendingAppDialog = {
+  window: BrowserWindow
+  resolve: (confirmed: boolean) => void
+  timer: ReturnType<typeof setTimeout>
+}
+const pendingAppDialogs = new Map<string, PendingAppDialog>()
+
+function requestRendererDialog(request: Omit<AppDialogRequest, 'id'>): Promise<boolean> {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(false)
+  const id = randomUUID()
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      const pending = pendingAppDialogs.get(id)
+      if (!pending) return
+      pendingAppDialogs.delete(id)
+      resolve(false)
+    }, 120_000)
+    pendingAppDialogs.set(id, { window, resolve, timer })
+    try {
+      window.webContents.send('app:dialogRequested', { id, ...request } satisfies AppDialogRequest)
+    } catch {
+      pendingAppDialogs.delete(id)
+      clearTimeout(timer)
+      resolve(false)
+    }
+  })
+}
+
+function resolveRendererDialog(sender: Electron.WebContents, requestId: unknown, confirmed: unknown): void {
+  if (typeof requestId !== 'string' || requestId.length > 100 || typeof confirmed !== 'boolean') return
+  const pending = pendingAppDialogs.get(requestId)
+  if (!pending || pending.window.isDestroyed() || pending.window.webContents !== sender) return
+  pendingAppDialogs.delete(requestId)
+  clearTimeout(pending.timer)
+  pending.resolve(confirmed)
+}
+
+function cancelRendererDialogsForWindow(window: BrowserWindow): void {
+  for (const [id, pending] of pendingAppDialogs) {
+    if (pending.window !== window) continue
+    pendingAppDialogs.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve(false)
+  }
+}
+
 let resizeObserverDiagnosticAt = 0
 let suppressedResizeObserverDiagnostics = 0
 let tray: Tray | null = null
@@ -409,6 +474,11 @@ function projectKnowledgeStore(): InspirationKnowledgeStore {
     }
   })
 }
+let inspirationWorkflowStore: InspirationWorkflowStore | undefined
+function projectInspirationWorkflowStore(): InspirationWorkflowStore {
+  return inspirationWorkflowStore ??= new InspirationWorkflowStore(path.join(app.getPath('userData'), 'inspiration-workflows'), projectKnowledgeStore())
+}
+
 installProcessDiagnosticHandlers()
 const sidebarViewIds = new Set<SidebarViewId>([
   'workspace', 'modpack-server', 'inspiration', 'minecraft', 'code', 'build', 'settings', 'plugins', 'features'
@@ -905,19 +975,47 @@ const scannedModelCapabilities = new Map<string, { checkedAt: number; models: Ai
 let quotaModelRouter: QuotaModelRouting | undefined
 let quotaModelSwitchInProgress = false
 let providerSyncService: ProviderSyncService | undefined
+let legacyProviderUpgrade: { owner: string; at: number; task: Promise<void> } | undefined
 function providerSync(): ProviderSyncService {
   return providerSyncService ??= new ProviderSyncService({
+    authorizationBusy: () => Boolean(deviceAuthorizationController),
     read: async () => { const c = await readDeviceCredentials(); return c?.sync ? { siteUrl: c.siteUrl, username: c.username, sync: c.sync } : null },
     write: (previous, next) => deviceStateWrites.run(async () => {
       const c = await readDeviceCredentials()
       if (!c?.sync || providerOwnerKey(c) !== providerOwnerKey(previous) || JSON.stringify(c.sync) !== JSON.stringify(previous.sync)) throw new Error('账号或连接已更新，请重试')
       const current = next.connections.find(x => x.account === next.defaultAccount)!
-      await writeDeviceCredentialsUnlocked({ ...c, sync: next, account: current.account, group: current.group, node: current.node ?? undefined, baseUrl: current.inferenceBaseUrl, apiKey: current.apiKey })
+      const saved = await writeDeviceCredentialsUnlocked({ ...c, sync: next, account: current.account, group: current.group, node: current.node ?? undefined, baseUrl: current.inferenceBaseUrl, apiKey: current.apiKey })
       quotaModelAvailabilityCache.clear(); scannedModelCapabilities.clear()
+      if (c.sync.selectionRevision !== next.selectionRevision || c.sync.defaultAccount !== next.defaultAccount || JSON.stringify(c.sync.connections) !== JSON.stringify(next.connections)) emitProviderConnectionsChanged(saved)
+      for (const surface of ['workspace', 'inspiration'] as const) {
+        const before = c.sync.bindings?.[surface], selection = next.bindings?.[surface]
+        if (before && selection && JSON.stringify(before) !== JSON.stringify(selection)) emitAiSelection(surface, selection)
+      }
     }),
     readSession: () => quotaSessionStore().read(), writeSession: s => deviceStateWrites.run(async () => {
       const c = await readDeviceCredentials(); if (!c?.sync || providerOwnerKey(c) !== s.owner) throw new Error('账号已切换')
       await quotaSessionStore().write(s)
+    }),
+    readDiscovery: async () => {
+      if (!safeStorage.isEncryptionAvailable()) return null
+      try {
+        const target = path.join(app.getPath('userData'), 'provider-model-discovery.enc')
+        if ((await fs.stat(target)).size > 24 * 1024 * 1024) return null
+        return JSON.parse(safeStorage.decryptString(Buffer.from(await fs.readFile(target, 'utf8'), 'base64'))) as ProviderModelDiscovery
+      } catch { return null }
+    },
+    writeDiscovery: discovery => deviceStateWrites.run(async () => {
+      const c = await readDeviceCredentials()
+      if (!c?.sync || providerOwnerKey(c) !== discovery.owner) throw new Error('账号已切换，请重新读取模型')
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用')
+      const text = JSON.stringify(discovery)
+      if (Buffer.byteLength(text, 'utf8') > 16 * 1024 * 1024) throw new Error('模型目录过大，请减少已连接供应商后重试')
+      const target = path.join(app.getPath('userData'), 'provider-model-discovery.enc')
+      const temporary = `${target}.${randomUUID()}.tmp`
+      try {
+        await fs.writeFile(temporary, safeStorage.encryptString(text).toString('base64'), { encoding: 'utf8', mode: 0o600 })
+        await fs.rename(temporary, target)
+      } finally { await fs.rm(temporary, { force: true }).catch(() => undefined) }
     }),
     listModels: c => fetchAvailableModels(c.inferenceBaseUrl, c.apiKey, '无法读取供应商模型列表'),
     readPreferences: readBeginnerAiPreferences,
@@ -943,8 +1041,23 @@ function emitAiPreferences(preferences: BeginnerAiPreferences): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:aiPreferences', preferences)
   for (const window of BrowserWindow.getAllWindows()) if (window !== mainWindow && !window.isDestroyed()) window.webContents.send('device:aiPreferences', preferences)
 }
-async function upgradeQuotaConnections(previous: Pick<DeviceCredentials, 'siteUrl' | 'username'>, token: string): Promise<boolean> {
-  const response = await fetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { Authorization: `Bearer ${token}` } })
+function emitAiSelection(surface: 'workspace' | 'inspiration', selection?: AiModelSelection): void {
+  for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('device:aiSelection', { surface, ...(selection ? { selection } : {}) })
+}
+function emitProviderConnectionsChanged(credentials: DeviceCredentials): void {
+  if (deviceAuthorizationController) return
+  transientDeviceState = null
+  // Existing renderer state listeners reload their catalogs without resetting
+  // saved defaults or per-surface selections.
+  emitDeviceState(publicDeviceState(credentials))
+}
+async function upgradeQuotaConnections(previous: RoutingCredentials, token: string): Promise<boolean> {
+  const before = await readDeviceCredentials()
+  const unchanged = (current: DeviceCredentials | null): current is DeviceCredentials => Boolean(current && !current.provider && !current.sync &&
+    current.siteUrl === previous.siteUrl && current.username === previous.username && current.apiKey === previous.apiKey &&
+    current.baseUrl === previous.baseUrl && current.account === previous.account && current.group === previous.group)
+  if (!unchanged(before)) throw new Error('账号或连接已更新，请重试')
+  const response = await fetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${token}` } })
   if (response.status === 404) return false
   if (!response.ok) throw new Error('无法刷新供应商连接，请稍后重试')
   const envelope = await response.json() as { success?: unknown; data?: unknown }
@@ -954,12 +1067,17 @@ async function upgradeQuotaConnections(previous: Pick<DeviceCredentials, 'siteUr
   const snapshot = parseProviderSnapshot(data)
   const defaults = snapshot.connections.find(c => c.account === snapshot.defaultAccount)!
   const preferences = await readBeginnerAiPreferences()
-  const model = defaults.models?.includes(preferences.model) ? preferences.model : defaults.model ?? defaults.models?.[0] ?? preferences.model
-  const selection: AiModelSelection = { model, account: defaults.account, billing: defaults.kind === 'free' ? 'free' : 'quota', reasoningLevel: model === preferences.model ? preferences.reasoningLevel : 'auto' }
+  const original = snapshot.connections.find(c => c.apiKey === previous.apiKey && (c.inferenceBaseUrl === previous.baseUrl || c.baseUrl === previous.baseUrl))
+  const account = preferences.account ?? previous.account ?? original?.account
+  if (!account) throw new Error('无法确认原来的供应商，请重新同步并明确选择模型')
+  const billing = preferences.billing ?? (account.startsWith('trial:') ? 'free' : 'quota')
+  const group = preferences.group ?? (previous.account === undefined || account === previous.account ? previous.group : undefined)
+  const selection: AiModelSelection = { model: preferences.model, account, billing, ...(billing === 'quota' && group ? { group } : {}), reasoningLevel: preferences.reasoningLevel }
   const current = await readDeviceCredentials()
-  if (!current || current.provider === 'custom' || current.siteUrl !== previous.siteUrl || current.username !== previous.username) throw new Error('账号已切换，请重新操作')
-  await writeDeviceCredentialsUnlocked({ ...current, sync: { ...snapshot, defaults: selection }, account: defaults.account, group: defaults.group, node: defaults.node ?? undefined, baseUrl: defaults.inferenceBaseUrl, apiKey: defaults.apiKey })
+  if (!unchanged(current)) throw new Error('账号或连接已更新，请重试')
+  const saved = await writeDeviceCredentialsUnlocked({ ...current, sync: { ...snapshot, defaults: selection }, account: defaults.account, group: defaults.group, node: defaults.node ?? undefined, baseUrl: defaults.inferenceBaseUrl, apiKey: defaults.apiKey })
   providerSyncService?.invalidate(); quotaModelAvailabilityCache.clear(); scannedModelCapabilities.clear()
+  emitProviderConnectionsChanged(saved)
   return true
 }
 function quotaRouter(): QuotaModelRouting {
@@ -981,11 +1099,11 @@ function quotaRouter(): QuotaModelRouting {
     upgradeConnections: (credentials, session) => upgradeQuotaConnections(credentials, session.token),
     listModels: credentials => quotaModelsForCredentials({ ...credentials, version: 1, connectedAt: '' }, true),
     readPreferences: readBeginnerAiPreferences,
-    applyModel: async model => {
+    applyModel: async (model, route) => {
       const credentials = await readDeviceCredentials()
       if (!credentials) throw new Error('请先连接账号')
       const store = await readStoredBeginnerAiPreferences()
-      const preferences = normalizeQuotaModelPreferences({ ...store.current, model,
+      const preferences = normalizeQuotaModelPreferences({ ...store.current, model, ...(route ? { account: route.account, group: route.group ?? undefined, billing: route.account.startsWith('trial:') ? 'free' : 'quota' } : {}),
         reasoningLevel: store.current.model === model ? store.current.reasoningLevel : 'auto' }, DEFAULT_BEGINNER_AI_PREFERENCES)
       await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(store, preferences, deviceProfileKey(credentials)))
       return preferences
@@ -993,6 +1111,26 @@ function quotaRouter(): QuotaModelRouting {
   })
 }
 async function getQuotaModelCatalog(force = false): Promise<QuotaModelCatalog> {
+  // Existing desktop sessions can read the full provider snapshot without a new login.
+  // Migrate local storage once, while keeping running requests on their captured tuple.
+  const previous = await readDeviceCredentials()
+  if (previous && !previous.sync && previous.provider !== 'custom' && !quotaModelSwitchInProgress && ![...activeAiRuns.values()].some(run => run.backend === 'quota')) {
+    const session = await quotaSessionStore().read().catch(() => null)
+    const owner = providerOwnerKey(previous)
+    if (session?.owner === owner && !session.pending && session.expiresAt > Date.now()) {
+      if (!legacyProviderUpgrade || legacyProviderUpgrade.owner !== owner || Date.now() - legacyProviderUpgrade.at >= 60_000) {
+        const task = deviceStateWrites.run(async () => {
+          const current = await readDeviceCredentials()
+          if (!current || !sameDeviceCredentials(current, previous) || current.sync || quotaModelSwitchInProgress || [...activeAiRuns.values()].some(run => run.backend === 'quota')) return
+          const latestSession = await quotaSessionStore().read()
+          if (latestSession?.owner !== owner || latestSession.token !== session.token || latestSession.pending) return
+          await upgradeQuotaConnections(previous, session.token)
+        }).catch(() => undefined)
+        legacyProviderUpgrade = { owner, at: Date.now(), task }
+      }
+      await legacyProviderUpgrade.task
+    }
+  }
   if ((await readDeviceCredentials())?.sync) {
     return providerSync().catalog(force)
   }
@@ -1001,20 +1139,34 @@ async function getQuotaModelCatalog(force = false): Promise<QuotaModelCatalog> {
   return { ...catalog, canSwitch: catalog.canSwitch && !running && !quotaModelSwitchInProgress,
     ...(running && !catalog.message ? { message: 'AI 任务正在运行，完成后即可切换模型' } : {}) }
 }
+async function discoverQuotaModels(): Promise<QuotaModelCatalog> {
+  // Legacy connections may be upgraded by a read. Scanning always remains an
+  // explicit action because discovering a paid group temporarily changes it.
+  await getQuotaModelCatalog()
+  const credentials = await readDeviceCredentials()
+  if (!credentials?.sync) throw new Error('请先重新同步供应商连接，再读取全部线路模型')
+  try { return await providerSync().discoverModels() }
+  finally { await updateDeviceState(null) }
+}
+
 async function selectQuotaModel(model: unknown, selection?: unknown): Promise<QuotaModelSwitchResult> {
   if (typeof model !== 'string' || !model.trim() || model.length > 256) throw new Error('请选择有效的工作台模型')
   const version = validateQuotaModelSelection(selection)
   if ((await readDeviceCredentials())?.sync) {
     if (deviceAuthorizationController) throw new Error('账号正在授权，请完成后再选择模型')
-    const result = await providerSync().select(model.trim(), version)
-    if (result.preferences) { emitAiPreferences(result.preferences); await updateDeviceState(null) }
+    let result: QuotaModelSwitchResult
+    try { result = await providerSync().select(model.trim(), version) }
+    catch (error) {
+      await updateDeviceState(null).catch(() => undefined)
+      throw error
+    }
+    if (result.preferences) emitAiPreferences(result.preferences)
     else if (result.selection && (version.scope === 'workspace' || version.scope === 'inspiration')) {
       for (const [surface, selection] of Object.entries({ ...result.linkedSelections, [version.scope]: result.selection })) {
-        const payload = { surface, selection }
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:aiSelection', payload)
-        for (const window of BrowserWindow.getAllWindows()) if (window !== mainWindow && !window.isDestroyed()) window.webContents.send('device:aiSelection', payload)
+        emitAiSelection(surface as 'workspace' | 'inspiration', selection)
       }
     }
+    await updateDeviceState(null)
     return result
   }
   if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候')
@@ -1027,7 +1179,7 @@ async function selectQuotaModel(model: unknown, selection?: unknown): Promise<Qu
   finally { quotaModelSwitchInProgress = false; quotaConfiguration.finish(revision) }
   if (result.requiresProviderSync) {
     const catalog = await getQuotaModelCatalog()
-    const requested = catalog.models.find(m => m.id === model.trim() && m.billing === (version.billing ?? 'quota') && (!version.account || m.account === version.account))
+    const requested = catalog.models.find(m => m.id === model.trim() && m.billing === (version.billing ?? 'quota') && (!version.account || m.account === version.account) && (version.group === undefined || m.group === version.group))
     if (requested) return selectQuotaModel(model, { ...version, account: requested.account })
     result = { status: 'error', message: '这个供应商尚未同步，请在官网勾选后同步连接', requiresProviderSync: true, catalog }
     emitAiPreferences(await readBeginnerAiPreferences())
@@ -1103,14 +1255,7 @@ async function writeDeviceFileAtomically(value: StoredDeviceCredentials): Promis
   await fs.mkdir(path.dirname(target), { recursive: true })
   try {
     await fs.writeFile(temporary, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try {
-      await fs.rename(temporary, target)
-    } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
-      if (code !== 'EEXIST' && code !== 'EPERM') throw error
-      await fs.rm(target, { force: true })
-      await fs.rename(temporary, target)
-    }
+    await retryTransientFileLock(() => fs.rename(temporary, target))
   } finally {
     await fs.rm(temporary, { force: true }).catch(() => undefined)
   }
@@ -1169,7 +1314,7 @@ async function checkForAppUpdates(): Promise<AppVersionCheckResult> {
 async function readDeviceCredentials(): Promise<DeviceCredentials | null> {
   if (!safeStorage.isEncryptionAvailable()) return null
   try {
-    const stored = JSON.parse(await fs.readFile(deviceCredentialsFile(), 'utf8')) as StoredDeviceCredentials
+    const stored = JSON.parse(await retryTransientFileLock(() => fs.readFile(deviceCredentialsFile(), 'utf8'))) as StoredDeviceCredentials
     if ((stored.version !== 1 && stored.version !== 2) || !stored.encryptedApiKey || !stored.username || !/^\d+$/.test(stored.balanceCents)) return null
     if (stored.version === 2 && (stored.provider !== 'custom' || !stored.providerId || !stored.model)) return null
     const apiKey = safeStorage.decryptString(Buffer.from(stored.encryptedApiKey, 'base64')).trim()
@@ -1249,6 +1394,7 @@ function publicDeviceState(credentials: DeviceCredentials): DeviceConnectionStat
     configured: true,
     siteUrl: credentials.siteUrl,
     username: credentials.username,
+    account: credentials.sync?.defaults?.account ?? credentials.sync?.defaultAccount ?? credentials.account,
     billing: isFreeDeviceAccount(credentials) ? 'free' : 'quota',
     balanceCents: credentials.usage?.balanceCents ?? credentials.balanceCents,
     keyStatus: credentials.usage?.keyStatus ?? 'ACTIVE',
@@ -1272,8 +1418,7 @@ function emitDeviceState(state: DeviceConnectionState): void {
     message: state.message || `Device state: ${state.status}`,
     data: state
   })
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
-  mainWindow.webContents.send('device:state', state)
+  for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed() && (window === mainWindow || isDetachedWindow(window))) window.webContents.send('device:state', state)
 }
 
 async function updateDeviceState(state: DeviceConnectionState | null): Promise<DeviceConnectionState> {
@@ -1284,13 +1429,26 @@ async function updateDeviceState(state: DeviceConnectionState | null): Promise<D
 }
 
 async function waitForDevicePoll(ms: number, signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
+    const aborted = (): void => {
       clearTimeout(timer)
+      signal.removeEventListener('abort', aborted)
       reject(new DOMException('Aborted', 'AbortError'))
-    }, { once: true })
+    }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', aborted); resolve() }, ms)
+    signal.addEventListener('abort', aborted, { once: true })
   })
+}
+
+async function waitForDeviceSyncIdle(signal: AbortSignal): Promise<void> {
+  const deadline = Date.now() + 600_000
+  while (providerSyncService?.busy || quotaModelSwitchInProgress) {
+    throwIfAborted(signal)
+    if (Date.now() >= deadline) throw new Error('线路仍在更新，请完成后在官网重新同步')
+    await waitForDevicePoll(100, signal)
+  }
+  throwIfAborted(signal)
 }
 
 async function deviceAuthorizationFailure(message: string): Promise<void> {
@@ -1340,7 +1498,9 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           const previous = await readDeviceCredentials()
           const sameOwner = previous?.siteUrl === siteUrl && previous.username === result.username
           if (!sameOwner) for (const run of activeAiRuns.values()) if (run.backend === 'quota') aiAbortControllers.get(run.id)?.abort()
-          const synced = v2 ? { ...result.sync!, ...(sameOwner && previous?.sync?.bindings ? { bindings: previous.sync.bindings } : {}), ...(sameOwner && previous?.sync?.defaults ? { defaults: previous.sync.defaults } : {}) } : undefined
+          const synced = v2 ? sameOwner && previous?.sync
+            ? reconcileProviderSync(previous.sync, result.sync!, activeQuotaModelPreferences(await readStoredBeginnerAiPreferences(), deviceProfileKey(previous)))
+            : result.sync! : undefined
           const saved = await writeDeviceCredentialsUnlocked({
             siteUrl,
             baseUrl: v2 ? result.baseUrl : customApi?.baseUrl ?? ('baseUrl' in result ? result.baseUrl : ''),
@@ -1353,7 +1513,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           })
           if (synced && (!sameOwner || !previous?.sync)) {
             const c = synced.connections.find(c => c.account === synced.defaultAccount)!
-            const preferences = normalizeQuotaModelPreferences({ ...DEFAULT_BEGINNER_AI_PREFERENCES, account: c.account, billing: c.kind === 'free' ? 'free' : 'quota', model: initialV2Model ?? c.model ?? c.models?.[0] ?? DEFAULT_DEVICE_MODEL }, DEFAULT_BEGINNER_AI_PREFERENCES)
+            const preferences = normalizeQuotaModelPreferences({ ...DEFAULT_BEGINNER_AI_PREFERENCES, account: c.account, ...(c.kind === 'paid' && c.group ? { group: c.group } : {}), billing: c.kind === 'free' ? 'free' : 'quota', model: initialV2Model ?? c.model ?? c.models?.[0] ?? DEFAULT_DEVICE_MODEL }, DEFAULT_BEGINNER_AI_PREFERENCES)
             await writeStoredBeginnerAiPreferences(updateQuotaModelPreferences(await readStoredBeginnerAiPreferences(), preferences, deviceProfileKey(saved)))
             emitAiPreferences(preferences)
           }
@@ -1404,8 +1564,6 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
 }
 
 async function beginDeviceAuthorization(): Promise<DeviceConnectionState> {
-  if (providerSyncService?.busy) throw new Error('连接正在更新，请稍候再授权')
-  if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候再连接账号')
   const siteUrl = configuredDeviceSiteUrl()
   if (!siteUrl) throw new Error('未配置正式站点地址，请在发行环境设置 MODMIND_SITE_URL')
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法开始授权')
@@ -1415,6 +1573,7 @@ async function beginDeviceAuthorization(): Promise<DeviceConnectionState> {
   const initial: DeviceConnectionState = { status: 'authorizing', configured: true, siteUrl, message: '正在申请授权码' }
   await updateDeviceState(initial)
   try {
+    await waitForDeviceSyncIdle(controller.signal)
     const result = await requestDeviceCode(siteUrl, controller.signal)
     const expiresAt = new Date(Date.now() + result.expiresIn * 1_000).toISOString()
     const authorizing: DeviceConnectionState = { ...initial, expiresAt, message: '请在浏览器中登录并确认授权' }
@@ -1424,6 +1583,7 @@ async function beginDeviceAuthorization(): Promise<DeviceConnectionState> {
     return authorizing
   } catch (error) {
     if (deviceAuthorizationController === controller) deviceAuthorizationController = null
+    if (controller.signal.aborted) return readDeviceState()
     const message = error instanceof Error ? error.message : String(error)
     await deviceAuthorizationFailure(message)
     throw new Error(message)
@@ -1431,8 +1591,6 @@ async function beginDeviceAuthorization(): Promise<DeviceConnectionState> {
 }
 
 async function beginDeviceDeepLinkAuthorization(rawUrl: string): Promise<DeviceConnectionState> {
-  if (providerSyncService?.busy) throw new Error('连接正在更新，请稍候再同步')
-  if (quotaModelSwitchInProgress) throw new Error('正在切换模型，请稍候再连接账号')
   const expectedSite = configuredDeviceSiteUrl()
   if (!expectedSite) throw new Error('未配置正式站点地址，拒绝处理设备深链')
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法处理设备深链')
@@ -1448,6 +1606,11 @@ async function beginDeviceDeepLinkAuthorization(rawUrl: string): Promise<DeviceC
     message: '已收到网页授权，正在同步凭证'
   }
   await updateDeviceState(state)
+  try { await waitForDeviceSyncIdle(controller.signal) }
+  catch (error) {
+    if (deviceAuthorizationController === controller) deviceAuthorizationController = null
+    throw error
+  }
   startDevicePolling(siteUrl, code, 600, controller, quotaConfiguration.begin(), customApi)
   return state
 }
@@ -1462,6 +1625,7 @@ async function handleDeviceDeepLink(rawUrl: string): Promise<void> {
     mainWindow.show()
     mainWindow.focus()
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') return
     await deviceAuthorizationFailure(error instanceof Error ? error.message : String(error))
   }
 }
@@ -1511,6 +1675,15 @@ async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
     return updateDeviceState(publicDeviceState(updated))
   } catch (error) {
     if (error instanceof DeviceApiError && error.status === 401) {
+      if (credentials.sync) {
+        const before = await readDeviceCredentials()
+        if (!sameDeviceCredentials(before, credentials) || JSON.stringify(before?.sync) !== JSON.stringify(credentials.sync)) return readDeviceState()
+        let refreshed = false
+        try { await providerSync().refresh(); refreshed = true } catch { /* Keep every connection and its last usage snapshot when discovery is unavailable. */ }
+        const current = await readDeviceCredentials()
+        if (!current?.sync || providerOwnerKey(current) !== providerOwnerKey(credentials)) return readDeviceState()
+        return updateDeviceState({ ...publicDeviceState(current), message: refreshed ? '连接已刷新，用量暂不可用' : '用量暂不可用，已保留现有连接；请刷新连接或重新授权' })
+      }
       if (!await removeCurrentDeviceCredentials(credentials)) return readDeviceState()
       return updateDeviceState(disconnectedDeviceState('接入 Key 已失效，请重新连接账号'))
     }
@@ -1551,7 +1724,8 @@ async function ensureQuotaAccountReady(): Promise<void> {
 
   try {
     const models = await quotaModelsForCredentials(credentials)
-    if (models.length) await reconcileQuotaModelPreferences(credentials, false, models)
+    const preferences = await readBeginnerAiPreferences()
+    if (models.length && !preferences.account && !preferences.group) await reconcileQuotaModelPreferences(credentials, false, models)
   } catch {
     // Some compatible relays do not expose /model(s). The actual Agent
     // request remains authoritative in that case.
@@ -1679,8 +1853,7 @@ async function readSnapshotStorage(projectPath: string): Promise<SnapshotStorage
 }
 
 async function publishSnapshotStorage(projectPath: string): Promise<void> {
-  const pending = snapshotStatusJobs.get(snapshotStorageKey(projectPath))
-  if (pending) await pending.catch(() => undefined)
+  if (!canRefreshSnapshotStorageIncrementally(projectPath)) return
   const status = await readSnapshotStorage(projectPath)
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('snapshots:storageChanged', status)
@@ -1690,20 +1863,19 @@ async function publishSnapshotStorage(projectPath: string): Promise<void> {
 function scheduleSnapshotStorageMaintenance(project: ProjectInfo): void {
   const key = snapshotStorageKey(project.path)
   if (snapshotMaintenanceDone.has(key) || snapshotMaintenanceJobs.has(key)) return
-  const task = (async () => {
+  const task = withProjectMutation(project.path, async () => {
     if (runsForProject(project.path).some(run => run.surface === 'workspace') || await pathExists(activeAiTaskPath(project))) return
     const result = await repairLegacySnapshotCaches(project.path)
     snapshotMaintenanceDone.add(key)
+    if (snapshotMaintenanceDone.size > 32) snapshotMaintenanceDone.delete(snapshotMaintenanceDone.values().next().value!)
     if (result.repaired || result.skipped) diagnosticJournal.record({
       subsystem: 'snapshots', operation: 'legacy-cache-cleanup', phase: result.skipped ? 'warning' : 'success',
       level: result.skipped ? 'warning' : 'info', message: `旧快照缓存清理：已修复 ${result.repaired} 份，跳过 ${result.skipped} 份`
     })
-  })()
+  })
   snapshotMaintenanceJobs.set(key, task)
   void task.finally(() => { if (snapshotMaintenanceJobs.get(key) === task) snapshotMaintenanceJobs.delete(key) })
     .catch(error => console.warn('旧快照缓存清理失败', error))
-    .then(() => publishSnapshotStorage(project.path))
-    .catch(error => console.warn('快照占用检查失败', error))
 }
 
 function emitProjectChanged(): void {
@@ -1729,7 +1901,6 @@ function emitProjectChanged(): void {
     void startPublicMcpBridge(currentProject.path).catch((error) => console.warn('[mcp-bridge] failed to start after project open', error))
   }
   void optionalTestingService()?.playerTestService?.projectChanged(currentProject?.path).catch(error => console.warn('测试会话清理失败', error))
-  if (currentProject) scheduleSnapshotStorageMaintenance(currentProject)
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
   mainWindow.webContents.send('project:changed', currentProject)
 }
@@ -1742,12 +1913,13 @@ function broadcastPluginSnapshot(snapshot: { plugins: unknown[] }): void {
 
 async function createProjectForRemote(input: ProjectCreateInput): Promise<ProjectInfo> {
   assertProjectSwitchAllowed()
-  if (!(PROJECT_PLATFORMS as readonly string[]).includes(input.loader)) throw new Error('不支持的项目平台')
-  const kind = isServerPluginPlatform(input.loader) ? 'server-plugin' : input.kind === 'modpack' ? 'modpack' : 'mod'
+  if (!input || typeof input.loader !== 'string') throw new Error('项目平台无效')
+  const kind = input.kind ?? (isServerPluginPlatform(input.loader) ? 'server-plugin' : 'mod')
+  const selectedStudio = studios().select({ ...input, kind })
   if (kind === 'modpack' && !isJavaLoader(input.loader)) throw new Error('整合包目前仅支持 Java 版 Fabric、Quilt、Forge 和 NeoForge')
   const name = validateProjectNameInput(input.name)
   const minecraftVersion = input.minecraftVersion.trim()
-  const compatibility = await requireLoaderCatalog().resolve(input.loader, minecraftVersion)
+  const compatibility: Partial<import('../shared/types').LoaderVersionOption> = (PROJECT_PLATFORMS as readonly string[]).includes(input.loader) ? await requireLoaderCatalog().resolve(input.loader, minecraftVersion) : {}
   const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
   if (result.canceled || !result.filePaths[0]) throw new Error('Remote 新建项目已取消')
   const namespace = slugify(name)
@@ -1756,6 +1928,8 @@ async function createProjectForRemote(input: ProjectCreateInput): Promise<Projec
   const project: ProjectInfo = {
     ...input,
     kind,
+    studioId: selectedStudio.definition.id,
+    studioName: selectedStudio.definition.name,
     name,
     minecraftVersion,
     namespace,
@@ -1773,12 +1947,7 @@ async function createProjectForRemote(input: ProjectCreateInput): Promise<Projec
   try {
     await projectKnowledgeStore().clearProject(projectPath)
     Object.assign(project, await assignDefaultProjectNamespace(project, candidate => suggestProjectNamespace(candidate)))
-    if (kind === 'modpack') {
-      await fs.writeFile(path.join(projectPath, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
-      await createModpackTemplate(project)
-    } else {
-      await writeProjectTemplate(project)
-    }
+    await scaffoldStudioProject(project)
     await fs.mkdir(path.join(projectPath, '.modmind'), { recursive: true })
   } catch (error) {
     await fs.rm(projectPath, { recursive: true, force: true })
@@ -1894,8 +2063,7 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
     }
     case 'set_workbench_agent': {
       if (activeAiRuns.size) throw new Error('存在运行中的 AI 任务，暂时不能切换 Agent')
-      const settings = await readSettings()
-      const saved = await saveAgentSettings({ ...settings, codingBackend: action.agent })
+      const saved = await saveAgentSettings(current => ({ ...current, codingBackend: action.agent }))
       return { success: true, agent: saved.codingBackend }
     }
     case 'set_workbench_model': {
@@ -1905,12 +2073,12 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
         const result = await selectQuotaModel(action.model)
         return { success: result.status === 'ok', model: result.preferences?.model, message: result.message }
       }
-      const current = settings.externalAgents?.[settings.codingBackend] ?? {}
-      const saved = await saveAgentSettings({
-        ...settings,
-        externalAgents: { ...settings.externalAgents, [settings.codingBackend]: { ...current, model: action.model } }
-      })
-      return { success: true, model: saved.externalAgents?.[settings.codingBackend]?.model }
+      const backend = settings.codingBackend
+      const saved = await saveAgentSettings(current => ({
+        ...current,
+        externalAgents: { ...current.externalAgents, [backend]: { ...current.externalAgents?.[backend], model: action.model } }
+      }))
+      return { success: true, model: saved.externalAgents?.[backend]?.model }
     }
     case 'set_app_setting': {
       const result = await applyAppSettingWrite({ key: action.key, value: action.value })
@@ -1927,12 +2095,12 @@ async function executeRemoteAppAction(action: RemoteAppAction): Promise<unknown>
 }
 
 type AppSettingKey =
-  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowBuildScriptChanges' | 'allowLongerContext'
-  | 'preferLocalGradle' | 'closeBehavior' | 'gradleDownloadSource'
+  | 'javaPreferences' | 'darkMode' | 'notificationsEnabled' | 'allowLongerContext'
+  | 'closeBehavior' | 'gradleDownloadSource'
 
 const APP_SETTING_KEYS: readonly AppSettingKey[] = [
-  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowBuildScriptChanges', 'allowLongerContext',
-  'preferLocalGradle', 'closeBehavior', 'gradleDownloadSource'
+  'javaPreferences', 'darkMode', 'notificationsEnabled', 'allowLongerContext',
+  'closeBehavior', 'gradleDownloadSource'
 ]
 
 /** Shared write path for the remote controller and the MCP app-setting tool. */
@@ -1940,11 +2108,11 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
   const key = String(input.key ?? '') as AppSettingKey
   const value = input.value
   if (!APP_SETTING_KEYS.includes(key)) throw new Error(`不支持的应用设置键：${key || '(空)'}`)
-  const next = { ...await readSettings() } as AgentSettings
+  const next: Partial<AgentSettings> = {}
   if (key === 'javaPreferences') {
     if (typeof value !== 'object' || value === null) throw new Error('Java 偏好需要对象值')
     next.javaPreferences = normalizeJavaPreferences(value)
-  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowBuildScriptChanges' || key === 'allowLongerContext' || key === 'preferLocalGradle') {
+  } else if (key === 'darkMode' || key === 'notificationsEnabled' || key === 'allowLongerContext') {
     if (typeof value !== 'boolean') throw new Error(`应用设置 ${key} 需要布尔值`)
     next[key] = value
   } else if (key === 'closeBehavior') {
@@ -1954,25 +2122,12 @@ async function applyAppSettingWrite(input: Record<string, unknown>): Promise<Age
     if (value !== 'auto' && value !== 'china' && value !== 'official') throw new Error('Gradle 下载源无效')
     next.gradleDownloadSource = value
   }
-  return await saveAgentSettings(next)
+  return await saveAgentSettings(current => ({ ...current, ...next }))
 }
 
 async function remoteQuotaConfig(): Promise<RemoteQuotaConfig> {
-  if ((await readDeviceCredentials())?.sync) {
-    const config = await readBeginnerAgentServerConfig()
-    return { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model, reasoningEffort: config.reasoningEffort }
-  }
-  await ensureQuotaRoutingReady()
-  const credentials = await readDeviceCredentials()
-  if (!credentials) throw new Error('请先连接 ModMind 账号')
-  const preferences = await readBeginnerAiPreferences()
-  await quotaModelsForCredentials(credentials)
-  return {
-    baseUrl: openAiV1BaseUrl(credentials.baseUrl),
-    apiKey: credentials.apiKey,
-    model: preferences.model,
-    reasoningEffort: reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(preferences.model, preferences.reasoningEffortOptions))
-  }
+  const config = await readBeginnerAgentServerConfig()
+  return { baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model, reasoningEffort: config.reasoningEffort }
 }
 
 function broadcastPluginDiagnostics(diagnostics: PluginDiagnostics): void {
@@ -2000,20 +2155,7 @@ async function readStoredBeginnerAiPreferences(): Promise<StoredQuotaModelPrefer
 }
 
 async function writeStoredBeginnerAiPreferences(value: StoredQuotaModelPreferences): Promise<void> {
-  const target = beginnerAiPreferencesFile()
-  const temporary = `${target}.${randomUUID()}.tmp`
-  await fs.mkdir(path.dirname(target), { recursive: true })
-  try {
-    await fs.writeFile(temporary, JSON.stringify(value, null, 2), 'utf8')
-    await fs.rename(temporary, target).catch(async (error) => {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
-      if (code !== 'EEXIST' && code !== 'EPERM') throw error
-      await fs.rm(target, { force: true })
-      await fs.rename(temporary, target)
-    })
-  } finally {
-    await fs.rm(temporary, { force: true }).catch(() => undefined)
-  }
+  await writeSettingsFile(beginnerAiPreferencesFile(), value)
 }
 
 async function readBeginnerAiPreferences(): Promise<BeginnerAiPreferences> {
@@ -2027,7 +2169,7 @@ async function readBeginnerAiPreferences(): Promise<BeginnerAiPreferences> {
   const cached = quotaModelAvailabilityCache.get(legacyKey)
   const preferences = activeQuotaModelPreferences(store, store.profiles[key] ? key : legacyKey)
   if (credentials.provider === 'custom' && !store.profiles[key]) return { ...preferences, model: credentials.model! }
-  if (cached?.models.length && !cached.models.some(model => model.id === preferences.model)) {
+  if (!preferences.group && cached?.models.length && !cached.models.some(model => model.id === preferences.model)) {
     return resolveQuotaModelPreferences(store, key, cached.models).preferences
   }
   return preferences
@@ -2042,7 +2184,7 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   const compactLimit = value.modelAutoCompactTokenLimits?.[model]
   if (compactLimit !== undefined && !validModelContext(compactLimit)) throw new Error('自动压缩阈值必须是 1,024–100,000,000 之间的整数')
   const reasoningLevel = isReasoningEffort(value.reasoningLevel) ? value.reasoningLevel : 'auto'
-  const preferences = normalizeQuotaModelPreferences({ model, account: value.account, billing: value.billing, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows, modelAutoCompactTokenLimits: value.modelAutoCompactTokenLimits, reasoningEffortOptions: value.reasoningEffortOptions }, DEFAULT_BEGINNER_AI_PREFERENCES)
+  const preferences = normalizeQuotaModelPreferences({ model, account: value.account, group: value.group, billing: value.billing, reasoningLevel, fastMode: Boolean(value.fastMode), modelContextWindows: value.modelContextWindows, modelAutoCompactTokenLimits: value.modelAutoCompactTokenLimits, reasoningEffortOptions: value.reasoningEffortOptions }, DEFAULT_BEGINNER_AI_PREFERENCES)
   const previous = await readBeginnerAiPreferences()
   if (initialRevision !== quotaConfiguration.current()) throw new Error('线路正在切换，请稍后重新选择模型')
   const previousWindows = previous.modelContextWindows ?? {}
@@ -2057,14 +2199,15 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   const nextEfforts = preferences.reasoningEffortOptions ?? {}
   const sameEfforts = Object.keys(previousEfforts).length === Object.keys(nextEfforts).length
     && Object.entries(previousEfforts).every(([id, efforts]) => efforts.join(',') === nextEfforts[id]?.join(','))
-  if (previous.model === preferences.model && previous.account === preferences.account && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
+  if (previous.model === preferences.model && previous.account === preferences.account && previous.group === preferences.group && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
   const credentials = await readDeviceCredentials()
-  if (credentials?.sync && (previous.model !== preferences.model || previous.account !== preferences.account)) throw new Error('请通过模型列表切换模型与供应商')
+  if (credentials?.sync && (previous.model !== preferences.model || previous.account !== preferences.account || previous.group !== preferences.group)) throw new Error('请通过模型列表切换模型与供应商')
   validateCodexAutoCompactTokenLimit(model, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow }, compactLimit)
   if (preferences.reasoningLevel !== 'auto') {
     reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(model, preferences.reasoningEffortOptions))
   }
   const fastConnection = credentials?.sync?.connections.find(c => c.account === preferences.account)
+  if (previous.fastMode !== preferences.fastMode && (fastConnection?.account ?? credentials?.account) === 'ls') throw new Error('LS 暂不支持 Fast 模式')
   if (previous.fastMode !== preferences.fastMode && credentials?.provider !== 'custom' && !(credentials && (credentials.sync ? fastConnection?.kind === 'free' : isFreeDeviceAccount(credentials)))) {
     if (!credentials) throw new Error('请先连接 ModMind 账号，再切换 Fast 模式')
     await sendDeviceFastMode(
@@ -2119,7 +2262,13 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
   if (!credentials) throw new Error('请先连接 ModMind 账号')
   const allowLongerContext = (await readSettings()).allowLongerContext === true
   if (credentials.sync) {
-    const { owner, connection, model } = await providerSync().resolve(selection)
+    let resolved: Awaited<ReturnType<ProviderSyncService['resolve']>>
+    try { resolved = await providerSync().resolve(selection) }
+    catch (error) {
+      await updateDeviceState(null).catch(() => undefined)
+      throw error
+    }
+    const { owner, connection, model } = resolved
     const preferences = { ...await readBeginnerAiPreferences(), ...selection }
     if (connection.kind === 'paid') {
       try {
@@ -2156,10 +2305,18 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
   }
   // Upstream groups may change without rotating the key or changing the URL.
   // Execution must use a fresh catalog; a failed scan must not revive a stale model.
-  const models = await quotaModelsForCredentials(credentials, true)
+  const saved = await readBeginnerAiPreferences()
+  const exact = selection ? { ...saved, ...selection, ...(selection.account !== undefined || selection.billing !== undefined ? { group: selection.group } : {}) } : saved
+  let models: AiModelInfo[]
+  if (exact.account || exact.group) {
+    const catalog = await quotaRouter().catalog(true)
+    if (catalog.stale || !catalog.currentRoute) throw new Error('无法确认当前线路，请刷新后重试')
+    if (exact.account && exact.account !== catalog.currentRoute.account || exact.group !== undefined && exact.group !== catalog.currentRoute.group) throw new Error('所选分组已变化，请重新选择线路；消息已保留')
+    models = catalog.models.filter(model => model.routeCurrent && model.modelEvidence === 'verified')
+  } else models = await quotaModelsForCredentials(credentials, true)
   if (!models.length) throw new Error('当前分组没有可用于任务的模型，请检查账号分组')
-  const preferences = selection ? { ...await readBeginnerAiPreferences(), ...selection } : await reconcileQuotaModelPreferences(credentials, false, models)
-  if (selection && !models.some(model => model.id === selection.model)) throw new Error(`当前线路没有模型 ${selection.model}，请重新选择`)
+  const preferences = selection || exact.account || exact.group ? exact : await reconcileQuotaModelPreferences(credentials, false, models)
+  if (!models.some(model => model.id === preferences.model)) throw new Error(`当前线路没有模型 ${preferences.model}，请重新选择`)
   if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) return readBeginnerAgentServerConfig(selection)
   const reasoningCapabilities = models.find(model => model.id === preferences.model)?.reasoning ?? modelReasoningCatalog.resolve(preferences.model, credentials.baseUrl)
   const efforts = selectedReasoningEfforts(preferences.model, preferences.reasoningEffortOptions)
@@ -2176,6 +2333,7 @@ async function readBeginnerAgentServerConfig(selection?: AiModelSelection): Prom
 }
 
 const managedCodexPreparations = new Map<string, ReturnType<typeof prepareCodex>>()
+const managedCodexPreparationUsers = new Map<string, { controller: AbortController; count: number }>()
 const managedCodexPreparationListeners = new Map<string, Set<(progress: CodexSetupProgress) => void>>()
 let managedCodexPreparationTail = Promise.resolve()
 
@@ -2220,23 +2378,32 @@ async function prepareManagedCodex(
   configSource: 'device' | 'local-settings',
   existingExecutable?: string,
   onProgress?: (progress: CodexSetupProgress) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  surface: StudioSurface = 'workbench'
 ): ReturnType<typeof prepareCodex> {
+  signal?.throwIfAborted()
   const home = managedCodexHome(project, sessionScope, configSource)
   await migrateLegacyManagedCodexSessions(home)
   const routeRevision = configSource === 'device' && !(await readDeviceCredentials())?.sync ? quotaConfiguration.current() : undefined
   const configurationId = createHash('sha256').update(JSON.stringify(serverConfig)).digest('hex')
-  const key = `${process.platform === 'win32' ? home.toLowerCase() : home}:${configurationId}:${routeRevision?.sequence ?? 0}:${existingExecutable ?? ''}`
+  const key = `${process.platform === 'win32' ? home.toLowerCase() : home}:${configurationId}:${routeRevision?.sequence ?? 0}:${existingExecutable ?? ''}:${surface}`
+  if (managedCodexPreparationUsers.get(key)?.controller.signal.aborted) {
+    await managedCodexPreparations.get(key)?.catch(() => undefined)
+    signal?.throwIfAborted()
+  }
   const listeners = managedCodexPreparationListeners.get(key) ?? new Set<(progress: CodexSetupProgress) => void>()
   managedCodexPreparationListeners.set(key, listeners)
   if (onProgress) listeners.add(onProgress)
   if (!managedCodexPreparations.has(key)) {
+    const users = { controller: new AbortController(), count: 0 }
+    managedCodexPreparationUsers.set(key, users)
     const previousPreparation = managedCodexPreparationTail
     let releasePreparation!: () => void
     managedCodexPreparationTail = new Promise<void>((resolve) => { releasePreparation = resolve })
     const preparation = (async () => {
       await previousPreparation
       try {
+        users.controller.signal.throwIfAborted()
         const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow })
         if (contextBudget.source === 'inferred') diagnosticJournal.record({
           subsystem: 'ai', operation: 'model-context-budget', phase: 'inferred',
@@ -2253,10 +2420,12 @@ async function prepareManagedCodex(
           },
           configSource,
           existingExecutable: existingExecutable?.trim() || undefined,
-          bundledSkillsDir: bundledCodexSkillsDirectory(),
-          bundledSkillNames: workbenchSkillNames(project, featurePluginService.enabled('image-studio')),
+          bundledSkillsDir: sessionScope.startsWith('developer/') ? undefined : bundledCodexSkillsDirectory(),
+          bundledSkillNames: sessionScope.startsWith('developer/') ? [] : workbenchSkillNames(project, featurePluginService.enabled('image-studio'), surface),
+          bundledSkillDirectories: sessionScope.startsWith('developer/') ? [] : studios().skillDirectories(project),
           imageToolsEnabled: featurePluginService.enabled('image-studio'),
           rememberPrepared: false,
+          signal: users.controller.signal,
           onProgress: (progress) => {
             for (const listener of listeners) listener(progress)
           }
@@ -2267,14 +2436,21 @@ async function prepareManagedCodex(
     })()
     managedCodexPreparations.set(key, preparation)
     const release = (): void => {
-      if (managedCodexPreparations.get(key) === preparation) managedCodexPreparations.delete(key)
+      if (managedCodexPreparations.get(key) === preparation) {
+        managedCodexPreparations.delete(key)
+        managedCodexPreparationUsers.delete(key)
+      }
       if (!listeners.size) managedCodexPreparationListeners.delete(key)
     }
     void preparation.then(release, release)
   }
   const activePreparation = managedCodexPreparations.get(key)!
+  const users = managedCodexPreparationUsers.get(key)!
+  users.count += 1
   const observedPreparation = signal ? awaitWithAbort(activePreparation, signal, 'Codex 准备已停止') : activePreparation
   return observedPreparation.finally(() => {
+    users.count -= 1
+    if (users.count === 0 && managedCodexPreparations.get(key) === activePreparation) users.controller.abort()
     if (onProgress) listeners.delete(onProgress)
     if (!listeners.size && !managedCodexPreparations.has(key)) managedCodexPreparationListeners.delete(key)
   })
@@ -2296,7 +2472,8 @@ async function prepareConfiguredCodex(
   sessionScope: string,
   configuration: ExternalAgentConfiguration,
   onProgress?: (progress: CodexSetupProgress) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  surface: StudioSurface = 'workbench'
 ): ReturnType<typeof prepareCodex> {
   const installed = await detectInstalledCodex(configuration)
   return prepareManagedCodex(
@@ -2306,15 +2483,16 @@ async function prepareConfiguredCodex(
     'local-settings',
     installed.installed ? installed.executable : undefined,
     onProgress,
-    signal
+    signal,
+    surface
   )
 }
 
-async function prepareQuotaCodex(project: ProjectInfo, sessionScope: string, onProgress?: (progress: CodexSetupProgress) => void, signal?: AbortSignal, override?: CodexServerConfig): ReturnType<typeof prepareCodex> {
+async function prepareQuotaCodex(project: ProjectInfo, sessionScope: string, onProgress?: (progress: CodexSetupProgress) => void, signal?: AbortSignal, override?: CodexServerConfig, surface: StudioSurface = 'workbench'): ReturnType<typeof prepareCodex> {
   const serverConfig = override ?? (signal
     ? await awaitWithAbort(readBeginnerAgentServerConfig(), signal, 'Codex 准备已停止')
     : await readBeginnerAgentServerConfig())
-  return prepareManagedCodex(project, sessionScope, serverConfig, 'device', undefined, onProgress, signal)
+  return prepareManagedCodex(project, sessionScope, serverConfig, 'device', undefined, onProgress, signal, surface)
 }
 
 function externalAgentEnvironment(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration, codexHome?: string): NodeJS.ProcessEnv {
@@ -2326,23 +2504,6 @@ function externalAgentEnvironment(kind: ExternalAgentKind, configuration: Extern
   if (!model) throw new Error('请先选择模型')
   if (!codexHome) throw new Error('Codex 配置目录不可用')
   return {CODEX_HOME: codexHome, MODMIND_THIRD_PARTY_API_KEY: apiKey}
-}
-
-async function configureExternalAgentProvider(kind: ExternalAgentKind, settings: AgentSettings): Promise<{kind: ExternalAgentKind; executable?: string; configPath?: string; detail: string}> {
-  const configured = settings.externalAgents?.[kind] ?? {}
-  if (configured.mode !== 'hosted') {
-    const detected = await detectInstalledCodex(configured)
-    if (!detected.installed) throw new Error('未检测到本机 Codex CLI')
-    return { kind, executable: detected.executable, detail: '使用本机 Codex 登录与配置' }
-  }
-  if (!externalAgentSupportsHostedConfiguration(kind)) {
-    return {kind, executable: configured.executable, detail: `${externalAgentLabel(kind)} 使用本机已有配置；ModMind 将在项目中准备 MCP 工具桥`}
-  }
-  if (!configured.apiKey?.trim()) throw new Error('请先填写 API Key')
-  normalizeApiBaseUrl(configured.baseUrl ?? '')
-  if (!configured.model?.trim()) throw new Error('请先选择模型')
-  const detected = await detectInstalledCodex(configured)
-  return { kind, executable: detected.executable || undefined, detail: 'Codex 服务配置已保存；工作台将优先使用本机 CLI 和项目隔离会话' }
 }
 
 async function externalAgentRunEnvironment(kind: ExternalAgentKind, settings: AgentSettings): Promise<NodeJS.ProcessEnv | undefined> {
@@ -2357,6 +2518,25 @@ function applicationIconPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, fileName)
     : path.join(app.getAppPath(), 'resources', fileName)
+}
+
+function applicationUserModelId(): string {
+  if (app.getVersion().endsWith('-plugintest')) return 'dev.modmind.desktop.plugintest'
+  return app.isPackaged ? 'dev.modmind.desktop' : 'dev.modmind.desktop.development'
+}
+
+function setApplicationWindowIdentity(window: BrowserWindow): void {
+  if (process.platform !== 'win32') return
+  const iconPath = applicationIconPath()
+  window.setIcon(nativeImage.createFromPath(iconPath))
+  // Windows taskbar groups use relaunch metadata, independently of WM_SETICON.
+  window.setAppDetails({
+    appId: applicationUserModelId(),
+    appIconPath: iconPath,
+    appIconIndex: 0,
+    relaunchCommand: app.isPackaged ? `"${process.execPath}"` : `"${process.execPath}" "${app.getAppPath()}"`,
+    relaunchDisplayName: app.isPackaged ? 'ModMind' : 'ModMind (开发)'
+  })
 }
 
 function bundledCodexSkillsDirectory(): string | undefined {
@@ -2631,6 +2811,8 @@ function createDetachedWindow(target: DetachedWindowTarget, rawTitle: string): B
       nodeIntegration: false
     }
   })
+  if (process.platform !== 'darwin') window.setMenuBarVisibility(false)
+  setApplicationWindowIdentity(window)
   detachedWindows.set(target, window)
   window.on('ready-to-show', () => window.show())
   window.on('unresponsive', () => {
@@ -2674,6 +2856,7 @@ function isDetachedWindow(window: BrowserWindow | null | undefined): boolean {
 
 function createWindow(): void {
   const iconPath = applicationIconPath()
+  const offscreenQa = !app.isPackaged && process.env.MODMIND_UI_QA_OFFSCREEN === '1'
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -2684,16 +2867,17 @@ function createWindow(): void {
     backgroundColor: '#f5f5f7',
     icon: iconPath,
     webPreferences: {
+      offscreen: offscreenQa,
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
   })
-  // Electron uses the window icon on Windows; macOS takes the bundle icon.
-  if (process.platform === 'win32') mainWindow.setIcon(nativeImage.createFromPath(iconPath))
+  if (process.platform !== 'darwin') mainWindow.setMenuBarVisibility(false)
+  setApplicationWindowIdentity(mainWindow)
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('ready-to-show', () => { if (!offscreenQa) mainWindow?.show() })
   mainWindow.on('unresponsive', () => {
     diagnosticJournal.record({ subsystem: 'renderer', operation: 'window', phase: 'unresponsive', level: 'error', message: 'Main window became unresponsive' })
   })
@@ -2728,6 +2912,7 @@ function createWindow(): void {
 
   buildRuntime = new BuildRuntimeManager(runtimeOptions())
   mainWindow.on('closed', () => {
+    cancelRendererDialogsForWindow(mainWindow!)
     for (const window of detachedWindows.values()) window.close()
     detachedWindows.clear()
     for (const window of pluginOverlayWindows.values()) window.close()
@@ -2881,6 +3066,15 @@ async function withMinecraftResourceLock<T>(operation: () => Promise<T>): Promis
 
 function buildProjectWithLock(signal?: AbortSignal): Promise<MinecraftManagedMod> {
   const project = requireProject()
+  if (studios().resolve(project)?.definition.tasks?.build) return studios().invokeTask(project, 'build', {}, { projectPath: project.path, surface: 'workbench', signal }).then(async value => {
+    const artifact = value as { path?: unknown }
+    if (typeof artifact?.path !== 'string') throw new Error('工作台未返回构建产物')
+    const file = await fs.realpath(artifact.path), relative = path.relative(await fs.realpath(project.path), file)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('工作台构建产物超出项目目录')
+    const stat = await fs.stat(file)
+    if (!stat.isFile() || !stat.size) throw new Error('工作台构建产物不是有效文件')
+    return { name: path.basename(file), path: file, size: stat.size, modifiedAt: stat.mtime.toISOString(), projectArtifact: true }
+  })
   return withMinecraftResourceLock(async () => {
     const startedAt = Date.now()
     const feedback = new CreationFeedbackService(project)
@@ -2966,19 +3160,28 @@ function requireImageStudio(): ImageStudioBackend {
   return featurePluginService.service<ImageStudioBackend>('image-studio')
 }
 
-function generateStudioImage(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent') {
-  return runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(input, source), { source })
+function generateStudioImage(input: ImageGenerationRequest | Record<string, unknown>, source: 'manual' | 'agent', signal?: AbortSignal) {
+  signal?.throwIfAborted()
+  return runDiagnosticOperation('image-studio', 'generate', 'Image generation', () => requireImageStudio().generate(input, source, signal), { source })
 }
 
-async function createHostedImageLease(request?: ImageGenerationRequest): Promise<{ baseUrl: string; apiKey: string; jobId: string; reservedCredits: number }> {
+async function hostedImageAuthorization(): Promise<{ credentials: DeviceCredentials; routingToken: string }> {
   const credentials = await readDeviceCredentials()
   if (!credentials) throw new Error('请先连接 ModMind 账号，或在专业设置中保存图片 API Key')
   if (credentials.provider === 'custom') throw new Error('自定义 API 模式下请配置图片 API，无法使用 ModMind 额度图像服务')
-  const { baseUrl, apiKey } = await requestDeviceImageLease(credentials, AbortSignal.timeout(20_000))
+  const routingToken = credentials.sync ? await providerSync().routingToken() : await deviceStateWrites.run(() => quotaRouter().routingToken())
+  if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请重新运行图像任务')
+  return { credentials, routingToken }
+}
+
+async function createHostedImageLease(request?: ImageGenerationRequest, signal?: AbortSignal): Promise<DeviceImageLease & { jobId: string; reservedCredits: number }> {
+  signal?.throwIfAborted()
+  const { credentials, routingToken } = await hostedImageAuthorization()
+  const lease = await requestDeviceImageLease({ ...credentials, routingToken }, signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000))
   if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请重新运行图像任务')
   const jobId = randomUUID()
   const reservedCredits = request ? Math.max(1, request.count) : 0
-  return { baseUrl, apiKey, jobId, reservedCredits }
+  return { ...lease, jobId, reservedCredits }
 }
 
 async function writeProjectTemplate(project: ProjectInfo, includeStarter = true): Promise<void> {
@@ -2994,6 +3197,24 @@ async function writeProjectTemplate(project: ProjectInfo, includeStarter = true)
   if (isJavaLoader(project.loader) || isServerPluginPlatform(project.loader)) await copyBundledGradleWrapper(project.path)
 }
 
+async function scaffoldStudioProject(project: ProjectInfo): Promise<void> {
+  const record = studios().require(project)
+  project.studioId = record.definition.id
+  project.studioName = record.definition.name
+  if (record.definition.creation) project.studioValues = studioFormValues(record.definition, project)
+  await studios().scaffold(project, async files => {
+    for (const [relative, content] of Object.entries(files)) {
+      if (!relative || relative.includes('\\') || relative.split('/').some(segment => !segment || segment === '.' || segment === '..' || segment.includes(':'))) throw new Error('工作台模板包含无效文件路径')
+      const target = path.resolve(project.path, relative)
+      if (!path.relative(project.path, target) || path.relative(project.path, target).startsWith('..')) throw new Error('工作台模板路径超出项目')
+      await fs.mkdir(path.dirname(target), { recursive: true })
+      await fs.writeFile(target, content, 'utf8')
+    }
+    if (isJavaLoader(project.loader) || isServerPluginPlatform(project.loader)) await copyBundledGradleWrapper(project.path)
+  })
+  await fs.writeFile(path.join(project.path, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
+}
+
 async function readProjectInfo(root: string): Promise<ProjectInfo | null> {
   const currentPath = path.join(root, currentProjectManifest)
   if (!await pathExists(currentPath)) return null
@@ -3005,31 +3226,36 @@ async function readProjectInfo(root: string): Promise<ProjectInfo | null> {
 async function offerProjectVersionMigration(project: ProjectInfo): Promise<ProjectInfo> {
   if (project.draft) return project
   if (await detectedProjectVersion(project) !== MIGRATABLE_PROJECT_VERSION) return project
-  const choice = await dialog.showMessageBox(mainWindow!, {
-    type: 'warning',
+  const shouldMigrate = await requestRendererDialog({
+    kind: 'confirm',
     title: '项目模板需要迁移',
     message: `检测到 ModMind ${MIGRATABLE_PROJECT_VERSION} 项目`,
     detail: `旧版 Gradle 和 Loader 模板可能无法构建。可以自动备份原配置并迁移到 ${CURRENT_PROJECT_VERSION}；源码和自定义入口不会被覆盖`,
-    buttons: [`自动迁移到 ${CURRENT_PROJECT_VERSION}`, '暂不迁移'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true
+    confirmLabel: `自动迁移到 ${CURRENT_PROJECT_VERSION}`,
+    cancelLabel: '暂不迁移'
   })
-  if (choice.response !== 0) return project
+  if (!shouldMigrate) return project
   let migrationProject = project
   if (project.loader === 'quilt' && !project.qslVersion) {
     const compatibility = await requireLoaderCatalog().resolve(project.loader, project.minecraftVersion)
     migrationProject = { ...project, qslVersion: compatibility.qslVersion }
   }
   const result = await migrateProjectVersion112(migrationProject, copyBundledGradleWrapper)
-  await dialog.showMessageBox(mainWindow!, {
-    type: 'info',
+  await requestRendererDialog({
+    kind: 'info',
     title: '项目迁移完成',
     message: `项目已迁移到 ModMind ${CURRENT_PROJECT_VERSION}`,
     detail: `旧配置已备份到 ${path.relative(project.path, result.backupDirectory)}`,
-    buttons: ['确定']
+    confirmLabel: '知道了'
   })
   return result.project
+}
+
+async function readAvailableProjectForOpening(root: string): Promise<ProjectInfo | null> {
+  const preview = await readProjectInfo(root) ?? await readLegacyModtoolProject(root)
+  if (!preview) return null
+  if (!preview.draft) studios().require(preview)
+  return (await convertLegacyModtoolProject(root)).project ?? preview
 }
 
 const externalProjectIgnoredDirectories = new Set(['node_modules', '.git', '.gradle', '.idea', '.vscode', 'build', 'out', 'run', 'logs', 'target'])
@@ -3054,6 +3280,168 @@ async function scanExternalFiles(root: string): Promise<string[]> {
     }
   }
   return files
+}
+
+const studioInspectionCache = new AsyncLocalStorage<Map<string, ReturnType<typeof analyzeExistingProject>>>()
+async function inspectBuiltinStudio(kind: string, sourcePath: string): Promise<ExistingProjectAnalysis | null> {
+  const cache = studioInspectionCache.getStore()
+  let pending = cache?.get(sourcePath)
+  if (!pending) { pending = analyzeExistingProject(sourcePath); cache?.set(sourcePath, pending) }
+  const { analysis } = await pending
+  return (analysis.inferred.kind ?? 'mod') === kind ? analysis : null
+}
+async function inspectStudioSource(sourcePath: string): Promise<ExistingProjectAnalysis> {
+  return studioInspectionCache.run(new Map(), () => studios().inspectExisting(sourcePath))
+}
+const studioAdoptionBackground = new AsyncLocalStorage<boolean>()
+async function isExtractedProjectSource(sourcePath: string): Promise<boolean> {
+  const temporaryRoot = await fs.realpath(app.getPath('temp'))
+  const relative = path.relative(temporaryRoot, await fs.realpath(sourcePath))
+  return !relative.startsWith('..') && !path.isAbsolute(relative) && relative.split(path.sep)[0].startsWith('modmind-import-')
+}
+async function adoptStudioProject(input: ExistingProjectAdoptInput): Promise<ProjectInfo | null> {
+  if (!studioAdoptionBackground.getStore()) assertProjectSwitchAllowed()
+  if (!input || typeof input.sourcePath !== 'string') throw new Error('接管参数无效')
+  const sourcePath = await fs.realpath(input.sourcePath)
+  const legacy = await readLegacyModtoolProject(sourcePath)
+  if (legacy) {
+    const record = studios().require(legacy)
+    const converted = (await convertLegacyModtoolProject(sourcePath)).project!
+    converted.studioId = record.definition.id
+    converted.studioName = record.definition.name
+    await fs.writeFile(path.join(sourcePath, currentProjectManifest), JSON.stringify(converted, null, 2), 'utf8')
+    if (!studioAdoptionBackground.getStore()) currentProject = converted
+    await rememberRecentProject(converted)
+    return converted
+  }
+  if (await readProjectInfo(sourcePath)) throw new Error('此目录已是 ModMind 项目，请直接打开')
+  const analysis = await inspectStudioSource(sourcePath)
+  const selected = studios().select({ ...input, studioId: input.studioId ?? analysis.inferred.studioId, kind: input.kind ?? analysis.inferred.kind })
+  const name = validateProjectNameInput(input.name)
+  const checked = { ...input, sourcePath: analysis.sourcePath, studioId: selected.definition.id, kind: selected.definition.projectKind,
+    name, namespace: slugify(input.namespace), studioValues: selected.definition.creation ? studioFormValues(selected.definition, { ...input, name }) : input.studioValues }
+  const builtin = featurePluginService.list().find(entry => entry.id === selected.pluginId)?.builtin
+  if (!builtin && (analysis.kind !== 'complete' || await isExtractedProjectSource(sourcePath))) throw new Error('此工作台仅支持直接接管完整项目文件夹')
+  const plan = await studios().adoptExisting(checked, analysis)
+  let project: ProjectInfo
+  if (plan.mode === 'host-managed') {
+    if (!builtin) throw new Error('自定义工作台应返回 in-place 接管计划')
+    if (!plan.project) return null
+    project = plan.project
+  } else {
+    project = { ...checked, studioName: selected.definition.name, path: analysis.sourcePath, createdAt: new Date().toISOString(), toolDataDirectory: '.modmind', projectVersion: CURRENT_PROJECT_VERSION }
+    await fs.writeFile(path.join(project.path, currentProjectManifest), JSON.stringify(project, null, 2), { encoding: 'utf8', flag: 'wx' })
+  }
+  project.studioId = selected.definition.id
+  project.studioName = selected.definition.name
+  project.studioValues = checked.studioValues
+  studios().require(project)
+  await fs.writeFile(path.join(project.path, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
+  const verified = await readProjectInfo(project.path)
+  if (!verified || verified.studioId !== selected.definition.id) throw new Error('接管项目信息回读失败')
+  if (!studioAdoptionBackground.getStore()) currentProject = verified
+  await rememberRecentProject(verified)
+  return verified
+}
+
+async function adoptBuiltinStudio(input: ExistingProjectAdoptInput): Promise<ProjectInfo | null> {
+    if (!studioAdoptionBackground.getStore()) assertProjectSwitchAllowed()
+    if (!input || typeof input.sourcePath !== 'string') throw new Error('导入参数无效')
+    const legacyConversion = await convertLegacyModtoolProject(input.sourcePath)
+    if (legacyConversion.project) {
+      if (!studioAdoptionBackground.getStore()) currentProject = legacyConversion.project
+      await rememberRecentProject(legacyConversion.project)
+      return legacyConversion.project
+    }
+    if (!isJavaLoader(input.loader) && !isServerPluginPlatform(input.loader)) throw new Error('现有项目识别支持 Java 模组和服务端插件工程')
+    const { analysis, files } = await analyzeExistingProject(input.sourcePath)
+    const name = validateProjectNameInput(input.name)
+    const namespace = slugify(input.namespace)
+    const minecraftVersion = input.minecraftVersion.trim()
+    if (!/^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-SNAPSHOT)?$/.test(minecraftVersion)) throw new Error('目标版本格式无效')
+    if (analysis.kind === 'modpack') {
+      let projectPath = analysis.sourcePath
+      const isTemporaryImport = await isExtractedProjectSource(analysis.sourcePath)
+      if (isTemporaryImport) {
+        const destination = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
+        if (destination.canceled || !destination.filePaths[0]) return null
+        projectPath = path.join(destination.filePaths[0], namespace)
+        if (await pathExists(projectPath)) throw new Error('目标项目目录已经存在，请选择其他位置或名称')
+      }
+      return adoptExternalModpackWithRetry({
+        sourcePath: analysis.sourcePath,
+        projectPath,
+        isTemporaryImport,
+        name,
+        namespace,
+        minecraftVersion,
+        loader: input.loader
+      })
+    }
+
+    const compatibility = await requireLoaderCatalog().resolve(input.loader, minecraftVersion)
+
+    let projectPath = analysis.sourcePath
+    const isTemporaryImport = await isExtractedProjectSource(analysis.sourcePath)
+    if (analysis.kind !== 'complete' || isTemporaryImport) {
+      const destination = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
+      if (destination.canceled || !destination.filePaths[0]) return null
+      projectPath = path.join(destination.filePaths[0], namespace)
+      if (await pathExists(projectPath)) throw new Error('目标项目目录已经存在，请选择其他位置或名称')
+    }
+
+    const project: ProjectInfo = {
+      name,
+      path: projectPath,
+      loader: input.loader,
+      kind: isServerPluginPlatform(input.loader) ? 'server-plugin' : 'mod',
+      studioId: input.studioId,
+      studioName: studios().select(input).definition.name,
+      studioValues: input.studioValues,
+      minecraftVersion,
+      namespace,
+      createdAt: new Date().toISOString(),
+      loaderVersion: input.loaderVersion && input.loader === analysis.inferred.loader && minecraftVersion === analysis.inferred.minecraftVersion
+        ? input.loaderVersion
+        : compatibility.loaderVersion,
+      apiVersion: compatibility.apiVersion,
+      qslVersion: compatibility.qslVersion,
+      javaVersion: compatibility.javaVersion,
+      projectVersion: CURRENT_PROJECT_VERSION,
+      toolDataDirectory: '.modmind'
+    }
+    if (analysis.kind === 'complete') {
+      if (isTemporaryImport) {
+        await copySnapshotFiles(analysis.sourcePath, projectPath)
+      }
+      await fs.writeFile(path.join(projectPath, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
+      await fs.mkdir(path.join(projectPath, '.modmind'), { recursive: true })
+    } else {
+      await fs.mkdir(projectPath)
+      try {
+        await writeProjectTemplate(project)
+        const importedFolder = analysis.kind === 'partial' ? 'imported-source' : 'imported-api'
+        const destination = path.join(projectPath, 'docs', importedFolder, slugify(analysis.sourceName))
+        const copied = await copyImportedReferences(analysis.sourcePath, destination, files)
+        const summary = [
+          '# Imported reference',
+          '',
+          `Source: ${analysis.sourcePath}`,
+          `Detected type: ${analysis.kind}`,
+          `Copied files: ${copied}`,
+          '',
+          ...analysis.reasons.map((reason) => `- ${reason}`)
+        ].join('\n')
+        await fs.writeFile(path.join(projectPath, 'docs', 'import-summary.md'), summary, 'utf8')
+      } catch (error) {
+        await fs.rm(projectPath, { recursive: true, force: true })
+        throw error
+      }
+    }
+    if (!studioAdoptionBackground.getStore()) currentProject = project
+    await rememberRecentProject(project)
+    return project
+
 }
 
 async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: ExistingProjectAnalysis; files: string[] }> {
@@ -3136,32 +3524,30 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
       : descriptor && /mods\.toml$/i.test(descriptor) ? 'forge' : 'fabric'
   let name = path.basename(root)
   let namespace = slugify(name)
-  let minecraftVersion = '1.21.1'
-  const importantTextFiles = [...new Set([...buildFiles, ...(descriptor ? [descriptor] : []), ...(files.includes('.build-target-props.json') ? ['.build-target-props.json'] : [])])]
+  const versionFiles = files.filter(file => /(?:^|\/)(?:gradle\.properties|build\.gradle(?:\.kts)?|fabric\.mod\.json|quilt\.mod\.json|mods\.toml|neoforge\.mods\.toml|\.build-target-props\.json)$/i.test(file))
+  const importantTextFiles = [...new Set([...buildFiles, ...versionFiles])]
   const importantContents: Array<{ path: string; content: string }> = []
+  let incompleteVersionMetadata = false
   for (const relative of importantTextFiles) {
-    const content = await fs.readFile(path.join(root, ...relative.split('/')), 'utf8').catch(() => '')
+    const absolute = path.join(root, ...relative.split('/'))
+    const stat = await fs.stat(absolute).catch(() => null)
+    if (!stat?.isFile() || stat.size > 1024 * 1024) { incompleteVersionMetadata = true; continue }
+    const content = await fs.readFile(absolute, 'utf8').catch(() => { incompleteVersionMetadata = true; return '' })
     if (content) importantContents.push({ path: relative, content })
   }
   const gradlePropertiesFile = importantContents.find((entry) => /(?:^|\/)gradle\.properties$/i.test(entry.path))
   const properties = gradlePropertiesFile ? parseGradleProperties(gradlePropertiesFile.content) : {}
-  const detectedLoader = inferGradleLoader(importantContents, descriptor)
+  const detectedLoader = inferGradleLoader(importantContents.filter(entry => buildFiles.includes(entry.path) || entry.path === descriptor), descriptor)
   loader = detectedLoader.loader
   if (properties.mod_name && !properties.mod_name.includes('${')) name = properties.mod_name.trim()
   if (properties.mod_id && !properties.mod_id.includes('${')) namespace = slugify(properties.mod_id)
-  const explicitMinecraftVersion = properties.minecraft_version ?? properties.parchment_minecraft_version
-  if (explicitMinecraftVersion) minecraftVersion = extractMinecraftVersion(explicitMinecraftVersion) ?? minecraftVersion
   for (const { path: relative, content } of importantContents) {
-    if (!content) continue
-    if (!explicitMinecraftVersion) minecraftVersion = extractMinecraftVersion(content) ?? minecraftVersion
+    if (!content || relative !== descriptor) continue
     if (/fabric\.mod\.json$/i.test(relative)) {
       try {
         const manifest = JSON.parse(content) as { id?: unknown; name?: unknown; depends?: { minecraft?: unknown } }
         if (typeof manifest.id === 'string') namespace = slugify(manifest.id)
         if (typeof manifest.name === 'string' && manifest.name.trim()) name = manifest.name.trim()
-        const dependency = manifest.depends?.minecraft
-        const dependencyText = Array.isArray(dependency) ? dependency.join(' ') : typeof dependency === 'string' ? dependency : ''
-        minecraftVersion = extractMinecraftVersion(dependencyText) ?? minecraftVersion
       } catch {
         // Keep filename-based inference when the descriptor is malformed.
       }
@@ -3173,9 +3559,6 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
         const quilt = manifest.quilt_loader
         if (typeof quilt?.id === 'string') namespace = slugify(quilt.id)
         if (typeof quilt?.metadata?.name === 'string' && quilt.metadata.name.trim()) name = quilt.metadata.name.trim()
-        const minecraft = quilt?.depends?.find((entry) => entry.id === 'minecraft')?.versions
-        const dependencyText = Array.isArray(minecraft) ? minecraft.join(' ') : typeof minecraft === 'string' ? minecraft : ''
-        minecraftVersion = extractMinecraftVersion(dependencyText) ?? minecraftVersion
       } catch {
         // Keep filename-based inference when the descriptor is malformed.
       }
@@ -3187,6 +3570,8 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
     }
   }
 
+  const minecraftVersions = inferMinecraftVersions(importantContents)
+  const minecraftVersion = !incompleteVersionMetadata && minecraftVersions.length === 1 ? minecraftVersions[0] : ''
   const reasons = kind === 'complete' ? ['Complete project detected; ModMind metadata will be added in place.'] : kind === 'partial' ? ['The source or build structure is incomplete.', 'A new buildable project will be created with references copied to docs/imported-source.'] : ['No buildable source was detected; the content appears to be API documentation.', 'A new buildable project will be created with references copied to docs/imported-api.']
   return {
     files,
@@ -3199,6 +3584,7 @@ async function analyzeExistingProject(sourcePath: string): Promise<{ analysis: E
       documentCount: documentFiles.length,
       detectedFiles: notable,
       reasons,
+      minecraftVersions,
       inferred: { name, loader, minecraftVersion, namespace, ...(detectedLoader.loaderVersion ? { loaderVersion: detectedLoader.loaderVersion } : {}) }
     }
   }
@@ -3292,9 +3678,9 @@ async function performExternalModpackAdoption(context: ExternalModpackAdoptionCo
     throw error
   }
 
-  currentProject = project
+  if (!studioAdoptionBackground.getStore()) currentProject = project
   await rememberRecentProject(project)
-  emitProjectChanged()
+  if (!studioAdoptionBackground.getStore()) emitProjectChanged()
   return project
 }
 
@@ -3539,19 +3925,18 @@ async function copySnapshotFiles(source: string, destination: string, ignoreDire
 
 async function latestSnapshotBaseline(project: ProjectInfo): Promise<{ root: string; hashes: Record<string, string>; metadata?: Record<string, SnapshotFileMetadata> } | undefined> {
   const snapshotsRoot = path.join(project.path, projectDataDirectory(project), 'snapshots')
-  const entries = await fs.readdir(snapshotsRoot, { withFileTypes: true }).catch(() => [])
-  const candidates: Array<{ createdAt: string; root: string; manifest: SnapshotManifest }> = []
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    const directory = path.join(snapshotsRoot, entry.name)
+  let latest: { root: string; manifest: SnapshotManifest } | undefined
+  for (const info of await listSnapshotSummaries(project.path)) {
+    const directory = path.join(snapshotsRoot, info.id)
     const manifest = await fs.readFile(path.join(directory, 'snapshot.json'), 'utf8')
       .then((value) => JSON.parse(value) as SnapshotManifest)
       .catch(() => null)
     const root = path.join(directory, 'files')
-    if (!manifest || typeof manifest.createdAt !== 'string' || !snapshotManifestBelongsToProject(manifest, entry.name, project.path) || !(await pathExists(root))) continue
-    candidates.push({ createdAt: manifest.createdAt, root, manifest })
+    const rootStat = await fs.lstat(root).catch(() => null)
+    if (!manifest || typeof manifest.createdAt !== 'string' || !snapshotManifestBelongsToProject(manifest, info.id, project.path) || !rootStat?.isDirectory() || rootStat.isSymbolicLink()) continue
+    latest = { root, manifest }
+    break
   }
-  const latest = candidates.sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
   if (!latest) return undefined
 
   const hashes: Record<string, string> = {}
@@ -3618,25 +4003,10 @@ function normalizeNetworkProxyUrl(value: unknown): string {
 let agentSettingsWriteTail = Promise.resolve()
 
 async function writeAgentSettingsAtomically(stored: Record<string, unknown>): Promise<void> {
-  const target = settingsFile()
-  const temporary = `${target}.tmp-${randomUUID()}`
-  await fs.mkdir(path.dirname(target), { recursive: true })
-  try {
-    await fs.writeFile(temporary, JSON.stringify(stored, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try {
-      await fs.rename(temporary, target)
-    } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
-      if (code !== 'EEXIST' && code !== 'EPERM') throw error
-      await fs.rm(target, { force: true })
-      await fs.rename(temporary, target)
-    }
-  } finally {
-    await fs.rm(temporary, { force: true }).catch(() => undefined)
-  }
+  await writeSettingsFile(settingsFile(), stored)
 }
 
-async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
+async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSettings) => AgentSettings), validatePreferences = true): Promise<AgentSettings> {
   let resolveWrite!: (settings: AgentSettings) => void
   let rejectWrite!: (error: unknown) => void
   const result = new Promise<AgentSettings>((resolve, reject) => {
@@ -3645,14 +4015,16 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
   })
   agentSettingsWriteTail = agentSettingsWriteTail.catch(() => undefined).then(async () => {
     try {
+  const current = await readSettings(true)
+  const value = typeof input === 'function' ? input(current) : mergeAgentSettingsPatch(current, input)
   const kinds = ['codex'] as const
   const normalized: AgentSettings = {
     ...value,
     allowLongerContext: value.allowLongerContext === true,
     codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
     codexApprovalMode: normalizeAgentApprovalMode(value.codexApprovalMode),
-    allowBuildScriptChanges: value.allowBuildScriptChanges !== false,
-    preferLocalGradle: Boolean(value.preferLocalGradle),
+    allowBuildScriptChanges: true,
+    preferLocalGradle: false,
     gradleExecutable: typeof value.gradleExecutable === 'string' ? value.gradleExecutable.trim().slice(0, 4096) : '',
     gradleDownloadSource: value.gradleDownloadSource === 'china' || value.gradleDownloadSource === 'official' ? value.gradleDownloadSource : 'auto',
     networkProxyUrl: normalizeNetworkProxyUrl(value.networkProxyUrl),
@@ -3662,35 +4034,50 @@ async function saveAgentSettings(value: AgentSettings): Promise<AgentSettings> {
     notificationsEnabled: value.notificationsEnabled !== false
   }
   let existingAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
+  let existingAgentEntries: AgentSettings['externalAgents'] = {}
   try {
-    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>> }
+    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { externalAgents?: AgentSettings['externalAgents']; encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>> }
+    existingAgentEntries = existing.externalAgents ?? {}
     existingAgentKeys = existing.encryptedAgentKeys ?? {}
     if (existing.encryptedKey && existing.externalAgentProvider && !existingAgentKeys[existing.externalAgentProvider]) {
       existingAgentKeys[existing.externalAgentProvider] = existing.encryptedKey
     }
-  } catch {
-    // First save has no existing settings file.
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('原配置当前无法读取，已保留原文件；请重试保存', { cause: error })
   }
   const agentEntries: NonNullable<AgentSettings['externalAgents']> = {}
   const encryptedAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
   for (const kind of kinds) {
     const entry = normalized.externalAgents?.[kind]
     if (!entry) continue
-    if (kind === 'codex') {
+    if (kind === 'codex' && validatePreferences) {
+      const existing = existingAgentEntries[kind]
       const model = entry.model?.trim() ?? ''
-      validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
-      reasoningSelectionEffort(entry.reasoningEffort ?? 'auto', undefined, selectedReasoningEfforts(model, entry.reasoningEffortOptions))
+      const contextFields = (configuration?: ExternalAgentConfiguration) => JSON.stringify([
+        configuration?.model, configuration?.modelContextWindows, configuration?.modelAutoCompactTokenLimits
+      ])
+      const existingContext = { ...existing, modelContextWindows: normalizeModelContextWindows(existing?.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(existing?.modelAutoCompactTokenLimits) }
+      if (contextFields(entry) !== contextFields(existingContext)) {
+        validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
+      }
+      const existingOptions = normalizeReasoningEffortOptions(existing?.reasoningEffortOptions)
+      const existingEffort = isReasoningEffort(existing?.reasoningEffort) && selectedReasoningEfforts(existing?.model ?? '', existingOptions).includes(existing.reasoningEffort) ? existing.reasoningEffort : undefined
+      if (entry.model !== existing?.model || entry.reasoningEffort !== existingEffort || JSON.stringify(entry.reasoningEffortOptions) !== JSON.stringify(existingOptions)) {
+        reasoningSelectionEffort(entry.reasoningEffort ?? 'auto', undefined, selectedReasoningEfforts(model, entry.reasoningEffortOptions))
+      }
     }
-    if (entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
-    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, hasStoredKey: undefined}
-    if (entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
-    else if (existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
+    if (!entry.clearApiKey && entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
+    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, clearApiKey: undefined, hasStoredKey: undefined}
+    if (!entry.clearApiKey && entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
+    else if (!entry.clearApiKey && existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
   }
   const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries }
+  delete stored.encryptedAgentKeys
+  delete stored.encryptedKey
   if (Object.keys(encryptedAgentKeys).length) stored.encryptedAgentKeys = encryptedAgentKeys
       await writeAgentSettingsAtomically(stored)
-      await pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
-      const savedSettings = await readSettings()
+      void pruneSavedBackgroundMedia(app.getPath('userData')).catch(error => console.warn('背景素材清理失败', error))
+      const savedSettings = await readSettings(true)
       const appearance = normalizeAppearance(savedSettings)
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send('settings:appearance', appearance)
@@ -4026,7 +4413,7 @@ async function migrateLegacyUserData(): Promise<void> {
   }
 }
 
-async function readSettings(): Promise<AgentSettings> {
+async function readSettings(strict = false): Promise<AgentSettings> {
   const defaults: AgentSettings = {
     codingBackend: 'quota',
     allowLongerContext: false,
@@ -4052,6 +4439,7 @@ async function readSettings(): Promise<AgentSettings> {
       model?: string
       reasoningEffort?: unknown
     }
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('配置内容需要对象值')
     let legacyApiKey = ''
     if (stored.encryptedKey && safeStorage.isEncryptionAvailable()) {
       try { legacyApiKey = safeStorage.decryptString(Buffer.from(stored.encryptedKey, 'base64')) } catch { /* Ignore an unreadable legacy credential. */ }
@@ -4092,8 +4480,8 @@ async function readSettings(): Promise<AgentSettings> {
       codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
         : 'quota',
-      allowBuildScriptChanges: stored.allowBuildScriptChanges !== false,
-      preferLocalGradle: Boolean(stored.preferLocalGradle),
+      allowBuildScriptChanges: true,
+      preferLocalGradle: false,
       gradleExecutable: typeof stored.gradleExecutable === 'string' ? stored.gradleExecutable.slice(0, 4096) : '',
       gradleDownloadSource: stored.gradleDownloadSource === 'china' || stored.gradleDownloadSource === 'official'
         ? stored.gradleDownloadSource
@@ -4104,7 +4492,8 @@ async function readSettings(): Promise<AgentSettings> {
       closeBehavior: stored.closeBehavior === 'tray' || stored.closeBehavior === 'quit' ? stored.closeBehavior : 'ask',
       notificationsEnabled: stored.notificationsEnabled !== false
     }
-  } catch {
+  } catch (error) {
+    if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('原配置当前无法读取，已保留原文件；请重试保存', { cause: error })
     settings = defaults
   }
   if (settings.externalAgents?.codex?.mode !== 'hosted' && !settings.externalAgents?.codex?.model) {
@@ -4137,10 +4526,8 @@ async function listAvailableAgentModels(kind: ExternalAgentKind, input: External
   const stored = await readSettings()
   const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
   const storedEntry = stored.externalAgents?.[kind]
-  const storedBaseUrl = storedEntry?.baseUrl ? normalizeApiBaseUrl(storedEntry.baseUrl) : ''
   const native = await readLocalCodexConfig().catch(() => null)
-  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
-  const apiKey = input.apiKey?.trim() || (baseUrl === storedBaseUrl ? storedEntry?.apiKey?.trim() ?? '' : '') || (baseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
+  const apiKey = input.apiKey?.trim() || (sameApiBaseUrl(baseUrl, storedEntry?.baseUrl) ? storedEntry?.apiKey?.trim() ?? '' : '') || (sameApiBaseUrl(baseUrl, native?.baseUrl) ? await readLocalCodexApiKey() : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
   return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
@@ -4151,44 +4538,28 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
   const settings = await readSettings()
   const existingConfiguration = settings.externalAgents?.[kind]
   const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
-  const existingBaseUrl = existingConfiguration?.baseUrl ? normalizeApiBaseUrl(existingConfiguration.baseUrl) : ''
-  const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && targetBaseUrl !== existingBaseUrl ? await readLocalCodexConfig().catch(() => null) : null
-  const nativeBaseUrl = native?.baseUrl ? normalizeApiBaseUrl(native.baseUrl) : ''
+  const sameConnection = sameApiBaseUrl(targetBaseUrl, existingConfiguration?.baseUrl)
+  const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && !sameConnection ? await readLocalCodexConfig().catch(() => null) : null
   const apiKey = configuration?.apiKey?.trim()
-    || (targetBaseUrl === existingBaseUrl ? existingConfiguration?.apiKey?.trim() : '')
-    || (targetBaseUrl === nativeBaseUrl ? await readLocalCodexApiKey() : '')
+    || (sameConnection ? existingConfiguration?.apiKey?.trim() : '')
+    || (sameApiBaseUrl(targetBaseUrl, native?.baseUrl) ? await readLocalCodexApiKey().catch(() => '') : '')
   const nextConfiguration = {
     ...existingConfiguration,
     ...configuration,
     executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
-    apiKey: apiKey || ''
+    apiKey: apiKey || '',
+    clearApiKey: !apiKey && !sameConnection
   }
   if (nextConfiguration.mode === 'hosted') {
-    if (!nextConfiguration.apiKey) throw new Error('请填写 API Key；更改 Base URL 后不会复用旧地址的凭证')
     nextConfiguration.baseUrl = targetBaseUrl
-    try {
-      const discovered = await discoverAvailableModels(targetBaseUrl, nextConfiguration.apiKey, '无法读取当前服务的模型列表')
-      nextConfiguration.baseUrl = discovered.baseUrl
-      if (discovered.models.length && (targetBaseUrl !== existingBaseUrl || !discovered.models.some(model => model.id === nextConfiguration.model))) {
-        nextConfiguration.model = discovered.models[0].id
-        nextConfiguration.reasoningEffort = undefined
-      }
-    } catch (error) {
-      // Model-list support is optional; keep manually supplied IDs usable offline.
-      if (!nextConfiguration.model?.trim()) throw error
-    }
-    if (!nextConfiguration.model?.trim()) throw new Error('服务没有返回可用模型，请手动输入模型 ID')
-    const baseUrl = normalizeApiBaseUrl(nextConfiguration.baseUrl ?? '')
-    reasoningSelectionEffort(nextConfiguration.reasoningEffort ?? 'auto', modelReasoningFor(baseUrl, nextConfiguration.apiKey?.trim() ?? '', nextConfiguration.model?.trim() ?? ''), selectedReasoningEfforts(nextConfiguration.model?.trim() ?? '', nextConfiguration.reasoningEffortOptions))
   }
-  const current = await readSettings()
-  const next: AgentSettings = {
-    ...current,
+  const next: AgentSettingsPatch = {
     codingBackend: kind,
-    externalAgents: { ...current.externalAgents, [kind]: nextConfiguration }
+    externalAgents: { [kind]: nextConfiguration }
   }
-  const saved = await saveAgentSettings(next)
-  return configureExternalAgentProvider(kind, saved)
+  // Persist first; availability, model discovery and CLI detection belong to refresh/run.
+  const saved = await saveAgentSettings(next, false)
+  return { kind, detail: '连接已保存到本地设置', settings: publicAgentSettings(saved) }
 }
 
 async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {
@@ -4250,8 +4621,7 @@ async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
   } else {
     const catalog = await getQuotaModelCatalog(force)
     if (catalog.stale) throw new Error(catalog.message || '无法读取模型目录')
-    const available = catalog.models.filter(m => m.available && (m.billing === 'quota' || m.optionKey === catalog.currentOptionKey))
-    return modelReasoningCatalog.enrich(available.map(({ id, reasoning }) => ({ id, reasoning })), openAiV1BaseUrl(credentials.baseUrl))
+    return modelReasoningCatalog.enrich(catalog.models, openAiV1BaseUrl(credentials.baseUrl))
   }
   if (models.length && !await quotaRouter().recoveryRequired()) await reconcileQuotaModelPreferences(credentials, false, models, revision)
   return models
@@ -4275,7 +4645,7 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
       endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/${suffix}`
       let response: Response
       try {
-        response = await fetch(endpoint.toString(), {
+        response = await networkFetch(endpoint.toString(), {
           headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
           signal: AbortSignal.timeout(20_000)
         })
@@ -4328,27 +4698,31 @@ async function resolveSafeCodingTarget(relativePath: string, project: ProjectInf
 
 async function createProjectSnapshot(label: string, metadata: { taskId?: string } = {}, projectOverride?: ProjectInfo): Promise<SnapshotInfo> {
   const project = projectOverride ?? requireProject()
-  const id = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
-  const snapshotPath = path.join(project.path, projectDataDirectory(project), 'snapshots', id, 'files')
-  const copied = await copySnapshotFilesIncremental(
-    project.path,
-    snapshotPath,
-    ignoreSnapshotDirectory,
-    await latestSnapshotBaseline(project)
-  )
-  const fileCount = copied.fileCount
-  const info: SnapshotInfo = { id, label, createdAt: new Date().toISOString(), fileCount }
-  const manifest: SnapshotManifest = {
-    ...info,
-    files: Object.keys(copied.hashes).sort(),
-    hashes: copied.hashes,
-    fileMetadata: copied.metadata,
-    taskId: metadata.taskId,
-    projectPath: project.path
-  }
-  await fs.writeFile(path.join(path.dirname(snapshotPath), 'snapshot.json'), JSON.stringify(manifest, null, 2), 'utf8')
-  void publishSnapshotStorage(project.path).catch(() => undefined)
-  return info
+  return withProjectMutation(project.path, async () => {
+    const id = `${new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')}-${randomUUID().slice(0, 8)}`
+    const snapshotPath = path.join(project.path, projectDataDirectory(project), 'snapshots', id, 'files')
+    const copied = await copySnapshotFilesIncremental(
+      project.path,
+      snapshotPath,
+      ignoreSnapshotDirectory,
+      await latestSnapshotBaseline(project)
+    )
+    const fileCount = copied.fileCount
+    const info: SnapshotInfo = { id, label, createdAt: new Date().toISOString(), fileCount }
+    const manifest: SnapshotManifest = {
+      ...info,
+      files: Object.keys(copied.hashes).sort(),
+      hashes: copied.hashes,
+      fileMetadata: copied.metadata,
+      taskId: metadata.taskId,
+      projectPath: project.path
+    }
+    await fs.writeFile(path.join(path.dirname(snapshotPath), 'snapshot.json'), JSON.stringify(manifest, null, 2), 'utf8')
+    invalidateSnapshotCatalog(project.path, id)
+    invalidateSnapshotStorage(project.path, id)
+    void publishSnapshotStorage(project.path).catch(() => undefined)
+    return info
+  })
 }
 
 async function readGiteeBuildSettings(): Promise<GiteeBuildSettings> {
@@ -4672,7 +5046,10 @@ async function migrateProject(input: ProjectMigrationInput): Promise<ProjectMigr
 
 async function readSnapshotInfo(project: ProjectInfo, id: string): Promise<SnapshotInfo | null> {
   const target = path.join(project.path, projectDataDirectory(project), 'snapshots', id, 'snapshot.json')
-  return await fs.readFile(target, 'utf8').then((value) => JSON.parse(value) as SnapshotInfo).catch(() => null)
+  return await fs.readFile(target, 'utf8').then((value) => {
+    const manifest = JSON.parse(value) as SnapshotInfo
+    return { id: manifest.id, label: manifest.label, createdAt: manifest.createdAt, fileCount: manifest.fileCount }
+  }).catch(() => null)
 }
 
 function sendAiProgress(event: Electron.IpcMainInvokeEvent, item: PipelineEvent, sessionId?: string, projectPath?: string, runId?: string): void {
@@ -4738,7 +5115,7 @@ function sendAiOutput(
   const actualBackend = options?.backend ?? run?.backend
   const terminalError = kind === 'error' && options?.terminal !== false
   const notice = options?.notice ?? ((kind === 'error' || kind === 'warning') && options?.terminal === true ? aiNoticeDetails(kind, safeContent) : undefined)
-  const payload: AiOutputEvent = { kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(run?.conversationId ? { conversationId: run.conversationId } : {}), ...(run?.generation !== undefined ? { generation: run.generation } : {}), ...(run?.turnId ? { turnId: run.turnId } : {}), ...(options?.itemId ? { itemId: options.itemId } : {}), ...(options?.streamId ? { streamId: options.streamId } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
+  const payload: AiOutputEvent = { ...(run?.surface === 'inspiration' ? { inspirationFeatures: run.inspirationFeatures } : {}), kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(run?.conversationId ? { conversationId: run.conversationId } : {}), ...(run?.generation !== undefined ? { generation: run.generation } : {}), ...(run?.turnId ? { turnId: run.turnId } : {}), ...(options?.itemId ? { itemId: options.itemId } : {}), ...(options?.streamId ? { streamId: options.streamId } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
   if (kind !== 'delta') {
     if (notice) payload.notice = notice
     diagnosticJournal.record({
@@ -4784,6 +5161,7 @@ interface AgentTodoItem {
 const MAX_READ_ONLY_AI_TASKS_PER_PROJECT = 4
 
 interface ActiveAiRun {
+  inspirationFeatures?: import('../shared/inspirationFeatures').InspirationFeatures
   id: string
   senderId: number
   startedAt: string
@@ -4889,7 +5267,7 @@ async function withAiRun<T>(run: ActiveAiRun, controller: AbortController, opera
     aiCancelRequests.delete(run.id)
     activeAiRuns.delete(run.id)
     if (run.surface === 'workspace') {
-      void readProjectInfo(run.projectPath).then(project => { if (project) scheduleSnapshotStorageMaintenance(project) }).catch(() => undefined)
+      void publishSnapshotStorage(run.projectPath).catch(() => undefined)
     }
     const route = recentAiRunRoutes.get(run.id)
     const timer = setTimeout(() => { if (recentAiRunRoutes.get(run.id) === route) recentAiRunRoutes.delete(run.id) }, 60_000)
@@ -4899,9 +5277,9 @@ async function withAiRun<T>(run: ActiveAiRun, controller: AbortController, opera
 
 async function resolveAiProject(options?: AiCreateCodeOptions): Promise<ProjectInfo> {
   const requestedPath = options?.projectPath?.trim()
-  if (!requestedPath) return requireProject()
-  const project = await readProjectInfo(path.resolve(requestedPath))
+  const project = requestedPath ? await readProjectInfo(path.resolve(requestedPath)) : requireProject()
   if (!project) throw new Error('AI 任务指定的项目不存在或不是有效 ModMind 项目')
+  if (!project.draft) studios().require(project)
   return project
 }
 
@@ -5062,6 +5440,8 @@ async function stopRemoteClient(persist = false): Promise<RemoteConnectionState>
 }
 
 function assertProjectSwitchAllowed(): void {
+  if (featurePluginService.hasBusyRuntime()) throw new Error('功能测试会话正在准备或运行，请先停止后再切换项目')
+  if (optionalTestingService()?.isolatedServerScenarios?.isBusy()) throw new Error('隔离服务端测试正在运行，请先取消后再切换项目')
   if (optionalTestingService()?.localTestService?.isBusy()) throw new Error('本机测试正在准备或运行，请先停止后再切换项目')
   if (optionalTestingService()?.localServerManager?.isBusy()) throw new Error('本机服务端正在准备或运行，请先停止后再切换项目')
 }
@@ -5212,13 +5592,14 @@ async function listSnapshotManagedFiles(root: string): Promise<string[]> {
   return listManagedFiles(root, ignoreSnapshotDirectory)
 }
 
-async function restoreSnapshotFilesExact(snapshotRoot: string, destinationRoot: string, expectedFiles: string[]): Promise<void> {
+async function restoreSnapshotFilesExact(snapshotRoot: string, destinationRoot: string, expectedFiles: string[], hashes?: Record<string, string>): Promise<void> {
   await restoreManagedTreeExact(
     snapshotRoot,
     destinationRoot,
     expectedFiles,
     ignoreSnapshotDirectory,
-    (source, destination) => copySnapshotFiles(source, destination, ignoreSnapshotDirectory)
+    (source, destination) => copySnapshotFiles(source, destination, ignoreSnapshotDirectory),
+    hashes
   )
 }
 
@@ -5226,6 +5607,8 @@ async function readSnapshotManifest(project: ProjectInfo, id: string): Promise<{
   const validId = validateSnapshotId(id)
   const directory = path.join(project.path, projectDataDirectory(project), 'snapshots', validId)
   const root = path.join(directory, 'files')
+  assertAgentWriteAllowed(project.path, path.relative(project.path, root))
+  await migrateSelectedSnapshotMetadata(project, validId)
   const manifest = await fs.readFile(path.join(directory, 'snapshot.json'), 'utf8')
     .then((value) => JSON.parse(value) as SnapshotManifest)
     .catch(() => null)
@@ -5243,46 +5626,49 @@ async function restoreSnapshotTree(project: ProjectInfo, snapshot: { manifest: S
   if (!expectedFiles.some((file) => manifestNames.has(file))) {
     throw new Error('快照缺少 ModMind 项目清单，无法恢复')
   }
-  await restoreSnapshotFilesExact(snapshot.root, project.path, expectedFiles)
+  await restoreSnapshotFilesExact(snapshot.root, project.path, expectedFiles, snapshot.manifest.hashes)
 }
 
 async function restoreProjectSnapshot(id: string, projectPath?: string): Promise<SnapshotRestoreResult> {
   assertProjectSwitchAllowed()
   const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
   if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-  if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('快照恢复只能作用于当前前台项目')
-  assertProjectMutationAllowed(project.path, '恢复快照')
-  const activeAiTask = await readActiveAiTask(project)
-  const agentProject = aiProjectContext.getStore()
-  if (activeAiTask && (!agentProject || !sameProjectPath(agentProject.path, project.path))) {
-    throw new Error('存在待处理的 AI 恢复任务，请先继续任务或恢复 AI 修改前状态')
-  }
-  const runtime = await requireMinecraftRuntime().refresh()
-  if (runtime.running || !['idle', 'stopped', 'error'].includes(runtime.stage)) {
-    throw new Error('Minecraft 或构建任务正在运行，请停止后再恢复快照')
-  }
-
-  const selected = await readSnapshotManifest(project, id)
-  const backup = await createProjectSnapshot(`恢复 ${selected.manifest.label} 前的自动备份`)
-  const rollback = await readSnapshotManifest(project, backup.id)
-  try {
-    await restoreSnapshotTree(project, selected)
-    const restoredProject = await readProjectInfo(project.path)
-    if (!restoredProject) throw new Error('恢复后的项目清单无效')
-    currentProject = restoredProject
-    await rememberRecentProject(restoredProject)
-    return { snapshot: selected.manifest, backup, project: restoredProject }
-  } catch (error) {
-    try {
-      await restoreSnapshotTree(project, rollback)
-      currentProject = project
-    } catch (rollbackError) {
-      throw new Error(
-        `快照恢复失败，自动回滚也失败。安全备份 ${backup.id} 已保留。\n恢复错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
-      )
+  return withProjectMutation(project.path, async () => {
+    if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('快照恢复只能作用于当前前台项目')
+    assertProjectMutationAllowed(project.path, '恢复快照')
+    const activeAiTask = await readActiveAiTask(project)
+    const agentProject = aiProjectContext.getStore()
+    if (activeAiTask && (!agentProject || !sameProjectPath(agentProject.path, project.path))) {
+      throw new Error('存在待处理的 AI 恢复任务，请先继续任务或恢复 AI 修改前状态')
     }
-    throw new Error(`快照恢复失败，已自动回滚到操作前状态：${error instanceof Error ? error.message : String(error)}`)
-  }
+    const runtime = await requireMinecraftRuntime().refresh()
+    if (runtime.running || !['idle', 'stopped', 'error'].includes(runtime.stage)) {
+      throw new Error('Minecraft 或构建任务正在运行，请停止后再恢复快照')
+    }
+
+    const selected = await readSnapshotManifest(project, id)
+    const backup = await createProjectSnapshot(`恢复 ${selected.manifest.label} 前的自动备份`)
+    const rollback = await readSnapshotManifest(project, backup.id)
+    try {
+      await restoreSnapshotTree(project, selected)
+      const restoredProject = await readProjectInfo(project.path)
+      if (!restoredProject) throw new Error('恢复后的项目清单无效')
+      currentProject = restoredProject
+      await rememberRecentProject(restoredProject)
+      const { id: snapshotId, label, createdAt, fileCount } = selected.manifest
+      return { snapshot: { id: snapshotId, label, createdAt, fileCount }, backup, project: restoredProject }
+    } catch (error) {
+      try {
+        await restoreSnapshotTree(project, rollback)
+        currentProject = project
+      } catch (rollbackError) {
+        throw new Error(
+          `快照恢复失败，自动回滚也失败。安全备份 ${backup.id} 已保留。\n恢复错误：${error instanceof Error ? error.message : String(error)}\n回滚错误：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+        )
+      }
+      throw new Error(`快照恢复失败，已自动回滚到操作前状态：${error instanceof Error ? error.message : String(error)}`)
+    }
+  })
 }
 
 function modpackMigrationDirectory(project: ProjectInfo, migrationId?: string): string {
@@ -5333,28 +5719,21 @@ async function undoModpackMigration(project: ProjectInfo, migrationId: string): 
 async function deleteProjectSnapshot(id: string, projectPath?: string): Promise<SnapshotInfo[]> {
   const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
   if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-  assertProjectMutationAllowed(project.path, '删除快照')
-  const selected = await readSnapshotManifest(project, id)
-  const migration = (await listModpackMigrationRecords(project)).find((record) =>
-    (record.status !== 'undone' && record.sourceSnapshotId === selected.manifest.id)
-    || record.preUndoSnapshotId === selected.manifest.id)
-  if (migration) throw new Error(`该快照是迁移 ${migration.id} 的恢复依据，不能从普通快照列表删除`)
-  const active = await readActiveAiTask(project)
-  if (active?.snapshotId === selected.manifest.id) throw new Error('不能删除当前 AI 恢复任务依赖的快照')
-  await fs.rm(path.dirname(selected.root), { recursive: true, force: true })
-  void publishSnapshotStorage(project.path).catch(() => undefined)
-  const root = path.join(project.path, projectDataDirectory(project), 'snapshots')
-  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => [])
-  const snapshots: SnapshotInfo[] = []
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    try {
-      snapshots.push(JSON.parse(await fs.readFile(path.join(root, entry.name, 'snapshot.json'), 'utf8')) as SnapshotInfo)
-    } catch {
-      // Ignore incomplete snapshots.
-    }
-  }
-  return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return withProjectMutation(project.path, async () => {
+    assertProjectMutationAllowed(project.path, '删除快照')
+    const selected = await readSnapshotManifest(project, id)
+    const migration = (await listModpackMigrationRecords(project)).find((record) =>
+      (record.status !== 'undone' && record.sourceSnapshotId === selected.manifest.id)
+      || record.preUndoSnapshotId === selected.manifest.id)
+    if (migration) throw new Error(`该快照是迁移 ${migration.id} 的恢复依据，不能从普通快照列表删除`)
+    const active = await readActiveAiTask(project)
+    if (active?.snapshotId === selected.manifest.id) throw new Error('不能删除当前 AI 恢复任务依赖的快照')
+    await fs.rm(path.dirname(selected.root), { recursive: true, force: true })
+    invalidateSnapshotCatalog(project.path, selected.manifest.id)
+    invalidateSnapshotStorage(project.path, selected.manifest.id)
+    void publishSnapshotStorage(project.path).catch(() => undefined)
+    return listSnapshotSummaries(project.path)
+  })
 }
 
 
@@ -5396,12 +5775,32 @@ async function previewModpackMigrationForAgent(project: ProjectInfo, input: Reco
 async function applyModpackMigrationForAgent(project: ProjectInfo, input: Record<string, unknown>): Promise<ModpackMigrationCreateResult> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').applyModpackMigrationForAgent(project, input) }
 
 
-function featureAgentHandlers(project: ProjectInfo, signal: AbortSignal, event?: import('electron').IpcMainInvokeEvent, automaticFeatures = false): Pick<ExternalAgentBridgeHandlers, 'featureCatalog' | 'featureTools' | 'featureInvoke' | 'featureRecommend' | 'featureInstallMode'> {
+function featureAgentHandlers(project: ProjectInfo, signal: AbortSignal, event?: import('electron').IpcMainInvokeEvent, automaticFeatures = false): Pick<ExternalAgentBridgeHandlers, 'featureCatalog' | 'featureTools' | 'featureInvoke' | 'featureRecommend' | 'featureInstallMode' | 'studioInspect' | 'studioAdopt'> {
+  const source = async (input: Record<string, unknown>): Promise<string> => {
+    signal.throwIfAborted()
+    if (typeof input.sourcePath !== 'string' || !input.sourcePath.trim() || path.isAbsolute(input.sourcePath)) throw new Error('请提供当前项目内的相对目录')
+    const root = await fs.realpath(project.path), target = await fs.realpath(resolveProjectPathFor(project, input.sourcePath))
+    const relative = path.relative(root, target)
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !(await fs.stat(target)).isDirectory()) throw new Error('接管源必须是当前项目内的子目录，不能越过项目边界')
+    return target
+  }
   return {
-    featureCatalog: async () => featureStoreService?.agentCatalog() ?? featurePluginService.catalog(),
+    studioInspect: async input => inspectStudioSource(await source(input)),
+    studioAdopt: async input => {
+      const sourcePath = await source(input)
+      assertProjectMutationAllowed(project.path, '接管项目子目录')
+      assertAgentWriteAllowed(project.path, path.relative(await fs.realpath(project.path), path.join(sourcePath, currentProjectManifest)))
+      const analysis = await inspectStudioSource(sourcePath)
+      if (analysis.kind !== 'complete') throw new Error('MCP 接管只支持完整项目文件夹；压缩包、整合包和参考资料请使用项目页接管入口')
+      const selected = studios().select({ ...analysis.inferred, ...input } as ProjectCreateInput)
+      if (analysis.studio?.id !== selected.definition.id) throw new Error('工作台与识别结果不匹配')
+      const projectInfo = await studioAdoptionBackground.run(true, () => adoptStudioProject({ ...analysis.inferred, ...input, sourcePath } as ExistingProjectAdoptInput))
+      return { status: 'verified', project: projectInfo, activeProjectPath: project.path }
+    },
+    featureCatalog: async () => (featureStoreService?.agentCatalog() ?? featurePluginService.catalog()).filter(entry => featureDefinitionApplies(entry.manifest, project)),
     featureInstallMode: automaticFeatures ? 'automatic' : 'manual',
     featureRecommend: input => featureStoreService.recommend(input, automaticFeatures, signal),
-    featureTools: async surface => featurePluginService.tools(surface),
+    featureTools: async surface => featurePluginService.tools(surface, project),
     featureInvoke: (id, action, input, context) => aiProjectContext.run(project, async () => {
       signal.throwIfAborted()
       const window = BrowserWindow.getAllWindows().find(candidate => candidate.webContents === event?.sender) ?? mainWindow
@@ -5423,7 +5822,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     modpackModules: input => inspectModpackModules(project, input),
     modpackDelegateModule: async input => moduleTasks.start(input),
     modpackModuleTask: input => moduleTasks.read(input),
-    projectInfo: { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents') },
+    get projectInfo() { return { ...project, studio: studios().context(project, 'workbench'), integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents') } },
     serverOperation: input => localServerAgentOperation(project, input, signal),
     creationContext: input => creationContextOperation(project, input),
     projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
@@ -5491,6 +5890,10 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     javaHomeProbe: (home) => probeJavaHomeInfo(home),
     appSettingsRead: async () => publicAgentSettings(await readSettings()),
     quotaModelsRead: (force) => getQuotaModelCatalog(force),
+    quotaModelsDiscover: () => {
+      if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
+      return discoverQuotaModels()
+    },
     quotaModelSelect: (model, selection) => {
       if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
       return selectQuotaModel(model, selection)
@@ -5512,6 +5915,7 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       return withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), managedMinecraftDirectory: requireMinecraftRuntime().managedMinecraftDirectory(), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
     },
     modpackRunServerScenario: async (input) => {
+      if (input.fixture || input.operation) return requireTestingService().isolatedServerScenarioOperation(project, input, signal)
       if (!isModpackProject(project)) throw new Error('current project is not a modpack')
       const javaPath = await requireMinecraftRuntime().ensureJavaRuntime()
       if (!Array.isArray(input.steps) || !input.steps.length) throw new Error('server scenario requires at least one step')
@@ -5539,6 +5943,7 @@ async function startPublicMcpBridge(projectPath?: string): Promise<{ projectPath
   const requestedPath = projectPath?.trim() ? path.resolve(projectPath.trim()) : undefined
   const project = requestedPath ? await readProjectInfo(requestedPath) : currentProject
   if (!project) throw new Error('a ModMind project is required; pass --project <path>')
+  if (!project.draft) studios().require(project)
   if (publicMcpBridge && sameProjectPath(publicMcpBridgeProjectPath, project.path)) {
     const directory = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents')
     return { projectPath: project.path, bridgeConfigPath: path.join(directory, 'bridge.json'), mcpConfigPath: path.join(directory, 'mcp-config.json'), serverPath: path.join(directory, 'modmind-mcp-server.mjs') }
@@ -5549,7 +5954,7 @@ async function startPublicMcpBridge(projectPath?: string): Promise<{ projectPath
   await refreshExternalAgentContext(project, featurePluginService.enabled('image-studio')).catch(() => undefined)
   const controller = new AbortController()
   const handlers = await createPublicMcpBridgeHandlers(project, controller.signal)
-  const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget(), undefined, undefined, userSkillStore)
+  const bridge = new ModMindBridge(project, handlers, app.getVersion(), bundledCodexSkillsDirectory(), false, undefined, createPluginBridgeTarget(project.path), undefined, undefined, userSkillStore)
   try {
     const { mcpConfigPath, contextPath } = await bridge.start()
     await bridge.writeMcpConfig(mcpConfigPath)
@@ -5701,9 +6106,11 @@ async function restoreAiRecovery(): Promise<SnapshotInfo | null> {
   if (!active) return null
   const recovery = await getAiRecoveryInfo()
   if (!recovery.snapshot || recovery.snapshot.id !== active.snapshotId) return null
+  const selected = await readSnapshotManifest(project, active.snapshotId)
+  if (!selected.manifest.files) throw new Error('恢复快照缺少文件清单，当前项目和恢复点已保留')
   const backup = await createProjectSnapshot('Recovery backup before restoring interrupted AI task')
   const snapshotRoot = path.join(project.path, projectDataDirectory(project), 'snapshots', recovery.snapshot.id, 'files')
-  await restoreManagedPathsFromSnapshot(snapshotRoot, project.path, active.changedFiles ?? [])
+  await restoreManagedPathsFromSnapshot(snapshotRoot, project.path, active.changedFiles ?? [], { files: selected.manifest.files, hashes: selected.manifest.hashes })
   await clearActiveAiTask(project, active.taskId)
   diagnosticJournal.record({
     subsystem: 'ai',
@@ -5849,14 +6256,9 @@ Native Agent tools, terminal commands, and file tools remain available for uncov
 
 Treat completion review as advice. Never start another implementation turn only because an optional review or checklist recommends more work.`
 
-const NETEASE_CODING_WORKFLOW = `NETEASE MOD SDK GUIDANCE. Inspect existing project files first and implement promptly using the Python Mod SDK layout (behavior_pack/modMain.py, behavior_pack/<namespace>/clientSystem.py, behavior_pack/<namespace>/serverSystem.py, and resource-pack UI JSON/textures). Do not use Gradle, Java mappings, Sourcegraph, or broad web scraping. Use official NetEase documentation only for a specific unresolved API after inspecting local templates. For engineering tasks, prefer concrete edits plus modmind_validate_content and modmind_build_project when they materially help; runtime testing belongs in the official NetEase developer workbench.`
-
 function codingWorkflowPrompt(project: ProjectInfo): string {
-  if (project.kind === 'modpack') return `${MANDATORY_CODING_WORKFLOW}\n\n${MODPACK_AGENT_WORKFLOW_GUIDANCE}`
-  if (project.kind === 'server-plugin') return `${MANAGED_DOWNLOAD_POLICY}\n\n${serverPluginContext(project)}`
-  return project.loader === 'netease-pc' || project.loader === 'netease-mobile'
-    ? `${MANDATORY_CODING_WORKFLOW}\n\n${NETEASE_CODING_WORKFLOW}`
-    : MANDATORY_CODING_WORKFLOW
+  const profile = studios().context(project, 'workbench')
+  return `${MANDATORY_CODING_WORKFLOW}\n\n${profile.instructions || '领域工作台未启用；保留项目文件并在功能页恢复工作台。不得将其按其他领域处理。'}`
 }
 
 async function resourcePackAgentOperation(project: ProjectInfo, input: Record<string, unknown>): Promise<unknown> {
@@ -5949,6 +6351,7 @@ async function runExternalCodingAgent(
   const surface: AiSurface = context.surface === 'inspiration' ? 'inspiration' : 'workspace'
   const beginnerAgent = surface === 'workspace' && (context.agentMode === 'beginner' || recovery?.agentMode === 'beginner')
   const isInspiration = usesInspirationWorkflow({ ...context, ...(beginnerAgent ? { agentMode: 'beginner' } : {}) })
+  if (!project.draft && !isInspiration) studios().require(project)
   const initialCredentials = backend === 'quota' ? await readDeviceCredentials() : null
   const modelSelection = normalizeAiModelSelection(context.modelSelection ?? recovery?.modelSelection ?? initialCredentials?.sync?.bindings?.[surface])
   const frozenQuotaConfig = initialCredentials?.sync ? await readBeginnerAgentServerConfig(modelSelection) : undefined
@@ -5990,6 +6393,7 @@ async function runExternalCodingAgent(
     lifecycle.onProgress?.(item)
   }
   const inspirationFeatures = surface === 'inspiration' ? normalizeInspirationFeatures(context.inspirationFeatures) : undefined
+  const inspirationKnowledgeBaseline = inspirationFeatures?.knowledgeOrganization ? await projectKnowledgeStore().read(project.path) : []
   const savedExternalConfiguration = settings.externalAgents?.[externalBackend] ?? {}
   const runExternalConfiguration = savedExternalConfiguration
   const localCodexConfig = !usesQuota && runExternalConfiguration.mode !== 'hosted'
@@ -6014,7 +6418,7 @@ async function runExternalCodingAgent(
         await awaitWithAbort(ensureQuotaAccountReady(), preparingSignal, 'Agent 任务已停止')
         codexSetup = await prepareQuotaCodex(project, sessionScope, (progress) => {
           if (!preparingSignal.aborted) sendCodingProgress(pipelineEvent('planning', progress.title, progress.detail, progress.status))
-        }, preparingSignal, frozenQuotaConfig ?? (modelSelection ? await quotaRunConfig() : undefined))
+        }, preparingSignal, frozenQuotaConfig ?? (modelSelection ? await quotaRunConfig() : undefined), isInspiration ? 'inspiration' : 'workbench')
         throwIfAborted(preparingSignal)
         break
       } catch (error) {
@@ -6027,7 +6431,7 @@ async function runExternalCodingAgent(
     if (configured.mode === 'hosted') {
       codexSetup = await prepareConfiguredCodex(project, sessionScope, configured, (progress) => {
         sendCodingProgress(pipelineEvent('planning', progress.title, progress.detail, progress.status))
-      }, signal)
+      }, signal, isInspiration ? 'inspiration' : 'workbench')
     }
   }
   throwIfAborted(signal, 'Agent 任务已停止')
@@ -6200,9 +6604,8 @@ async function runExternalCodingAgent(
     const initialExternalPrompt = recovery
       ? `${prompt}${unifiedHandoff}\n\nContinue the unfinished action from the unified conversation context. Do not recap context or announce preparation; proceed with the next substantive action.${missingRecoveryStages.length ? ` Suggested unfinished checks: ${missingRecoveryStages.join(', ')}.` : ''} Do not repeat completed work.`
       : prompt
-    const platformPrompt = project.kind === 'server-plugin' ? `${initialExternalPrompt}\n\n${serverPluginContext(project, isInspiration)}` : project.loader === 'netease-pc' || project.loader === 'netease-mobile'
-      ? `${initialExternalPrompt}\n\n${NETEASE_CODING_WORKFLOW}`
-      : initialExternalPrompt
+    const studioProfile = studios().context(project, isInspiration ? 'inspiration' : 'workbench')
+    const platformPrompt = `${initialExternalPrompt}\n\n${studioProfile.instructions}`
     const externalRunOptions: ExternalAgentRunOptions = {
       inspirationFeatures,
       workbenchFeatures,
@@ -6235,7 +6638,7 @@ async function runExternalCodingAgent(
         refreshConfiguration: async (configurationSignal: AbortSignal) => {
           const revision = quotaConfiguration.current()
           const config = await awaitWithAbort(quotaRunConfig(), configurationSignal)
-          const prepared = await prepareQuotaCodex(project, sessionScope, undefined, configurationSignal, config)
+          const prepared = await prepareQuotaCodex(project, sessionScope, undefined, configurationSignal, config, isInspiration ? 'inspiration' : 'workbench')
           codexSetup = prepared
           throwIfAborted(configurationSignal)
           const adapterUrl = await chatCompletionsAdapter.baseUrl(config.baseUrl, `${codexProviderIdentity(config)}:${revision.sequence}`, revision.signal, config.model, config.model, config.reasoningEffort ?? null)
@@ -6256,9 +6659,9 @@ async function runExternalCodingAgent(
       project,
       workflowSourceDirectory: bundledCodexSkillsDirectory(),
       userSkillStore: isInspiration ? undefined : userSkillStore,
-      pluginTarget: createPluginBridgeTarget(),
+      pluginTarget: createPluginBridgeTarget(project.path),
       systemPrompt: isInspiration
-        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures, featurePluginService.enabled('image-studio')) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
+        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures, featurePluginService.enabled('image-studio')) + '\n' + inspirationWorkflowInstruction(`${context.turnId}:user`) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
         : `${WORKBENCH_REQUEST_GUIDANCE}\n\n${beginnerAgent ? BEGINNER_AGENT_WORKFLOW_GUIDANCE : ''}\n\n${project.draft ? `当前工程尚未创建。已记录的选择：${JSON.stringify(project.draft.target)}。结合本次对话补齐必要信息后使用 modmind_project_setup；不要手写模板或修改占位项目配置。` : codingWorkflowPrompt(project)}`,
       sessionScope,
       sessionLane: backend,
@@ -6379,7 +6782,7 @@ async function runExternalCodingAgent(
         research: input => runInspirationResearch(project, input, {
           backend: () => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile'),
           cacheRoot: path.join(app.getPath('userData'), 'decompile'), signal,
-          ensureJava: () => requireMinecraftRuntime().ensureJavaRuntimeForTools(decompileMinimumJava()),
+          ensureJava: () => requireMinecraftRuntime().ensureJavaRuntimeForTools(decompileMinimumJava(), undefined, undefined, signal),
           onProgress: detail => { sendCodingProgress(pipelineEvent('planning', '分析材料', detail, 'running')); if (isInspiration) sendAiOutput(event, 'tool', detail, sessionId, project.path, context.runId) }
         }),
         modpackModules: input => inspectModpackModules(project, input),
@@ -6398,7 +6801,7 @@ async function runExternalCodingAgent(
           if (task.result?.changedFiles.length) recordWorkflow('implementation', `Module workbench completed edits for ${task.namespace}`)
           return task
         },
-        get projectInfo() { return { ...project, integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents') } },
+        get projectInfo() { return { ...project, studio: studios().context(project, isInspiration ? 'inspiration' : 'workbench'), integrationDirectory: path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents') } },
         projectSetup: async input => {
           signal.throwIfAborted()
           const wasDraft = Boolean(project.draft)
@@ -6407,8 +6810,7 @@ async function runExternalCodingAgent(
             resolve: (loader, version) => requireLoaderCatalog().resolve(loader, version),
             scaffold: async candidate => {
               signal.throwIfAborted()
-              if (candidate.kind === 'modpack') await createModpackTemplate(candidate)
-              else await writeProjectTemplate(candidate)
+              await scaffoldStudioProject(candidate)
             }
           }, input as Pick<Required<ProjectCreateInput>, 'kind' | 'loader' | 'minecraftVersion'>)
           // Every bridge closure and runtime operation keeps this live project
@@ -6554,6 +6956,7 @@ async function runExternalCodingAgent(
            return result
         },
         modpackRunServerScenario: async (input) => {
+          if (input.fixture || input.operation) return requireTestingService().isolatedServerScenarioOperation(project, input, signal)
           runtimeUsed = false
           lastRuntimeHashes = null
           if (!isModpackProject(project)) throw new Error('current project is not a modpack')
@@ -6658,6 +7061,10 @@ async function runExternalCodingAgent(
         javaHomeProbe: (home) => probeJavaHomeInfo(home),
         appSettingsRead: async () => publicAgentSettings(await readSettings()),
         quotaModelsRead: (force) => getQuotaModelCatalog(force),
+        quotaModelsDiscover: () => {
+          if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
+          return discoverQuotaModels()
+        },
         quotaModelSelect: (model, selection) => {
           if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
           return selectQuotaModel(model, selection)
@@ -6702,6 +7109,23 @@ async function runExternalCodingAgent(
     const finalIntent = hasTargetChanges ? 'engineering' : declaredIntent ?? (changedFiles.length ? 'engineering' : 'informational')
     activeTask.changedFiles = changedFiles
     const finalResponse = completedAnswer(result).slice(-120_000)
+    if (surface === 'inspiration' && inspirationFeatures && context.conversationId && context.turnId) {
+      // Only the host's terminal answer may commit knowledge. Streaming/replay have no side effects.
+      const parsed = parseInspirationWorkflow(finalResponse, inspirationFeatures)
+      if (!parsed.complete) activeTask.state.warnings.push(parsed.error ?? '灵感回答未按结构化格式完成，不能交接或自动保存')
+      else {
+        try {
+          throwIfAborted(signal, '灵感任务已停止')
+          const currentConversation = await conversationStore.read(project.path, context.conversationId)
+          if (currentConversation?.generation !== (context.generation ?? 0)) throw new Error('对话已回退或删除，知识变更未保存')
+          await projectInspirationWorkflowStore().register(project.path, { conversationId: context.conversationId, turnId: context.turnId, generation: context.generation ?? 0 },
+            finalResponse, inspirationFeatures, context.inspirationQuestion ?? '', inspirationKnowledgeBaseline, signal)
+        } catch (error) {
+          if (signal?.aborted) throw error
+          activeTask.state.warnings.push(`项目知识未同步：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+    }
     const summary = finalResponse.slice(0, 4_000)
     const tests = [
       ...(buildUsed ? ['已使用 ModMind 托管构建'] : []),
@@ -6793,6 +7217,7 @@ async function runExternalCodingAgent(
   } finally {
     await moduleTasks.close()
     await optionalTestingService()?.playerTestService?.stopNativeForSignal(signal)
+    await featurePluginService.stopForSignal(signal)
   }
 }
 
@@ -6958,6 +7383,24 @@ async function runAutomatedE2E(): Promise<void> {
 }
 
 function registerIpc(): void {
+  registerDeveloperIpc({ appearance: async () => normalizeAppearance(await readSettings()), run: async (options, backend, sender, selection) => {
+    const settings = settingsForAiSelection(await readSettings(), backend, normalizeAiModelSelection(selection))
+    const scope = options.sessionScope!, configured = settings.externalAgents?.codex ?? {}
+    const onProgress = (progress: CodexSetupProgress): void => options.onProgress(progress.title, progress.detail, progress.status)
+    let prepared: Awaited<ReturnType<typeof prepareCodex>> | undefined
+    if (backend === 'quota') {
+      await ensureQuotaAccountReady()
+      prepared = await prepareQuotaCodex(options.project, scope, onProgress, options.signal, await readBeginnerAgentServerConfig(selection))
+    } else if (configured.mode === 'hosted') prepared = await prepareConfiguredCodex(options.project, scope, configured, onProgress, options.signal)
+    const executable = prepared?.executable ?? (await detectInstalledCodex(configured)).executable
+    if (!executable) throw new Error('Codex CLI 不可用，请在 AI 设置中配置开发引擎')
+    return runExternalAgent({ ...options, executable,
+      approvalMode: normalizeAgentApprovalMode(settings.codexApprovalMode),
+      onApproval: (request, signal) => workbenchApprovals.request(sender.id, { projectPath: options.project.path, conversationId: scope.slice('developer/'.length), runId: options.runId! }, request, signal),
+      ...(prepared ? { env: prepared.environment, sessionHome: prepared.home, adapterRouteId: prepared.adapterRouteId, model: prepared.model, modelProvider: 'thirdparty' } : configured.model ? { model: configured.model } : {}),
+      ...(configured.reasoningEffort ? { reasoningEffort: configured.reasoningEffort } : {})
+    })
+  } })
   diagnosticHandle('skills:list', () => userSkillStore.list())
   diagnosticHandle('skills:read', (_event, name: string) => userSkillStore.read(name))
   diagnosticHandle('skills:save', (_event, input: import('../shared/userSkills').UserSkillSaveInput) => userSkillStore.save(input))
@@ -7012,6 +7455,9 @@ function registerIpc(): void {
       report => prepareCleanReinstall({ ...options, report }),
       report => prepareOverwriteReinstall({ ...options, report }))
   })
+  diagnosticHandle('app:resolveDialog', (event, requestId: unknown, confirmed: unknown) => {
+    resolveRendererDialog(event.sender, requestId, confirmed)
+  })
   diagnosticHandle('downloads:list', () => downloadActivities.snapshot())
   diagnosticHandle('downloads:retry', (_event, id: unknown) => downloadActivities.retry(typeof id === 'string' ? id : ''))
   diagnosticHandle('downloads:cancel', (_event, id: unknown) => downloadActivities.cancel(typeof id === 'string' ? id : ''))
@@ -7027,6 +7473,7 @@ function registerIpc(): void {
   diagnosticHandle('device:saveAiPreferences', (_event, preferences: BeginnerAiPreferences) => saveBeginnerAiPreferences(preferences))
   diagnosticHandle('device:listModels', (_event, force?: boolean) => listBeginnerModels(force === true))
   diagnosticHandle('device:getModelCatalog', (_event, force?: boolean) => getQuotaModelCatalog(force === true))
+  diagnosticHandle('device:discoverModels', () => discoverQuotaModels())
   diagnosticHandle('device:refreshConnections', async () => {
     await providerSync().refresh()
     await updateDeviceState(null)
@@ -7035,9 +7482,7 @@ function registerIpc(): void {
   diagnosticHandle('device:resetModelSelection', async (_event, surface: unknown) => {
     if (surface !== 'workspace' && surface !== 'inspiration') throw new Error('模型选择范围无效')
     if ((await readDeviceCredentials())?.sync) await providerSync().resetBinding(surface)
-    const payload = { surface }
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:aiSelection', payload)
-    for (const window of BrowserWindow.getAllWindows()) if (window !== mainWindow && !window.isDestroyed()) window.webContents.send('device:aiSelection', payload)
+    emitAiSelection(surface)
   })
   diagnosticHandle('device:selectModel', (_event, model: unknown, selection?: unknown) => selectQuotaModel(model, selection))
   diagnosticHandle('device:openSite', (_event, relativePath?: string) => openConfiguredDeviceSite(relativePath))
@@ -7047,6 +7492,13 @@ function registerIpc(): void {
   diagnosticHandle('mcp-bridge:getState', () => mcpBridgeState())
   diagnosticHandle('mcp-bridge:setEnabled', (_event, enabled: unknown) => setMcpBridgeEnabledFromSettings(enabled === true))
   diagnosticHandle('feature-plugins:list', () => featurePluginService.list())
+  diagnosticHandle('studios:list', () => studios().list())
+  diagnosticHandle('studios:context', (_event, surface: unknown, projectPath: unknown) => {
+    if (surface !== 'workbench' && surface !== 'inspiration') throw new Error('工作台页面无效')
+    const project = requireProject()
+    if (typeof projectPath !== 'string' || !sameProjectPath(project.path, projectPath)) throw new Error('项目已切换，请重新读取工作台')
+    return studios().context(project, surface)
+  })
   diagnosticHandle('feature-plugins:catalog', () => featurePluginService.catalog())
   diagnosticHandle('feature-plugins:store', () => featureStoreService.snapshot())
   diagnosticHandle('feature-plugins:refreshStore', () => featureStoreService.refresh(true))
@@ -7066,7 +7518,7 @@ function registerIpc(): void {
   })
   diagnosticHandle('feature-plugins:install', async (event) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('请在主窗口安装应用功能插件')
-    const selected = await dialog.showOpenDialog(mainWindow!, { title: '安装应用功能插件', properties: ['openFile'], filters: [{ name: 'ModMind 应用功能插件', extensions: ['mmfeature'] }] })
+    const selected = await dialog.showOpenDialog(mainWindow!, { title: '安装工作台或功能组件', properties: ['openFile'], filters: [{ name: 'ModMind 工作台与功能组件', extensions: ['mmstudio', 'mmfeature'] }] })
     if (selected.canceled || !selected.filePaths[0]) return null
     const prepared = await prepareFeaturePlugin(selected.filePaths[0])
     const trusted = await requestWindowConfirmation(event.sender, randomUUID(), {
@@ -7148,110 +7600,14 @@ function registerIpc(): void {
     report({ phase: 'analyzing', sourceName })
     const existingProject = await readProjectInfo(sourcePath).catch(() => null)
     if (existingProject) return { existingProject, archive: sourceType === 'zip' }
-    return (await analyzeExistingProject(sourcePath)).analysis
+    return inspectStudioSource(sourcePath)
   })
 
   diagnosticHandle('project:listLoaderVersions', (_event, refresh = false) =>
     Promise.all([requireLoaderCatalog().list(Boolean(refresh)), requireLoaderCatalog().listPlugins(Boolean(refresh))]).then(options => options.flat())
   )
 
-  diagnosticHandle('project:adoptExisting', async (_event, input: ExistingProjectAdoptInput) => {
-    assertProjectSwitchAllowed()
-    if (!input || typeof input.sourcePath !== 'string') throw new Error('导入参数无效')
-    const legacyConversion = await convertLegacyModtoolProject(input.sourcePath)
-    if (legacyConversion.project) {
-      currentProject = legacyConversion.project
-      await rememberRecentProject(currentProject)
-      return currentProject
-    }
-    if (!isJavaLoader(input.loader) && !isServerPluginPlatform(input.loader)) throw new Error('现有项目识别支持 Java 模组和服务端插件工程')
-    const { analysis, files } = await analyzeExistingProject(input.sourcePath)
-    const name = validateProjectNameInput(input.name)
-    const namespace = slugify(input.namespace)
-    const minecraftVersion = input.minecraftVersion.trim()
-    if (!/^\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-SNAPSHOT)?$/.test(minecraftVersion)) throw new Error('目标版本格式无效')
-    if (analysis.kind === 'modpack') {
-      let projectPath = analysis.sourcePath
-      const temporaryImportRoot = path.join(app.getPath('temp'), 'modmind-import-')
-      const isTemporaryImport = analysis.sourcePath.startsWith(temporaryImportRoot)
-      if (isTemporaryImport) {
-        const destination = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
-        if (destination.canceled || !destination.filePaths[0]) return null
-        projectPath = path.join(destination.filePaths[0], namespace)
-        if (await pathExists(projectPath)) throw new Error('目标项目目录已经存在，请选择其他位置或名称')
-      }
-      return adoptExternalModpackWithRetry({
-        sourcePath: analysis.sourcePath,
-        projectPath,
-        isTemporaryImport,
-        name,
-        namespace,
-        minecraftVersion,
-        loader: input.loader
-      })
-    }
-
-    const compatibility = await requireLoaderCatalog().resolve(input.loader, minecraftVersion)
-
-    let projectPath = analysis.sourcePath
-    const temporaryImportRoot = path.join(app.getPath('temp'), 'modmind-import-')
-    const isTemporaryImport = analysis.sourcePath.startsWith(temporaryImportRoot)
-    if (analysis.kind !== 'complete' || isTemporaryImport) {
-      const destination = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
-      if (destination.canceled || !destination.filePaths[0]) return null
-      projectPath = path.join(destination.filePaths[0], namespace)
-      if (await pathExists(projectPath)) throw new Error('目标项目目录已经存在，请选择其他位置或名称')
-    }
-
-    const project: ProjectInfo = {
-      name,
-      path: projectPath,
-      loader: input.loader,
-      kind: isServerPluginPlatform(input.loader) ? 'server-plugin' : 'mod',
-      minecraftVersion,
-      namespace,
-      createdAt: new Date().toISOString(),
-      loaderVersion: input.loaderVersion && input.loader === analysis.inferred.loader && minecraftVersion === analysis.inferred.minecraftVersion
-        ? input.loaderVersion
-        : compatibility.loaderVersion,
-      apiVersion: compatibility.apiVersion,
-      qslVersion: compatibility.qslVersion,
-      javaVersion: compatibility.javaVersion,
-      projectVersion: CURRENT_PROJECT_VERSION,
-      toolDataDirectory: '.modmind'
-    }
-    if (analysis.kind === 'complete') {
-      if (isTemporaryImport) {
-        await copySnapshotFiles(analysis.sourcePath, projectPath)
-      }
-      await fs.writeFile(path.join(projectPath, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
-      await fs.mkdir(path.join(projectPath, '.modmind'), { recursive: true })
-    } else {
-      await fs.mkdir(projectPath)
-      try {
-        await writeProjectTemplate(project)
-        const importedFolder = analysis.kind === 'partial' ? 'imported-source' : 'imported-api'
-        const destination = path.join(projectPath, 'docs', importedFolder, slugify(analysis.sourceName))
-        const copied = await copyImportedReferences(analysis.sourcePath, destination, files)
-        const summary = [
-          '# Imported reference',
-          '',
-          `Source: ${analysis.sourcePath}`,
-          `Detected type: ${analysis.kind}`,
-          `Copied files: ${copied}`,
-          '',
-          ...analysis.reasons.map((reason) => `- ${reason}`)
-        ].join('\n')
-        await fs.writeFile(path.join(projectPath, 'docs', 'import-summary.md'), summary, 'utf8')
-      } catch (error) {
-        await fs.rm(projectPath, { recursive: true, force: true })
-        throw error
-      }
-    }
-    currentProject = project
-    await rememberRecentProject(project)
-    return project
-  })
+  diagnosticHandle('project:adoptExisting', (_event, input: ExistingProjectAdoptInput) => adoptStudioProject(input))
 
   diagnosticHandle('project:createDraft', async (_event, message: string) => {
     assertProjectSwitchAllowed()
@@ -7280,8 +7636,7 @@ function registerIpc(): void {
       suggestNamespace: candidate => suggestProjectNamespace(candidate, backend, modelSelection),
       resolve: (loader, version) => requireLoaderCatalog().resolve(loader, version),
       scaffold: async project => {
-        if (project.kind === 'modpack') await createModpackTemplate(project)
-        else await writeProjectTemplate(project)
+        await scaffoldStudioProject(project)
       }
     })
     if (currentProject && sameProjectPath(currentProject.path, project.path)) currentProject = updated
@@ -7291,12 +7646,13 @@ function registerIpc(): void {
 
   diagnosticHandle('project:create', async (_event, input: ProjectCreateInput) => {
     assertProjectSwitchAllowed()
-    if (!input || !(PROJECT_PLATFORMS as readonly string[]).includes(input.loader)) throw new Error('不支持的项目平台')
-    const kind = isServerPluginPlatform(input.loader) ? 'server-plugin' : input.kind === 'modpack' ? 'modpack' : 'mod'
+    if (!input || typeof input.loader !== 'string') throw new Error('项目平台无效')
+    const kind = input.kind ?? (isServerPluginPlatform(input.loader) ? 'server-plugin' : 'mod')
+    const selectedStudio = studios().select({ ...input, kind })
     if (kind === 'modpack' && !isJavaLoader(input.loader)) throw new Error('整合包目前仅支持 Java 版的 Fabric、Quilt、Forge 和 NeoForge')
     const name = validateProjectNameInput(input.name)
     const minecraftVersion = input.minecraftVersion.trim()
-    const compatibility = await requireLoaderCatalog().resolve(input.loader, minecraftVersion)
+    const compatibility: Partial<import('../shared/types').LoaderVersionOption> = (PROJECT_PLATFORMS as readonly string[]).includes(input.loader) ? await requireLoaderCatalog().resolve(input.loader, minecraftVersion) : {}
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory', 'createDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
     const namespace = slugify(name)
@@ -7305,6 +7661,8 @@ function registerIpc(): void {
     const project: ProjectInfo = {
       ...input,
       kind,
+      studioId: selectedStudio.definition.id,
+      studioName: selectedStudio.definition.name,
       name,
       minecraftVersion,
       namespace,
@@ -7322,12 +7680,7 @@ function registerIpc(): void {
     try {
       await projectKnowledgeStore().clearProject(projectPath)
       Object.assign(project, await assignDefaultProjectNamespace(project, candidate => suggestProjectNamespace(candidate)))
-      if (kind === 'modpack') {
-        await fs.writeFile(path.join(projectPath, currentProjectManifest), JSON.stringify(project, null, 2), 'utf8')
-        await createModpackTemplate(project)
-      } else {
-        await writeProjectTemplate(project)
-      }
+      await scaffoldStudioProject(project)
       await fs.mkdir(path.join(projectPath, '.modmind'), { recursive: true })
     } catch (error) {
       await fs.rm(projectPath, { recursive: true, force: true })
@@ -7350,9 +7703,9 @@ function registerIpc(): void {
     assertProjectSwitchAllowed()
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
-    const converted = await convertLegacyModtoolProject(result.filePaths[0])
-    const info = converted.project ?? await readProjectInfo(result.filePaths[0])
+    const info = await readAvailableProjectForOpening(result.filePaths[0])
       if (!info) throw new Error('所选目录不是 ModMind 项目，缺少 modmind.project.json')
+      if (!info.draft) studios().require(info)
       currentProject = await offerProjectVersionMigration(info)
       await rememberRecentProject(currentProject)
       emitProjectChanged()
@@ -7363,9 +7716,9 @@ function registerIpc(): void {
     if (typeof projectPath !== 'string' || !projectPath.trim()) throw new Error('项目路径无效')
     const resolvedProjectPath = path.resolve(projectPath)
     assertProjectSwitchAllowed()
-    const converted = await convertLegacyModtoolProject(resolvedProjectPath)
-    const info = converted.project ?? await readProjectInfo(resolvedProjectPath)
+    const info = await readAvailableProjectForOpening(resolvedProjectPath)
       if (!info) throw new Error('最近项目不存在或已经不再是有效的 ModMind 项目')
+      if (!info.draft) studios().require(info)
       currentProject = await offerProjectVersionMigration(info)
       await rememberRecentProject(currentProject)
       emitProjectChanged()
@@ -7465,6 +7818,21 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.create(project.path, input)
   })
+  diagnosticHandle('conversations:readProjection', async (_event, projectPath: string, conversationId: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.readProjection(project.path, conversationId)
+  })
+  diagnosticHandle('conversations:ensureProjection', async (_event, projectPath: string, input) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.ensureProjection(project.path, input)
+  })
+  diagnosticHandle('conversations:saveProjection', async (_event, projectPath: string, conversationId: string, generation: number, view, title?: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.saveProjection(project.path, conversationId, generation, view, title)
+  })
   diagnosticHandle('conversations:saveView', async (_event, projectPath: string, conversationId: string, generation: number, view, title?: string) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
@@ -7522,13 +7890,11 @@ function registerIpc(): void {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     if (runsForProject(project.path).some(run => run.conversationId === conversationId)) throw new Error('请先停止当前任务，再删除对话')
-    const document = await conversationStore.read(project.path, conversationId)
-    if (document) {
-      await Promise.allSettled(Object.entries(document.native).map(([backend, state]) => state?.sessionId
+    return conversationStore.delete(project.path, conversationId, async (sessions) => {
+      await Promise.allSettled(Object.entries(sessions).map(([backend, state]) => state?.sessionId
         ? deleteExternalAgentSession(project, backend === 'quota' ? 'codex' : backend as ExternalAgentKind, state.sessionId, state.sessionHome, backend === 'quota' || backend === 'codex' ? managedCodexExecutablePath(app.getPath('userData')) : undefined)
         : Promise.resolve()))
-    }
-    return conversationStore.delete(project.path, conversationId)
+    })
   })
   diagnosticHandle('conversations:flush', () => conversationStore.flush())
   diagnosticHandle('project:writeFile', async (_event, relativePath: string, content: string, projectPath?: string) => {
@@ -7549,7 +7915,7 @@ function registerIpc(): void {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
-    const target = resolveProjectPathFor(project, normalized)
+    const target = await resolveSafeCodingTarget(normalized, project)
     if (await pathExists(target)) throw new Error('目标路径已存在')
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.writeFile(target, content, 'utf8')
@@ -7559,7 +7925,7 @@ function registerIpc(): void {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
-    const target = resolveProjectPathFor(project, normalized)
+    const target = await resolveSafeCodingTarget(normalized, project)
     if (await pathExists(target)) throw new Error('目标路径已存在')
     await fs.mkdir(target, { recursive: true })
     return { project, path: normalized }
@@ -7567,8 +7933,8 @@ function registerIpc(): void {
   diagnosticHandle('project:renamePath', async (_event, from: string, to: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
-    const source = resolveProjectPathFor(project, normalizeReadablePath(from, project))
-    const destination = resolveProjectPathFor(project, normalizeReadablePath(to, project))
+    const source = await resolveSafeCodingTarget(normalizeReadablePath(from, project), project)
+    const destination = await resolveSafeCodingTarget(normalizeReadablePath(to, project), project)
     if (!(await pathExists(source))) throw new Error('源路径不存在')
     if (await pathExists(destination)) throw new Error('目标路径已存在')
     await fs.mkdir(path.dirname(destination), { recursive: true })
@@ -7580,7 +7946,7 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
     if (isToolDataDirectory(normalized.split('/')[0]) || ignoredDirectories.has(normalized.split('/')[0])) throw new Error('不能删除受保护的项目目录')
-    const target = resolveProjectPathFor(project, normalized)
+    const target = await resolveSafeCodingTarget(normalized, project)
     try { await shell.trashItem(target) } catch (error) {
       const failure = new Error('文件无法放入系统回收站，需要再次确认后永久删除') as Error & { code?: string; cause?: unknown }
       failure.code = 'TRASH_UNAVAILABLE'; failure.cause = error; throw failure
@@ -7591,7 +7957,7 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     const normalized = normalizeReadablePath(relativePath, project)
     if (isToolDataDirectory(normalized.split('/')[0]) || ignoredDirectories.has(normalized.split('/')[0])) throw new Error('不能删除受保护的项目目录')
-    await fs.rm(resolveProjectPathFor(project, normalized), { recursive: true, force: true })
+    await fs.rm(await resolveSafeCodingTarget(normalized, project), { recursive: true, force: true })
   })
   // The generic delete path refuses everything under .modmind; workbench data
   // cleanup needs a narrow exception for exactly the files ModMind owns.
@@ -7641,6 +8007,10 @@ function registerIpc(): void {
   })
   diagnosticHandle('project:exportArtifact', async () => {
     const project = requireProject()
+    if (studios().resolve(project)?.definition.tasks?.export) {
+      const result = await studios().invokeTask(project, 'export', {}, { projectPath: project.path, surface: 'workbench', windowId: mainWindow?.id }) as { path?: string } | null
+      return result?.path ?? null
+    }
     if (project.kind === 'server-plugin') {
       await buildProjectWithLock()
       const artifact = await findPluginArtifact(project)
@@ -7783,6 +8153,23 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在')
     return inspirationKnowledge.read(project.path)
   })
+  const resolveInspirationRecord = async (projectPath: string, identity: InspirationWorkflowIdentity): Promise<ProjectInfo> => {
+    if (!identity || typeof identity.conversationId !== 'string' || typeof identity.turnId !== 'string' || !Number.isInteger(identity.generation)) throw new Error('灵感会话身份无效')
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在')
+    const conversation = await conversationStore.read(project.path, identity.conversationId)
+    if (!conversation || conversation.surface !== 'inspiration' || conversation.generation !== identity.generation) throw new Error('灵感会话版本已变化，请重新整理')
+    return project
+  }
+  diagnosticHandle('inspiration:readWorkflow', async (_event, projectPath: string, identity: InspirationWorkflowIdentity) => {
+    const project = await resolveInspirationRecord(projectPath, identity)
+    return projectInspirationWorkflowStore().read(project.path, identity)
+  })
+  diagnosticHandle('inspiration:commitWorkflow', async (_event, projectPath: string, identity: InspirationWorkflowIdentity, edits: Array<{ index: number; title: string; content: string }>, undo = false) => {
+    const project = await resolveInspirationRecord(projectPath, identity)
+    if (!Array.isArray(edits) || edits.length > 8 || typeof undo !== 'boolean') throw new Error('知识变更参数无效')
+    return projectInspirationWorkflowStore().commit(project.path, identity, edits, undo)
+  })
   diagnosticHandle('inspiration:updateKnowledge', async (_event, projectPath: string, input: { id?: string; title?: string; content?: string; remove?: boolean }) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!input || typeof input !== 'object') throw new Error('知识条目无效')
@@ -7819,7 +8206,7 @@ function registerIpc(): void {
     if (result.canceled || !result.filePaths[0]) return null
     return importBackgroundMedia(result.filePaths[0], path.join(app.getPath('userData'), 'appearance-media'))
   })
-  diagnosticHandle('settings:saveAgent', async (_event, settings: AgentSettings) => {
+  diagnosticHandle('settings:saveAgent', async (_event, settings: AgentSettingsPatch) => {
     const saved = await saveAgentSettings(settings)
     setNetworkProxy(saved.networkProxyUrl ?? '')
     return publicAgentSettings(saved)
@@ -7910,13 +8297,8 @@ function registerIpc(): void {
     const executable = await ensureManagedCodexRuntime({rootDir: app.getPath('userData')})
     const status = await detectExternalAgent('codex', {executables: [executable], includeDefaults: false})
     if (!status.installed || !isManagedCodexVersion(status.version)) throw new Error('Codex 托管运行时版本校验失败')
-    const settings = await readSettings()
     await saveAgentSettings({
-      ...settings,
-      externalAgents: {
-        ...settings.externalAgents,
-        codex: {...settings.externalAgents?.codex, executable}
-      }
+      externalAgents: { codex: { executable } }
     })
     return status
   })
@@ -8027,6 +8409,7 @@ function registerIpc(): void {
     const run: ActiveAiRun = {
       id: aiRunId(event.sender.id, project.path, sessionId), senderId: event.sender.id, startedAt: recovery?.startedAt ?? new Date().toISOString(), sessionId, sessionScope: conversationOptions.sessionScope, projectPath: project.path,
       executionProfile: normalizedExecutionProfile, backend: selectedBackend, surface: requestedSurface,
+      ...(requestedSurface === 'inspiration' ? { inspirationFeatures: normalizeInspirationFeatures(conversationOptions.inspirationFeatures) } : {}),
       ...(conversationOptions.agentMode !== 'beginner' && options?.workbenchPhase === 'discussion' ? { workbenchPhase: 'discussion' as const } : {}),
       conversationId: conversationOptions.conversationId,
       generation: conversationOptions.generation,
@@ -8182,7 +8565,7 @@ function registerIpc(): void {
       if (!aiBackendSwitchCoordinator.isCurrent(switchState)) return { status: 'superseded', backend: requestedBackend }
       recovery = await awaitWithAbort(readActiveAiTask(project), controller.signal, 'Agent 切换已停止')
       if (previousSettings.codingBackend !== requestedBackend) {
-        await awaitWithAbort(saveAgentSettings({ ...previousSettings, codingBackend: requestedBackend }), controller.signal, 'Agent 切换已停止')
+        await awaitWithAbort(saveAgentSettings(current => ({ ...current, codingBackend: requestedBackend })), controller.signal, 'Agent 切换已停止')
       }
       if (!recovery) {
         if (!aiBackendSwitchCoordinator.markReady(switchState)) return { status: 'superseded', backend: requestedBackend }
@@ -8231,7 +8614,8 @@ function registerIpc(): void {
     } catch (error) {
       if (!backendReady && aiBackendSwitchCoordinator.isCurrent(switchState)) {
         if (switchState.rollbackValue.codingBackend !== requestedBackend) {
-          await awaitWithAbort(saveAgentSettings(switchState.rollbackValue), AbortSignal.timeout(10_000)).catch(() => undefined)
+          await awaitWithAbort(saveAgentSettings(current => current.codingBackend === requestedBackend
+            ? { ...current, codingBackend: switchState.rollbackValue.codingBackend } : current), AbortSignal.timeout(10_000)).catch(() => undefined)
         }
         if (recovery) await awaitWithAbort(writeActiveAiTask(recovery, project), AbortSignal.timeout(10_000)).catch(() => undefined)
         aiBackendSwitchCoordinator.fail(switchState)
@@ -8373,14 +8757,15 @@ function registerIpc(): void {
   })
 }
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'modmind-feature', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
+protocol.registerSchemesAsPrivileged([{ scheme: 'modmind-feature', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }, { scheme: 'modmind-dev-preview', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return
   featurePluginService = new FeaturePluginService(path.join(app.getPath('userData'), 'feature-plugins'), {
     requireFrom: path.join(app.getAppPath(), 'package.json'),
     projectRoot: () => (aiProjectContext.getStore() ?? currentProject)?.path ?? null,
-    capabilities: { downloadActivities, runtime: featureHostRuntime, testingV1: true },
+    project: () => aiProjectContext.getStore() ?? currentProject,
+    capabilities: { downloadActivities, runtime: featureHostRuntime, testingV1: true, testingV2: true, studioV1: true },
     busy: () => activeAiRuns.size > 0 || Boolean(optionalTestingService()?.isBusy()),
     changed: () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:changed'); featureStoreService?.publish() },
     event: (id, event, value, windowId) => {
@@ -8391,13 +8776,28 @@ app.whenReady().then(async () => {
       userDataDir: app.getPath('userData'),
       projectRoot: () => (aiProjectContext.getStore() ?? currentProject)?.path ?? null,
       getHostedLease: createHostedImageLease,
+      getHostedImageProvider: async () => {
+        const { credentials, routingToken } = await hostedImageAuthorization()
+        const service = await queryDeviceImageProvider(credentials.siteUrl, routingToken, AbortSignal.timeout(12_000), undefined, [credentials.apiKey])
+        if (!sameDeviceCredentials(await readDeviceCredentials(), credentials)) throw new Error('账号已切换，请刷新生图配置')
+        return service
+      },
       getSyncedImageApi: async () => {
         const credentials = await readDeviceCredentials()
         return { customMode: credentials?.provider === 'custom', imageApi: credentials?.provider === 'custom' ? credentials.localImageApi ?? null : null }
       }
     })
   })
-  await featurePluginService.initialize()
+  await featurePluginService.initialize(await builtinStudioDirectories(
+    app.isPackaged ? path.join(process.resourcesPath, 'bundled-studios') : path.join(app.getAppPath(), 'resources', 'bundled-studios')
+  ).then(entries => entries.filter(entry => entry.id !== developerHostConfig?.pluginId)))
+  configureStudios(new StudioRegistry(() => featurePluginService.catalog(), id => featurePluginService.service(id), (id, group) => featurePluginService.assetDirectory(id, group), (id, action, input, context) => featurePluginService.invoke(id, action, input, context)))
+  if (developerHostConfig) {
+    configureNativeFeatureServices(id => featurePluginService.service<Record<string, unknown>>(id))
+    mainWindow = new BrowserWindow({ show: false, skipTaskbar: true, webPreferences: { sandbox: true, contextIsolation: true } })
+    configureDeveloperHost(developerHostConfig.kit, featurePluginService, nativeFeatureHost())
+    return
+  }
   featureStoreService = new FeatureStoreService(path.join(app.getPath('userData'), 'feature-store'), featurePluginService, snapshot => {
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:storeChanged', snapshot)
   })
@@ -8461,7 +8861,7 @@ app.whenReady().then(async () => {
     installMarkerPath: process.platform === 'win32' ? path.join(process.resourcesPath, 'modmind-install-versions.txt') : undefined
   })
   await appChangelogService.initialize()
-  electronApp.setAppUserModelId(app.getVersion().endsWith('-plugintest') ? 'dev.modmind.desktop.plugintest' : 'dev.modmind.desktop')
+  if (process.platform === 'win32') app.setAppUserModelId(applicationUserModelId())
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc()
   await cleanupTerminalScripts(path.join(app.getPath('userData'), 'terminal-sessions'))
@@ -8577,6 +8977,8 @@ get linkAddonProject() { return linkAddonProject },
 get previewModpackMigrationForAgent() { return previewModpackMigrationForAgent },
 get applyModpackMigrationForAgent() { return applyModpackMigrationForAgent },
 get analyzeExistingProject() { return analyzeExistingProject },
+get inspectBuiltinStudio() { return inspectBuiltinStudio },
+get adoptBuiltinStudio() { return adoptBuiltinStudio },
 get applyModpackMigrationInPlace() { return applyModpackMigrationInPlace },
 get assertProjectMutationAllowed() { return assertProjectMutationAllowed },
 get assertProjectSwitchAllowed() { return assertProjectSwitchAllowed },
@@ -8604,6 +9006,8 @@ get readProjectInfo() { return readProjectInfo },
 get readReleaseSecrets() { return readReleaseSecrets },
 get readSettings() { return readSettings },
 get readSnapshotStorage() { return readSnapshotStorage },
+get listSnapshotSummaries() { return listSnapshotSummaries },
+get scheduleSnapshotStorageMaintenance() { return scheduleSnapshotStorageMaintenance },
 get rememberRecentProject() { return rememberRecentProject },
 get requireLoaderCatalog() { return requireLoaderCatalog },
 get requireMinecraftRuntime() { return requireMinecraftRuntime },

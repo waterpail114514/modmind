@@ -1,3 +1,4 @@
+import { requestAiTextResponse } from '../../src/main/aiTextRequest'
 
 import { ContentService } from "./src/main/contentService"
 import { ReleaseService, type ReleaseSecrets } from "./src/main/releaseService"
@@ -35,37 +36,20 @@ function requireReleaseService(): ReleaseService {
     return releaseService;
 }
 async function generateAiReleaseSummary(): Promise<ReleaseSummaryDraft> {
-    const fallback = await requireReleaseService().suggestSummary();
-    const settings = await host.readSettings();
-    const backend = settings.codingBackend;
-    const config = await host.getAiReviewerConfig(backend === 'quota', backend === 'quota' ? 'codex' : backend, settings).catch(() => null);
-    if (!config?.baseUrl || !config.apiKey || !config.model)
-        return fallback;
-    const project = host.requireProject();
-    const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            model: config.model,
-            temperature: 0.25,
-            messages: [
-                { role: 'system', content: 'You write concise Minecraft release notes in Simplified Chinese. Return only JSON with string fields summary and changelog. Do not claim unverified gameplay changes.' },
-                { role: 'user', content: `Create a release summary from this local metadata. Do not request files or make edits.\n${JSON.stringify({ project: project.name, minecraft: project.minecraftVersion, loader: project.loader, fallback }, null, 2)}` }
-            ]
-        }),
-        signal: AbortSignal.timeout(30000)
-    });
-    if (!response.ok)
-        return fallback;
-    const body = await response.json().catch(() => null) as {
-        choices?: Array<{
-            message?: {
-                content?: unknown;
-            };
-        }>;
-    } | null;
-    const content = typeof body?.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : '';
-    return content ? parseReleaseSummary(content, fallback) : fallback;
+  const project = host.requireProject()
+  const fallback = await requireReleaseService().suggestSummary()
+  const settings = await host.readSettings()
+  const backend = settings.codingBackend
+  const config = await host.getAiReviewerConfig(backend === 'quota', backend === 'quota' ? 'codex' : backend, settings).catch(() => null)
+  if (!config?.baseUrl || !config.apiKey || !config.model) return fallback
+  const response = await requestAiTextResponse({ baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model }, [
+        { role: 'system', content: 'You write concise Minecraft release notes in Simplified Chinese. Return only JSON with string fields summary and changelog. Do not claim unverified gameplay changes.' },
+        { role: 'user', content: `Create a release summary from this local metadata. Do not request files or make edits.\n${JSON.stringify({ project: project.name, minecraft: project.minecraftVersion, loader: project.loader, fallback }, null, 2)}` }
+      ], { temperature: 0.25, signal: AbortSignal.timeout(30_000) })
+  if (!response.ok) return fallback
+  const body = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: unknown } }> } | null
+  const content = typeof body?.choices?.[0]?.message?.content === 'string' ? body.choices[0].message.content : ''
+  return content ? parseReleaseSummary(content, fallback) : fallback
 }
 diagnosticHandle('content:create', (_event, input: ContentCreateInput) => requireContentService().create(input));
 diagnosticHandle('content:importAudio', async (_event, input: AudioImportInput) => {

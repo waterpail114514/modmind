@@ -1,8 +1,9 @@
 import type { AiModelInfo, BeginnerAiPreferences } from './types'
+import { validProviderKind } from './providerAccounts'
 
 export interface QuotaRoute { account: string; group: string | null; label?: string }
 export type ModelBilling = 'quota' | 'free'
-export interface QuotaModelSelection { billing?: ModelBilling; account?: string; scope?: 'settings' | 'workspace' | 'inspiration' }
+export interface QuotaModelSelection { billing?: ModelBilling; account?: string; group?: string; scope?: 'settings' | 'workspace' | 'inspiration' }
 export interface QuotaModelOption extends AiModelInfo {
   name: string; family: string; description: string; recommended: boolean
   available: boolean; unavailableReason?: string
@@ -10,6 +11,10 @@ export interface QuotaModelOption extends AiModelInfo {
   /** Present only when the chosen upstream route explicitly advertises no cache. */
   noCache?: true
   providerLabel?: string
+  group?: string | null
+  groupLabel?: string
+  routeCurrent?: boolean
+  modelEvidence?: 'verified' | 'unknown'
 }
 export interface QuotaModelCatalog {
   models: QuotaModelOption[]; currentModel: string; currentRoute?: QuotaRoute
@@ -18,6 +23,9 @@ export interface QuotaModelCatalog {
   currentOptionKey: string; pendingSelection?: QuotaModelSelection
   protocolVersion?: 2
   bindings?: Partial<Record<'workspace' | 'inspiration', import('./aiSelection').AiModelSelection>>
+  routes?: Array<QuotaRoute & { current: boolean; available: boolean; providerLabel?: string; kind?: 'free' | 'paid'; models?: string[] }>
+  selectionRequired?: boolean
+  providers?: Array<{ account: string; label: string; kind: 'free' | 'paid' }>
 }
 export interface QuotaModelSwitchResult {
   status: 'ok' | 'error'; message: string; preferences?: BeginnerAiPreferences
@@ -238,16 +246,18 @@ export const FREE_MODEL_METADATA = [
   { id: 'glm-5.3', name: 'GLM 5.3', family: 'GLM', description: '复杂编程与推理主力，适合大型代码修改和长程任务。', recommended: false },
   { id: 'qwen3.8-flash', name: 'Qwen 3.8 Flash', family: 'Qwen', description: '高性价比多模态模型，适合写代码、分析文档和看图。', recommended: false }
 ] as const
-export function quotaModelOptionKey(model: string, billing: ModelBilling, account?: string): string {
+export function quotaModelOptionKey(model: string, billing: ModelBilling, account?: string, group?: string | null): string {
+  if (billing === 'quota' && group != null) return `quota-route:${JSON.stringify([account ?? 'secondary', group, model])}`
   return billing === 'free' ? `free:${account ?? ''}:${model}` : account && account !== 'secondary' ? `quota:${account}:${model}` : `quota:${model}`
 }
 export function validateQuotaModelSelection(value: unknown): QuotaModelSelection {
   if (value === undefined) return {}
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('模型版本选项无效')
   const v = value as Record<string, unknown>
-  if (Object.keys(v).some(k => !['billing', 'account', 'scope'].includes(k)) || (v.billing !== undefined && v.billing !== 'quota' && v.billing !== 'free') || (v.scope !== undefined && !['settings', 'workspace', 'inspiration'].includes(String(v.scope)))) throw new Error('模型版本选项无效')
-  if (v.account !== undefined && (typeof v.account !== 'string' || !/^(primary|secondary|deepseek|trial:[a-zA-Z0-9._-]{1,128})$/.test(v.account) || (v.billing === 'free') !== v.account.startsWith('trial:'))) throw new Error('免费或付费供应商选项无效')
-  return { ...(v.billing ? { billing: v.billing as ModelBilling } : {}), ...(v.account ? { account: v.account as string } : {}), ...(v.scope ? { scope: v.scope as QuotaModelSelection['scope'] } : {}) }
+  if (Object.keys(v).some(k => !['billing', 'account', 'group', 'scope'].includes(k)) || (v.billing !== undefined && v.billing !== 'quota' && v.billing !== 'free') || (v.scope !== undefined && !['settings', 'workspace', 'inspiration'].includes(String(v.scope)))) throw new Error('模型版本选项无效')
+  if (v.group !== undefined && (v.billing === 'free' || typeof v.group !== 'string' || !v.group.trim() || v.group.length > 512 || /[\x00-\x1f\x7f]/.test(v.group))) throw new Error('付费分组选项无效')
+  if (v.account !== undefined && !validProviderKind(v.account, v.billing === 'free' ? 'free' : 'paid')) throw new Error('免费或付费供应商选项无效')
+  return { ...(v.billing ? { billing: v.billing as ModelBilling } : {}), ...(v.account ? { account: v.account as string } : {}), ...(v.group !== undefined ? { group: v.group as string } : {}), ...(v.scope ? { scope: v.scope as QuotaModelSelection['scope'] } : {}) }
 }
 
 export function quotaModelMetadata(id: string): { id: string; name: string; family: string; description: string; recommended: boolean } {
@@ -257,4 +267,13 @@ export function quotaModelMetadata(id: string): { id: string; name: string; fami
 }
 export function isSelectableQuotaModel(id: string): boolean {
   return Boolean(id && id.length <= 256 && !/[\r\n\u0000-\u001f]/.test(id) && !/^(?:codex-auto-review|gpt-image|text-embedding|whisper|tts-|sora)/i.test(id))
+}
+
+/** Keep live provider labels for newly released models; bundled labels are hints. */
+export function quotaModelDisplayMetadata(model: AiModelInfo): ReturnType<typeof quotaModelMetadata> {
+  const fallback = quotaModelMetadata(model.id)
+  const text = (value: unknown, defaultValue: string): string => typeof value === 'string' && value.trim() ? value.trim() : defaultValue
+  return { id: model.id, name: text(model.name, fallback.name), family: text(model.family, fallback.family),
+    description: typeof model.description === 'string' ? model.description : fallback.description,
+    recommended: typeof model.recommended === 'boolean' ? model.recommended : fallback.recommended }
 }

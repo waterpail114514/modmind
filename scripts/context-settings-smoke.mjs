@@ -57,7 +57,7 @@ try {
   await page.evaluate(() => window.setSaving(true))
   await page.waitForFunction(() => document.querySelector('[role="switch"]').disabled)
   await page.evaluate(() => window.setSaving(false))
-  for (const width of [1440, 760, 390]) {
+  for (const width of [1440, 1080]) {
     await page.setViewportSize({ width, height: 800 })
     for (const dark of [false, true]) {
       await page.evaluate(value => window.setTheme(value), dark)
@@ -68,7 +68,7 @@ try {
     }
   }
   assert.deepEqual(errors, [])
-  console.log('PASS context settings: toggle, manual validation, reset, saving state, light/dark at 1440/760/390')
+  console.log('PASS context settings: toggle, manual validation, reset, saving state, light/dark at 1440/1080')
 } finally {
   await browser.close()
 }

@@ -87,9 +87,9 @@ try{
     for(const surface of ['工作台','灵感台']){
       await page.getByRole('button',{name:surface,exact:true}).click()
       const local=surface==='灵感台'?idea:workbench
-      for(const width of [1280,390]){
+      for(const width of [1280, 1080]){
         await page.setViewportSize({width,height:900})
-        const collapse=page.getByRole('button',{name:width<600?'收起侧栏':'展开侧栏',exact:true})
+        const collapse=page.getByRole('button',{name:'展开侧栏',exact:true})
         if(await collapse.count())await collapse.click()
         await local.getByRole('button',{name:/模型与思考强度：/}).click()
         await panel.waitFor()

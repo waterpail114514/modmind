@@ -1,3 +1,5 @@
+import { requestAiTextResponse } from './aiTextRequest'
+
 export async function requestAiName(input: {
   prompt: string
   config: { baseUrl?: string; apiKey?: string; model?: string } | null
@@ -6,12 +8,7 @@ export async function requestAiName(input: {
 }): Promise<string> {
   const { config } = input
   if (config?.baseUrl && config.apiKey && config.model) {
-    const response = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: input.model || config.model, messages: [{ role: 'user', content: input.prompt }] }),
-      signal: AbortSignal.timeout(20_000)
-    })
+    const response = await requestAiTextResponse({ baseUrl: config.baseUrl, apiKey: config.apiKey, model: input.model || config.model }, [{ role: 'user', content: input.prompt }], { signal: AbortSignal.timeout(20_000) })
     if (!response.ok) throw new Error('AI naming request failed')
     const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
     const content = body.choices?.[0]?.message?.content

@@ -7,8 +7,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, updateModpackModuleSide, writeModpackManifest } from './modpackService'
 import { createEmptyModpackLock, writeModpackLock } from './modpackLockService'
-import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from "../../feature-plugins/testing/src/main/serverPackService"
+import { addServerPackMods, buildServerPack, createServerPackArchive, installServerRuntime, readExistingServerPack, readServerPackManifest, removeServerPackMod, serverRuntimeDownloadDescription } from '../../feature-plugins/testing/src/main/serverPackService'
 import { verifiedDownload } from './downloadService'
+import { createServer } from 'node:http'
+import { httpTransport } from './networkRequest'
+import { createStoredZip } from './bedrockAddon'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))) })
@@ -16,6 +19,68 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(ro
 function project(root: string): ProjectInfo { return { kind: 'modpack', name: 'Server Pack', path: root, loader: 'fabric', minecraftVersion: '1.21.1', loaderVersion: '0.16.10', namespace: 'server_pack', createdAt: new Date().toISOString() } }
 
 describe('server pack generation', () => {
+  it('uses published Maven coordinates for NeoForge transition and historical Forge installers', () => {
+    expect(serverRuntimeDownloadDescription({ loader: 'neoforge', minecraftVersion: '1.20.1', loaderVersion: '1.20.1-47.1.106' }).sources[0]).toBe('https://maven.neoforged.net/releases/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar')
+    expect(serverRuntimeDownloadDescription({ loader: 'forge', minecraftVersion: '1.7.10', loaderVersion: '1.7.10-10.13.4.1614' }).sources[0]).toBe('https://maven.minecraftforge.net/net/minecraftforge/forge/1.7.10-10.13.4.1614-1.7.10/forge-1.7.10-10.13.4.1614-1.7.10-installer.jar')
+  })
+  it.each(['forge', 'neoforge'] as const)('retains the selected Java for a cached %s run script', async loader => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-server-java-selection-')); roots.push(root)
+    const pack = { ...project(root), loader, loaderVersion: loader === 'forge' ? '47.4.22' : '21.1.244' }
+    await fs.writeFile(path.join(root, '.modmind-server-runtime.json'), JSON.stringify({ minecraftVersion: pack.minecraftVersion, loader, loaderVersion: pack.loaderVersion }))
+    await fs.writeFile(path.join(root, process.platform === 'win32' ? 'run.bat' : 'run.sh'), 'java @args.txt')
+    const runtime = await installServerRuntime({ serverPack: { root, copiedMods: [], skippedClientMods: [], warnings: [], manifestPath: path.join(root, 'modmind.server.json') }, javaPath: process.execPath }, pack)
+    expect(runtime.javaPath).toBe(process.execPath)
+    expect(runtime.launchCommand.join(' ')).toContain(process.platform === 'win32' ? 'run.bat' : 'run.sh')
+  })
+  it('applies common then server-only overrides and excludes client-only files', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-server-sided-overrides-')); roots.push(root)
+    const pack = project(root)
+    await createModpackTemplate(pack)
+    for (const [directory, contents] of [['overrides', 'common'], ['client-overrides', 'client'], ['server-overrides', 'server']] as const) {
+      await fs.mkdir(path.join(root, directory, 'config'), { recursive: true })
+      await fs.writeFile(path.join(root, directory, 'config', 'shared.txt'), contents)
+      await fs.writeFile(path.join(root, directory, `${contents}-only.txt`), contents)
+    }
+    const result = await buildServerPack(pack, { outputDirectory: path.join(root, '.modmind/server-pack'), port: 25565, onlineMode: false, acceptEula: true })
+    expect(await fs.readFile(path.join(result.root, 'config/shared.txt'), 'utf8')).toBe('server')
+    expect(await fs.readFile(path.join(result.root, 'server-only.txt'), 'utf8')).toBe('server')
+    expect(await fs.readFile(path.join(result.root, 'common-only.txt'), 'utf8')).toBe('common')
+    await expect(fs.access(path.join(result.root, 'client-only.txt'))).rejects.toThrow()
+  })
+  it('repairs a corrupt cached Fabric server JAR despite a matching installed marker', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-server-runtime-repair-')); roots.push(root)
+    const pack = project(root)
+    await fs.writeFile(path.join(root, 'server.jar'), '<html>previous download failure</html>')
+    await fs.writeFile(path.join(root, '.modmind-server-runtime.json'), JSON.stringify({ minecraftVersion: pack.minecraftVersion, loader: pack.loader, loaderVersion: pack.loaderVersion }))
+    const bytes = createStoredZip([{ name: 'META-INF/MANIFEST.MF', data: Buffer.from('Main-Class: Server\r\n') }, { name: 'Server.class', data: Buffer.from('class fixture') }])
+    const server = createServer((_request, response) => response.end(bytes))
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const transport = httpTransport.request
+    const mock = vi.spyOn(httpTransport, 'request').mockImplementation((_url, options) => transport(`http://127.0.0.1:${(server.address() as { port: number }).port}/file`, options))
+    try {
+      const result = await installServerRuntime({ serverPack: { root, copiedMods: [], skippedClientMods: [], warnings: [], manifestPath: path.join(root, 'modmind.server.json') }, javaPath: process.execPath }, pack)
+      expect(await fs.readFile(result.serverJar!)).toEqual(bytes)
+      expect(mock).toHaveBeenCalledOnce()
+    } finally {
+      mock.mockRestore(); server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
+  it.each(['forge', 'neoforge', 'fabric'] as const)('rejects HTTP 200 error pages before installing a %s server runtime', async loader => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-server-runtime-invalid-')); roots.push(root)
+    const server = createServer((_request, response) => response.end('<html>download unavailable</html>'))
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const transport = httpTransport.request
+    const mock = vi.spyOn(httpTransport, 'request').mockImplementation((_url, options) => transport(`http://127.0.0.1:${(server.address() as { port: number }).port}/file`, options))
+    try {
+      const pack = { ...project(root), loader, loaderVersion: loader === 'forge' ? '47.4.22' : loader === 'neoforge' ? '21.1.244' : '0.16.10' }
+      await expect(installServerRuntime({ serverPack: { root, copiedMods: [], skippedClientMods: [], warnings: [], manifestPath: path.join(root, 'modmind.server.json') }, javaPath: process.execPath }, pack)).rejects.toThrow('JAR 内容校验失败')
+      expect(await fs.readdir(root)).toEqual([])
+    } finally {
+      mock.mockRestore(); server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
   it('does not expose client manifest mods before a server pack exists', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-server-manifest-'))
     roots.push(root)
@@ -136,8 +201,10 @@ describe('server pack generation', () => {
     const serverJar = path.join(root, 'server.jar')
     await fs.writeFile(path.join(root, '.modmind-server-runtime.json'), JSON.stringify({ minecraftVersion: pack.minecraftVersion, loader: pack.loader, loaderVersion: '0.16.9' }))
     const download = vi.spyOn(verifiedDownload, 'download').mockImplementation(async (input) => {
-      await fs.writeFile(input.destination, Buffer.from('server runtime'))
-      return { source: input.sources[0], destination: input.destination, bytes: 14, attempts: 1, failures: [] }
+      const bytes = createStoredZip([{ name: 'META-INF/MANIFEST.MF', data: Buffer.from('Main-Class: Server\r\n') }, { name: 'Server.class', data: Buffer.from('class fixture') }])
+      await fs.writeFile(input.destination, bytes)
+      await input.validate?.(input.destination)
+      return { source: input.sources[0], destination: input.destination, bytes: bytes.length, attempts: 1, failures: [] }
     })
 
     try {

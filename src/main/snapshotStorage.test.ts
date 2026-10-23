@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listManagedFiles, restoreManagedTreeExact } from './agentCore'
-import { ignoreSnapshotDirectory, repairLegacySnapshotCaches, snapshotStorageInfo } from './snapshotStorage'
+import { ignoreSnapshotDirectory, repairLegacySnapshotCaches, snapshotStorageInfo, invalidateSnapshotStorage, canRefreshSnapshotStorageIncrementally } from './snapshotStorage'
 
 const temporaryRoots: string[] = []
 
@@ -14,6 +14,7 @@ async function temporaryProject(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(temporaryRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })))
 })
 
@@ -83,6 +84,81 @@ describe('snapshot storage maintenance', () => {
 
     const status = await snapshotStorageInfo(project)
     expect(status).toMatchObject({ snapshotCount: 2, logicalBytes: 18, uniqueBytes: 9, warning: false, incomplete: false })
+  })
+
+  it('merges concurrent scans and updates only changed snapshots, including shared-file deletion', async () => {
+    const project = await temporaryProject()
+    const root = path.join(project, '.modmind', 'snapshots')
+    await fs.mkdir(path.join(root, 'first'), { recursive: true })
+    await fs.mkdir(path.join(root, 'second'))
+    await fs.writeFile(path.join(root, 'first', 'source'), 'shared')
+    await fs.link(path.join(root, 'first', 'source'), path.join(root, 'second', 'source'))
+    const scans = vi.spyOn(fs, 'readdir')
+    const [a, b] = await Promise.all([snapshotStorageInfo(project), snapshotStorageInfo(project)])
+    expect(a).toEqual(b)
+    expect(scans).toHaveBeenCalledTimes(3)
+    scans.mockClear()
+    await snapshotStorageInfo(project)
+    expect(scans).not.toHaveBeenCalled()
+    await fs.mkdir(path.join(root, 'third'))
+    await fs.writeFile(path.join(root, 'third', 'other'), 'new')
+    invalidateSnapshotStorage(project, 'third')
+    expect(await snapshotStorageInfo(project)).toMatchObject({ snapshotCount: 3, logicalBytes: 15, uniqueBytes: 9 })
+    expect(scans).toHaveBeenCalledTimes(2)
+    await fs.rm(path.join(root, 'first'), { recursive: true })
+    invalidateSnapshotStorage(project, 'first')
+    expect(await snapshotStorageInfo(project)).toMatchObject({ snapshotCount: 2, logicalBytes: 9, uniqueBytes: 9 })
+  })
+
+  it('expires external file modifications and isolates project caches', async () => {
+    const first = await temporaryProject(), second = await temporaryProject()
+    for (const project of [first, second]) {
+      await fs.mkdir(path.join(project, '.modmind', 'snapshots', 'one'), { recursive: true })
+      await fs.writeFile(path.join(project, '.modmind', 'snapshots', 'one', 'source'), 'short')
+    }
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    await snapshotStorageInfo(first)
+    await snapshotStorageInfo(second)
+    await fs.writeFile(path.join(first, '.modmind', 'snapshots', 'one', 'source'), 'much longer content')
+    vi.mocked(Date.now).mockReturnValue(now + 60_001)
+    expect((await snapshotStorageInfo(first)).logicalBytes).toBe(19)
+    expect((await snapshotStorageInfo(second)).logicalBytes).toBe(5)
+  })
+
+  it('allows background notifications to refresh hot estimates without starting a cold or expired full scan', async () => {
+    const project = await temporaryProject()
+    expect(canRefreshSnapshotStorageIncrementally(project)).toBe(false)
+    await fs.mkdir(path.join(project, '.modmind', 'snapshots', 'first'), { recursive: true })
+    await fs.writeFile(path.join(project, '.modmind', 'snapshots', 'first', 'source'), 'content')
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    await snapshotStorageInfo(project)
+    expect(canRefreshSnapshotStorageIncrementally(project)).toBe(true)
+    invalidateSnapshotStorage(project, 'first')
+    expect(canRefreshSnapshotStorageIncrementally(project)).toBe(true)
+    vi.mocked(Date.now).mockReturnValue(now + 60_001)
+    expect(canRefreshSnapshotStorageIncrementally(project)).toBe(false)
+  })
+
+  it('refreshes a known write that arrives during the initial scan', async () => {
+    const project = await temporaryProject()
+    const directory = path.join(project, '.modmind', 'snapshots', 'first')
+    await fs.mkdir(directory, { recursive: true })
+    const target = path.join(directory, 'source')
+    await fs.writeFile(target, 'old')
+    const lstat = fs.lstat.bind(fs)
+    let changed = false
+    vi.spyOn(fs, 'lstat').mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+      const stat = await lstat(...args)
+      if (!changed && String(args[0]) === target) {
+        changed = true
+        await fs.writeFile(target, 'updated during initial scan')
+        invalidateSnapshotStorage(project, 'first')
+      }
+      return stat
+    }) as typeof fs.lstat)
+    expect((await snapshotStorageInfo(project)).logicalBytes).toBe(27)
   })
 
   it('restores source files without rolling back a current test world', async () => {

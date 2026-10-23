@@ -441,10 +441,13 @@ getState(): MinecraftRuntimeState {
   }
 
 async ensureJavaRuntime(
-    onProgress?: (message: string) => void,
+    onProgressOrSignal?: ((message: string) => void) | AbortSignal,
     minimumMajorOverride?: number,
     onDownloadProgress?: (progress: ManagedJdkProgress) => void
   ): Promise<string> {
+    const onProgress = typeof onProgressOrSignal === 'function' ? onProgressOrSignal : undefined
+    const signal = typeof onProgressOrSignal === 'function' ? undefined : onProgressOrSignal
+    signal?.throwIfAborted()
     const project = this.requireProject()
     const projectMinimumMajor = javaVersionForMinecraft(project.minecraftVersion)
     const minimumMajor = Math.max(projectMinimumMajor, minimumMajorOverride ?? projectMinimumMajor)
@@ -475,7 +478,8 @@ async ensureJavaRuntime(
         reportedSource = progress.source
         onProgress?.(message)
       }
-    })
+    }, signal)
+    signal?.throwIfAborted()
     const candidate = await probeJavaHome(managed.home, minimumMajor, false)
     if (!candidate) throw new Error(`已下载的 JDK 无法运行 ServerPackCreator：${managed.home}`)
     onProgress?.(`Java ${candidate.major} 已就绪：${managed.source}`)
@@ -485,8 +489,10 @@ async ensureJavaRuntime(
 async ensureJavaRuntimeForTools(
     minimumMajor = 21,
     onProgress?: (message: string) => void,
-    onDownloadProgress?: (progress: ManagedJdkProgress) => void
+    onDownloadProgress?: (progress: ManagedJdkProgress) => void,
+    signal?: AbortSignal
   ): Promise<string> {
+    signal?.throwIfAborted()
     const requiredMajor = Number.isInteger(minimumMajor) ? Math.max(8, minimumMajor) : 21
     const runtimeTarget = javaRuntimeTargetForJavaVersion(requiredMajor)
     const preferredToolsJava = await this.preferredJavaHome('tools')
@@ -513,7 +519,8 @@ async ensureJavaRuntimeForTools(
         reportedSource = progress.source
         onProgress?.(message)
       }
-    })
+    }, signal)
+    signal?.throwIfAborted()
     const candidate = await probeJavaHome(managed.home, requiredMajor, false)
     if (!candidate) throw new Error(`已下载的 JDK 无法运行反编译工具：${managed.home}`)
     onProgress?.(`Java ${candidate.major} 已就绪：${managed.source}`)
@@ -700,8 +707,8 @@ protected async stopStaleGradleDaemons(runtime: GradleRuntimeSelection, project:
     }
   }
 
-protected async gradleRuntime(project: ProjectInfo): Promise<GradleRuntimeSelection> {
-    const javaPath = await this.ensureBuildJava(project)
+protected async gradleRuntime(project: ProjectInfo, signal?: AbortSignal): Promise<GradleRuntimeSelection> {
+    const javaPath = await this.ensureBuildJava(project, signal)
     const wrapperPath = projectGradleWrapperExecutable(project.path)
     if (!(await exists(wrapperPath))) {
       throw new Error(`项目缺少 Gradle Wrapper：${path.basename(wrapperPath)}。请先在项目根目录提供可用的 Wrapper`)
@@ -710,7 +717,8 @@ protected async gradleRuntime(project: ProjectInfo): Promise<GradleRuntimeSelect
     return { executable: wrapperPath, javaHome: path.dirname(path.dirname(javaPath)), usesWrapper: true, source: 'wrapper' }
   }
 
-protected async ensureBuildJava(project: ProjectInfo): Promise<string> {
+protected async ensureBuildJava(project: ProjectInfo, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
     const range = buildJavaRangeForProject(project)
     const preferredBuildJava = await this.preferredJavaHome('build')
     if (preferredBuildJava) {
@@ -727,6 +735,7 @@ protected async ensureBuildJava(project: ProjectInfo): Promise<string> {
       )
     }
     for (const home of await configuredBuildJavaHomes(project)) {
+      signal?.throwIfAborted()
       const candidate = await probeJavaHome(home, range.minimum, true, range.maximum)
       if (candidate) {
         this.buildToolchainHomes.set(candidate.major, path.dirname(path.dirname(candidate.javaPath)))
@@ -737,7 +746,8 @@ protected async ensureBuildJava(project: ProjectInfo): Promise<string> {
     }
     const managed = await ensureManagedJdk(path.join(app.getPath('userData'), 'build-jdks'), range.minimum, (progress) => {
       this.emitProgress('downloading-java', `正在从${progress.source}下载完整 JDK ${range.minimum}`, progress.downloaded, progress.total)
-    })
+    }, signal)
+    signal?.throwIfAborted()
     const candidate = await probeJavaHome(managed.home, range.minimum, true, range.maximum)
     if (!candidate) {
       throw new Error(`ModMind 下载的 JDK 无法用于 Gradle 编译：${managed.home}。请设置有效的 JDK（包含 javac）或修复 JDK 缓存`)
@@ -747,11 +757,13 @@ protected async ensureBuildJava(project: ProjectInfo): Promise<string> {
     return candidate.javaPath
   }
 
-protected async ensureDetectedBuildToolchains(logText: string, project?: ProjectInfo): Promise<boolean> {
+protected async ensureDetectedBuildToolchains(logText: string, project?: ProjectInfo, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
     const requirements = detectToolchainRequirements(logText)
     const configuredHomes = project ? await configuredBuildJavaHomes(project) : []
     let changed = false
     for (const major of requirements.javaMajors) {
+      signal?.throwIfAborted()
       if (this.buildToolchainHomes.has(major)) continue
       const existing = await Promise.all(configuredHomes.map((home) => probeJavaHome(home, major, true, major)))
       const configured = existing.find((candidate): candidate is JavaProbeResult => Boolean(candidate))
@@ -764,7 +776,8 @@ protected async ensureDetectedBuildToolchains(logText: string, project?: Project
       this.emit('building-mod', `构建日志要求 Java ${major}，正在自动准备对应 JDK`, 'warning')
       const managed = await ensureManagedJdk(path.join(app.getPath('userData'), 'build-jdks'), major, (progress) => {
         this.emitProgress('downloading-java', `正在为构建下载 JDK ${major}（${progress.source}）`, progress.downloaded, progress.total)
-      })
+      }, signal)
+      signal?.throwIfAborted()
       const candidate = await probeJavaHome(managed.home, major, true)
       if (!candidate) throw new Error(`自动下载的 JDK ${major} 未通过 javac 验证：${managed.home}`)
       this.buildToolchainHomes.set(major, path.dirname(path.dirname(candidate.javaPath)))
@@ -812,7 +825,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     if (project.kind === 'server-plugin') {
       if (!isServerPluginPlatform(project.loader)) throw new Error('插件工程平台无效')
       if (await exists(path.join(project.path, 'pom.xml')) && !await exists(path.join(project.path, 'build.gradle')) && !await exists(path.join(project.path, 'build.gradle.kts'))) {
-        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
+        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project, signal), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
       } else await this.runGradleBuild(project, signal)
       const artifact = await findPluginArtifact(project)
       this.updateState({ stage: 'idle', message: `插件构建完成：${artifact.name}`, mods: [artifact] })
@@ -838,7 +851,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     await this.prepareProjectDependencies?.(project, signal)
     await this.prepareGradleMavenFallback(project)
     await this.prepareGradleWrapperDownload(project, 0, signal)
-    const runtime = await this.gradleRuntime(project)
+    const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
     await fs.mkdir(logDirectory, { recursive: true })
@@ -898,7 +911,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     if (spawnError) throw new Error(`无法启动 Gradle Wrapper：${spawnError}\nJava: ${javaPath}\nWrapper: ${runtime.executable}\n工作目录：${project.path}`)
     if (termination.code !== 0) {
       if (!aborted && toolchainRetryAttempt < 4) {
-        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project)
+        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project, signal)
         if (toolchainsPrepared) {
           this.emit('building-mod', '已根据构建日志补齐工具链，正在重试原构建任务', 'warning')
           return this.buildProjectInternal(signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
@@ -994,7 +1007,7 @@ protected async prepareGradleMavenFallback(project: ProjectInfo): Promise<void> 
 protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolchainRetryAttempt = 0, distributionRetryAttempt = 0): Promise<void> {
     await this.prepareGradleMavenFallback(project)
     await this.prepareGradleWrapperDownload(project, 0, signal)
-    const runtime = await this.gradleRuntime(project)
+    const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
     const logPath = path.join(logDirectory, 'minecraft-test-build.log')
     await fs.mkdir(logDirectory, { recursive: true })
@@ -1047,7 +1060,7 @@ protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolc
     if (spawnError) throw new Error(`无法启动 Gradle Wrapper：${spawnError}\nJava: ${javaPath}\nWrapper: ${runtime.executable}`)
     if (termination.code !== 0) {
       if (!aborted && toolchainRetryAttempt < 4) {
-        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project)
+        const toolchainsPrepared = await this.ensureDetectedBuildToolchains(fullLog, project, signal)
         if (toolchainsPrepared) {
           this.emit('building-mod', '已根据构建日志补齐工具链，正在重试原构建任务', 'warning')
           return this.runGradleBuild(project, signal, toolchainRetryAttempt + 1, distributionRetryAttempt)

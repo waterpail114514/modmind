@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "image-studio",
   "name": "图像工坊",
-  "version": "1.5.0-plugintest",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -79,7 +79,7 @@
           "model": {
             "type": "string",
             "maxLength": 128,
-            "description": "Optional model override for this request only; otherwise uses the saved Image Studio model."
+            "description": "Optional custom API model override for this request. Official image requests use the server image lease model."
           },
           "presetId": {
             "type": "string",
@@ -262,7 +262,7 @@
     {
       "name": "modmind_image_generate",
       "action": "generate",
-      "description": "Generate or edit through the same Image Studio entry point, saved credentials and model as the UI. Read modmind_image_studio_info for presets and optionally models. Supports every generation parameter; model is a per-request override. Never requires separate agent credentials. Each output records a project path and, up to 8 MiB, a dataUrl for processing or Blockbench."
+      "description": "Generate or edit through the same Image Studio entry point as the UI. Read modmind_image_studio_info for presets and optionally models. Custom API requests support a per-request model override; official requests use the Key, URL and model from a fresh image lease. Never requires separate agent credentials. Each output records a project path and, up to 8 MiB, a dataUrl for processing or Blockbench."
     },
     {
       "name": "modmind_image_perfect_pixel",

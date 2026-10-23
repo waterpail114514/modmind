@@ -156,7 +156,7 @@ try {
   await snapshot('studio-music-long-song')
   await beepbox.locator('.modmind-bar-scroll').click({ position: { x: 8, y: 11 } })
   assert.equal(await beepbox.locator('.beepboxEditor').evaluate(() => editor.doc.barScrollPos), 0, 'Bar navigation cannot return to the first bars')
-  await page.setViewportSize({ width: 640, height: 900 })
+  await page.setViewportSize({ width: 1080, height: 900 })
   for (const [view, region] of [['编排', '.track-area'], ['音色', '.settings-area'], ['音符', '.pattern-area']]) {
     await page.getByRole('button', { name: view, exact: true }).click()
     await beepbox.locator(region).waitFor({ state: 'visible' })
@@ -177,13 +177,13 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 })
   for (const [tab, screenshot] of [['声音库', 'library-narrow'], ['事件', 'events-narrow'], ['制作', 'studio-narrow']]) {
     await page.getByRole('tab', { name: tab }).click()
-    await page.setViewportSize({ width: 640, height: 900 })
+    await page.setViewportSize({ width: 1080, height: 900 })
     await snapshot(screenshot)
     await page.setViewportSize({ width: 1440, height: 900 })
   }
   await page.evaluate(async () => { const settings = await window.modmind.settings.getAgent(); await window.modmind.settings.saveAgent({ ...settings, darkMode: true }) })
   for (let attempt = 0; attempt < 50 && await page.locator('html').getAttribute('data-theme-mode') !== 'dark'; attempt++) await new Promise(resolve => setTimeout(resolve, 100))
-  await page.setViewportSize({ width: 640, height: 900 })
+  await page.setViewportSize({ width: 1080, height: 900 })
   await snapshot('studio-dark-narrow')
   const hostColors = await page.evaluate(() => {
     const style = getComputedStyle(document.documentElement)

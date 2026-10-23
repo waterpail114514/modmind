@@ -67,7 +67,7 @@ async function install() {
     await page.keyboard.press('Escape'); await confirmation.waitFor({ state: 'detached' })
     assert.deepEqual(await page.evaluate(() => window.modmind.featurePlugins.list()), [])
     await page.getByRole('button', { name: '安装功能插件', exact: true }).click(); await confirmation.waitFor()
-    for (const dark of [false, true]) for (const width of [1280, 390]) {
+    for (const dark of [false, true]) for (const width of [1280, 1080]) {
       await page.evaluate(darkMode => window.dispatchEvent(new StorageEvent('storage', { key: 'modmind-appearance:v1', newValue: JSON.stringify({ themePreset: 'modmind', darkMode }) })), dark)
       await page.setViewportSize({ width, height: 800 })
       assert.ok(await confirmation.evaluate(e => e.scrollWidth <= e.clientWidth + 1))
@@ -129,7 +129,7 @@ try {
   }))
   assert.ok(storedWorkflows.workflows.length > 0)
   assert.equal(requests.length, 2)
-  for (const dark of [false, true]) for (const width of [1280, 760]) {
+  for (const dark of [false, true]) for (const width of [1280, 1080]) {
     await page.evaluate(darkMode => window.dispatchEvent(new StorageEvent('storage', { key: 'modmind-appearance:v1', newValue: JSON.stringify({ themePreset: 'modmind', darkMode }) })), dark)
     await page.setViewportSize({ width, height: 800 })
     await page.screenshot({ path: path.join(work, `studio-${dark ? 'dark' : 'light'}-${width}.png`) })

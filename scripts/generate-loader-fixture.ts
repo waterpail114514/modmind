@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { projectTemplateFiles } from '../src/main/projectTemplates'
+import { modTemplateFiles as projectTemplateFiles } from '../feature-plugins/studio-mod/src/main/modTemplates'
 import type { LoaderKind, ProjectInfo } from '../src/shared/types'
 
 const [targetInput = 'matrix-project'] = process.argv.slice(2)

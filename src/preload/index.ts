@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSource } from '../shared/aiAttachments'
 import { diagnosticErrorPayload } from '../shared/diagnostics'
 import { presentClientResult } from '../shared/clientResult'
-import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
+import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, AppDialogRequest, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
@@ -71,6 +71,43 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 const api: ModMindApi = {
+  developer: {
+    recent: () => invoke('developer:recent'),
+    editorTypes: () => invoke('developer:editorTypes'),
+    create: input => invoke('developer:create', input),
+    open: root => invoke('developer:open', root),
+    importPackage: () => invoke('developer:importPackage'),
+    close: session => invoke('developer:close', session),
+    state: session => invoke('developer:state', session),
+    read: (session, file) => invoke('developer:read', session, file),
+    write: (session, file, content, revision) => invoke('developer:write', session, file, content, revision),
+    remove: (session, file, revision) => invoke('developer:remove', session, file, revision),
+    importAssets: session => invoke('developer:importAssets', session),
+    build: session => invoke('developer:build', session),
+    preview: (session, page, dark, readOnly) => invoke('developer:preview', session, page, dark, readOnly),
+    debug: (session, input) => invoke('developer:debug', session, input),
+    previewInvoke: (session, channel, args, readOnly) => invoke('developer:previewInvoke', session, channel, args, readOnly),
+    onPreviewEvent: callback => {
+      const listener = (_event: Electron.IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value)
+      ipcRenderer.on('developer:previewEvent', listener)
+      return () => ipcRenderer.removeListener('developer:previewEvent', listener)
+    },
+    export: session => invoke('developer:export', session),
+    cancel: session => invoke('developer:cancel', session),
+    drafts: session => invoke('developer:drafts', session),
+    saveDrafts: (session, drafts) => invoke('developer:saveDrafts', session, drafts),
+    restoreCheckpoint: session => invoke('developer:restoreCheckpoint', session),
+    conversations: session => invoke('developer:conversations', session),
+    saveConversation: (session, conversation) => invoke('developer:saveConversation', session, conversation),
+    deleteConversation: (session, id) => invoke('developer:deleteConversation', session, id),
+    runAi: (session, conversationId, prompt, backend, selection) => invoke('developer:runAi', session, conversationId, prompt, backend, selection),
+    stopAi: session => invoke('developer:stopAi', session),
+    onAi: callback => {
+      const listener = (_event: Electron.IpcRendererEvent, value: import('../shared/developerWorkbench').DeveloperAiEvent): void => callback(value)
+      ipcRenderer.on('developer:ai', listener)
+      return () => { ipcRenderer.removeListener('developer:ai', listener) }
+    }
+  },
   skills: {
     list: () => invoke('skills:list'),
     read: name => invoke('skills:read', name),
@@ -148,6 +185,12 @@ const api: ModMindApi = {
       ipcRenderer.on('window:detachedClosed', handler)
       return () => ipcRenderer.removeListener('window:detachedClosed', handler)
     },
+    onDialogRequest: (listener: (request: AppDialogRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: AppDialogRequest): void => listener(presentResult(request, 'app:dialogRequested'))
+      ipcRenderer.on('app:dialogRequested', handler)
+      return () => ipcRenderer.removeListener('app:dialogRequested', handler)
+    },
+    resolveDialog: (requestId: string, confirmed: boolean) => invoke('app:resolveDialog', requestId, confirmed),
     onCloseRequested: (listener: () => void) => {
       closeRequestListeners.add(listener)
       if (pendingCloseRequest) {
@@ -228,6 +271,7 @@ const api: ModMindApi = {
   },
   modpack: {
     get: () => invoke('modpack:get'),
+    refreshMods: () => invoke('modpack:refreshMods'),
     resumeImport: () => invoke('modpack:resumeImport'),
     cancelImport: () => invoke('modpack:cancelImport'),
     importStatus: () => invoke('modpack:importStatus'),
@@ -245,7 +289,6 @@ const api: ModMindApi = {
     sync: () => invoke('modpack:sync'),
     listContent: (refresh?: boolean) => invoke('modpack:listContent', refresh),
     configModIdentities: root => invoke('modpack:configModIdentities', root),
-    contentFeatures: root => invoke('modpack:contentFeatures', root),
     onModsChanged: listener => {
       const handler = (_event: Electron.IpcRendererEvent, projectPath: string): void => listener(presentResult(projectPath, 'modpack:modsChanged'))
       ipcRenderer.on('modpack:modsChanged', handler)
@@ -288,11 +331,14 @@ const api: ModMindApi = {
     saveFtbQuestBook: (book, projectPath) => invoke('modpack:saveFtbQuestBook', book, projectPath),
     writeFtbQuest: (input: unknown) => invoke('modpack:writeFtbQuest', input),
     writePatchouliBook: (input: unknown) => invoke('modpack:writePatchouliBook', input),
+    readPatchouliBooks: () => invoke('modpack:readPatchouliBooks'),
     applyKeybindPreset: (input: unknown, allowConflicts?: boolean) => invoke('modpack:applyKeybindPreset', input, allowConflicts),
     buildServerPack: (input: unknown) => invoke('modpack:buildServerPack', input),
     installServerRuntime: (input: unknown) => invoke('modpack:installServerRuntime', input),
     verifyServerJoin: (input: unknown) => invoke('modpack:verifyServerJoin', input),
     runServerScenario: (input: unknown) => invoke('modpack:runServerScenario', input),
+    pickScenarioJars: () => invoke('modpack:pickScenarioJars'),
+    removeScenarioJar: (file: string) => invoke('modpack:removeScenarioJar', file),
     getServerState: () => invoke('modpack:getServerState'),
     startServer: (input: unknown) => invoke('modpack:startServer', input),
     stopServer: () => invoke('modpack:stopServer'),
@@ -341,7 +387,7 @@ const api: ModMindApi = {
     pickBackground: () => invoke('settings:pickBackground'),
     revealSecret: (key) => invoke('settings:revealSecret', key),
     getAgent: () => invoke('settings:getAgent'),
-    saveAgent: (settings: AgentSettings) => invoke('settings:saveAgent', settings),
+    saveAgent: (settings) => invoke('settings:saveAgent', settings),
     onAppearanceChanged: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, appearance: import('../shared/appTheme').AppAppearance): void => listener(appearance)
       ipcRenderer.on('settings:appearance', handler)
@@ -367,6 +413,7 @@ const api: ModMindApi = {
     saveAiPreferences: (preferences: BeginnerAiPreferences) => invoke('device:saveAiPreferences', preferences),
     listModels: (force?: boolean) => invoke('device:listModels', force),
     getModelCatalog: (force?: boolean) => invoke('device:getModelCatalog', force),
+    discoverModels: () => invoke('device:discoverModels'),
     refreshConnections: () => invoke('device:refreshConnections'),
     resetModelSelection: (surface: 'workspace' | 'inspiration') => invoke('device:resetModelSelection', surface),
     onAiSelection: (listener: (value: { surface: 'workspace' | 'inspiration'; selection?: import('../shared/aiSelection').AiModelSelection }) => void) => {
@@ -453,8 +500,11 @@ const api: ModMindApi = {
   conversations: {
     list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => invoke('conversations:list', projectPath, surface, includeArchived),
     read: (projectPath: string, conversationId: string) => invoke('conversations:read', projectPath, conversationId),
+    readProjection: (projectPath: string, conversationId: string) => invoke('conversations:readProjection', projectPath, conversationId),
     create: (projectPath: string, input: ConversationCreateInput) => invoke('conversations:create', projectPath, input),
+    ensureProjection: (projectPath: string, input: ConversationCreateInput) => invoke('conversations:ensureProjection', projectPath, input),
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => invoke('conversations:saveView', projectPath, conversationId, generation, view, title),
+    saveProjection: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => invoke('conversations:saveProjection', projectPath, conversationId, generation, view, title),
     replaceView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']) => invoke('conversations:replaceView', projectPath, conversationId, generation, view),
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => invoke('conversations:eventsSince', projectPath, conversationId, generation, afterSequence, limit),
     fork: (projectPath: string, input: ConversationForkInput) => invoke('conversations:fork', projectPath, input),
@@ -672,6 +722,10 @@ const api: ModMindApi = {
     }
   }
   ,
+  studios: {
+    list: () => invoke('studios:list'),
+    context: (surface, projectPath) => invoke('studios:context', surface, projectPath)
+  },
   featurePlugins: {
     store: () => invoke('feature-plugins:store'),
     refreshStore: () => invoke('feature-plugins:refreshStore'),
@@ -713,6 +767,8 @@ const api: ModMindApi = {
   }
   ,
   inspiration: {
+    readWorkflow: (projectPath, identity) => invoke('inspiration:readWorkflow', projectPath, identity),
+    commitWorkflow: (projectPath, identity, edits, undo) => invoke('inspiration:commitWorkflow', projectPath, identity, edits, undo),
     listModels: (backend: import('../shared/types').CodingBackend) => invoke('inspiration:listModels', backend),
     onKnowledgeChanged: listener => {
       const handler = (_event: Electron.IpcRendererEvent, change: Parameters<typeof listener>[0]): void => listener(presentResult(change, 'inspiration:knowledgeChanged'))

@@ -1,6 +1,6 @@
 import { createContext, createElement, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Expand, ImageOff, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Copy, Download, Expand, ImageOff, X } from 'lucide-react'
 import { renderWorkbenchMarkdown } from '../workbenchMarkdown'
 import ResourceImagePreview from './ResourceImagePreview'
 import './reply-images.css'
@@ -66,7 +66,95 @@ function ReplyImage({ path, caption }: { path: string; caption: string }): React
   </button>
 }
 
-export const ReplyMarkdown = memo(function ReplyMarkdown({ content, className = 'markdown-message', onSource }: { content: string; className?: string; onSource?: (href: string) => void }): React.JSX.Element {
+type ReplyMarkdownProps = { content: string; className?: string; onSource?: (href: string) => void }
+const REPLY_PAGE_CHARS = 12_000
+
+type ReplyPage = { start: number; end: number; fence: string }
+function replyPages(content: string): ReplyPage[] {
+  const pages: ReplyPage[] = []
+  let start = 0
+  let fence = ''
+  while (start < content.length) {
+    let end = Math.min(content.length, start + REPLY_PAGE_CHARS)
+    if (end < content.length) {
+      const newline = content.slice(start, end).lastIndexOf('\n')
+      if (newline > REPLY_PAGE_CHARS / 2) end = start + newline + 1
+      // Keep UTF-16 pairs intact even for a very long unbroken line.
+      if (/[\uD800-\uDBFF]/u.test(content[end - 1])) end--
+    }
+    pages.push({ start, end, fence })
+    for (const line of content.slice(start, end).split('\n')) {
+      const match = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line)
+      if (!match) continue
+      if (!fence) fence = `${match[1]}${match[2]}`
+      else if (match[1][0] === fence[0] && match[1].length >= /^(`+|~+)/u.exec(fence)![0].length && !match[2].trim()) fence = ''
+    }
+    start = end
+  }
+  return pages
+}
+
+function LongReply({ content, className, onSource }: ReplyMarkdownProps): React.JSX.Element {
+  const pages = useMemo(() => replyPages(content), [content])
+  const [selected, setSelected] = useState(0)
+  const [fullOpen, setFullOpen] = useState(false)
+  const page = Math.min(selected, pages.length - 1)
+  const part = pages[page]
+  const preview = `${part.fence ? `${part.fence}\n` : ''}${content.slice(part.start, part.end)}`
+  return <div className="reply-long-message">
+    <div className="reply-long-toolbar"><span>长回复 · 第 {page + 1} / {pages.length} 段</span><button type="button" aria-label="上一段回复" disabled={page === 0} onClick={() => setSelected(page - 1)}><ChevronLeft size={14} /></button><button type="button" aria-label="下一段回复" disabled={page === pages.length - 1} onClick={() => setSelected(page + 1)}><ChevronRight size={14} /></button><button type="button" onClick={() => setFullOpen(true)}>阅读全文</button></div>
+    <ReplyMarkdownPage content={preview} className={className} onSource={onSource} />
+    {fullOpen ? <ReplyTextDialog content={content} pages={pages} initialPage={page} onClose={() => setFullOpen(false)} /> : null}
+  </div>
+}
+
+function ReplyTextDialog({ content, pages, initialPage, onClose }: { content: string; pages: ReplyPage[]; initialPage: number; onClose: () => void }): React.JSX.Element {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const text = useRef<HTMLPreElement>(null)
+  const [page, setPage] = useState(initialPage)
+  const [query, setQuery] = useState('')
+  const [match, setMatch] = useState(-1)
+  const [message, setMessage] = useState('')
+  const part = pages[Math.min(page, pages.length - 1)]
+  const source = content.slice(part.start, part.end)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    const element = dialog.current!
+    element.showModal()
+    return () => { element.close(); if (previous?.isConnected) previous.focus({ preventScroll: true }) }
+  }, [])
+  useEffect(() => { text.current?.scrollTo({ top: 0 }) }, [page])
+  useEffect(() => {
+    if (match >= 0) text.current?.querySelector('mark')?.scrollIntoView({ block: 'center' })
+  }, [page, match])
+  const find = (): void => {
+    if (!query) return
+    let index = content.indexOf(query, match >= 0 ? match + Math.max(1, query.length) : 0)
+    if (index < 0) index = content.indexOf(query)
+    setMatch(index)
+    if (index < 0) setMessage('没有找到匹配文字')
+    else { setPage(pages.findIndex(part => index >= part.start && index < part.end)); setMessage('已定位匹配文字') }
+  }
+  const download = (): void => {
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = 'ModMind-完整回复.md'; link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+  const offset = match - part.start
+  return createPortal(<dialog ref={dialog} className="reply-text-dialog" aria-label="完整回复原文" onCancel={event => { event.preventDefault(); onClose() }} onClick={event => { if (event.target === event.currentTarget) onClose() }}>
+    <header><strong>完整回复原文</strong><button type="button" aria-label="关闭完整回复" title="关闭（Esc）" onClick={onClose}><X size={18} /></button></header>
+    <div className="reply-text-tools"><input type="search" aria-label="在完整回复中查找" placeholder="查找原文" value={query} onChange={event => { setQuery(event.target.value); setMatch(-1); setMessage('') }} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); find() } }} /><button type="button" disabled={!query} onClick={find}>查找下一个</button><button type="button" onClick={() => { void navigator.clipboard.writeText(content).then(() => setMessage('已复制完整回复'), () => setMessage('复制失败，可以下载完整原文')) }}><Copy size={14} />复制全文</button><button type="button" onClick={download}><Download size={14} />下载原文</button></div>
+    <pre ref={text} tabIndex={0}>{offset >= 0 && offset < source.length ? <>{source.slice(0, offset)}<mark>{source.slice(offset, offset + query.length)}</mark>{source.slice(offset + query.length)}</> : source}</pre>
+    <footer><button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>上一段</button><label>第 <input type="number" aria-label="原文段数" min={1} max={pages.length} value={page + 1} onChange={event => { const next = Number(event.target.value); if (Number.isInteger(next) && next >= 1 && next <= pages.length) setPage(next - 1) }} /> / {pages.length} 段</label><button type="button" disabled={page === pages.length - 1} onClick={() => setPage(page + 1)}>下一段</button><span role="status">{message}</span></footer>
+  </dialog>, document.body)
+}
+
+export const ReplyMarkdown = memo(function ReplyMarkdown(props: ReplyMarkdownProps): React.JSX.Element {
+  return props.content.length > REPLY_PAGE_CHARS * 2 ? <LongReply {...props} /> : <ReplyMarkdownPage {...props} />
+})
+
+const ReplyMarkdownPage = memo(function ReplyMarkdownPage({ content, className = 'markdown-message', onSource }: ReplyMarkdownProps): React.JSX.Element {
   const context = useContext(ImageContext)
   const html = useMemo(() => renderWorkbenchMarkdown(content, !!onSource), [content, !!onSource])
   const children = useMemo(() => {

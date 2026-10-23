@@ -84,7 +84,7 @@ try {
   assert.deepEqual(calls[0].options.workbenchFeatures, { renderedTesting: true, headlessTesting: false, imageGeneration: false, modeling: true })
   await app.evaluate(() => globalThis.featureSmoke.release())
   await page.locator('.workbench-feature-trigger:not([disabled])').waitFor()
-  for (const width of [900, 390]) {
+  for (const width of [1080]) {
     await page.setViewportSize({ width, height: 850 })
     await trigger.click()
     await controls.waitFor()

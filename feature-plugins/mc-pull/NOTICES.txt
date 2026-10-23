@@ -1,0 +1,3 @@
+游戏数据采集
+
+来自用户交接源码，使用 Node 标准库处理本地资源；界面复用宿主 React。集成代码遵循 ModMind LICENSE，仓库及编译依赖声明位于 main.cjs 和 renderer.js 末尾。未包含游戏资源或探针 JAR。

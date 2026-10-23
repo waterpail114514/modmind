@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import { parse as parseToml } from 'smol-toml'
 import type { AddonApiProfile, AddonRelationshipDependency } from '../shared/production'
 import type { JavaLoaderKind } from '../shared/types'
 import { inspectLegacyForgeAnnotations, type LegacyForgeAnnotation } from './legacyForgeAnnotations'
-import { archiveEntries, archiveRead } from "./archiveInspection"
+import { archiveEntries, archiveRead } from './archiveInspection'
 import type { ModConfigIdentity } from '../shared/contentFileFilters'
 
 export interface InspectedModJar {

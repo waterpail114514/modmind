@@ -129,10 +129,12 @@ diagnosticHandle('decompile:start', (_event, input: unknown) => host.runDiagnost
         skipRemap: value.skipRemap === true,
         ...(typeof value.minecraftVersion === 'string' && value.minecraftVersion.trim() ? { minecraftVersion: value.minecraftVersion.trim() } : {})
     };
+    const runKey = process.platform === 'win32' ? path.resolve(request.jarPath).toLowerCase() : path.resolve(request.jarPath);
+    if (activeDecompileRuns.has(runKey)) throw new Error('这个 JAR 正在反编译，请等待当前任务完成');
     const controller = new AbortController();
-    activeDecompileRuns.set(request.jarPath, controller);
+    activeDecompileRuns.set(runKey, controller);
     try {
-        const javaPath = await host.requireMinecraftRuntime().ensureJavaRuntimeForTools(DECOMPILE_MIN_JAVA, (message) => host.sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'inspecting', message }), ({ source, downloaded, total }) => host.sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'downloading-mappings', message: `正在从 ${source} 下载托管 Java`, ...(total > 0 ? { ratio: Math.min(0.05, 0.05 * downloaded / total) } : {}) }));
+        const javaPath = await host.requireMinecraftRuntime().ensureJavaRuntimeForTools(DECOMPILE_MIN_JAVA, (message) => host.sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'inspecting', message }), ({ source, downloaded, total }) => host.sendDecompileEvent(controller.signal, { jarSha256: '', phase: 'downloading-mappings', message: `正在从 ${source} 下载托管 Java`, ...(total > 0 ? { ratio: Math.min(0.05, 0.05 * downloaded / total) } : {}) }), controller.signal);
         return await runDecompilation(request, {
             cacheRoot: decompileCacheRoot(),
             javaPath,
@@ -142,14 +144,16 @@ diagnosticHandle('decompile:start', (_event, input: unknown) => host.runDiagnost
         });
     }
     finally {
-        activeDecompileRuns.delete(request.jarPath);
+        if (activeDecompileRuns.get(runKey) === controller) activeDecompileRuns.delete(runKey);
     }
 }));
 diagnosticHandle('decompile:cancel', (_event, jarPath: unknown) => {
     if (typeof jarPath !== 'string')
         throw new Error('缺少 JAR 路径');
-    activeDecompileRuns.get(jarPath)?.abort();
-    return true;
+    const runKey = process.platform === 'win32' ? path.resolve(jarPath).toLowerCase() : path.resolve(jarPath);
+    const controller = activeDecompileRuns.get(runKey);
+    controller?.abort();
+    return Boolean(controller);
 });
 diagnosticHandle('decompile:listFiles', (_event, sourceSha256: unknown) => host.runDiagnosticOperation('decompile', 'listFiles', 'List decompiled sources', async () => {
     if (typeof sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sourceSha256))

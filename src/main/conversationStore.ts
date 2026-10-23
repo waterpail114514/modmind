@@ -13,6 +13,8 @@ import type {
 import { WorkbenchDataStore } from './workbenchDataStore'
 
 const INDEX_KEY = '.modmind/conversations-v2/index.json'
+const INDEX_CHECKPOINT_KEY = '.modmind/conversations-index-v1.json'
+const INDEX_UPDATES_KEY = '.modmind/conversations-v3/index-updates.jsonl'
 const PAGE_LIMIT = 5_000
 type Surface = 'workspace' | 'inspiration'
 
@@ -62,7 +64,7 @@ function normalizeDocument(value: unknown): ConversationDocument | null {
       && event.generation === summary.generation && typeof event.turnId === 'string'
       && Number.isSafeInteger(event.sequence))).sort((left, right) => left.sequence - right.sequence)
     : []
-  const lastSequence = Math.max(Number.isSafeInteger(entry.lastSequence) ? Number(entry.lastSequence) : 0, ...events.map((event) => event.sequence), 0)
+  const lastSequence = events.reduce((maximum, event) => Math.max(maximum, event.sequence), Math.max(0, Number.isSafeInteger(entry.lastSequence) ? Number(entry.lastSequence) : 0))
   const native = entry.native && typeof entry.native === 'object' ? entry.native : {}
   const nativeTurns = entry.nativeTurns && typeof entry.nativeTurns === 'object' ? entry.nativeTurns : {}
   const view = entry.view && typeof entry.view === 'object' ? entry.view : {}
@@ -89,9 +91,16 @@ function parseJournalLines(lines: string[], conversationId: string, generation: 
 
 function storedDocument(document: ConversationDocument): ConversationDocument { return { ...document, events: [] } }
 
+function checkpointView(document: ConversationDocument, generation: number, view: ConversationDocument['view'], title?: string): ConversationDocument {
+  if (document.generation !== generation) throw new Error('对话已产生新分支，已拒绝旧页面覆盖')
+  const checkpointSequence = Math.max(document.checkpointSequence, Math.min(document.lastSequence, viewSequence(view)))
+  // A renderer projection never replaces the original event truth.
+  return { ...document, view, checkpointSequence, ...(!document.titleSource && title?.trim() ? { title: title.trim() } : {}), updatedAt: new Date().toISOString() }
+}
+
 function viewSequence(view: ConversationDocument['view']): number {
   const entries = Array.isArray(view.timeline) ? view.timeline : Array.isArray(view.messages) ? view.messages : []
-  return Math.max(0, ...entries.map((entry) => entry && typeof entry === 'object' && Number.isSafeInteger((entry as { sequence?: number }).sequence) ? Number((entry as { sequence?: number }).sequence) : 0))
+  return entries.reduce<number>((maximum, entry) => Math.max(maximum, entry && typeof entry === 'object' && Number.isSafeInteger((entry as { sequence?: number }).sequence) ? Number((entry as { sequence?: number }).sequence) : 0), 0)
 }
 
 function viewTurnIds(view: ConversationDocument['view']): Set<string> {
@@ -116,6 +125,12 @@ function resetViewSequences(view: ConversationDocument['view']): ConversationDoc
 
 export class ConversationStore {
   private readonly lanes = new Map<string, Promise<unknown>>()
+  private readonly documents = new Map<string, { content: string; document: ConversationDocument; bytes: number }>()
+  private documentBytes = 0
+  private indexClock = 0
+  private readonly indexWrites = new Map<string, number>()
+  private readonly checkpoints = new Map<string, { content: string; throughOrder: string; entries: ConversationSummary[]; bytes: number }>()
+  private checkpointBytes = 0
   private readonly eventBatches = new Map<string, {
     projectPath: string
     conversationId: string
@@ -128,15 +143,60 @@ export class ConversationStore {
 
   async list(projectPath: string, surface?: Surface, includeArchived = false): Promise<ConversationSummary[]> {
     await this.wait(projectPath, '$conversation-index')
-    const stored = await this.data.read(projectPath, INDEX_KEY)
-    if (stored.status === 'unavailable') throw new Error(stored.message ?? '对话索引当前无法读取')
-    if (stored.status !== 'ok' || !stored.content) return []
-    let parsed: unknown
-    try { parsed = JSON.parse(stored.content) } catch { throw new Error('对话索引格式无效') }
-    if (!Array.isArray(parsed)) throw new Error('对话索引格式无效')
-    return parsed.map(normalizeSummary).filter((entry): entry is ConversationSummary => Boolean(entry))
+    return (await this.readIndex(projectPath))
       .filter((entry) => (!surface || entry.surface === surface) && (includeArchived || !entry.archived))
       .sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt.localeCompare(left.updatedAt))
+  }
+
+  private async readIndex(projectPath: string): Promise<ConversationSummary[]> {
+    const checkpoint = await this.readIndexCheckpoint(projectPath)
+    let parsed: unknown = checkpoint?.entries ?? []
+    if (!checkpoint) {
+      const stored = await this.data.read(projectPath, INDEX_KEY)
+      if (stored.status === 'unavailable') throw new Error(stored.message ?? '对话索引当前无法读取')
+      if (stored.status === 'ok' && stored.content) {
+        try { parsed = JSON.parse(stored.content) } catch { throw new Error('对话索引格式无效') }
+      }
+    }
+    if (!Array.isArray(parsed)) throw new Error('对话索引格式无效')
+    const entries = new Map(parsed.map(normalizeSummary).filter((entry): entry is ConversationSummary => Boolean(entry)).map(entry => [entry.id, entry]))
+    const changes = new Map<string, { order: string; summary: ConversationSummary | null }>()
+    for (const line of await this.data.readJournal(projectPath, INDEX_UPDATES_KEY, true)) {
+      try {
+        const value = JSON.parse(line) as { id?: string; order?: string; summary?: unknown; deleted?: boolean }
+        if (!value.id || !validId(value.id) || typeof value.order !== 'string') continue
+        if (checkpoint && value.order <= checkpoint.throughOrder) continue
+        const summary = value.deleted ? null : normalizeSummary(value.summary)
+        if (!value.deleted && (!summary || summary.id !== value.id)) continue
+        if (!changes.has(value.id) || changes.get(value.id)!.order < value.order) changes.set(value.id, { order: value.order, summary })
+      } catch { /* Recover valid records from the other replicas after a torn write. */ }
+    }
+    for (const [id, value] of changes) { if (value.summary) entries.set(id, value.summary); else entries.delete(id) }
+    return [...entries.values()]
+  }
+
+  private async readIndexCheckpoint(projectPath: string): Promise<{ throughOrder: string; entries: ConversationSummary[] } | null> {
+    const stored = await this.data.read(projectPath, INDEX_CHECKPOINT_KEY), key = this.laneKey(projectPath, '$conversation-index')
+    const prior = this.checkpoints.get(key)
+    if (stored.status === 'unavailable') throw new Error(stored.message ?? '对话索引当前无法读取')
+    if (stored.status === 'ok' && prior && prior.content === stored.content) {
+      this.checkpoints.delete(key); this.checkpoints.set(key, prior); return prior
+    }
+    if (prior) { this.checkpointBytes -= prior.bytes; this.checkpoints.delete(key) }
+    if (stored.status !== 'ok' || !stored.content) return null
+    let parsed: { schemaVersion?: number; throughOrder?: string; entries?: unknown }
+    try { parsed = JSON.parse(stored.content) } catch { throw new Error('对话索引格式无效') }
+    if (parsed.schemaVersion !== 1 || typeof parsed.throughOrder !== 'string' || !Array.isArray(parsed.entries)) throw new Error('对话索引格式无效')
+    const entries = parsed.entries.map(normalizeSummary).filter((entry): entry is ConversationSummary => Boolean(entry))
+    const checkpoint = { content: stored.content, throughOrder: parsed.throughOrder, entries, bytes: Buffer.byteLength(stored.content, 'utf8') * 4 + 1024 }
+    if (checkpoint.bytes <= 64 * 1024 * 1024) {
+      this.checkpoints.set(key, checkpoint); this.checkpointBytes += checkpoint.bytes
+      while (this.checkpointBytes > 64 * 1024 * 1024 || this.checkpoints.size > 16) {
+        const oldest = this.checkpoints.keys().next().value!, entry = this.checkpoints.get(oldest)!
+        this.checkpointBytes -= entry.bytes; this.checkpoints.delete(oldest)
+      }
+    }
+    return checkpoint
   }
 
   async read(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
@@ -144,11 +204,25 @@ export class ConversationStore {
     return this.readUnlocked(projectPath, conversationId)
   }
 
+  async readProjection(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
+    await this.wait(projectPath, conversationId)
+    const document = await this.readProjectionUnlocked(projectPath, conversationId)
+    return document ? { ...document, events: [] } : null
+  }
+
+  ensureProjection(projectPath: string, input: ConversationCreateInput): Promise<ConversationDocument> {
+    return this.createInternal(projectPath, input, false)
+  }
+
   async create(projectPath: string, input: ConversationCreateInput): Promise<ConversationDocument> {
+    return this.createInternal(projectPath, input, true)
+  }
+
+  private async createInternal(projectPath: string, input: ConversationCreateInput, full: boolean): Promise<ConversationDocument> {
     const id = input.id?.trim() || newId(input.surface)
     if (!validId(id)) throw new Error('对话标识无效')
     return this.enqueue(projectPath, id, async () => {
-      const existing = await this.readUnlocked(projectPath, id)
+      const existing = await (full ? this.readUnlocked(projectPath, id) : this.readProjectionUnlocked(projectPath, id))
       if (existing) {
         if (input.agentMode === 'beginner' && existing.surface === 'workspace' && !existing.agentMode) {
           existing.agentMode = 'beginner'
@@ -169,14 +243,11 @@ export class ConversationStore {
   }
 
   saveView(projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string): Promise<ConversationDocument> {
-    return this.update(projectPath, conversationId, (document) => {
-      if (document.generation !== generation) throw new Error('对话已产生新分支，已拒绝旧页面覆盖')
-      const checkpointSequence = Math.max(document.checkpointSequence, Math.min(document.lastSequence, viewSequence(view)))
-      // The view is a renderer projection, never the source of truth. Keep the
-      // complete event journal so a repaired projection can be rebuilt after a
-      // crash or an older client has written an incomplete view.
-      return { ...document, view, checkpointSequence, ...(!document.titleSource && title?.trim() ? { title: title.trim() } : {}), updatedAt: new Date().toISOString() }
-    })
+    return this.update(projectPath, conversationId, document => checkpointView(document, generation, view, title), true, true)
+  }
+
+  saveProjection(projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string): Promise<ConversationDocument> {
+    return this.update(projectPath, conversationId, document => checkpointView(document, generation, view, title))
   }
 
   replaceView(projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']): Promise<ConversationDocument> {
@@ -205,16 +276,22 @@ export class ConversationStore {
   appendOutput(projectPath: string, event: AiOutputEvent): Promise<AiOutputEvent> { return this.appendRouted(projectPath, 'output', event) as Promise<AiOutputEvent> }
 
   eventsSince(projectPath: string, conversationId: string, generation: number, afterSequence = 0, limit = PAGE_LIMIT): Promise<ConversationEventsPage> {
-    return this.read(projectPath, conversationId).then((document) => {
-      if (!document || document.generation !== generation) return { conversationId, generation, checkpointSequence: 0, events: [], nextSequence: null }
+    return this.enqueue(projectPath, conversationId, async () => {
+      const document = await this.readProjectionUnlocked(projectPath, conversationId)
+      if (!document) return { conversationId, generation, checkpointSequence: 0, events: [], nextSequence: null }
+      if (document.generation !== generation) throw new Error('对话已更新，请重新载入历史')
       const bounded = Math.min(10_000, Math.max(1, Math.floor(limit)))
-      const remaining = document.events.filter((event) => event.sequence > afterSequence)
+      const remaining = await this.data.conversationJournalPage(projectPath, journalKey(conversationId), conversationId, generation, afterSequence, bounded)
       const events = remaining.slice(0, bounded)
       return { conversationId, generation, checkpointSequence: document.checkpointSequence, events, nextSequence: remaining.length > events.length ? events.at(-1)!.sequence : null }
     })
   }
 
   async fork(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
+    return this.enqueue(projectPath, '$conversation-lifecycle', () => this.forkUnlocked(projectPath, input))
+  }
+
+  private async forkUnlocked(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
     const source = await this.read(projectPath, input.sourceConversationId)
     if (!source) throw new Error('要分支的原对话不存在')
     const id = input.id?.trim() || newId(source.surface)
@@ -277,12 +354,29 @@ export class ConversationStore {
     return this.update(projectPath, conversationId, (document) => document.titleSource
       ? document : { ...document, title: clean, titleSource: 'ai' })
   }
-  async delete(projectPath: string, conversationId: string): Promise<void> {
-    await this.enqueue(projectPath, conversationId, async () => {
-      await this.data.delete(projectPath, documentKey(conversationId))
-      await this.data.deleteJournal(projectPath, journalKey(conversationId))
-      await this.mutateIndex(projectPath, (entries) => entries.filter((entry) => entry.id !== conversationId))
+  async delete(projectPath: string, conversationId: string, deleteNative?: (sessions: ConversationDocument['native']) => Promise<void>): Promise<void> {
+    // A branch must not borrow a native session after it has been selected for
+    // deletion. Keep the ownership check, external deletion, and document
+    // removal in the same project lane used by the complete fork operation.
+    await this.enqueue(projectPath, '$conversation-lifecycle', async () => {
+      if (deleteNative) await deleteNative(await this.nativeSessionsForDeletion(projectPath, conversationId))
+      await this.enqueue(projectPath, conversationId, async () => {
+        await this.data.delete(projectPath, documentKey(conversationId))
+        await this.data.deleteJournal(projectPath, journalKey(conversationId))
+        this.forgetDocument(this.laneKey(projectPath, conversationId))
+        await this.writeIndexChange(projectPath, conversationId, null)
+      })
     })
+  }
+  async nativeSessionsForDeletion(projectPath: string, conversationId: string): Promise<ConversationDocument['native']> {
+    const document = await this.read(projectPath, conversationId)
+    // An unmaterialized branch borrows its parent's native session.
+    if (!document || document.nativeForkPending) return {}
+    const others = await Promise.all((await this.list(projectPath, undefined, true))
+      .filter(entry => entry.id !== conversationId).map(entry => this.read(projectPath, entry.id)))
+    return Object.fromEntries(Object.entries(document.native).filter(([, state]) => state?.sessionId
+      && !others.some(other => Object.values(other?.native ?? {}).some(candidate => candidate?.sessionId === state.sessionId
+        && candidate.sessionHome === state.sessionHome))))
   }
   setNativeState(projectPath: string, conversationId: string, generation: number, backend: CodingBackend, sessionId: string, lastTurnId?: string, modmindTurnId?: string, sessionHome?: string): Promise<ConversationDocument> {
     return this.update(projectPath, conversationId, (document) => {
@@ -349,26 +443,37 @@ export class ConversationStore {
     const appended: ConversationEventRecord[] = []
     try {
       await this.enqueue(batch.projectPath, batch.conversationId, async () => {
-        const document = await this.readUnlocked(batch.projectPath, batch.conversationId)
-        if (!document) throw new Error('瀵硅瘽涓嶅瓨鍦?')
+        const document = await this.readProjectionUnlocked(batch.projectPath, batch.conversationId)
+        if (!document) throw new Error('对话不存在')
         if (document.generation !== batch.generation) throw new Error('事件属于旧对话分支，已拒绝写入')
-        let sequence = Math.max(document.lastSequence, ...document.events.map((event) => event.sequence), 0)
+        let sequence = Math.max(0, document.lastSequence)
         for (const item of batch.items) {
           sequence += 1
           const record: ConversationEventRecord = { eventId: randomUUID(), conversationId: batch.conversationId, generation: batch.generation, turnId: item.turnId, ...(item.runId ? { runId: item.runId } : {}), sequence, kind: item.kind, time: new Date().toISOString(), payload: item.payload }
           appended.push(record)
         }
-        await this.data.appendJournal(batch.projectPath, journalKey(batch.conversationId), `${appended.map((record) => JSON.stringify(record)).join('\n')}\n`)
-        if (batch.updateIndex) await this.writeDocumentUnlocked(batch.projectPath, { ...document, lastSequence: sequence, events: [], updatedAt: appended.at(-1)?.time ?? document.updatedAt })
+        const serialized = appended.map(record => `${JSON.stringify(record)}\n`)
+        const sizes = serialized.map(line => Buffer.byteLength(line, 'utf8'))
+        if (sizes.some(bytes => bytes > 8 * 1024 * 1024)) throw new Error('Conversation journal record exceeds 8 MB')
+        let chunk: string[] = [], bytes = 0
+        for (let index = 0; index < serialized.length; index += 1) {
+          if (bytes && bytes + sizes[index] > 4 * 1024 * 1024) {
+            await this.data.appendJournal(batch.projectPath, journalKey(batch.conversationId), chunk.join(''))
+            chunk = []; bytes = 0
+          }
+          chunk.push(serialized[index]); bytes += sizes[index]
+        }
+        if (chunk.length) await this.data.appendJournal(batch.projectPath, journalKey(batch.conversationId), chunk.join(''))
+        if (batch.updateIndex) await this.writeIndexChange(batch.projectPath, document.id, summaryOf({ ...document, lastSequence: sequence, updatedAt: appended.at(-1)?.time ?? document.updatedAt }))
       })
       batch.items.forEach((item, index) => item.resolve(appended[index]))
     } catch (error) {
       batch.items.forEach((item) => item.reject(error))
     }
   }
-  private update(projectPath: string, conversationId: string, update: (document: ConversationDocument) => ConversationDocument | Promise<ConversationDocument>, updateIndex = true): Promise<ConversationDocument> {
+  private update(projectPath: string, conversationId: string, update: (document: ConversationDocument) => ConversationDocument | Promise<ConversationDocument>, updateIndex = true, full = false): Promise<ConversationDocument> {
     return this.enqueue(projectPath, conversationId, async () => {
-      const document = await this.readUnlocked(projectPath, conversationId)
+      const document = await (full ? this.readUnlocked(projectPath, conversationId) : this.readProjectionUnlocked(projectPath, conversationId))
       if (!document) throw new Error('对话不存在')
       const next = await update(document)
       if (next !== document) await this.writeDocumentUnlocked(projectPath, next, updateIndex)
@@ -378,16 +483,52 @@ export class ConversationStore {
   private async writeDocument(projectPath: string, document: ConversationDocument): Promise<void> { await this.enqueue(projectPath, document.id, () => this.writeDocumentUnlocked(projectPath, document)) }
   private async writeDocumentUnlocked(projectPath: string, document: ConversationDocument, updateIndex = true): Promise<void> {
     await this.data.write(projectPath, documentKey(document.id), JSON.stringify(storedDocument(document)))
-    if (updateIndex) await this.mutateIndex(projectPath, (entries) => [summaryOf(document), ...entries.filter((entry) => entry.id !== document.id)])
+    this.forgetDocument(this.laneKey(projectPath, document.id))
+    if (updateIndex) await this.writeIndexChange(projectPath, document.id, summaryOf(document))
   }
-  private async readUnlocked(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
+  private forgetDocument(key: string): void {
+    const prior = this.documents.get(key)
+    if (prior) this.documentBytes -= prior.bytes
+    this.documents.delete(key)
+  }
+  private async readMetadataUnlocked(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
     const stored = await this.data.read(projectPath, documentKey(conversationId))
-    if (stored.status === 'missing') return null
+    const key = this.laneKey(projectPath, conversationId)
+    if (stored.status === 'missing') { this.forgetDocument(key); return null }
     if (stored.status === 'unavailable') throw new Error(stored.message ?? '对话当前无法读取')
+    const cached = this.documents.get(key)
+    if (cached && cached.content === stored.content) {
+      this.documents.delete(key); this.documents.set(key, cached)
+      return cached.document
+    }
+    this.forgetDocument(key)
     let parsed: unknown
     try { parsed = JSON.parse(stored.content ?? 'null') } catch { throw new Error('对话数据格式无效') }
     const document = normalizeDocument(parsed)
     if (!document) throw new Error('对话数据无法通过完整性校验')
+    const bytes = Buffer.byteLength(stored.content ?? '', 'utf8') * 4 + 1024
+    if (bytes <= 128 * 1024 * 1024) {
+      this.documents.set(key, { content: stored.content!, document, bytes }); this.documentBytes += bytes
+      while (this.documentBytes > 128 * 1024 * 1024 || this.documents.size > 128) this.forgetDocument(this.documents.keys().next().value!)
+    }
+    return document
+  }
+  private async readProjectionUnlocked(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
+    let document = await this.readMetadataUnlocked(projectPath, conversationId)
+    if (!document) return null
+    // Migrate embedded v2 events before a projection-only caller relies on pages.
+    if (document.events.length) {
+      document = (await this.readUnlocked(projectPath, conversationId))!
+      await this.writeDocumentUnlocked(projectPath, document, false)
+    }
+    const state = await this.data.conversationJournalState(projectPath, journalKey(conversationId), conversationId, document.generation)
+    const lastSequence = Math.max(document.lastSequence, state.lastSequence)
+    const updatedAt = state.updatedAt && Date.parse(state.updatedAt) > Date.parse(document.updatedAt) ? state.updatedAt : document.updatedAt
+    return { ...document, events: [], lastSequence, updatedAt }
+  }
+  private async readUnlocked(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
+    const document = await this.readMetadataUnlocked(projectPath, conversationId)
+    if (!document) return null
     const journal = parseJournalLines(await this.data.readJournal(projectPath, journalKey(conversationId)), conversationId, document.generation)
     const merged = new Map(journal.map((event) => [event.eventId, event]))
     for (const event of document.events) if (!merged.has(event.eventId)) {
@@ -395,26 +536,49 @@ export class ConversationStore {
       await this.data.appendJournal(projectPath, journalKey(conversationId), `${JSON.stringify(event)}\n`)
     }
     const events = [...merged.values()].sort((left, right) => left.sequence - right.sequence || left.eventId.localeCompare(right.eventId))
-    return { ...document, events, lastSequence: Math.max(document.lastSequence, ...events.map((event) => event.sequence), 0) }
+    const updatedAt = events.reduce((latest, event) => {
+      const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : {}
+      const terminal = event.kind === 'user' || (event.kind === 'output' && payload.kind !== 'delta') || (event.kind === 'progress' && (payload.stage === 'complete' || payload.stage === 'error'))
+      return terminal && Date.parse(event.time) > Date.parse(latest) ? event.time : latest
+    }, document.updatedAt)
+    return { ...document, events, updatedAt, lastSequence: events.reduce((maximum, event) => Math.max(maximum, event.sequence), Math.max(0, document.lastSequence)) }
   }
 
-  private mutateIndex(projectPath: string, transform: (entries: ConversationSummary[]) => ConversationSummary[]): Promise<void> {
-    return this.enqueue(projectPath, '$conversation-index', () => this.rewriteIndex(projectPath, transform))
-  }
-  private async rewriteIndex(projectPath: string, transform: (entries: ConversationSummary[]) => ConversationSummary[]): Promise<void> {
-    const stored = await this.data.read(projectPath, INDEX_KEY)
-    if (stored.status === 'unavailable') throw new Error(stored.message ?? '对话索引当前无法读取')
-    let parsed: unknown = []
-    if (stored.status === 'ok' && stored.content) { try { parsed = JSON.parse(stored.content) } catch { throw new Error('对话索引格式无效') } }
-    const entries = Array.isArray(parsed) ? parsed.map(normalizeSummary).filter((entry): entry is ConversationSummary => Boolean(entry)) : []
-    await this.data.write(projectPath, INDEX_KEY, JSON.stringify(transform(entries).sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned)) || right.updatedAt.localeCompare(left.updatedAt))))
+  private writeIndexChange(projectPath: string, id: string, summary: ConversationSummary | null): Promise<void> {
+    return this.enqueue(projectPath, '$conversation-index', async () => {
+      // The old index remains a compatible baseline. Single-object changes use
+      // the existing durable three-copy journal instead of recompressing it.
+      const checkpoint = await this.readIndexCheckpoint(projectPath)
+      if (checkpoint) this.indexClock = Math.max(this.indexClock, Number(checkpoint.throughOrder.split('-')[0]) || 0)
+      for (const line of await this.data.journalLastLines(projectPath, INDEX_UPDATES_KEY)) {
+        try {
+          const order = (JSON.parse(line) as { order?: unknown }).order
+          if (typeof order === 'string') this.indexClock = Math.max(this.indexClock, Number(order.split('-')[0]) || 0)
+        } catch { /* Ignore a torn last record. */ }
+      }
+      this.indexClock = Math.max(Date.now(), this.indexClock + 1)
+      const change = { id, order: `${String(this.indexClock).padStart(16, '0')}-${randomUUID()}`, ...(summary ? { summary } : { deleted: true }) }
+      await this.data.appendJournal(projectPath, INDEX_UPDATES_KEY, `${JSON.stringify(change)}\n`)
+      const key = this.laneKey(projectPath, '$conversation-index'), count = (this.indexWrites.get(key) ?? 0) + 1
+      this.indexWrites.set(key, count)
+      if (count >= 1_024 || ((count === 1 || count % 64 === 0) && await this.data.journalByteSize(projectPath, INDEX_UPDATES_KEY) >= 4 * 1024 * 1024)) {
+        const entries = await this.readIndex(projectPath)
+        // Entries and watermark form one checksummed atomic snapshot. Even if
+        // cleanup leaves an older replica behind, its absorbed summaries cannot
+        // resurrect a deleted conversation after restart.
+        await this.data.write(projectPath, INDEX_CHECKPOINT_KEY, JSON.stringify({ schemaVersion: 1, throughOrder: change.order, entries }))
+        await this.data.write(projectPath, INDEX_KEY, JSON.stringify(entries))
+        await this.data.deleteJournal(projectPath, INDEX_UPDATES_KEY)
+        this.indexWrites.set(key, 0)
+      }
+    })
   }
   private laneKey(projectPath: string, conversationId: string): string { return `${projectPath.toLowerCase()}\n${conversationId}` }
   private wait(projectPath: string, conversationId: string): Promise<unknown> { return this.lanes.get(this.laneKey(projectPath, conversationId)) ?? Promise.resolve() }
   private enqueue<T>(projectPath: string, conversationId: string, operation: () => Promise<T>): Promise<T> {
     const key = this.laneKey(projectPath, conversationId)
     const previous = this.lanes.get(key) ?? Promise.resolve()
-    const current = previous.catch(() => undefined).then(operation)
+    const current = previous.catch(() => undefined).then(() => this.data.withConversationLock(projectPath, conversationId, operation))
     const tracked = current.then(() => undefined, () => undefined).finally(() => { if (this.lanes.get(key) === tracked) this.lanes.delete(key) })
     this.lanes.set(key, tracked)
     return current

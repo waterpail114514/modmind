@@ -1,0 +1,30 @@
+export function developerTemplate(id: string, name: string, kind: 'feature' | 'studio'): Record<string, string> {
+  const action = { id: 'check', handler: 'check', permission: 'read', projectRequired: false, surfaces: ['workbench', 'inspiration'],
+    inputSchema: { type: 'object', additionalProperties: false, required: ['text'], properties: { text: { type: 'string', maxLength: 100000 } } } }
+  const manifest = {
+    format: 'modmind-feature', apiVersion: 2, hostVersion: '1.5.0-plugintest', id, name, version: '1.0.0',
+    main: 'main.cjs', renderer: 'renderer.js', style: 'renderer.css', hostCapabilities: kind === 'studio' ? ['runtime', 'studioV1'] : ['runtime'],
+    capabilities: [{ id: `${id}-authoring`, name, description: kind === 'studio' ? '创建文稿项目并检查文本。' : '编辑文本并检查字符数量。' }],
+    views: [{ id: `${id}-page`, label: name, component: 'MainPage', icon: 'FileText', group: '创作', order: 50 }],
+    actions: [action], tools: [{ name: `modmind_${id.replaceAll('-', '_')}_check`, action: 'check', description: 'Count characters and lines in supplied text. Does not change files.' }],
+    ...(kind === 'studio' ? { studios: [{ apiVersion: 1, id: `${id}-domain`, name, projectKind: `${id}-document`, loaders: ['markdown'],
+      defaultTarget: { loader: 'markdown', version: '1' }, templateHandler: 'document', navigation: { hideCoreViews: ['build'] },
+      creation: { fields: [
+        { id: 'name', title: '项目名称', type: 'input', bind: 'name', required: true, maxLength: 80 },
+        { id: 'loader', title: '文稿格式', type: 'input', bind: 'loader', default: 'markdown', readOnly: true },
+        { id: 'version', title: '格式版本', type: 'input', bind: 'minecraftVersion', default: '1', readOnly: true },
+        { id: 'style', title: '文稿类型', type: 'select', default: 'notes', options: [{ value: 'notes', title: '笔记' }, { value: 'essay', title: '文章' }] }
+      ] },
+      ai: { workbench: { instructions: 'Help write and revise the Markdown project {{name}}. Read existing files before editing, preserve user drafts, verify saved content and discover available tools.', skills: [], greetings: ['开始整理这份文稿。'], starters: [{ title: '整理文稿', prompt: '读取现有文稿，整理结构并保留已有内容。' }] },
+        inspiration: { instructions: 'Discuss and research the Markdown project {{name}}. Read available files, cite evidence and keep project content unchanged.', skills: [], greetings: ['先把想法理清楚。'] } }
+    }] } : {})
+  }
+  return {
+    'manifest.json': JSON.stringify(manifest, null, 2) + '\n',
+    'main.ts': `import type { ${kind === 'studio' ? 'StudioRuntime' : 'FeaturePluginRuntime'} } from '@modmind/sdk'\n\nexport function activate(): ${kind === 'studio' ? 'StudioRuntime' : 'FeaturePluginRuntime'} {\n  return {\n    actions: {\n      check(input) {\n        const text = input.text as string\n        return { characters: Array.from(text).length, lines: text === '' ? 0 : text.split(/\\r\\n|\\r|\\n/).length }\n      }\n    }${kind === 'studio' ? `,\n    studios: {\n      document: {\n        templateFiles(project, includeStarter) {\n          return {\n            'notes-project.json': JSON.stringify({ style: project.studioValues?.style ?? 'notes' }, null, 2) + '\\n',\n            ...(includeStarter ? { 'draft.md': '# ' + project.name + '\\n\\n' } : {})\n          }\n        }\n      }\n    }` : ''}\n  }\n}\n`,
+    'renderer.tsx': `import { useState } from 'react'\nimport { FileText } from 'lucide-react'\nimport { registerFeature, type FeaturePageContext } from '@modmind/sdk'\nimport './style.css'\n\nfunction MainPage({ project }: FeaturePageContext) {\n  const [text, setText] = useState('')\n  const [result, setResult] = useState('')\n  const [busy, setBusy] = useState(false)\n  const [error, setError] = useState('')\n  async function check() {\n    setBusy(true); setError('')\n    try {\n      const value = await window.modmind.featurePlugins.invoke('${id}', 'check', { text })\n      setResult(value.characters + ' 个字符 · ' + value.lines + ' 行')\n    } catch (error) { setError(error instanceof Error ? error.message : String(error)) }\n    finally { setBusy(false) }\n  }\n  return <section className="authoring-page">\n    <div className="authoring-toolbar"><FileText size={17} /><strong>{project?.name ?? ${JSON.stringify(name)}}</strong></div>\n    <label className="authoring-field">文稿<textarea aria-label="文稿" value={text} onChange={event => setText(event.target.value)} /></label>\n    <div className="authoring-actions"><button className="primary-button" disabled={busy} onClick={() => void check()}>{busy ? '检查中…' : '检查文本'}</button><span role="status">{result}</span></div>\n    {error ? <p role="alert" className="inline-error">{error}</p> : null}\n  </section>\n}\n\nregisterFeature('${id}', { apiVersion: 2, pages: [{ id: '${id}-page', exportName: 'MainPage', label: ${JSON.stringify(name)}, scope: 'application', component: MainPage }] })\n`,
+    'style.css': `.authoring-page { display:flex; flex-direction:column; gap:18px; padding:24px; height:100%; box-sizing:border-box; }\n.authoring-toolbar { display:flex; align-items:center; gap:9px; min-height:30px; }\n.authoring-field { display:flex; flex-direction:column; gap:9px; flex:1; min-height:160px; }\n.authoring-field textarea { flex:1; resize:none; padding:12px; font:inherit; line-height:1.6; color:var(--theme-text); background:var(--theme-panel); border:1px solid var(--theme-line); border-radius:6px; }\n.authoring-actions { display:flex; align-items:center; gap:14px; min-height:34px; }\n`,
+    'README.md': `# ${name}\n\n在右侧 AI 工作台描述功能或界面需求，也可以直接编辑源码。\n\n- manifest.json：包信息、页面、业务动作和 MCP 工具${kind === 'studio' ? '，以及创建字段、模板 provider 与 AI 上下文' : ''}\n- renderer.tsx / style.css：页面与样式\n- main.ts：业务动作${kind === 'studio' ? '及项目文件模板' : ''}\n- sdk/index.d.ts：随应用提供的 SDK 类型\n\n预览使用示例项目；实际动作在独立测试进程中运行。自定义工作台可在“调试 → 创建测试项目”中验证文件和 AI 上下文。\n\n修改后保存，再刷新预览或导出。导出产物可在 ModMind 的功能管理中本地安装。\n`,
+    'sdk/styles.d.ts': "declare module '*.css'\ndeclare module '*.png'\ndeclare module '*.jpg'\ndeclare module '*.svg'\ndeclare module '*.webp'\n"
+  }
+}

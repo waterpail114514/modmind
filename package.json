@@ -1,6 +1,6 @@
 {
   "name": "modmind",
-  "version": "1.5.0-preview.2",
+  "version": "1.5.0-preview.4",
   "private": true,
   "description": "AI-assisted Minecraft mod development workspace",
   "main": "out/main/index.js",
@@ -9,16 +9,21 @@
   "sourceFingerprint": "sha256:235b5b247370dc5069a627962c848fb0d80f557114a51f51ebf5610db303f504",
   "scripts": {
     "models:sync": "node scripts/sync-model-context-registry.mjs && node scripts/sync-model-reasoning-registry.mjs",
+    "predev": "node scripts/verify-workspace.mjs && node scripts/prepare-bundled-studios.mjs && node scripts/prepare-developer-kit.mjs",
     "dev": "electron-vite dev",
-    "prebuild": "node scripts/verify-gradle-wrapper.mjs && npm run theme:check && node scripts/clean-build-output.mjs",
+    "prebuild": "node scripts/verify-workspace.mjs && node scripts/verify-gradle-wrapper.mjs && node scripts/prepare-bundled-studios.mjs && node scripts/prepare-developer-kit.mjs && npm run theme:check && node scripts/clean-build-output.mjs",
+    "developer:kit": "node scripts/prepare-developer-kit.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "test": "vitest run src && npm run test:mcp && npm run test:mac-policy && npm run test:gradle-wrapper",
+    "test": "vitest run src && npm run test:mcp && npm run test:mac-policy && npm run test:gradle-wrapper && npm run test:ffmpeg",
     "test:mcp": "npm --prefix modmind-mcp-open-source test",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.web.json --pretty false",
     "assets:icons": "node scripts/generate-icons.mjs && node scripts/generate-macos-assets.mjs && node scripts/generate-installer-assets.mjs && node android-twa/scripts/generate-icons.mjs",
     "assets:installer": "node scripts/generate-installer-assets.mjs",
     "version:patch": "npm version patch --no-git-tag-version",
+    "test:ffmpeg": "node --test scripts/verify-ffmpeg.test.mjs",
+    "predist:win": "node scripts/verify-ffmpeg.mjs --repair",
+    "predist:win:unsigned": "node scripts/verify-ffmpeg.mjs --repair",
     "dist:win": "npm run build && electron-builder --win --config.forceCodeSigning=true && node scripts/verify-release.mjs && node scripts/prepare-update-artifacts.mjs",
     "dist:win:unsigned": "set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm run build && electron-builder --win && node scripts/verify-release.mjs --allow-unsigned && node scripts/prepare-update-artifacts.mjs",
     "dist:linux": "npm run build && electron-builder --linux AppImage zip",
@@ -32,6 +37,7 @@
     "verify:mac": "node scripts/verify-macos-release.mjs",
     "test:mac-policy": "node --test scripts/macos-release-policy.test.mjs",
     "test:gradle-wrapper": "node --test scripts/verify-gradle-wrapper.test.mjs",
+    "test:update-artifacts": "node --test scripts/prepare-update-artifacts.test.mjs scripts/verify-update-config.test.mjs",
     "test:reinstall-electron": "node scripts/reinstall-electron-smoke.mjs",
     "theme:generate": "node scripts/generate-theme-tokens.mjs",
     "theme:check": "node scripts/generate-theme-tokens.mjs --check && node scripts/check-theme-colors.mjs && npm run plugins:check",
@@ -41,7 +47,12 @@
     "features:build": "node scripts/build-feature-plugins.mjs",
     "features:preview": "node scripts/feature-plugins-live-qa.mjs --preview",
     "features:smoke": "node scripts/feature-plugins-smoke.mjs",
-    "dist:plugintest": "node scripts/dist-plugintest.mjs"
+    "dist:plugintest": "node scripts/dist-plugintest.mjs",
+    "sync:mcp": "node scripts/sync-mcp-server.mjs --write",
+    "pretest:mcp": "node scripts/verify-workspace.mjs --mcp && node scripts/patch-mcp-tests.mjs && node scripts/sync-mcp-server.mjs",
+    "setup:tests": "node scripts/setup-mcp-tests.mjs",
+    "verify:workspace": "node scripts/verify-workspace.mjs --mcp",
+    "pretest": "node scripts/verify-workspace.mjs --mcp"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -53,49 +64,55 @@
     "cheerio": "^1.1.2",
     "electron-updater": "^6.8.9",
     "extract-zip": "^2.0.1",
-    "fast-xml-parser": "^5.2.5",
+    "fast-xml-parser": "^5.11.2",
     "fzstd": "^0.1.1",
+    "partial-json": "0.1.7",
     "pdfjs-dist": "4.10.38",
     "proper-lockfile": "^4.1.2",
-    "sharp": "^0.33.5",
-    "smol-toml": "^1.8.0",
-    "undici": "7.2.3",
+    "semver": "7.8.5",
+    "sharp": "^0.35.5",
+    "smol-toml": "^1.9.1",
+    "undici": "7.30.0",
     "yauzl": "^2.10.0"
   },
   "devDependencies": {
-    "@tonejs/midi": "^2.0.28",
-    "ffmpeg-static": "^5.3.0",
-    "ftbq-nbt": "^1.4.1",
-    "jfxr": "^0.13.0",
-    "json5": "^2.2.3",
-    "react-virtuoso": "^4.18.13",
-    "react-zoom-pan-pinch": "4.2.0",
-    "three": "^0.180.0",
-    "tone": "^15.1.22",
     "@monaco-editor/react": "^4.7.0",
+    "@shaderfrog/glsl-parser": "7.0.1",
+    "@tonejs/midi": "^2.0.28",
     "@types/node": "^22.10.2",
     "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/semver": "7.7.1",
     "@types/three": "^0.180.0",
     "@types/yauzl": "^2.10.3",
     "@vitejs/plugin-react": "^4.3.4",
+    "@xmcl/core": "^2.15.1",
+    "@xmcl/installer": "^6.1.2",
     "@xyflow/react": "^12.11.2",
-    "electron": "^33.3.1",
-    "electron-builder": "^25.1.8",
+    "archiver": "^5.3.2",
+    "driver.js": "1.9.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
+    "ffmpeg-static": "^5.3.0",
+    "ftbq-nbt": "^1.4.1",
+    "jfxr": "^0.13.0",
+    "json5": "^2.2.3",
     "lucide-react": "^0.468.0",
     "marked": "^15.0.7",
     "monaco-editor": "^0.56.0",
-    "playwright": "^1.54.1",
+    "playwright": "^1.64.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-virtuoso": "^4.18.13",
+    "react-zoom-pan-pinch": "4.2.0",
+    "three": "^0.180.0",
+    "tone": "^15.1.22",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "vitest": "^3.2.4",
-    "yaml": "^2.8.1",
-    "@xmcl/core": "^2.15.1",
-    "@xmcl/installer": "^6.1.2"
+    "vitest": "^4.1.11",
+    "yaml": "^2.8.1"
   },
   "build": {
     "appId": "dev.modmind.desktop",
@@ -133,6 +150,23 @@
       "node_modules/7zip-bin/**"
     ],
     "extraResources": [
+      {
+        "from": "resources/developer-kit",
+        "to": "developer-kit",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/bundled-studios",
+        "to": "bundled-studios",
+        "filter": [
+          "index.json",
+          "studio-mod/**/*",
+          "studio-modpack/**/*",
+          "studio-server-plugin/**/*"
+        ]
+      },
       {
         "from": "resources/reinstall-app.ps1",
         "to": "reinstall-app.ps1"
@@ -182,13 +216,6 @@
         ]
       },
       {
-        "from": "resources/server-plugin-starters",
-        "to": "server-plugin-starters",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "resources/trayTemplate.png",
         "to": "trayTemplate.png"
       },
@@ -199,7 +226,11 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "resources/icon.ico"
+      "icon": "resources/icon.ico",
+      "publish": {
+        "provider": "generic",
+        "url": "https://etherup.cn-nb1.rains3.com/"
+      }
     },
     "nsis": {
       "oneClick": false,
@@ -233,5 +264,9 @@
       "icon": "resources/icon.png",
       "category": "Development"
     }
+  },
+  "overrides": {
+    "dompurify": "3.4.16",
+    "undici": "$undici"
   }
 }

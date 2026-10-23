@@ -1,12 +1,12 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ProjectInfo } from "../../../../src/shared/types"
-import { parseStudioDraft, renderEffectWav, type StudioDraft } from "../../../../src/shared/soundStudio"
-import type { SoundDefinition, SoundEvent, SoundEventSave, SoundImportOptions, SoundImportResult, SoundLibraryAudio, SoundLibraryItem, SoundLibraryResult, SoundLibrarySource, SoundProcessOptions, SoundSource, SoundVariant } from "../../../../src/shared/soundLibrary"
-import { archiveEntries, archiveRead } from "../../../../src/main/archiveInspection"
-import { AUDIO_LIMIT, audioExtension, digestSound, readSoundBytes, runSoundFfmpeg, safeSoundPath, soundJson, soundResourceId, writeSoundAtomic } from "./soundFiles"
-import { SoundVanilla } from "./soundVanilla"
+import type { ProjectInfo } from '../../../../src/shared/types'
+import { parseStudioDraft, renderEffectWav, type StudioDraft } from '../../../../src/shared/soundStudio'
+import type { SoundDefinition, SoundEvent, SoundEventSave, SoundImportOptions, SoundImportResult, SoundLibraryAudio, SoundLibraryItem, SoundLibraryResult, SoundLibrarySource, SoundProcessOptions, SoundSource, SoundVariant } from '../../../../src/shared/soundLibrary'
+import { archiveEntries, archiveRead } from '../../../../src/main/archiveInspection'
+import { AUDIO_LIMIT, audioExtension, digestSound, readSoundBytes, runSoundFfmpeg, safeSoundPath, soundJson, soundResourceId, writeSoundAtomic } from './soundFiles'
+import { SoundVanilla } from './soundVanilla'
 
 type Location = { root: string; file: string; archive: boolean; vanilla?: boolean }
 type Source = SoundSource & { root: string; archive: boolean; editable: boolean }
@@ -248,14 +248,36 @@ export class SoundLibraryService {
       if (!name) throw new Error('没有可撤销的声音修改')
       const directory = await safeSoundPath(root, name), history = await soundJson<History>(path.join(directory, 'history.json'))
       if (!history) throw new Error('声音历史记录损坏')
-      for (const file of history.files) {
+      const current = new Map<string, Buffer>()
+      const originals = new Map<string, Buffer | null>()
+      for (const [index, file] of history.files.entries()) {
         const bytes = await readSoundBytes(this.project.path, file.relative)
         if (digestSound(bytes) !== file.after) throw new Error('文件已被其他操作修改，不能覆盖：' + file.relative)
+        current.set(file.relative, bytes)
+        originals.set(file.relative, file.before ? await readSoundBytes(directory, String(index)) : null)
       }
-      for (const [index, file] of history.files.entries()) {
-        const target = await safeSoundPath(this.project.path, file.relative)
-        if (file.before) await writeSoundAtomic(target, await readSoundBytes(directory, String(index)))
-        else await fs.rm(target, { force: true })
+      const changed: string[] = []
+      const recovery = path.join(directory, 'undo-recovery')
+      await fs.mkdir(recovery, { recursive: true })
+      await fs.writeFile(path.join(recovery, 'current.json'), JSON.stringify([...current].map(([relative, bytes]) => ({ relative, base64: bytes.toString('base64') }))))
+      try {
+        for (const file of history.files) {
+          const target = await safeSoundPath(this.project.path, file.relative)
+          changed.push(file.relative)
+          const original = originals.get(file.relative)!
+          if (original !== null) await writeSoundAtomic(target, original)
+          else await fs.rm(target, { force: true })
+        }
+      } catch (error) {
+        const failures: unknown[] = []
+        for (const relative of changed.reverse()) {
+          try { await writeSoundAtomic(await safeSoundPath(this.project.path, relative), current.get(relative)!) }
+          catch (failure) { failures.push(failure) }
+        }
+        if (failures.length) {
+          throw new AggregateError([error, ...failures], `撤销未能完全恢复，恢复数据保留在：${recovery}`)
+        }
+        throw error
       }
       await fs.rm(directory, { recursive: true, force: true })
     })

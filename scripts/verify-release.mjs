@@ -3,6 +3,8 @@ import { createReadStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { verifyInstallerGradleWrapper } from './verify-gradle-wrapper.mjs'
+import { verifyInstallerUpdateConfig } from './verify-update-config.mjs'
+import { verifyInstallerFfmpeg } from './verify-ffmpeg.mjs'
 
 const platformIndex = process.argv.indexOf('--platform')
 if (process.platform === 'darwin' || (platformIndex >= 0 && process.argv[platformIndex + 1] === 'mac')) {
@@ -15,6 +17,7 @@ const packageJson = JSON.parse(await fs.readFile(path.join(root, 'package.json')
 const version = packageJson.version
 const releaseRoot = path.join(root, 'release')
 const allowUnsigned = process.argv.includes('--allow-unsigned')
+const services = JSON.parse(await fs.readFile(path.join(root, 'resources/service-config.json'), 'utf8'))
 const artifacts = [
   path.join(releaseRoot, `ModMind Setup ${version}.exe`)
 ]
@@ -32,7 +35,9 @@ for (const file of artifacts) {
     throw new Error(`Missing or implausibly small release artifact: ${file}`)
   }
   const gradleWrapper = verifyInstallerGradleWrapper(file)
-  results.push({ file, size: stat.size, hash: await sha256(file), gradleWrapper })
+  const updateConfig = verifyInstallerUpdateConfig(file, services.updateUrl)
+  const ffmpeg = await verifyInstallerFfmpeg(root, file)
+  results.push({ file, size: stat.size, hash: await sha256(file), gradleWrapper, updateConfig, ffmpeg })
 }
 
 if (process.platform === 'win32') {

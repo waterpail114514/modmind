@@ -97,7 +97,7 @@ export function normalizePerfectPixelOptions(input: unknown): PerfectPixelOption
 
 export const imageGenerationInputSchema = {
   type: 'object', additionalProperties: false, required: ['prompt'], properties: {
-    prompt: { type: 'string', maxLength: 32000 }, model: { type: 'string', maxLength: 128, description: 'Optional model override for this request only; otherwise uses the saved Image Studio model.' },
+    prompt: { type: 'string', maxLength: 32000 }, model: { type: 'string', maxLength: 128, description: 'Optional custom API model override for this request. Official image requests use the server image lease model.' },
     presetId: { type: 'string', description: 'Preset ID from modmind_image_studio_info.' }, presetPrompt: { type: 'string', description: 'Editable preset template. prompt supplies additional requirements.' },
     style: { type: 'string', enum: ['minecraft', 'free'], default: 'free' }, size: { type: 'string', default: '1024x1024' },
     quality: { type: 'string', enum: ['low', 'medium', 'high', 'auto'], default: 'medium' }, moderation: { type: 'string', enum: ['auto', 'low'], default: 'auto' },

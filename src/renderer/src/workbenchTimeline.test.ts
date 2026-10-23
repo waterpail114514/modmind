@@ -3,6 +3,53 @@ import { appendUserTurn, latestWorkbenchUsage, isWorkbenchInternalPrompt, normal
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 
 describe('workbench timeline adapter', () => {
+  it('keeps reconnect activities bounded through hundreds of retries and durable replay', () => {
+    const events: ConversationEventRecord[] = []
+    let live: WorkbenchTimelineItem[] = []
+    for (let attempt = 0; attempt < 697; attempt += 1) {
+      for (const activity of ['start', '正在准备工具', 'Codex 已恢复会话', 'retry']) {
+        const sequence = events.length + 1
+        const time = new Date(Date.UTC(2026, 9, 3) + sequence * 1000).toISOString()
+        const common = { time, runId: 'run', turnId: 'turn', sequence, eventId: `e${sequence}` }
+        const record = { eventId: common.eventId, conversationId: 'c', generation: 0, turnId: 'turn', sequence, time }
+        if (activity === 'start' || activity === 'retry') {
+          const payload: AiOutputEvent = { ...common, kind: activity, content: activity === 'start' ? '托管任务已启动' : `重试 ${attempt + 1}`, ...(activity === 'retry' ? { notice: { key: 'retry', detail: '502', occurrences: attempt + 1 } } : {}) }
+          events.push({ ...record, kind: 'output', payload })
+          live = reduceWorkbenchOutput(live, payload)
+        } else {
+          const payload = { ...common, id: common.eventId, stage: 'writing' as const, title: activity, detail: '确认连接', status: 'running' as const }
+          events.push({ ...record, kind: 'progress', payload })
+          live = reduceWorkbenchProgress(live, payload)
+        }
+      }
+    }
+    expect(live).toHaveLength(4)
+    expect(live.map(item => item.content.split('\n')[0])).toEqual(['托管任务已启动', '正在准备工具', 'Codex 已恢复会话', '重试 697'])
+    expect(live[0].time).toBe(events[0].time)
+    const replayed = replayWorkbenchEvents([], events)
+    expect(replayed).toEqual(live.map(item => item.status === 'running' ? { ...item, status: 'done' } : item))
+    const next = reduceWorkbenchOutput(live, { kind: 'start', content: '托管任务已启动', runId: 'next-run', turnId: 'next-turn', time: '2026-10-03T01:00:00Z' })
+    expect(next).toHaveLength(5)
+    const oldest = events[1].payload as Parameters<typeof reduceWorkbenchProgress>[1]
+    expect(reduceWorkbenchProgress(live, oldest)).toBe(live)
+  })
+
+  it('normalizes legacy reconnect history while retaining repeated domain steps and other turns', () => {
+    const items: WorkbenchTimelineItem[] = []
+    for (const runId of ['first', 'second']) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        for (const [kind, content] of [['start', '托管任务已启动'], ['thinking', '正在准备工具\n确认连接'], ['thinking', 'Codex 已恢复会话\n继续任务'], ['tool', '读取项目文件']] as const) {
+          items.push({ id: `old-${items.length}`, kind, content, runId, stage: 'writing', status: 'done', time: new Date(Date.UTC(2026, 9, 3) + items.length * 1000).toISOString() })
+        }
+      }
+    }
+    const restored = normalizeWorkbenchTimeline(items)
+    expect(restored).toHaveLength(10)
+    expect(restored.filter(item => item.content === '读取项目文件')).toHaveLength(4)
+    expect(restored[0].id).toBe(items[0].id)
+    expect(normalizeWorkbenchTimeline(restored)).toEqual(restored)
+  })
+
   it('retains persisted context through the next turn configuration and replay', () => {
     const records: ConversationEventRecord[] = [
       { eventId: 'u1', conversationId: 'c', generation: 0, turnId: 't1', sequence: 1, kind: 'user', time: 'T', payload: { prompt: '第一轮' } },

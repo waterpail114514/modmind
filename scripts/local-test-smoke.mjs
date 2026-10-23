@@ -61,7 +61,7 @@ try {
   await panel.getByRole('tab', { name: '客户端', exact: true }).click()
   assert.match(await panel.getByRole('log').innerText(), /Connecting to 127.0.0.1/)
   await page.screenshot({ path: path.join(work, 'desktop.png') })
-  await page.setViewportSize({ width: 760, height: 800 })
+  await page.setViewportSize({ width: 1080, height: 800 })
   await page.screenshot({ path: path.join(work, 'narrow.png') })
   const overflow = await panel.evaluate(node => node.scrollWidth > node.clientWidth + 1)
   assert.equal(overflow, false)

@@ -51,25 +51,28 @@ function parseListing(output: string): ListedEntry[] {
   return entries
 }
 
-async function listArchive(source: string): Promise<ListedEntry[]> {
+async function listArchive(source: string, signal?: AbortSignal): Promise<ListedEntry[]> {
+  signal?.throwIfAborted()
   try {
-    const result = await execFileAsync(executablePath(), ['l', '-slt', '-sccUTF-8', source], { windowsHide: true, maxBuffer: LISTING_LIMIT })
+    const result = await execFileAsync(executablePath(), ['l', '-slt', '-sccUTF-8', source], { windowsHide: true, maxBuffer: LISTING_LIMIT, signal })
     const entries = parseListing(result.stdout)
     if (!entries.length) throw new Error('Archive contains no regular files')
     return entries
   } catch (error) {
+    signal?.throwIfAborted()
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Unable to inspect archive with 7-Zip: ${detail}`)
   }
 }
 
-async function extractOne(source: string, destination: string, onEntry?: (entry: ZipExpansionEntry) => void): Promise<ListedEntry[]> {
-  const entries = await listArchive(source)
+async function extractOne(source: string, destination: string, onEntry?: (entry: ZipExpansionEntry) => void, signal?: AbortSignal): Promise<ListedEntry[]> {
+  const entries = await listArchive(source, signal)
   for (const entry of entries) onEntry?.({ fileName: entry.path, uncompressedSize: entry.size })
   await fs.mkdir(destination, { recursive: true })
   try {
-    await execFileAsync(executablePath(), ['x', '-y', '-bd', '-sccUTF-8', source, `-o${destination}`], { windowsHide: true, maxBuffer: LISTING_LIMIT })
+    await execFileAsync(executablePath(), ['x', '-y', '-bd', '-sccUTF-8', source, `-o${destination}`], { windowsHide: true, maxBuffer: LISTING_LIMIT, signal })
   } catch (error) {
+    signal?.throwIfAborted()
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Unable to extract archive with 7-Zip: ${detail}`)
   }
@@ -85,12 +88,13 @@ async function singleNestedArchive(root: string): Promise<string | undefined> {
 }
 
 /** Extracts formats supported by the bundled 7za binary (7z, RAR, CAB, ISO, ARJ, LZH, WIM, and compressed tar variants). */
-export async function extractSevenZipArchive(source: string, destination: string, onEntry?: (entry: ZipExpansionEntry) => void): Promise<void> {
+export async function extractSevenZipArchive(source: string, destination: string, onEntry?: (entry: ZipExpansionEntry) => void, signal?: AbortSignal): Promise<void> {
   let current = path.resolve(source)
   const temporaryArchives: string[] = []
   try {
     for (let layer = 0; layer < MAX_NESTED_LAYERS; layer += 1) {
-      const entries = await extractOne(current, destination, onEntry)
+      signal?.throwIfAborted()
+      const entries = await extractOne(current, destination, onEntry, signal)
       const nested = await singleNestedArchive(destination)
       if (!nested) {
         void entries

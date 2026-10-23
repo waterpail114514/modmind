@@ -30,7 +30,7 @@ async function bundle(id='test-feature',version='1.0.0',dependencies:string[]=[]
 }
 async function harness(bundles:Awaited<ReturnType<typeof bundle>>[]){
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'modmind-feature-store-'))
-  cleanup.push(()=>fs.rm(root,{recursive:true,force:true}))
+  cleanup.push(()=>fs.rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:100}))
   let index:OfficialFeatureIndex={format:'modmind-feature-catalog',schemaVersion:1,generatedAt:'2026-10-01T00:00:00.000Z',features:bundles.map(value=>value.release)},offline=false,busy=false,slow=false
   const files=new Map(bundles.map(value=>['/'+value.release.path,value.bytes])),requests:Array<{method:string|undefined;path:string;authorization:string|undefined}>=[]
   const server=createServer((request,response)=>{
@@ -102,9 +102,19 @@ describe('official feature downloads',()=>{
   it('rejects catalogue path escapes, missing dependencies, duplicates and dependency cycles',async()=>{
     const a=await bundle('a-feature'),b=await bundle('b-feature');const index={format:'modmind-feature-catalog',schemaVersion:1,generatedAt:new Date().toISOString(),features:[a.release,b.release]}
     expect(()=>validateOfficialFeatureIndex({...index,features:[{...a.release,path:'https://other.test/payload'}]})).toThrow('路径')
+    expect(validateOfficialFeatureIndex({...index, features: [{...a.release, path: a.release.path.replace(/\.mmfeature$/, '.mmstudio')}]}).features[0].path).toMatch(/\.mmstudio$/)
     expect(()=>validateOfficialFeatureIndex({...index,features:[{...a.release,dependencies:['absent']}]})).toThrow('缺少')
     expect(()=>validateOfficialFeatureIndex({...index,features:[a.release,a.release]})).toThrow('重复')
     expect(()=>validateOfficialFeatureIndex({...index,features:[{...a.release,dependencies:['b-feature']},{...b.release,dependencies:['a-feature']}]})).toThrow('循环')
+  })
+  it('retains the studio extension during verified downloads and rejects a package without a domain declaration', async () => {
+    const feature = await bundle(), h = await harness([feature])
+    const release = { ...feature.release, path: feature.release.path.replace(/\.mmfeature$/, '.mmstudio') }
+    h.files.set('/' + release.path, feature.bytes)
+    h.setIndex({ format: 'modmind-feature-catalog', schemaVersion: 1, generatedAt: new Date().toISOString(), features: [release] })
+    await h.refresh()
+    await expect(h.store.installOfficial(release.id)).rejects.toThrow('未声明领域工作台')
+    expect(h.manager.list()).toEqual([])
   })
   it('recommends, installs and calls a new feature through real MCP in one session, while rejecting installation from inspiration',async()=>{
     const h=await harness([await bundle()]),children:ChildProcessWithoutNullStreams[]=[],bridges:ModMindBridge[]=[]

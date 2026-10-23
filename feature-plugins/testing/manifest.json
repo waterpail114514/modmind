@@ -4,13 +4,14 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "testing",
   "name": "游戏与服务端测试",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
   "hostCapabilities": [
     "runtime",
-    "testingV1"
+    "testingV1",
+    "testingV2"
   ],
   "dependencies": [
     "server-pack-runtime"
@@ -39,7 +40,17 @@
       "component": "minecraft",
       "icon": "Gamepad2",
       "group": "测试与构建",
-      "order": 10
+      "order": 10,
+      "studioIds": [
+        "minecraft-mod",
+        "minecraft-modpack"
+      ],
+      "loaders": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge"
+      ]
     },
     {
       "id": "modpack-server",
@@ -47,7 +58,21 @@
       "component": "modpack-server",
       "icon": "Server",
       "group": "测试与构建",
-      "order": 20
+      "order": 20,
+      "studioIds": [
+        "minecraft-modpack",
+        "minecraft-server-plugin"
+      ],
+      "loaders": [
+        "fabric",
+        "quilt",
+        "forge",
+        "neoforge",
+        "paper",
+        "spigot",
+        "folia",
+        "velocity"
+      ]
     }
   ],
   "actions": [
@@ -1150,19 +1175,135 @@
       "permission": "process",
       "projectRequired": true,
       "surfaces": [
-        "workbench"
+        "workbench",
+        "inspiration"
       ],
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "start",
+              "state",
+              "cancel",
+              "files"
+            ]
+          },
+          "taskId": {
+            "type": "string"
+          },
+          "waitSeconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 20
+          },
+          "fixture": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "minecraftVersion",
+              "loader",
+              "loaderVersion",
+              "jars"
+            ],
+            "properties": {
+              "minecraftVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "loader": {
+                "type": "string",
+                "enum": [
+                  "fabric",
+                  "quilt",
+                  "forge",
+                  "neoforge"
+                ]
+              },
+              "loaderVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "jars": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-fA-F0-9]{64}$"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
           "steps": {
-            "type": "array"
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 40,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "enum": [
+                    "command",
+                    "restart"
+                  ]
+                },
+                "command": {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "expect": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 1000,
+                  "maximum": 120000
+                }
+              }
+            }
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 30000,
+            "maximum": 1800000
           },
           "outputDirectory": {
             "type": "string"
           },
           "port": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 65535
           },
           "acceptEula": {
             "type": "boolean"
@@ -1170,10 +1311,7 @@
           "onlineMode": {
             "type": "boolean"
           }
-        },
-        "required": [
-          "steps"
-        ]
+        }
       }
     },
     {
@@ -2062,6 +2200,52 @@
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "id": "modpack:pickScenarioJars",
+      "handler": "modpack:pickScenarioJars",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack:removeScenarioJar",
+      "handler": "modpack:removeScenarioJar",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
     }
   ],
   "tools": [
@@ -2123,7 +2307,7 @@
     {
       "name": "modmind_modpack_run_server_scenario",
       "action": "modpack_run_server_scenario",
-      "description": "Start a loopback-only local server in offline test mode and execute bounded console commands with log evidence assertions."
+      "description": "Run bounded server console/log scenarios. fixture + operation=start pins Minecraft/Loader versions and authorized JAR paths with SHA-256 in a fresh offline loopback world. acceptEula must be true. Returns taskId; poll operation=state with taskId and waitSeconds<=20, operation=files lists authorized JARs, cancel stops only that task. Without operation or fixture retain the existing full-pack scenario. Results distinguish declared and log-observed mods."
     },
     {
       "name": "modmind_runtime_state",
@@ -2131,5 +2315,20 @@
       "description": "Read the current isolated Minecraft test runtime state and recent events. Modpacks also return modpackImport with installed counts, pending dependencies and original-pack compatibility warnings; import success does not prove gameplay compatibility."
     }
   ],
-  "files": {}
+  "files": {},
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack",
+    "minecraft-server-plugin"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge",
+    "paper",
+    "spigot",
+    "folia",
+    "velocity"
+  ]
 }

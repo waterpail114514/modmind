@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "modpack-mods",
   "name": "模组列表",
-  "version": "1.5.0-plugintest",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -32,5 +32,14 @@
       "name": "模组列表",
       "description": "浏览和管理整合包模组及自制模块，通过兼容平台搜索、下载和安装 Mod。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
     }
+  ],
+  "studioIds": [
+    "minecraft-modpack"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge"
   ]
 }

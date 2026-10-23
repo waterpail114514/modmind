@@ -21,6 +21,8 @@
     "feature-plugins/*/main.ts",
     "feature-plugins/sdk/native.ts",
     "feature-plugins/sdk/mediaRuntime.ts",
-    "feature-plugins/sdk/nativeResources.ts"
+    "feature-plugins/sdk/nativeResources.ts",
+    "feature-plugins/sdk/studio.ts",
+    "feature-plugins/sdk/builtinAdoption.ts"
   ]
 }

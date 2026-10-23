@@ -136,7 +136,7 @@ try {
       assert.ok(colors.size >= 2 && dominant < .95, `Model capture is blank or badly framed: ${colors.size} colors, ${dominant} dominant`)
       results.push({ plugin: 'model-studio', editableModelAndCapture: 'passed' })
       const original = await page.evaluate(() => window.modmind.blockbench.projectState())
-      for (const width of [1280, 390]) {
+      for (const width of [1280, 1080]) {
         await page.setViewportSize({ width, height: 800 })
         void page.evaluate(() => window.modmind.app.close()).catch(() => {})
         const closeDialog = page.getByRole('dialog', { name: '关闭 ModMind', exact: true })
@@ -153,7 +153,7 @@ try {
       const accountDialog = page.getByRole('dialog', { name: 'ModMind 设备连接', exact: true })
       await accountDialog.waitFor()
       await page.waitForFunction(async () => !(await window.modmind.blockbench.getState()).visible)
-      await page.setViewportSize({ width: 1000, height: 760 })
+      await page.setViewportSize({ width: 1080, height: 760 })
       assert.equal((await page.evaluate(() => window.modmind.blockbench.getState())).visible, false)
       await accountDialog.getByRole('button', { name: '关闭', exact: true }).click()
       await page.waitForFunction(async () => (await window.modmind.blockbench.getState()).visible)
@@ -192,7 +192,7 @@ try {
     results.push({ page: label, project: 'modpack', render: 'passed' })
   }
   await select('设置'); await page.getByRole('button', { name: '集成', exact: true }).click()
-  for (const dark of [false, true]) for (const width of [1280, 390]) {
+  for (const dark of [false, true]) for (const width of [1280, 1080]) {
     await page.evaluate(darkMode => window.dispatchEvent(new StorageEvent('storage', { key: 'modmind-appearance:v1', newValue: JSON.stringify({ themePreset: 'modmind', darkMode }) })), dark)
     await page.setViewportSize({ width, height: 800 })
     await page.screenshot({ path: path.join(work, `plugins-${dark ? 'dark' : 'light'}-${width}.png`) })

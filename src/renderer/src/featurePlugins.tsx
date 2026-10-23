@@ -3,9 +3,10 @@ import * as ReactDOM from 'react-dom'
 import * as jsxRuntime from 'react/jsx-runtime'
 import * as dialogs from './components/InteractionDialogs'
 import MiniPaintEditor from './components/MiniPaintEditor'
-import * as icons from 'lucide-react'
 import * as theme from './theme'
 import type { FeaturePluginRecord, FeaturePluginCatalogEntry } from '../../shared/featurePlugins'
+import { featurePageApplies } from '../../shared/featureApplicability'
+import { resolveFeatureModule } from './featurePluginDefinitions'
 import type { FeaturePageContext, FeatureRendererModule, FeaturePageDefinition, FeatureSettingsDefinition } from './featurePluginTypes'
 
 type Snapshot = { ready: boolean; records: FeaturePluginRecord[]; catalog: FeaturePluginCatalogEntry[]; modules: Record<string, FeatureRendererModule>; error?: string }
@@ -19,23 +20,8 @@ hostWindow.__modmindFeatureHost = { React, ReactDOM, jsxRuntime, dialogs, MiniPa
 hostWindow.__modmindRegisterFeature = (id, module) => {
   if (assets.has(id) && module && typeof module === 'object') registered[id] = module
 }
-function resolveModule(record: FeaturePluginRecord): FeatureRendererModule {
-  const exports = registered[record.id]
-  if (!exports) throw new Error('插件未注册界面')
-  const metadata = exports as unknown as Partial<FeatureRendererModule>
-  const pages = (record.manifest?.views ?? []).map(view => {
-    const component = exports[view.component]
-    if (typeof component !== 'function') throw new Error(`插件页面未注册：${view.id}`)
-    const extra = metadata.pages?.find(page => page.id === view.id)
-    return { ...extra, id: view.id, label: view.label, group: view.group ?? '工具', order: view.order, icon: (icons as unknown as Record<string, icons.LucideIcon>)[view.icon] ?? icons.Puzzle, component, ...(view.loaders?.length ? { supports: (project: FeaturePageContext['project']) => Boolean(project && view.loaders?.includes(project.loader)) } : {}) } as FeaturePageDefinition
-  })
-  const settings = (record.manifest?.settings ?? []).map(section => {
-    const component = exports[section.component]
-    if (typeof component !== 'function') throw new Error(`插件设置未注册：${section.id}`)
-    return { ...metadata.settings?.find(value => value.id === section.id), id: section.id, category: section.category, keywords: section.keywords ?? section.label, component } as FeatureSettingsDefinition
-  })
-  return { apiVersion: 2, pages, settings, launcherActions: metadata.launcherActions, backgroundComponents: metadata.backgroundComponents }
-}
+
+function resolveModule(record: FeaturePluginRecord): FeatureRendererModule { return resolveFeatureModule(record, registered[record.id]) }
 let refreshQueue = Promise.resolve()
 function publish(value: Snapshot): void { snapshot = value; listeners.forEach(listener => listener()) }
 function removeAssets(id: string): void { const entry = assets.get(id); entry?.script.remove(); entry?.style.remove(); assets.delete(id); delete registered[id] }
@@ -109,15 +95,18 @@ function FeatureRoute({ page, context }: { page: FeaturePageDefinition; context:
 }
 
 export function FeaturePluginRoutes({ pages, view, context, routeData }: { pages: FeaturePageDefinition[]; view: string; context: Omit<FeaturePageContext, 'visible'>; routeData: Record<string, unknown> }): React.JSX.Element {
-  return <>{pages.filter(page => !page.supports || page.supports(context.project, context.uiMode)).map(page =>
+  return <>{pages.filter(page => featurePageApplies(page, context.project, context.uiMode)).map(page =>
     <FeatureRoute key={`${page.id}:${page.scope === 'application' ? 'application' : context.project?.path ?? 'standalone'}`} page={page} context={{ ...context, routeData: routeData[page.id], visible: view === page.id }} />)}</>
 }
 
 export function FeaturePluginBackgrounds({ modules, context }: { modules: Record<string, FeatureRendererModule>; context: FeaturePageContext }): React.JSX.Element {
-  return <>{Object.entries(modules).flatMap(([id, module]) => (module.backgroundComponents ?? []).map((Component, index) => <FeaturePluginBoundary key={`${id}:${index}`}><Component {...context} /></FeaturePluginBoundary>))}</>
+  return <>{Object.entries(modules).filter(([, module]) => featurePageApplies(module, context.project, context.uiMode)
+    && (!module.pages.length || module.pages.some(page => featurePageApplies(page, context.project, context.uiMode))))
+    .flatMap(([id, module]) => (module.backgroundComponents ?? []).map((Component, index) => <FeaturePluginBoundary key={`${id}:${index}:${context.project?.path ?? 'application'}`}><Component {...context} /></FeaturePluginBoundary>))}</>
 }
 
-export function FeatureSettingsSection({ definition, context }: { id?: string; definition: FeatureSettingsDefinition; context: FeaturePageContext }): React.JSX.Element {
+export function FeatureSettingsSection({ definition, context }: { id?: string; definition: FeatureSettingsDefinition; context: FeaturePageContext }): React.JSX.Element | null {
+  if (!featurePageApplies(definition, context.project, context.uiMode)) return null
   const Settings = definition.component
   return <section id={definition.id} className={`settings-section ${definition.className ?? ''}`}><FeaturePluginBoundary><Settings {...context} /></FeaturePluginBoundary></section>
 }

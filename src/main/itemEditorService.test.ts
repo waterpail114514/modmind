@@ -8,7 +8,7 @@ import type { ManagedItem } from '../shared/itemEditor'
 import { importItemTexture, listManagedItems, removeManagedItem, saveManagedItem } from "../../feature-plugins/item-editor/src/main/itemEditorService"
 
 const roots: string[] = []
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))) })
 
 async function fixture(version = '1.21.1', loader: ProjectInfo['loader'] = 'fabric'): Promise<ProjectInfo> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-items-'))

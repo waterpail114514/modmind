@@ -1,0 +1,30 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "skin-studio",
+  "name": "皮肤工坊",
+  "version": "1.0.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "capabilities": [
+    {
+      "id": "minecraft-skin",
+      "name": "Minecraft 皮肤制作",
+      "description": "创建和修改 64×64 Minecraft 皮肤，支持 Slim 与 Classic 模型、像素检查、项目保存和 PNG 导出。"
+    }
+  ],
+  "views": [
+    {
+      "id": "skin-studio",
+      "label": "皮肤工坊",
+      "component": "skin-studio",
+      "icon": "Palette",
+      "group": "资源",
+      "order": 25
+    }
+  ],
+  "studioIds": ["minecraft-mod", "minecraft-modpack", "minecraft-server-plugin"],
+  "loaders": ["fabric", "quilt", "forge", "neoforge", "bedrock", "netease-pc", "netease-mobile", "paper", "spigot", "folia", "velocity"]
+}

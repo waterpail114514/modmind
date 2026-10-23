@@ -1,3 +1,4 @@
+vi.mock('./networkRequest', async (importOriginal) => ({ ...(await importOriginal<typeof import('./networkRequest')>()), networkFetch: (input: string | URL, init?: RequestInit) => globalThis.fetch(input, init) }))
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { codexApprovalPolicy, normalizeAgentApprovalMode } from '../shared/agentApproval'
 import { fetchWithApprovalModelFallback, isAutomaticApprovalFailure } from './agentApproval'

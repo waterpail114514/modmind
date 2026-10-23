@@ -1,0 +1,24 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>3D 预览（P0 简版 · Deepslate 渲染验证页）</title>
+<style>
+  html,body{margin:0;height:100%;background:#0e1116;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none;cursor:grab}
+  #hud{position:fixed;left:12px;top:10px;color:#9fb0c3;font:12px/1.6 ui-monospace,Consolas,monospace;pointer-events:none;white-space:pre}
+  #err{position:fixed;left:12px;bottom:12px;color:#ff7b72;font:12px/1.5 ui-monospace,Consolas,monospace;max-width:90vw;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">加载中…</div>
+<div id="err"></div>
+<!-- P0 验收用的简版页：只渲染、不编辑。产品版在 index.html。 -->
+<script src="vendor/gl-matrix.js"></script>
+<script src="vendor/deepslate.umd.cjs"></script>
+<script src="data/assets.js"></script>
+<script src="data/opaque.js"></script>
+<script src="simple.js"></script>
+</body>
+</html>

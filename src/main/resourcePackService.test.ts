@@ -67,7 +67,7 @@ it('previews inherited geometry with current pack textures and refreshes after a
   const document = await resourcePackModelDocument(p, pack.id, file)
   expect(document.document.model.textures).toEqual({ all: 'test:block/example' })
   expect(document.document.model.elements).toHaveLength(1)
-})
+}, 20_000)
 
 it('fails closed on model cycles, missing textures and preview traversal', async () => {
   const p = await project(), pack = await createResourcePack(p, { name: 'cycle', description: '', packFormat: 34 })

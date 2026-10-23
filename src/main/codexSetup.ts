@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { verifiedDownload } from './downloadService'
 import { retryTransientFileLock } from './fileLockRetry'
+import { extractSevenZipArchive } from './sevenZipArchive'
+import { diagnosticJournal } from './diagnosticLog'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
@@ -55,6 +57,7 @@ export interface CodexSetupResult {
 
 export interface PrepareCodexOptions {
   rootDir: string
+  signal?: AbortSignal
   /** Optional isolated CODEX_HOME; the managed runtime cache still uses rootDir. */
   homeDir?: string
   serverConfig: CodexServerConfig
@@ -62,6 +65,7 @@ export interface PrepareCodexOptions {
   existingExecutable?: string
   bundledSkillsDir?: string
   bundledSkillNames?: readonly string[]
+  bundledSkillDirectories?: readonly string[]
   imageToolsEnabled?: boolean
   rememberPrepared?: boolean
   onProgress?: (progress: CodexSetupProgress) => void
@@ -69,13 +73,20 @@ export interface PrepareCodexOptions {
 
 export interface EnsureManagedCodexOptions {
   rootDir: string
+  signal?: AbortSignal
   onProgress?: (progress: CodexSetupProgress) => void
 }
 
 let preparedExecutable = ''
 let preparedHome = ''
 let preparedEnvironment: Record<string, string> = {}
-const managedRuntimePreparations = new Map<string, Promise<string>>()
+interface ManagedRuntimePreparation {
+  promise: Promise<string>
+  controller: AbortController
+  subscribers: number
+  listeners: Set<(progress: CodexSetupProgress) => void>
+}
+const managedRuntimePreparations = new Map<string, ManagedRuntimePreparation>()
 
 /**
  * The quota workflow must not silently run an arbitrary global Codex CLI.
@@ -99,9 +110,9 @@ export function managedCodexExecutablePath(rootDir: string, platform: string = p
   return path.join(managedCodexRuntimePath(rootDir, platform, arch), requireCodexRuntimeTarget(platform, arch).executableRelativePath)
 }
 
-async function usableManagedCodex(root: string, executable: string): Promise<boolean> {
-  try { await validateCodexFile(root, executable); return await probeCodexExecutable(executable) === CODEX_RUNTIME_VERSION }
-  catch { return false }
+async function usableManagedCodex(root: string, executable: string, signal?: AbortSignal): Promise<boolean> {
+  try { signal?.throwIfAborted(); await validateCodexFile(root, executable); return await probeCodexExecutable(executable, signal) === CODEX_RUNTIME_VERSION }
+  catch { signal?.throwIfAborted(); return false }
 }
 
 /** Only retire completed installations after the pinned runtime has passed validation. */
@@ -187,18 +198,19 @@ async function writeCodexConfig(configPath: string, config: CodexServerConfig): 
   return true
 }
 
-async function syncBundledSkills(sourceDirectory: string | undefined, home: string, names?: readonly string[]): Promise<boolean> {
+async function syncBundledSkills(sourceDirectory: string | undefined, home: string, names?: readonly string[], directories?: readonly string[]): Promise<boolean> {
   if (!sourceDirectory) return false
   const sourceExists = await fs.stat(sourceDirectory).then((value) => value.isDirectory()).catch(() => false)
   if (!sourceExists) return false
   const targetRoot = path.join(home, 'skills')
-  await syncWorkbenchSkills(sourceDirectory, targetRoot, names)
+  await syncWorkbenchSkills(sourceDirectory, targetRoot, names, directories)
   return true
 }
 
-async function runTar(args: string[]): Promise<void> {
+async function runTar(args: string[], signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(process.platform === 'win32' ? 'tar.exe' : 'tar', args, {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe']})
+    const child = spawn(process.platform === 'win32' ? 'tar.exe' : 'tar', args, {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], signal})
     let error = ''
     child.stderr.on('data', (chunk) => { error += String(chunk).slice(-4_000) })
     child.once('error', reject)
@@ -206,15 +218,35 @@ async function runTar(args: string[]): Promise<void> {
   })
 }
 
+async function extractCodexArchive(archive: string, destination: string, options: EnsureManagedCodexOptions): Promise<void> {
+  await fs.mkdir(destination, { recursive: true })
+  try {
+    await runTar(['-xzf', archive, '-C', destination], options.signal)
+  } catch (systemError) {
+    options.signal?.throwIfAborted()
+    diagnosticJournal.record({ subsystem: 'codex-runtime', operation: 'extract', phase: 'fallback', level: 'warning', message: 'System tar failed; using bundled 7-Zip', error: systemError })
+    progress(options, { stage: 'verifying', title: '正在验证开发工具', detail: '系统解压不可用，正在使用 ModMind 托管解压', status: 'running' })
+    // Keep the archive outside this empty directory so 7-Zip can unwrap gzip and tar.
+    await fs.rm(destination, { recursive: true, force: true })
+    try {
+      await extractSevenZipArchive(archive, destination, undefined, options.signal)
+    } catch (managedError) {
+      throw new AggregateError([systemError, managedError], `Codex 解压失败，系统解压和 ModMind 托管解压均未成功：${managedError instanceof Error ? managedError.message : String(managedError)}`)
+    }
+  }
+}
+
 async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions): Promise<string> {
   const descriptor = requireCodexRuntimeTarget()
   const urls = ['https://registry.npmjs.org', 'https://registry.npmmirror.com'].map((origin) => `${origin}/@openai/codex/-/${descriptor.archiveName}`)
   const runtimePath = managedCodexRuntimePath(rootDir)
   const executable = managedCodexExecutablePath(rootDir)
-  if (await usableManagedCodex(runtimePath, executable)) return executable
+  if (await usableManagedCodex(runtimePath, executable, options.signal)) return executable
+  options.signal?.throwIfAborted()
 
   const staging = `${runtimePath}.staging-${randomUUID()}`
   const archive = path.join(staging, 'codex.tgz')
+  const extracted = path.join(staging, 'extracted')
   await fs.mkdir(staging, {recursive: true})
   progress(options, {stage: 'downloading', title: '正在准备开发工具', detail: `正在连接 ${urls.length} 个可用下载源`, status: 'running'})
   try {
@@ -224,20 +256,24 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
       maxBytes: 256 * 1024 * 1024,
       timeoutMs: 120_000,
       retriesPerSource: DOWNLOAD_ATTEMPTS_PER_SOURCE,
+      signal: options.signal,
       activityLabel: `Codex ${CODEX_RUNTIME_VERSION}`,
       expectedHash: { algorithm: 'sha512', value: descriptor.sha512 }
     })
+    options.signal?.throwIfAborted()
     progress(options, {stage: 'verifying', title: '正在验证开发工具', detail: '下载完整性已通过，正在解压', status: 'running'})
-    await runTar(['-xzf', archive, '-C', staging])
-    const stagedExecutable = path.join(staging, descriptor.executableRelativePath)
-    await validateCodexFile(staging, stagedExecutable)
+    await extractCodexArchive(archive, extracted, options)
+    options.signal?.throwIfAborted()
+    const stagedExecutable = path.join(extracted, descriptor.executableRelativePath)
+    await validateCodexFile(extracted, stagedExecutable)
     if (process.platform !== 'win32') await fs.chmod(stagedExecutable, 0o755)
-    if (await probeCodexExecutable(stagedExecutable) !== CODEX_RUNTIME_VERSION) throw new Error('Codex 版本探测不匹配')
+    if (await probeCodexExecutable(stagedExecutable, options.signal) !== CODEX_RUNTIME_VERSION) throw new Error('Codex 版本探测不匹配')
+    options.signal?.throwIfAborted()
     await fs.rm(archive, { force: true })
     const backup = `${runtimePath}.previous-${randomUUID()}`
     const hasPrevious = await fs.stat(runtimePath).then(() => true).catch(() => false)
     if (hasPrevious) await fs.rename(runtimePath, backup)
-    try { await retryTransientFileLock(() => fs.rename(staging, runtimePath)) }
+    try { await retryTransientFileLock(() => { options.signal?.throwIfAborted(); return fs.rename(extracted, runtimePath) }) }
     catch (error) { if (hasPrevious) await fs.rename(backup, runtimePath); throw error }
     if (hasPrevious) await fs.rm(backup, { recursive: true, force: true }).catch(() => undefined)
     return executable
@@ -247,35 +283,75 @@ async function downloadCodex(rootDir: string, options: EnsureManagedCodexOptions
 }
 
 export async function ensureManagedCodexRuntime(options: EnsureManagedCodexOptions): Promise<string> {
+  options.signal?.throwIfAborted()
   const runtimePath = path.resolve(managedCodexRuntimePath(options.rootDir))
   const key = process.platform === 'win32' ? runtimePath.toLowerCase() : runtimePath
-  const active = managedRuntimePreparations.get(key)
-  if (active) return active
-
-  const preparation = (async () => {
-    const executable = await downloadCodex(options.rootDir, options)
-    await pruneObsoleteCodexRuntimes(options.rootDir)
-    return executable
-  })()
-  managedRuntimePreparations.set(key, preparation)
-  try {
-    return await preparation
-  } finally {
-    if (managedRuntimePreparations.get(key) === preparation) managedRuntimePreparations.delete(key)
+  let active = managedRuntimePreparations.get(key)
+  if (active?.controller.signal.aborted) {
+    await active.promise.catch(() => undefined)
+    return ensureManagedCodexRuntime(options)
   }
+  if (!active) {
+    const controller = new AbortController()
+    const listeners = new Set<(progress: CodexSetupProgress) => void>()
+    const promise = (async () => {
+      const executable = await downloadCodex(options.rootDir, { ...options, signal: controller.signal, onProgress: value => { for (const listener of listeners) listener(value) } })
+      controller.signal.throwIfAborted()
+      await pruneObsoleteCodexRuntimes(options.rootDir)
+      return executable
+    })()
+    active = { promise, controller, subscribers: 0, listeners }
+    managedRuntimePreparations.set(key, active)
+    const preparation = active
+    void promise.finally(() => { if (managedRuntimePreparations.get(key) === preparation) managedRuntimePreparations.delete(key) }).catch(() => undefined)
+  }
+  const preparation = active
+  preparation.subscribers += 1
+  if (options.onProgress) preparation.listeners.add(options.onProgress)
+  return await new Promise<string>((resolve, reject) => {
+    let settled = false
+    const finish = (error: unknown, value?: string): void => {
+      if (settled) return
+      settled = true
+      options.signal?.removeEventListener('abort', onAbort)
+      if (options.onProgress) preparation.listeners.delete(options.onProgress)
+      preparation.subscribers -= 1
+      if (error) reject(error)
+      else resolve(value!)
+    }
+    const onAbort = (): void => {
+      const error = Object.assign(new Error('Codex 准备已停止'), { name: 'AbortError', cause: options.signal?.reason })
+      if (preparation.subscribers === 1) {
+        preparation.controller.abort()
+        // Do not release the cache lock until aborted extraction and rollback
+        // have settled; another caller can then safely start a fresh attempt.
+        void preparation.promise.then(() => finish(error), () => finish(error))
+      } else finish(error)
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+    if (options.signal?.aborted) onAbort()
+    void preparation.promise.then(value => {
+      if (options.signal?.aborted) finish(Object.assign(new Error('Codex 准备已停止'), { name: 'AbortError', cause: options.signal.reason }))
+      else finish(undefined, value)
+    }, error => finish(error))
+  })
 }
 
 export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexSetupResult> {
+  options.signal?.throwIfAborted()
   progress(options, {stage: 'checking', title: '正在检查开发工具', detail: '正在检测本机 Codex', status: 'running'})
   const executable = options.existingExecutable || await ensureManagedCodexRuntime(options)
-  const version = await probeCodexExecutable(executable)
+  options.signal?.throwIfAborted()
+  const version = await probeCodexExecutable(executable, options.signal)
+  options.signal?.throwIfAborted()
   const runtimePath = options.existingExecutable ? path.dirname(options.existingExecutable) : managedCodexRuntimePath(options.rootDir)
   const home = options.homeDir ? path.resolve(options.homeDir) : path.join(options.rootDir, 'codex-home')
   const configPath = path.join(home, 'config.toml')
   const config = validateConfig(options.serverConfig)
   progress(options, {stage: 'configuring', title: '正在检查开发工具配置', detail: '正在比对本地配置并准备项目助手', status: 'running'})
   const configChanged = await writeCodexConfig(configPath, config)
-  const skillsSynced = await syncBundledSkills(options.bundledSkillsDir, home, options.bundledSkillNames)
+  const skillsSynced = await syncBundledSkills(options.bundledSkillsDir, home, options.bundledSkillNames, options.bundledSkillDirectories)
+  options.signal?.throwIfAborted()
   if (!skillsSynced && options.bundledSkillsDir) {
     progress(options, {
       stage: 'configuring',

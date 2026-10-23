@@ -1,4 +1,5 @@
 node_modules/
+resources/developer-kit/
 out/
 dist/
 release/
@@ -21,6 +22,8 @@ ui-check*.jpg
 /modmind-mcp-open-source.zip
 /docs/*
 !/docs/design-spec.zh-CN.md
+!/docs/developer-workbench.zh-CN.md
+/test-results/developer-workbench/
 !/docs/app-changelog.zh-CN.md
 !/docs/sidebar-layout.zh-CN.md
 !/docs/diagnostics-audit-2026-09-16.zh-CN.md
@@ -35,6 +38,13 @@ ui-check*.jpg
 /resources/server-pack-creator/.parts/
 /resources/server-pack-creator/*.partial
 
+# Local test-run and audit artifacts: Electron profiles, caches, captured
+# projects, screenshots and logs. They stay on disk; publish a curated record
+# explicitly with `git add -f` when one needs to be kept.
+/test-results/
+/work/
+/.audit-sandboxes/
+
 # Local development artifacts
 /video-assets/
 /scripts/inspect-loader-ui.mjs
@@ -45,6 +55,7 @@ ui-check*.jpg
 
 # Application feature plugin build output
 /feature-plugin-dist/
+/resources/bundled-studios/
 /feature-release/
 /tools/feature-publisher/node_modules/
 /test-results/feature-publisher/
@@ -59,3 +70,12 @@ ui-check*.jpg
 !/docs/feature-plugins.zh-CN.md
 !/docs/official-features-publishing.zh-CN.md
 !/docs/branch-workspaces.zh-CN.md
+!/docs/studio-protocol.zh-CN.md
+!/docs/extensions-development.zh-CN.md
+!/docs/mmfeature-development.zh-CN.md
+!/docs/mmstudio-development.zh-CN.md
+!/docs/shader-studio.zh-CN.md
+!/docs/shader-studio-promax.zh-CN.md
+!/docs/shader-studio-development.zh-CN.md
+!/docs/shader-studio-mcp.zh-CN.md
+!/docs/onboarding.zh-CN.md

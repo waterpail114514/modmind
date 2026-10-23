@@ -1,9 +1,10 @@
-import { invalidateModpackContentCache, inventoryCache, cacheKey, registerImportedPackContent, readStoredInventory, inventoryPath, MODPACK_CONTENT_INVENTORY_FILE, normalizeItem, CONTENT_KINDS, CONTENT_SCOPES, CONTENT_DELIVERIES, normalizeRelative, RESERVED_TOP_LEVEL, INSTANCE_IGNORED_FILES, validHash, MAX_CONTENT_FILE_BYTES, itemId, classifyPath, hashFile, contentTarget, overridesRoot, defaultScope, writeStoredInventory, readManagedModpackContent, isRemoteModpackContent } from "../../../../src/main/modpackContentMetadata"
-export { invalidateModpackContentCache, registerImportedPackContent, MODPACK_CONTENT_INVENTORY_FILE, readManagedModpackContent, isRemoteModpackContent } from "../../../../src/main/modpackContentMetadata"
+import { invalidateModpackContentCache, inventoryCache, cacheKey, registerImportedPackContent, readStoredInventory, inventoryPath, MODPACK_CONTENT_INVENTORY_FILE, normalizeItem, CONTENT_KINDS, CONTENT_SCOPES, CONTENT_DELIVERIES, normalizeRelative, RESERVED_TOP_LEVEL, INSTANCE_IGNORED_FILES, validHash, MAX_CONTENT_FILE_BYTES, itemId, classifyPath, hashFile, contentTarget, overridesRoot, defaultScope, writeStoredInventory, readManagedModpackContent, isRemoteModpackContent } from '../../../../src/main/modpackContentMetadata'
+export { invalidateModpackContentCache, registerImportedPackContent, MODPACK_CONTENT_INVENTORY_FILE, readManagedModpackContent, isRemoteModpackContent } from '../../../../src/main/modpackContentMetadata'
+import { serializeProjectMutation } from '../../../../src/main/projectMutation'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, promises as fs, readFileSync } from 'node:fs'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from '../../../../src/main/safeExtractZip'
 import type {
   ModpackContentDelivery,
   ModpackContentDownloadInput,
@@ -14,9 +15,10 @@ import type {
   ModpackContentKind,
   ModpackContentScope,
   ProjectInfo
-} from "../../../../src/shared/types"
-import { recordZipExpansion } from "../../../../src/main/archiveImportPolicy"
-import { verifiedDownload } from "../../../../src/main/downloadService"
+} from '../../../../src/shared/types'
+import { recordZipExpansion } from '../../../../src/main/archiveImportPolicy'
+import { verifiedDownload } from '../../../../src/main/downloadService'
+import { assertContentTarget, installContentTransaction } from '../../../../src/main/contentInstallTransaction'
 // Large resource packs can legitimately contain tens of thousands of small files.
 // Keep the bound finite for directory traversal while avoiding rejection of valid packs.
 const MAX_CONTENT_FILE_COUNT = 100_000
@@ -68,6 +70,7 @@ async function copyFileChecked(source: string, destination: string, budget: { fi
 }
 
 async function copyDirectoryChecked(source: string, destination: string, budget: { files: number; bytes: number }): Promise<void> {
+  await fs.mkdir(destination, { recursive: true })
   for (const entry of await fs.readdir(source, { withFileTypes: true })) {
     if (entry.isSymbolicLink()) continue
     const from = path.join(source, entry.name)
@@ -106,19 +109,6 @@ async function validateImportedContent(kind: ModpackContentKind, source: string,
 
   if (!directory && ['resourcepacks', 'shaderpacks'].includes(kind) && path.extname(source).toLowerCase() !== '.zip') {
     throw new Error(kind === 'resourcepacks' ? '资源包必须导入 ZIP 文件' : '光影包必须导入 ZIP 文件')
-  }
-}
-
-async function replacePath(source: string, destination: string): Promise<void> {
-  const pending = `${destination}.pending-${randomUUID()}`
-  await fs.mkdir(path.dirname(destination), { recursive: true })
-  await fs.rm(pending, { recursive: true, force: true }).catch(() => undefined)
-  await fs.rename(source, pending)
-  try {
-    await fs.rm(destination, { recursive: true, force: true })
-    await fs.rename(pending, destination)
-  } finally {
-    await fs.rm(pending, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 
@@ -176,7 +166,7 @@ export async function listModpackContent(project: ProjectInfo, refresh = false):
   }
 }
 
-export async function importModpackContent(
+export const importModpackContent = serializeProjectMutation(async function importModpackContent(
   project: ProjectInfo,
   kind: ModpackContentKind,
   sources: string[],
@@ -187,44 +177,55 @@ export async function importModpackContent(
   const stored = await readStoredInventory(project)
   const additions: ModpackContentItem[] = []
   const budget = { files: 0, bytes: 0 }
-  for (const source of sources) {
-    const stat = await fs.stat(source)
-    const directory = stat.isDirectory()
-    if (!directory && !stat.isFile()) throw new Error('只能导入普通文件或目录')
-    await validateImportedContent(kind, source, directory)
-    const base = defaultDirectory(kind)
-    const relative = normalizeRelative(base ? `${base}/${path.basename(source)}` : path.basename(source))
-    const destination = contentTarget(project, relative)
-    const staging = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'content-import', randomUUID())
-    await fs.mkdir(staging, { recursive: true })
-    try {
-      const staged = path.join(staging, path.basename(source))
+  const staging = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'content-import', randomUUID())
+  await assertContentTarget(project.path, staging)
+  await fs.mkdir(staging, { recursive: true })
+  const replacements: Array<{ source: string; destination: string }> = []
+  try {
+    for (const [index, source] of sources.entries()) {
+      const stat = await fs.lstat(source)
+      const directory = stat.isDirectory()
+      if (stat.isSymbolicLink() || !directory && !stat.isFile()) throw new Error('只能导入普通文件或目录')
+      await validateImportedContent(kind, source, directory)
+      const base = defaultDirectory(kind)
+      const relative = normalizeRelative(base ? `${base}/${path.basename(source)}` : path.basename(source))
+      const destination = contentTarget(project, relative)
+      await assertContentTarget(project.path, destination)
+      const staged = path.join(staging, String(index), path.basename(source))
+      const initialBytes = budget.bytes
       if (directory) await copyDirectoryChecked(source, staged, budget)
       else await copyFileChecked(source, staged, budget)
-      await replacePath(staged, destination)
-    } finally {
-      await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)
+      replacements.push({ source: staged, destination })
+      if (directory) {
+        additions.push({ id: itemId(relative), path: relative, kind, scope, delivery: 'embedded', directory: true, size: budget.bytes - initialBytes, addedAt: new Date().toISOString() })
+      } else {
+        const hashes = await hashFile(staged)
+        additions.push({ id: itemId(relative), path: relative, kind, scope, delivery: 'embedded', ...hashes, addedAt: new Date().toISOString() })
+      }
     }
-    if (directory) {
-      additions.push({ id: itemId(relative), path: relative, kind, scope, delivery: 'embedded', directory: true, size: budget.bytes, addedAt: new Date().toISOString() })
-    } else {
-      const hashes = await hashFile(destination)
-      additions.push({ id: itemId(relative), path: relative, kind, scope, delivery: 'embedded', sha1: hashes.sha1, sha512: hashes.sha512, size: hashes.size, addedAt: new Date().toISOString() })
-    }
+    const paths = new Set(additions.map((item) => item.path))
+    const next = { version: 1 as const, items: [...stored.items.filter((item) => !paths.has(item.path)), ...additions] }
+    if (next.items.some(item => !normalizeItem(item))) throw new Error('内容清单格式无效')
+    await installContentTransaction(project.path, replacements, () => writeStoredInventory(project, next))
+    return { items: additions, copiedFiles: budget.files }
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)
   }
-  const paths = new Set(additions.map((item) => item.path))
-  await writeStoredInventory(project, { version: 1, items: [...stored.items.filter((item) => !paths.has(item.path)), ...additions] })
-  return { items: additions, copiedFiles: budget.files }
-}
+})
 
-export async function downloadModpackContent(project: ProjectInfo, input: ModpackContentDownloadInput): Promise<ModpackContentDownloadResult> {
+export const downloadModpackContent = serializeProjectMutation(async function downloadModpackContent(project: ProjectInfo, input: ModpackContentDownloadInput, signal?: AbortSignal): Promise<ModpackContentDownloadResult> {
+  signal?.throwIfAborted()
   if (!CONTENT_KINDS.has(input.kind) || !/^https:\/\//i.test(input.url)) throw new Error('只允许使用 HTTPS 下载地址')
   const scope = input.scope && CONTENT_SCOPES.has(input.scope) ? input.scope : defaultScope(input.kind)
   const relative = targetForDownload(input)
   const extractWorld = Boolean(input.extract && input.kind === 'worlds')
   if (input.extract && !extractWorld) throw new Error('只有世界存档允许下载后解压')
   if (extractWorld && !relative.startsWith('saves/')) throw new Error('世界存档必须保存到 saves/ 目录')
+  const stored = await readStoredInventory(project)
+  const destination = contentTarget(project, relative)
+  await assertContentTarget(project.path, destination)
   const staging = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'content-downloads', randomUUID())
+  await assertContentTarget(project.path, staging)
   await fs.mkdir(staging, { recursive: true })
   const downloaded = path.join(staging, filenameFromUrl(input.url))
   try {
@@ -233,43 +234,46 @@ export async function downloadModpackContent(project: ProjectInfo, input: Modpac
       destination: downloaded,
       maxBytes: MAX_CONTENT_FILE_BYTES,
       retriesPerSource: 2,
-      timeoutMs: 120_000
+      timeoutMs: 120_000,
+      signal
     })
+    signal?.throwIfAborted()
     const hashes = await hashFile(downloaded)
     let item: ModpackContentItem
+    let stagedSource = downloaded
     let extractedFiles: number | undefined
     if (extractWorld) {
       const extracted = path.join(staging, 'extracted')
       const state = { entryCount: 0, expandedBytes: 0 }
       await extractZip(downloaded, {
         dir: extracted,
-        onEntry: (entry) => recordZipExpansion(state, { fileName: entry.fileName, uncompressedSize: entry.uncompressedSize }, {
+        onEntry: (entry) => { signal?.throwIfAborted(); recordZipExpansion(state, { fileName: entry.fileName, uncompressedSize: entry.uncompressedSize }, {
           maxEntries: 20_000,
           maxEntryBytes: 256 * 1024 * 1024,
           maxExpandedBytes: 2 * 1024 * 1024 * 1024
-        })
+        }) }
       })
       const roots = (await fs.readdir(extracted, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
       const source = roots.length === 1 ? path.join(extracted, roots[0].name) : extracted
       await validateImportedContent('worlds', source, true)
-      const destination = contentTarget(project, relative)
-      await replacePath(source, destination)
+      stagedSource = source
       extractedFiles = state.entryCount
       item = { id: itemId(relative), path: relative, kind: input.kind, scope, delivery: 'embedded', directory: true, sourceUrl: input.url, sha1: hashes.sha1, sha512: hashes.sha512, size: hashes.size, addedAt: new Date().toISOString() }
     } else {
-      const destination = contentTarget(project, relative)
-      await replacePath(downloaded, destination)
       item = { id: itemId(relative), path: relative, kind: input.kind, scope, delivery: 'remote', sourceUrl: input.url, sha1: hashes.sha1, sha512: hashes.sha512, size: hashes.size, addedAt: new Date().toISOString() }
     }
-    const stored = await readStoredInventory(project)
-    await writeStoredInventory(project, { version: 1, items: [...stored.items.filter((entry) => entry.path !== item.path), item] })
+    signal?.throwIfAborted()
+    await installContentTransaction(project.path, [{ source: stagedSource, destination }], () => {
+      signal?.throwIfAborted()
+      return writeStoredInventory(project, { version: 1, items: [...stored.items.filter((entry) => entry.path !== item.path), item] })
+    })
     return { item, downloadedBytes: result.bytes, ...(extractedFiles ? { extractedFiles } : {}) }
   } finally {
     await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)
   }
-}
+})
 
-export async function removeModpackContent(project: ProjectInfo, id: string): Promise<ModpackContentInventory> {
+export const removeModpackContent = serializeProjectMutation(async function removeModpackContent(project: ProjectInfo, id: string): Promise<ModpackContentInventory> {
   const inventory = await listModpackContent(project)
   const target = inventory.items.find((item) => item.id === id)
   if (!target) throw new Error('找不到内容记录')
@@ -277,4 +281,4 @@ export async function removeModpackContent(project: ProjectInfo, id: string): Pr
   const stored = await readStoredInventory(project)
   await writeStoredInventory(project, { version: 1, items: stored.items.filter((item) => item.path !== target.path) })
   return listModpackContent(project)
-}
+})

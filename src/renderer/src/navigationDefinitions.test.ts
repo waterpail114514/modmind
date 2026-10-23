@@ -4,12 +4,30 @@ import type { ProjectInfo } from '../../shared/types'
 import type { FeaturePageDefinition } from './featurePluginTypes'
 import { buildNavigationDefinitions } from './navigationDefinitions'
 import { emptySidebarLayout, parseSidebarLayout, resolveSidebarGroups } from './sidebarLayout'
+import { resolveFeatureModule } from './featurePluginDefinitions'
+import catalog from '../../shared/featurePluginCatalog.json'
+import type { FeaturePluginDefinition } from '../../shared/featurePlugins'
 
 const project = { path: 'test-project', name: 'Test', namespace: 'test', loader: 'fabric', kind: 'mod', minecraftVersion: '1.20.1' } as ProjectInfo
 const image: FeaturePageDefinition = { id: 'image-studio', label: '图像工坊', group: '资源', icon: WandSparkles, component: () => null }
 const quests: FeaturePageDefinition = { id: 'ftb-quests', label: 'FTB 任务书', group: '内容', icon: LibraryBig, component: () => null, supports: value => value?.kind === 'modpack' }
 const ids = (value: ReturnType<typeof buildNavigationDefinitions>) => value.baseVisibleNavGroups.flatMap(group => group.items.map(item => item.id))
 describe('feature plugin navigation', () => {
+  it.each(['beginner', 'advanced'] as const)('shows installed quest and guide pages in an empty modpack in %s mode', uiMode => {
+    const featurePages = ['ftb-quests', 'patchouli'].flatMap(id => {
+      const manifest = catalog.find(entry => entry.id === id) as FeaturePluginDefinition
+      return resolveFeatureModule({ id, name: manifest.name, version: manifest.version, enabled: true, manifest }, { [id]: () => null }).pages
+    })
+    const input = { project: { ...project, kind: 'modpack' as const }, uiMode, plugins: [], featurePages }
+    expect(ids(buildNavigationDefinitions(input))).toEqual(expect.arrayContaining(['ftb-quests', 'patchouli']))
+    expect(ids(buildNavigationDefinitions({ ...input, featurePages: [] }))).not.toEqual(expect.arrayContaining(['ftb-quests', 'patchouli']))
+    expect(ids(buildNavigationDefinitions({ ...input, project }))).not.toEqual(expect.arrayContaining(['ftb-quests', 'patchouli']))
+  })
+  it('uses studio-declared delivery navigation while preserving both AI surfaces and the editor', () => {
+    const value = buildNavigationDefinitions({ project: { ...project, kind: 'shader', studioId: 'minecraft-shader', loader: 'iris' }, uiMode: 'advanced', plugins: [], studio: { navigation: { hideCoreViews: ['build'] } } as import('../../shared/studios').StudioDefinition })
+    expect(ids(value)).not.toContain('build')
+    expect(ids(value)).toEqual(['workspace', 'inspiration', 'code', 'features', 'settings', 'plugins'])
+  })
   it('keeps only core surfaces when no feature modules are installed', () => {
     expect(ids(buildNavigationDefinitions({ project, uiMode: 'advanced', plugins: [] }))).toEqual(['workspace', 'inspiration', 'code', 'build', 'features', 'settings', 'plugins'])
     expect(ids(buildNavigationDefinitions({ project: null, uiMode: 'beginner', plugins: [] }))).toEqual(['workspace', 'features', 'settings', 'plugins'])

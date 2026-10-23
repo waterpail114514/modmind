@@ -1,10 +1,16 @@
 # Native Feature Plugin API 2
 
+Developer entry: [mmfeature and mmstudio](../docs/extensions-development.zh-CN.md).
+Step-by-step guides: [feature packages](../docs/mmfeature-development.zh-CN.md)
+and [studio packages](../docs/mmstudio-development.zh-CN.md).
+
 `src/shared/featurePlugins.ts` is the canonical typed contract. These trusted
 native application features are separate from the iframe third-party plugin
 system. The loader accepts only `format: "modmind-feature"`, `apiVersion: 2`, and
-the exact `hostVersion: "1.5.0-plugintest"`. API 1 packages are rejected; an old
-package must be rebuilt against API 2 before installation.
+the exact `hostVersion: "1.5.0-plugintest"`. This is the protocol identifier used
+by the published main application `1.5.0-preview.3`; feature releases keep it
+unchanged and use three numeric components in their own `version` field.
+API 1 packages are rejected; an old package must be rebuilt against API 2.
 
 ## Manifest And Contributions
 
@@ -12,6 +18,8 @@ A manifest declares its ID, display name, version, entry names, SHA-256 `files`
 map, and optional `dependencies`, `hostCapabilities`, `assets`, and contribution
 arrays:
 
+- `studios`: domain API 1 definitions for project creation/adoption, dual AI profiles,
+  skills and task bindings; see `src/shared/studios.ts` and `studioSchema.ts`.
 - `capabilities`: `{ id, name, description }`, including installable capabilities.
 - `views`: `{ id, label, component, icon, group?, order?, loaders? }`.
 - `settings`: `{ id, label, component, category, keywords? }`; categories are
@@ -20,6 +28,11 @@ arrays:
 - `tools`: `{ name, action, description }`, with a `modmind_` tool name referring
   to an action declared by the same plugin.
 - `events`: unique declared event names.
+
+Manifests, views, settings and actions may declare `studioIds` and `loaders`.
+Package and contribution scopes are checked together; `studioIds` contains domain
+IDs, not package IDs. An action with `studioIds` must require a project. Tool
+discovery filters by project, and invocation rechecks the active domain.
 
 Action permissions are `read`, `write`, `network`, or `process`; surfaces are
 `workbench` and `inspiration`. Omitting `surfaces` makes an action eligible for
@@ -90,6 +103,14 @@ testing feature and its ServerPackCreator runtime, so earlier hosts reject these
 packages even if their version string matches. `activeService(id)` inspects an
 already active service without loading optional code. The renderer similarly shares React,
 ReactDOM, JSX runtime, dialogs, theme, MiniPaint, and the host code editor.
+
+Testing 1.0.2 also requires `testingV2`: shared proxy routing and download recovery,
+scenario JAR selection IPC, and operation-aware read-only scenario queries.
+Earlier hosts reject this package instead of invoking missing host interfaces.
+
+Shader testing 1.1.0 uses the isolated session lifecycle already shipped in
+`1.5.0-preview.3`. Publishing a feature package does not update the main
+application or establish real Minecraft/Iris validation.
 
 ## Events And Assets
 
@@ -172,7 +193,8 @@ identifiers. It bundles each feature independently, shares the runtimes above,
 emits empty CSS when needed, includes upstream notices, and hashes every runtime
 file. `--only=<id>` limits compilation to one feature.
 
-Outputs are `feature-plugin-dist/<id>/`, `feature-plugin-dist/<id>.mmfeature`,
+Outputs are `feature-plugin-dist/<id>/`, `feature-plugin-dist/<id>.mmfeature`
+(or `<id>.mmstudio` when `studios` is nonempty),
 and `feature-plugin-dist/catalog.json`. The metadata-only
 `src/shared/featurePluginCatalog.json` is regenerated from source manifests and
 exported by `src/shared/featurePluginCatalog.ts`. The build-input report stays

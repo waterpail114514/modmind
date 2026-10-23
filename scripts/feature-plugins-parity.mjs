@@ -35,7 +35,7 @@ require(${JSON.stringify(path.join(appRoot, 'out/main/index.js'))});`)
     const caption = nav.locator('..').locator('..').locator('.nav-caption')
     if (await caption.getAttribute('aria-expanded') === 'false') await caption.click()
     await nav.click()
-    for (const width of [1280, 760]) {
+    for (const width of [1280, 1080]) {
       await page.setViewportSize({ width, height: 800 })
       for (const tab of ['工作流', '处理', '编辑']) {
         await page.getByRole('tab', { name: tab, exact: true }).click()
@@ -50,7 +50,7 @@ require(${JSON.stringify(path.join(appRoot, 'out/main/index.js'))});`)
   } finally { await app.close() }
 }
 const comparisons = []
-for (const width of [1280, 760]) for (const tab of ['工作流', '处理', '编辑']) {
+for (const width of [1280, 1080]) for (const tab of ['工作流', '处理', '编辑']) {
   const key = `${width}-${tab}`
   assert.deepEqual(geometries['original-' + key], geometries['plugin-' + key], 'Control geometry/style changed: ' + key)
   const a = await sharp(await readFile(path.join(work, `original-${key}.png`))).raw().toBuffer({ resolveWithObject: true })

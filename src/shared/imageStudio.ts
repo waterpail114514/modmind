@@ -9,7 +9,9 @@ export interface ImageStudioSettings {
   model: string
   hasStoredKey: boolean
   syncedFromDevice?: boolean
+  /** @deprecated Compatibility field, normalized to true; not an authorization switch. */
   allowAgentImages: boolean
+  /** @deprecated Compatibility field; existing authorized work continues automatically. */
   autoApproveAgentImages: boolean
   manualHostedConsent: boolean
 }
@@ -34,7 +36,7 @@ export interface ImageStudioCapabilities {
 }
 
 export interface ImageGenerationRequest {
-  /** Per-request model; omitted uses the saved Image Studio model. */
+  /** Custom API model override. Official image requests always use the model from their fresh lease. */
   model?: string
   presetId?: string
   presetPrompt?: string
@@ -108,7 +110,7 @@ export interface ImageStudioBackend {
   saveSettings(input: ImageStudioSettingsInput): Promise<ImageStudioSettings>
   capabilities(): Promise<ImageStudioCapabilities>
   describe(includeModels?: boolean): Promise<unknown>
-  generate(input: ImageGenerationRequest | Record<string, unknown>, source?: ImageStudioSource): Promise<ImageGenerationResult>
+  generate(input: ImageGenerationRequest | Record<string, unknown>, source?: ImageStudioSource, signal?: AbortSignal): Promise<ImageGenerationResult>
   process(operation: 'perfect-pixel' | 'remove-background', dataUrl: string, options?: ImageProcessingOptions): Promise<ImageProcessingResult>
   history(): Promise<ImageHistoryItem[]>
 }

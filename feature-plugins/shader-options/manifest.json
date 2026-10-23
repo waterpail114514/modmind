@@ -1,0 +1,154 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "shader-options",
+  "name": "光影选项",
+  "version": "1.1.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "dependencies": [
+    "studio-shader"
+  ],
+  "capabilities": [
+    {
+      "id": "shader-options",
+      "name": "光影选项",
+      "description": "读取 define、布尔与 Iris const 选项及继承预设，分组搜索、回写选项和程序开关，支持共享历史撤销。"
+    }
+  ],
+  "views": [
+    {
+      "id": "shader-options",
+      "label": "光影选项",
+      "component": "ShaderOptions",
+      "icon": "SlidersHorizontal",
+      "group": "开发",
+      "order": 20,
+      "loaders": [
+        "iris"
+      ],
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "inventory"
+            ]
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    },
+    {
+      "id": "edit",
+      "handler": "edit",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "options",
+              "undo"
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "values": {
+            "type": "object",
+            "maxProperties": 128,
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "programValues": {
+            "type": "object",
+            "maxProperties": 128,
+            "propertyNames": {
+              "pattern": "^(?:world-?[0-9]+/)?[A-Za-z0-9_]+$"
+            },
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "options"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "values",
+                "revision"
+              ]
+            }
+          }
+        ]
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_shader_options_query",
+      "action": "query",
+      "description": "Read shader option declarations (define/toggle/supported const), allowed values, localized groups, expanded profiles, profilePrograms, profileIssues and programConditions with the current inventory revision (operation inventory). Invalid or conflicting declarations and profiles are reported, not applied. Source configuration is not runtime effective state; conditional properties require Iris confirmation. No highest preset is inferred."
+    },
+    {
+      "name": "modmind_shader_options_edit",
+      "action": "edit",
+      "description": "Set existing shader option values and optional programValues using the exact inventory revision (operation options), or undo the latest unchanged source/option save (undo). To apply a profile, send its expanded profiles[name] and profilePrograms[name] together. Program overrides explicitly rewrite program.NAME.enabled in shaders.properties; conditional properties, duplicate or multiline program directives are rejected. Read before writing; unknown options/programs, invalid values and stale revisions are rejected. Atomic rollback and shared recovery history cover all changed files. This changes source, not a running game's settings."
+    }
+  ],
+  "studioIds": [
+    "minecraft-shader"
+  ],
+  "loaders": [
+    "iris"
+  ]
+}

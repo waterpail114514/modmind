@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { ChildProcess, execFile, spawn } from 'node:child_process'
+import { PassThrough } from 'node:stream'
 import { promisify } from 'node:util'
 import { ensureManagedCodexRuntime, managedCodexExecutablePath, managedCodexRuntimePath, CODEX_RUNTIME_VERSION } from './codexSetup'
 import { verifiedDownload } from './downloadService'
@@ -10,6 +11,10 @@ import { probeCodexExecutable } from './codexExecutable'
 import { requireCodexRuntimeTarget } from './runtimeTarget'
 
 vi.mock('./codexExecutable', async (original) => ({ ...await original<typeof import('./codexExecutable')>(), probeCodexExecutable: vi.fn() }))
+vi.mock('node:child_process', async (original) => {
+  const actual = await original<typeof import('node:child_process')>()
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
 const roots: string[] = []
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 async function root(): Promise<string> {
@@ -33,6 +38,64 @@ async function archive(directory: string, includeExecutable: boolean): Promise<s
   return result
 }
 describe('managed Codex cache protection', () => {
+  it('does not start work for an already cancelled request', async () => {
+    const directory = await root()
+    const controller = new AbortController()
+    controller.abort()
+    const download = vi.spyOn(verifiedDownload, 'download')
+    await expect(ensureManagedCodexRuntime({ rootDir: directory, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(download).not.toHaveBeenCalled()
+    expect(await fs.readdir(directory)).toEqual([])
+  })
+
+  it('cancels the last subscriber during download and waits for staging cleanup', async () => {
+    const directory = await root()
+    const old = await installedRuntime(directory, '0.146.0')
+    const controller = new AbortController()
+    let started!: () => void
+    const downloading = new Promise<void>(resolve => { started = resolve })
+    vi.spyOn(verifiedDownload, 'download').mockImplementation(async request => {
+      await fs.writeFile(request.destination, 'partial fixture')
+      started()
+      return await new Promise<never>((_resolve, reject) => request.signal!.addEventListener('abort', () => reject(Object.assign(new Error('download cancelled'), { name: 'AbortError' })), { once: true }))
+    })
+    const operation = ensureManagedCodexRuntime({ rootDir: directory, signal: controller.signal })
+    const rejected = expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    await downloading
+    controller.abort()
+    await rejected
+    expect(await fs.readFile(old, 'utf8')).toBe('0.146.0')
+    expect((await fs.readdir(path.join(directory, 'codex-runtime'))).some(name => name.includes('.staging-'))).toBe(false)
+  })
+
+  it('lets another subscriber finish the shared installation after one caller stops', async () => {
+    const directory = await root()
+    const fixture = await archive(directory, true)
+    const controller = new AbortController()
+    let started!: () => void, release!: () => void
+    const downloading = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let transferSignal: AbortSignal | undefined
+    vi.mocked(probeCodexExecutable).mockResolvedValue(CODEX_RUNTIME_VERSION)
+    const download = vi.spyOn(verifiedDownload, 'download').mockImplementation(async request => {
+      transferSignal = request.signal
+      started()
+      await gate
+      await fs.copyFile(fixture, request.destination)
+      return {} as Awaited<ReturnType<typeof verifiedDownload.download>>
+    })
+    const stopped = ensureManagedCodexRuntime({ rootDir: directory, signal: controller.signal })
+    const rejected = expect(stopped).rejects.toMatchObject({ name: 'AbortError' })
+    const continuing = ensureManagedCodexRuntime({ rootDir: directory })
+    await downloading
+    controller.abort()
+    await rejected
+    expect(transferSignal?.aborted).toBe(false)
+    release()
+    expect(await continuing).toBe(managedCodexExecutablePath(directory))
+    expect(download).toHaveBeenCalledOnce()
+  })
+
   it('retires all obsolete versions on a cache hit while preserving user data and unrelated directories', async () => {
     const directory = await root()
     const executable = await installedRuntime(directory)
@@ -67,6 +130,61 @@ describe('managed Codex cache protection', () => {
     const executable = await ensureManagedCodexRuntime({ rootDir: directory })
     expect(await fs.readFile(executable, 'utf8')).toBe('fixture')
     await expect(fs.stat(old)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it.each(['ENOENT', 'EACCES', 'exit'])('installs with bundled extraction when system tar fails with %s', async failure => {
+    const directory = await root()
+    const old = await installedRuntime(directory, '0.146.0')
+    const fixture = await archive(directory, true)
+    vi.spyOn(verifiedDownload, 'download').mockImplementation(async request => {
+      await fs.copyFile(fixture, request.destination)
+      return {} as Awaited<ReturnType<typeof verifiedDownload.download>>
+    })
+    vi.mocked(spawn).mockImplementationOnce((_command, args) => {
+      const child = Object.assign(new ChildProcess(), { stderr: new PassThrough() })
+      if (failure === 'exit' && Array.isArray(args)) {
+        const destination = args[args.indexOf('-C') + 1]
+        void fs.writeFile(path.join(destination, 'partial-system-output'), 'discard').then(() => {
+          child.stderr.write('system extraction failed')
+          child.emit('close', 1)
+        })
+      } else {
+        queueMicrotask(() => child.emit('error', Object.assign(new Error(`spawn tar ${failure}`), { code: failure })))
+      }
+      return child
+    })
+    vi.mocked(probeCodexExecutable).mockImplementation(async () => {
+      expect(await fs.readFile(old, 'utf8')).toBe('0.146.0')
+      return CODEX_RUNTIME_VERSION
+    })
+    const onProgress = vi.fn()
+    const executable = await ensureManagedCodexRuntime({ rootDir: directory, onProgress })
+    expect(await fs.readFile(executable, 'utf8')).toBe('fixture')
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'verifying', detail: expect.stringContaining('ModMind') }))
+    const runtime = managedCodexRuntimePath(directory)
+    expect(await fs.readdir(runtime)).toEqual(['package'])
+    expect((await fs.readdir(path.dirname(runtime))).filter(name => name.includes('.staging-'))).toEqual([])
+    await expect(fs.stat(old)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it('preserves the existing runtime and removes staging when both extractors fail', async () => {
+    const directory = await root()
+    const executable = await installedRuntime(directory)
+    const old = await installedRuntime(directory, '0.146.0')
+    vi.mocked(probeCodexExecutable).mockRejectedValue(new Error('probe failed'))
+    vi.spyOn(verifiedDownload, 'download').mockImplementation(async request => {
+      await fs.writeFile(request.destination, 'invalid archive')
+      return {} as Awaited<ReturnType<typeof verifiedDownload.download>>
+    })
+    vi.mocked(spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new ChildProcess(), { stderr: new PassThrough() })
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('spawn tar ENOENT'), { code: 'ENOENT' })))
+      return child
+    })
+    await expect(ensureManagedCodexRuntime({ rootDir: directory })).rejects.toMatchObject({
+      name: 'AggregateError', errors: [expect.objectContaining({ code: 'ENOENT' }), expect.any(Error)]
+    })
+    expect(await fs.readFile(executable, 'utf8')).toBe(CODEX_RUNTIME_VERSION)
+    expect(await fs.readFile(old, 'utf8')).toBe('0.146.0')
+    expect((await fs.readdir(path.dirname(managedCodexRuntimePath(directory)))).filter(name => name.includes('.staging-'))).toEqual([])
   })
   it('retries a locked obsolete directory on the next preparation without blocking the current runtime', async () => {
     const directory = await root()

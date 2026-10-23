@@ -43,6 +43,8 @@ Call `modmind_modpack_verify_server_join` when client compatibility or actual jo
 
 Use `modmind_modpack_run_server_scenario` for bounded console commands and log assertions. Follow the current tool schema for steps. Keep commands deterministic and assertions tied to observable server behavior. Do not use an open-ended shell or unbounded wait as a scenario step.
 
+For exact-JAR isolation, use `operation: start`, `acceptEula: true`, a fixture with fixed Minecraft/Loader versions, and authorized JAR paths with SHA-256. Read authorized files with `operation: files`. Each task owns a fresh offline loopback world; restart steps retain only that task's world. Poll `operation: state` with the returned taskId and waitSeconds at most 20. Cancel only that task and check cleanup before claiming completion. Declared metadata is not proof that a mod loaded; inspect observed log evidence.
+
 ### 5. Close the loop
 
 Correct pack composition, side metadata, config, port, or runtime issues and rerun the same failed check. Report the server manifest, output directory, engine/runtime, skipped mods, port and mode, ready/join/scenario evidence, logs, and remaining interactive checks.

@@ -5,10 +5,11 @@ export const FEATURE_PLUGIN_HOST = '1.5.0-plugintest'
 export type FeaturePluginSurface = 'workbench' | 'inspiration'
 export type FeaturePluginPermission = 'read' | 'write' | 'network' | 'process'
 export type FeaturePluginSchema = Record<string, unknown>
+export interface FeaturePluginScope { studioIds?: string[]; loaders?: string[] }
 export interface FeaturePluginCapability { id: string; name: string; description: string }
-export interface FeaturePluginView { id: string; label: string; component: string; icon: string; group?: string; order?: number; loaders?: string[] }
-export interface FeaturePluginSettings { id: string; label: string; component: string; category: string; keywords?: string }
-export interface FeaturePluginAction {
+export interface FeaturePluginView extends FeaturePluginScope { id: string; label: string; component: string; icon: string; group?: string; order?: number }
+export interface FeaturePluginSettings extends FeaturePluginScope { id: string; label: string; component: string; category: string; keywords?: string }
+export interface FeaturePluginAction extends FeaturePluginScope {
   id: string
   handler: string
   inputSchema: FeaturePluginSchema
@@ -19,6 +20,7 @@ export interface FeaturePluginAction {
 }
 export interface FeaturePluginTool { name: string; action: string; description: string }
 export interface FeaturePluginContributions {
+  studios?: import('./studios').StudioDefinition[]
   capabilities?: FeaturePluginCapability[]
   views?: FeaturePluginView[]
   settings?: FeaturePluginSettings[]
@@ -26,7 +28,7 @@ export interface FeaturePluginContributions {
   tools?: FeaturePluginTool[]
   events?: string[]
 }
-export interface FeaturePluginManifest extends FeaturePluginContributions {
+export interface FeaturePluginManifest extends FeaturePluginContributions, FeaturePluginScope {
   format: 'modmind-feature'
   apiVersion: number
   hostVersion: string
@@ -44,6 +46,7 @@ export interface FeaturePluginManifest extends FeaturePluginContributions {
 }
 export type FeaturePluginDefinition = Omit<FeaturePluginManifest, 'files'>
 export interface FeaturePluginRecord {
+  builtin?: boolean
   id: string
   name: string
   version: string
@@ -71,6 +74,8 @@ export interface FeaturePluginRuntime {
   actions?: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown>
   dispose?: () => void | Promise<void>
   projectChanged?: (projectPath: string | null) => void | Promise<void>
+  stopForSignal?: (signal: AbortSignal) => void | Promise<void>
+  isBusy?: () => boolean
 }
 export interface FeaturePluginApi {
   store: () => Promise<import('./featureStore').FeatureStoreSnapshot>

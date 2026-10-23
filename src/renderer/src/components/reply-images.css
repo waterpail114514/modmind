@@ -29,3 +29,22 @@
 @media (hover: hover) and (pointer: fine) { .reply-image-card:not(:disabled):hover { border-color: var(--accent); box-shadow: 0 4px 16px color-mix(in srgb, var(--theme-shadow) 10%, transparent); } }
 @media (max-width: 600px) { .reply-image-dialog { width: calc(100vw - 16px); height: calc(100dvh - 32px); border-radius: 14px; } .reply-image-dialog header { padding: 12px; } .reply-image-dialog footer { font-size: 11px; padding: 10px; } .reply-image-stage { height: 200px; } }
 @media (prefers-reduced-motion: reduce) { .reply-image-card { transition: none; } }
+.reply-long-message { min-width: 0; }
+.reply-long-toolbar, .reply-text-tools, .reply-text-dialog footer { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.reply-long-toolbar { margin-bottom: 10px; color: var(--agent-text-3); font-size: 12px; }
+.reply-long-toolbar > span { margin-right: auto; }
+.reply-long-toolbar button, .reply-text-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); background: var(--surface); font: inherit; font-size: 12px; cursor: pointer; }
+.reply-long-toolbar button:disabled, .reply-text-dialog button:disabled { opacity: .45; cursor: default; }
+.reply-text-dialog { width: min(1000px, calc(100vw - 32px)); height: min(800px, calc(100dvh - 32px)); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface); }
+.reply-text-dialog[open] { display: flex; flex-direction: column; }
+.reply-text-dialog::backdrop { background: color-mix(in srgb, var(--theme-shadow) 65%, transparent); }
+.reply-text-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.reply-text-dialog header strong { font-size: 14px; font-weight: 500; }
+.reply-text-tools, .reply-text-dialog footer { padding: 10px 16px; font-size: 12px; }
+.reply-text-tools input { flex: 1 1 160px; min-width: 0; }
+.reply-text-dialog input { box-sizing: border-box; height: 30px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--text); font: inherit; }
+.reply-text-dialog pre { flex: 1; min-height: 0; margin: 0; padding: 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+.reply-text-dialog footer { border-top: 1px solid var(--line); }
+.reply-text-dialog footer input { width: 65px; }
+.reply-text-dialog footer > span { flex: 1 1 160px; color: var(--muted); }
+.reply-text-dialog mark { color: var(--text); background: var(--theme-selected); outline: 1px solid var(--accent); }

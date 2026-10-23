@@ -9,14 +9,16 @@ export async function validateCodexFile(root: string, executable: string): Promi
     throw new Error('Codex 执行文件必须是运行时目录内的普通文件')
   }
 }
-export async function probeCodexExecutable(executable: string): Promise<string> {
+export async function probeCodexExecutable(executable: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const invocation = process.platform === 'win32' && /\.cmd$/i.test(executable)
       ? windowsCmdInvocation(executable, ['--version'])
       : process.platform === 'win32' && /\.ps1$/i.test(executable)
         ? { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', executable, '--version'], windowsVerbatimArguments: false }
-        : { command: executable, args: ['--version'], windowsVerbatimArguments: false }
-    execFile(invocation.command, invocation.args, { timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }, (error, stdout, stderr) => {
+        : { command: process.platform === 'win32' && path.isAbsolute(executable) ? path.toNamespacedPath(executable) : executable, args: ['--version'], windowsVerbatimArguments: false }
+    execFile(invocation.command, invocation.args, { timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, signal }, (error, stdout, stderr) => {
+      if (signal?.aborted) { reject(Object.assign(new Error('Codex 版本检查已停止'), { name: 'AbortError', cause: error })); return }
       const version = `${stdout}\n${stderr}`.match(/(?:^|\s)v?(\d+\.\d+\.\d+)(?:\s|$)/)?.[1]
       if (error || !version) reject(new Error(`无法运行 Codex (${executable})：${error?.message ?? '版本输出无效'}；请检查架构和执行权限`))
       else resolve(version)

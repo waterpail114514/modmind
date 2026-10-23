@@ -174,4 +174,19 @@ describe('PluginRuntime tool descriptors', () => {
     expect(clipboard).toBe('copied')
     await expect(runtime.handleContextOp('demo', 'netFetch', { url: 'https://example.com' })).resolves.toMatchObject({ status: 201, body: 'ok' })
   })
+
+  it('cancels an oversized declared response before rejecting it', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({ cancel: () => { cancelled = true } })
+    const runtime = new PluginRuntime({
+      hostScriptPath: '/host.mjs',
+      dataRootDirectory: '/data',
+      projectInfo: () => null,
+      netFetch: (async () => new Response(body, { status: 200, headers: { 'content-length': String(2 * 1024 * 1024 + 1) } })) as typeof fetch
+    })
+    runtime.syncRecords(new Map([['demo', record({ manifest: { ...record().manifest, permissions: ['net.fetch'] } })]]))
+
+    await expect(runtime.handleContextOp('demo', 'netFetch', { url: 'https://example.com/large' })).rejects.toThrow('网络响应超过 2 MiB')
+    expect(cancelled).toBe(true)
+  })
 })

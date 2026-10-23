@@ -69,8 +69,8 @@ const renderers = JSON.parse(await readFile(path.join(features, 'renderer-contri
 for (const [id, renderer] of Object.entries(renderers)) {
   const directory = path.join(features, id), file = path.join(directory, 'manifest.json')
   const existing = await exists(file) ? JSON.parse(await readFile(file, 'utf8')) : {}
-  const manifest = { format: 'modmind-feature', apiVersion: 2, hostVersion: '1.5.0-plugintest', id,
-    name: renderer.capabilities?.[0]?.name ?? renderer.views?.[0]?.label ?? id, version: '1.5.0-plugintest',
+  const manifest = { format: 'modmind-feature', apiVersion: 2, hostVersion: '1.5.0', id,
+    name: renderer.capabilities?.[0]?.name ?? renderer.views?.[0]?.label ?? id, version: '1.5.0',
     main: 'main.cjs', renderer: 'renderer.js', style: 'renderer.css', ...existing, ...renderer }
   if (id === 'model-studio') manifest.assets = { blockbench: `feature-plugins/${id}/assets/blockbench` }
   if (id === 'decompile') manifest.assets = { 'decompile-tools': `feature-plugins/${id}/assets/decompile-tools` }

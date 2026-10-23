@@ -1,25 +1,19 @@
+import { isFeaturePluginFile as allowedFile, validateFeaturePluginFiles as validate, validateFeaturePluginInput as validateInput, type PreparedPlugin } from './featurePluginPackage'
+export { prepareFeaturePlugin, type PreparedPlugin } from './featurePluginPackage'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { compileFunction } from 'node:vm'
-import yauzl from 'yauzl'
-import Ajv, { type ValidateFunction } from 'ajv'
 import { BUILTIN_FEATURE_CATALOG } from '../shared/featurePluginCatalog'
 import { sameProjectPath } from './projectPath'
 import { retryTransientFileLock } from './fileLockRetry'
-import { FEATURE_PLUGIN_API, FEATURE_PLUGIN_HOST, FEATURE_PLUGIN_ARCHIVE_LIMIT, FEATURE_PLUGIN_UNPACKED_LIMIT, type FeaturePluginManifest, type FeaturePluginRecord, type FeaturePluginDefinition, type FeaturePluginCatalogEntry, type FeaturePluginDiscoveredTool, type FeaturePluginInvocationContext, type FeaturePluginSchema, type FeaturePluginRuntime, type FeaturePluginSurface } from '../shared/featurePlugins'
+import type { ProjectInfo } from '../shared/types'
+import { featureActionApplies } from '../shared/featureApplicability'
+import { FEATURE_PLUGIN_API, FEATURE_PLUGIN_UNPACKED_LIMIT, type FeaturePluginManifest, type FeaturePluginRecord, type FeaturePluginDefinition, type FeaturePluginCatalogEntry, type FeaturePluginDiscoveredTool, type FeaturePluginInvocationContext, type FeaturePluginRuntime, type FeaturePluginSurface } from '../shared/featurePlugins'
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/
-const allowedFiles = new Set(['manifest.json', 'main.cjs', 'renderer.js', 'renderer.css'])
 const limit = FEATURE_PLUGIN_UNPACKED_LIMIT
-const archiveLimit = FEATURE_PLUGIN_ARCHIVE_LIMIT
-function allowedFile(name: string): boolean {
-  if (allowedFiles.has(name)) return true
-  if (!name.startsWith('assets/') || name.length > 512) return false
-  return name.split('/').every(part => /^[A-Za-z0-9_. -]+$/.test(part) && part !== '.' && part !== '..' && !/[. ]$/.test(part) && !/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(part))
-}
-export type PreparedPlugin = { manifest: FeaturePluginManifest; files: Map<string, Buffer> }
 export interface FeaturePluginHost {
   requireFrom: string
   capabilities: object
@@ -28,103 +22,16 @@ export interface FeaturePluginHost {
   changed: () => void
   catalog?: FeaturePluginDefinition[]
   projectRoot?: () => string | null
+  project?: () => ProjectInfo | null
   authorize?: (pluginId: string, action: string, input: Record<string, unknown>, context: FeaturePluginInvocationContext) => boolean | Promise<boolean>
   event?: (pluginId: string, event: string, value: unknown, windowId?: number) => void
 }
 function hash(bytes: Buffer): string { return createHash('sha256').update(bytes).digest('hex') }
+function object(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)) }
 function definition(manifest: FeaturePluginManifest): FeaturePluginDefinition {
   const { files: _files, ...value } = manifest
   return structuredClone(value)
 }
-function object(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)) }
-function text(value: unknown, maximum = 300): value is string { return typeof value === 'string' && Boolean(value.trim()) && value.length <= maximum }
-function validateContributions(manifest: FeaturePluginManifest): void {
-  if (manifest.events !== undefined && (!Array.isArray(manifest.events) || manifest.events.length > 64 || manifest.events.some(name => typeof name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9:_-]{0,79}$/.test(name)) || new Set(manifest.events).size !== manifest.events.length)) throw new Error('插件事件声明无效')
-  for (const name of ['capabilities', 'views', 'settings', 'actions', 'tools'] as const) {
-    const entries = manifest[name]
-    if (entries === undefined) continue
-    if (!Array.isArray(entries) || entries.length > 128 || entries.some(entry => !object(entry))) throw new Error(`插件声明无效：${name}`)
-    const identifiers = entries.map(entry => 'id' in entry ? entry.id : entry.name)
-    if (identifiers.some(id => !text(id, 80) || !/^[a-zA-Z][a-zA-Z0-9:_-]*$/.test(id)) || new Set(identifiers).size !== identifiers.length) throw new Error(`插件声明标识无效：${name}`)
-  }
-  for (const capability of manifest.capabilities ?? []) if (!text(capability.name, 80) || !text(capability.description, 2000)) throw new Error('插件能力说明无效')
-  for (const view of manifest.views ?? []) if (!text(view.label, 80) || !text(view.component, 80) || !text(view.icon, 80) || (view.order !== undefined && !Number.isFinite(view.order)) || (view.loaders !== undefined && (!Array.isArray(view.loaders) || view.loaders.some(loader => !text(loader, 80))))) throw new Error('插件页面声明无效')
-  for (const setting of manifest.settings ?? []) if (!text(setting.label, 80) || !text(setting.component, 80) || !['general', 'ai', 'development', 'integrations', 'about'].includes(setting.category)) throw new Error('插件设置声明无效')
-  for (const action of manifest.actions ?? []) {
-    if (action.inspirationOutput !== undefined && typeof action.inspirationOutput !== 'boolean') throw new Error('插件灵感台产物声明无效')
-    if (!text(action.handler, 80) || !/^[A-Za-z][A-Za-z0-9:._-]*$/.test(action.handler) || !object(action.inputSchema) || action.inputSchema.type !== 'object' || !['read', 'write', 'network', 'process'].includes(action.permission) || (action.projectRequired !== undefined && typeof action.projectRequired !== 'boolean') || (action.surfaces !== undefined && (!Array.isArray(action.surfaces) || !action.surfaces.length || action.surfaces.some(surface => !['workbench', 'inspiration'].includes(surface))))) throw new Error('插件动作声明无效')
-    validateSchema(action.inputSchema)
-  }
-  for (const tool of manifest.tools ?? []) if (!text(tool.description, 3000) || !/^modmind_[a-z0-9_]+$/.test(tool.name) || !manifest.actions?.some(action => action.id === tool.action)) throw new Error('插件工具声明无效')
-  for (const key of ['dependencies', 'hostCapabilities'] as const) if (manifest[key] !== undefined && (!Array.isArray(manifest[key]) || manifest[key]!.length > 32 || manifest[key]!.some(id => typeof id !== 'string' || !(key === 'dependencies' ? idPattern : /^[A-Za-z][A-Za-z0-9_-]{0,63}$/).test(id)) || new Set(manifest[key]).size !== manifest[key]!.length)) throw new Error(`插件依赖声明无效：${key}`)
-  if (manifest.dependencies?.includes(manifest.id)) throw new Error('插件不能依赖自身')
-  if (manifest.target && (!object(manifest.target) || manifest.target.platform !== process.platform || manifest.target.arch !== process.arch)) throw new Error('插件与当前操作系统或架构不兼容')
-}
-const schemaValidator = new Ajv({ strictSchema: true, strictTypes: false, strictTuples: false, allowUnionTypes: true, validateFormats: false, ownProperties: true, addUsedSchema: false })
-const compiledSchemas = new Map<string, ValidateFunction>()
-function validator(schema: FeaturePluginSchema): ValidateFunction {
-  const key = JSON.stringify(schema)
-  let compiled = compiledSchemas.get(key)
-  if (!compiled) {
-    try { compiled = schemaValidator.compile(schema) } catch (error) { throw new Error(`插件参数 schema 无效：${String(error)}`) }
-    if (compiledSchemas.size >= 256) compiledSchemas.delete(compiledSchemas.keys().next().value!)
-    compiledSchemas.set(key, compiled)
-  }
-  return compiled
-}
-function validateSchema(schema: FeaturePluginSchema): void { validator(schema) }
-function validateInput(value: unknown, schema: FeaturePluginSchema): void {
-  const check = validator(schema)
-  if (!check(value)) {
-    const error = check.errors?.[0]
-    const reason = error?.keyword === 'required' ? '插件缺少参数' : error?.keyword === 'additionalProperties' ? '插件包含未知参数' : '插件参数无效'
-    throw new Error(`${reason}：${error?.instancePath || 'input'} ${error?.message ?? ''}`)
-  }
-}
-function validate(files: Map<string, Buffer>): FeaturePluginManifest {
-  const manifest = JSON.parse(files.get('manifest.json')?.toString('utf8') ?? '{}') as FeaturePluginManifest
-  if (manifest.format !== 'modmind-feature' || manifest.apiVersion !== FEATURE_PLUGIN_API || manifest.hostVersion !== FEATURE_PLUGIN_HOST) throw new Error('应用功能插件接口或版本不兼容，请使用 API 2 的 1.5.0-plugintest 插件包')
-  if (!idPattern.test(manifest.id) || typeof manifest.name !== 'string' || !manifest.name.trim() || manifest.name.length > 80 || typeof manifest.version !== 'string' || manifest.version.length > 80) throw new Error('插件标识或名称无效')
-  if (manifest.main !== 'main.cjs' || manifest.renderer !== 'renderer.js' || manifest.style !== 'renderer.css') throw new Error('插件入口无效')
-  if (!manifest.files || Object.keys(manifest.files).length > 512 || ['main.cjs', 'renderer.css', 'renderer.js'].some(name => !Object.hasOwn(manifest.files, name)) || files.size !== Object.keys(manifest.files).length + 1 || Object.keys(manifest.files).some(name => !allowedFile(name) || name === 'manifest.json') || new Set([...files.keys()].map(name => name.toLowerCase())).size !== files.size) throw new Error('插件文件清单无效')
-  if ([...files.values()].reduce((size, bytes) => size + bytes.length, 0) > limit) throw new Error('插件解压内容超过 128 MiB')
-  for (const [name, digest] of Object.entries(manifest.files)) {
-    const bytes = files.get(name)
-    if (!bytes || hash(bytes) !== digest) throw new Error(`插件文件损坏：${name}`)
-  }
-  validateContributions(manifest)
-  return manifest
-}
-
-export async function prepareFeaturePlugin(archive: string): Promise<PreparedPlugin> {
-  if ((await fs.stat(archive)).size > archiveLimit) throw new Error('插件包超过 64 MiB')
-  const bytes = await fs.readFile(archive)
-  return new Promise((resolve, reject) => {
-    yauzl.fromBuffer(bytes, { lazyEntries: true }, (error, zip) => {
-      if (error || !zip) return reject(error ?? new Error('插件包无法读取'))
-      const files = new Map<string, Buffer>()
-      let total = 0
-      const fail = (error: unknown): void => { zip.close(); reject(error) }
-      zip.on('error', fail)
-      zip.on('entry', entry => {
-        const type = (entry.externalFileAttributes >>> 16) & 0o170000
-        if (!allowedFile(entry.fileName) || files.size >= 513 || files.has(entry.fileName) || (type !== 0 && type !== 0o100000) || entry.uncompressedSize > limit || (total += entry.uncompressedSize) > limit) return fail(new Error('插件包包含不允许的路径、重复文件或过大的内容'))
-        files.set(entry.fileName, Buffer.alloc(0))
-        zip.openReadStream(entry, (error, stream) => {
-          if (error || !stream) return fail(error ?? new Error('插件文件无法读取'))
-          const chunks: Buffer[] = []
-          let size = 0
-          stream.on('error', fail)
-          stream.on('data', chunk => { size += chunk.length; if (size > entry.uncompressedSize || size > limit) { stream.destroy(); fail(new Error('插件文件大小无效')) } else chunks.push(chunk) })
-          stream.on('end', () => { files.set(entry.fileName, Buffer.concat(chunks)); zip.readEntry() })
-        })
-      })
-      zip.on('end', () => { try { resolve({ manifest: validate(files), files }) } catch (error) { reject(error) } })
-      zip.readEntry()
-    })
-  })
-}
-
 /** Trusted native application features, deliberately separate from iframe third-party plugins. */
 export class FeaturePluginService {
   private records = new Map<string, FeaturePluginRecord>()
@@ -136,11 +43,18 @@ export class FeaturePluginService {
   private changing = false
   private revision = 0
   private projectPath: string | null = null
+  private builtinDirectories = new Map<string, string>()
+  private directory(id: string): string { return this.builtinDirectories.get(id) ?? path.join(this.root, id) }
+  private assertMutable(id: string): void { if (this.builtinDirectories.has(id)) throw new Error('内置工作台随软件更新，不能停用、替换或卸载') }
   constructor(private readonly root: string, private readonly host: FeaturePluginHost) {}
   list(): FeaturePluginRecord[] { return [...this.records.values()].map(record => structuredClone(record)) }
   activeService<T extends object>(id: string): T | undefined { return this.enabled(id) ? this.services.get(id) as T | undefined : undefined }
   fingerprint(id: string): string | undefined { const manifest = this.manifests.get(id); return manifest ? hash(Buffer.from(JSON.stringify(manifest))) : undefined }
   manifest(id: string): FeaturePluginDefinition | undefined { const manifest = this.manifests.get(id); return manifest ? definition(manifest) : undefined }
+  assetDirectory(id: string, group: string): string {
+    if (!this.enabled(id) || !Object.hasOwn(this.manifests.get(id)?.assets ?? {}, group) || !/^[a-z0-9-]+$/.test(group)) throw new Error('插件资源组不可用')
+    return path.join(this.directory(id), 'assets', group)
+  }
   enabled(id: string, ancestors = new Set<string>()): boolean {
     const record = this.records.get(id)
     if (!record?.enabled || record.error || ancestors.has(id)) return false
@@ -157,7 +71,7 @@ export class FeaturePluginService {
       return {
         id, name: record?.name ?? manifest?.name ?? id, version: record?.version ?? manifest?.version ?? '',
         enabled: record?.enabled ?? false, error: record?.error, manifest: manifest ? structuredClone(manifest) : undefined,
-        installed: Boolean(record), available,
+        installed: Boolean(record), available, builtin: record?.builtin,
         state: !record ? 'not-installed' : record.error ? 'error' : !record.enabled ? 'disabled' : available ? 'ready' : 'dependency-missing',
         installHint: '侧边栏 → 功能，按名称搜索并安装或启用'
       }
@@ -165,14 +79,18 @@ export class FeaturePluginService {
   }
   discoverInstalled(): FeaturePluginRecord[] { return this.list() }
   snapshot(): { revision: number; plugins: FeaturePluginCatalogEntry[] } { return { revision: this.revision, plugins: this.catalog() } }
-  tools(surface: FeaturePluginSurface = 'workbench'): FeaturePluginDiscoveredTool[] {
+  tools(surface: FeaturePluginSurface = 'workbench', project?: ProjectInfo): FeaturePluginDiscoveredTool[] {
+    const currentProject = project ?? this.host.project?.()
     const result: FeaturePluginDiscoveredTool[] = []
     for (const manifest of this.manifests.values()) {
       if (!this.enabled(manifest.id)) continue
       for (const tool of manifest.tools ?? []) {
         const action = manifest.actions?.find(action => action.id === tool.action)
         if (!action || (action.surfaces && !action.surfaces.includes(surface))) continue
-        result.push({ ...structuredClone(tool), pluginId: manifest.id, inputSchema: structuredClone(action.inputSchema), permission: action.permission, projectRequired: action.projectRequired ?? false, inspirationOutput: action.inspirationOutput })
+        if (!featureActionApplies(manifest, action, currentProject)) continue
+        const scenarioReader = manifest.id === 'testing' && action.id === 'modpack_run_server_scenario' && surface === 'inspiration'
+        const inputSchema = scenarioReader ? { ...structuredClone(action.inputSchema), properties: { ...structuredClone(action.inputSchema.properties as Record<string, unknown>), operation: { type: 'string', enum: ['state', 'files'] } }, required: ['operation'] } : structuredClone(action.inputSchema)
+        result.push({ ...structuredClone(tool), pluginId: manifest.id, inputSchema, permission: scenarioReader ? 'read' : action.permission, projectRequired: action.projectRequired ?? false, inspirationOutput: action.inspirationOutput })
       }
     }
     return result
@@ -184,9 +102,11 @@ export class FeaturePluginService {
     if (!object(input) || Buffer.byteLength(JSON.stringify(input)) > 32 * 1024 * 1024) throw new Error('插件参数过大或无效')
     const checkedInput = structuredClone(input)
     validateInput(checkedInput, action.inputSchema)
-    if (context.readOnly && action.permission !== 'read' && !(action.inspirationOutput && context.surface === 'inspiration' && context.allowInspirationOutput === true)) throw new Error('FEATURE_PLUGIN_READ_ONLY: 当前会话只允许读取')
+    const scenarioRead = id === 'testing' && action.id === 'modpack_run_server_scenario' && ['state', 'files'].includes(String(checkedInput.operation))
+    if (context.readOnly && !scenarioRead && action.permission !== 'read' && !(action.inspirationOutput && context.surface === 'inspiration' && context.allowInspirationOutput === true)) throw new Error('FEATURE_PLUGIN_READ_ONLY: 当前会话只允许读取')
     if (context.surface && action.surfaces && !action.surfaces.includes(context.surface)) throw new Error('FEATURE_PLUGIN_SURFACE_DENIED: 当前工作区不支持此动作')
     const currentProject = this.host.projectRoot?.() ?? null
+    if (!featureActionApplies(this.manifests.get(id)!, action, this.host.project?.())) throw new Error('FEATURE_PLUGIN_STUDIO_MISMATCH: 此工具不适用于当前工作台')
     if (this.host.projectRoot && context.projectPath && (!currentProject || !sameProjectPath(context.projectPath, currentProject))) throw new Error('FEATURE_PLUGIN_PROJECT_MISMATCH: 项目已切换')
     if (action.projectRequired && !(currentProject ?? context.projectPath)) throw new Error('FEATURE_PLUGIN_PROJECT_REQUIRED: 请先打开项目')
     const invocation = { ...context, projectPath: currentProject ?? context.projectPath ?? null }
@@ -198,16 +118,22 @@ export class FeaturePluginService {
       if (this.host.authorize && !await this.host.authorize(id, actionId, structuredClone(checkedInput), invocation)) throw new Error('FEATURE_PLUGIN_PERMISSION_DENIED: 插件动作未获批准')
       const latestProject = this.host.projectRoot?.() ?? null
       if (this.host.projectRoot && latestProject !== currentProject && (!latestProject || !currentProject || !sameProjectPath(latestProject, currentProject))) throw new Error('FEATURE_PLUGIN_PROJECT_MISMATCH: 项目已切换')
+      if (!featureActionApplies(this.manifests.get(id)!, action, this.host.project?.())) throw new Error('FEATURE_PLUGIN_STUDIO_MISMATCH: 此工具不适用于当前工作台')
       return await handler.call(runtime, checkedInput, invocation)
     } finally { this.activeCalls-- }
   }
-  async initialize(): Promise<void> {
+  async initialize(builtins: Array<{ id: string; directory: string }> = []): Promise<void> {
     await fs.mkdir(this.root, { recursive: true })
-    for (const entry of await fs.readdir(this.root, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !idPattern.test(entry.name)) continue
+    for (const entry of builtins) {
+      if (!idPattern.test(entry.id) || this.builtinDirectories.has(entry.id)) throw new Error('内置工作台索引无效')
+      this.builtinDirectories.set(entry.id, entry.directory)
+    }
+    const entries = [...builtins.map(entry => ({ name: entry.id, directory: entry.directory, builtin: true })),
+      ...(await fs.readdir(this.root, { withFileTypes: true })).filter(entry => entry.isDirectory() && idPattern.test(entry.name) && !this.builtinDirectories.has(entry.name)).map(entry => ({ name: entry.name, directory: path.join(this.root, entry.name), builtin: false }))]
+    for (const entry of entries) {
       try {
         const files = new Map<string, Buffer>()
-        const directory = path.join(this.root, entry.name)
+        const directory = entry.directory
         const manifestBytes = await fs.readFile(path.join(directory, 'manifest.json'))
         if (manifestBytes.length > limit) throw new Error('插件清单过大')
         const declared = JSON.parse(manifestBytes.toString('utf8')) as FeaturePluginManifest
@@ -217,7 +143,7 @@ export class FeaturePluginService {
         const canonicalRoot = await fs.realpath(directory)
         for (const name of Object.keys(declared.files)) {
           if (!allowedFile(name) || name === 'manifest.json') throw new Error('插件文件路径无效')
-          const file = path.join(this.root, entry.name, name)
+          const file = path.join(directory, name)
           const stat = await fs.lstat(file)
           const relative = path.relative(canonicalRoot, await fs.realpath(file))
           if (!stat.isFile() || (total += stat.size) > limit || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('插件文件无效')
@@ -225,17 +151,18 @@ export class FeaturePluginService {
         }
         const manifest = validate(files)
         if (manifest.id !== entry.name) throw new Error('插件目录与标识不匹配')
-        const disabled = await fs.stat(path.join(this.root, entry.name, 'disabled')).then(() => true, () => false)
+        this.checkConflicts(manifest)
+        const disabled = !entry.builtin && await fs.stat(path.join(directory, 'disabled')).then(() => true, () => false)
         this.manifests.set(manifest.id, manifest)
-        this.records.set(manifest.id, { id: manifest.id, name: manifest.name, version: manifest.version, enabled: !disabled, manifest: definition(manifest) })
-      } catch (error) { this.records.set(entry.name, { id: entry.name, name: entry.name, version: '', enabled: false, error: String(error) }) }
+        this.records.set(manifest.id, { id: manifest.id, name: manifest.name, version: manifest.version, enabled: !disabled, builtin: entry.builtin, manifest: definition(manifest) })
+      } catch (error) { this.records.set(entry.name, { id: entry.name, name: entry.name, version: '', enabled: false, builtin: entry.builtin, error: String(error) }) }
     }
   }
   service<T extends object>(id: string): T {
     if (!this.enabled(id)) throw new Error(`应用功能插件 ${this.records.get(id)?.name ?? id} 未启用，请在侧边栏 → 功能中安装或启用`)
     if (!this.services.has(id)) {
       try {
-        const file = path.join(this.root, id, 'main.cjs')
+        const file = path.join(this.directory(id), 'main.cjs')
         const hostRequire = createRequire(this.host.requireFrom)
         const pluginRequire = createRequire(file)
         const localRequest = (name: string): boolean => name.startsWith('.') || path.isAbsolute(name)
@@ -262,6 +189,14 @@ export class FeaturePluginService {
         }
         const service = module.exports.activate(object(configured) ? { ...configured, pluginId: id, pluginDirectory: path.dirname(file), assetBaseUrl: `modmind-feature://${id}/assets/`, emitEvent } : configured)
         if (!service || typeof service !== 'object') throw new Error('插件服务无效')
+        for (const studio of this.manifests.get(id)!.studios ?? []) {
+          const provider = (service as unknown as import('../shared/studios').StudioRuntime).studios?.[studio.templateHandler]
+          if (!provider || (typeof provider.templateFiles !== 'function' && typeof provider.scaffold !== 'function')) throw new Error('工作台创建实现与清单不一致')
+          if (studio.adoption) {
+            const adapter = (service as unknown as import('../shared/studios').StudioRuntime).studios?.[studio.adoption.handler]
+            if (typeof adapter?.inspectExisting !== 'function' || typeof adapter.adoptExisting !== 'function') throw new Error('工作台接管实现与清单不一致')
+          }
+        }
         if (this.manifests.get(id)!.apiVersion === FEATURE_PLUGIN_API && (this.manifests.get(id)!.actions ?? []).some(action => typeof (service as FeaturePluginRuntime).actions?.[action.handler] !== 'function' && typeof Reflect.get(service, action.handler) !== 'function')) throw new Error('插件动作实现与清单不一致')
         const guarded = (target: object, value: (...args: unknown[]) => unknown) => (...args: unknown[]) => {
             if (!this.enabled(id) || this.changing || this.services.get(id) !== proxy) throw new Error('插件已停用或正在更改')
@@ -271,8 +206,14 @@ export class FeaturePluginService {
         }
         const actions = (service as FeaturePluginRuntime).actions
         const guardedActions = actions ? new Proxy(actions, { get: (target, property) => { const value = Reflect.get(target, property); return typeof value === 'function' ? guarded(target, value) : value } }) : undefined
+        const studioProviders = (service as unknown as Partial<import('../shared/studios').StudioRuntime>).studios
+        const guardedStudios = studioProviders ? Object.fromEntries(Object.entries(studioProviders).map(([key, provider]) => [key, new Proxy(provider, { get: (target, property) => {
+          const value = Reflect.get(target, property)
+          return typeof value === 'function' ? guarded(target, value) : value
+        } })])) : undefined
         const proxy: object = new Proxy(service, { get: (target, property) => {
           if (property === 'actions') return guardedActions
+          if (property === 'studios') return guardedStudios
           const value = Reflect.get(target, property)
           return typeof value === 'function' ? guarded(target, value) : value
         } })
@@ -300,7 +241,7 @@ export class FeaturePluginService {
     walk(manifest.id)
     for (const installed of this.manifests.values()) {
       if (installed.id === manifest.id) continue
-      for (const key of ['views', 'settings', 'tools'] as const) {
+      for (const key of ['views', 'settings', 'tools', 'studios'] as const) {
         const identifiers = new Set((installed[key] ?? []).map(entry => 'id' in entry ? entry.id : entry.name))
         if ((manifest[key] ?? []).some(entry => identifiers.has('id' in entry ? entry.id : entry.name))) throw new Error(`插件贡献与 ${installed.name} 冲突：${key}`)
       }
@@ -316,7 +257,7 @@ export class FeaturePluginService {
     if (runtime?.dispose) await runtime.dispose()
     this.runtimes.delete(id); this.services.delete(id)
     const cache = createRequire(this.host.requireFrom).cache
-    const directory = path.join(this.root, id)
+    const directory = this.directory(id)
     for (const name of Object.keys(cache)) { const relative = path.relative(directory, name); if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) delete cache[name] }
   }
   async shutdown(): Promise<void> {
@@ -330,6 +271,10 @@ export class FeaturePluginService {
     this.projectPath = projectPath
     await Promise.all([...this.runtimes.values()].map(runtime => runtime.projectChanged?.(projectPath)))
   }
+  async stopForSignal(signal: AbortSignal): Promise<void> {
+    await Promise.all([...this.runtimes.values()].map(runtime => runtime.stopForSignal?.(signal)))
+  }
+  hasBusyRuntime(): boolean { return [...this.runtimes.values()].some(runtime => runtime.isBusy?.()) }
   async install(prepared: PreparedPlugin, additiveAgentInstall = false): Promise<FeaturePluginRecord[]> {
     return this.change(async () => {
       const manifest = validate(prepared.files)
@@ -349,6 +294,7 @@ export class FeaturePluginService {
   async update(prepared: PreparedPlugin): Promise<FeaturePluginRecord[]> {
     return this.change(async () => {
       const manifest = validate(prepared.files), previous = this.manifests.get(manifest.id), record = this.records.get(manifest.id)
+      this.assertMutable(manifest.id)
       if (!previous || !record) throw new Error('请先安装此功能')
       this.checkConflicts(manifest)
       const directory = path.join(this.root, manifest.id), staging = path.join(this.root, '.install-' + randomUUID()), backup = path.join(this.root, '.backup-' + randomUUID())
@@ -378,6 +324,7 @@ export class FeaturePluginService {
     })
   }
   async setEnabled(id: string, enabled: boolean, additiveAgentInstall = false): Promise<FeaturePluginRecord[]> {
+    this.assertMutable(id)
     return this.change(async () => {
       if (!idPattern.test(id) || !this.records.has(id) || !this.manifests.has(id)) throw new Error('插件不可用，请重新安装')
       if (!enabled) this.assertNoDependents(id)
@@ -389,6 +336,7 @@ export class FeaturePluginService {
     }, enabled && additiveAgentInstall)
   }
   async uninstall(id: string): Promise<FeaturePluginRecord[]> {
+    this.assertMutable(id)
     return this.change(async () => {
       if (!idPattern.test(id) || !this.records.has(id)) throw new Error('插件不存在')
       this.assertNoDependents(id)
@@ -403,7 +351,7 @@ export class FeaturePluginService {
     try {
       const url = new URL(request.url), name = decodeURIComponent(url.pathname.slice(1))
       if (request.method !== 'GET' || !this.enabled(url.hostname) || !allowedFile(name) || !(['renderer.js', 'renderer.css'].includes(name) || name.startsWith('assets/')) || !Object.hasOwn(this.manifests.get(url.hostname)?.files ?? {}, name)) return new Response(null, { status: 404 })
-      const bytes = await fs.readFile(path.join(this.root, url.hostname, name))
+      const bytes = await fs.readFile(path.join(this.directory(url.hostname), name))
       if (hash(bytes) !== this.manifests.get(url.hostname)!.files[name]) throw new Error('插件文件校验失败')
       const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm' }
       return new Response(new Uint8Array(bytes), { headers: { 'Content-Type': types[path.extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' } })

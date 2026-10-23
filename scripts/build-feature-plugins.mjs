@@ -1,7 +1,7 @@
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
-import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile, readdir, appendFile, access, cp, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile, readdir, appendFile, access, cp, rm, rename } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
@@ -18,7 +18,7 @@ const exportsOf = (name, value) => `const value = window.__modmindFeatureHost.${
 const definitions = []
 const only = process.argv.find(argument => argument.startsWith('--only='))?.slice(7)
 const exists = file => access(file).then(() => true, () => false)
-const sharedModules = ['buildRuntime', 'creationFeedbackService', 'diagnosticLog', 'downloadActivityService', 'downloadService', 'modpackService', 'modpackContentMetadata', 'curseForgePackMetadata', 'agentProtection', 'nativeFeatureServices', 'networkRequest', 'processTree', 'documentRead', 'projectTextRead', 'inspirationResearch']
+const sharedModules = ['buildRuntime', 'creationFeedbackService', 'diagnosticLog', 'downloadActivityService', 'downloadService', 'modpackService', 'modpackContentMetadata', 'curseForgePackMetadata', 'agentProtection', 'nativeFeatureServices', 'networkRequest', 'processTree', 'documentRead', 'projectTextRead', 'inspirationResearch', 'studioRegistry', 'projectTemplates', 'projectMutation']
 const sharedShims = []
 for (const name of sharedModules) {
   const source = ts.createSourceFile(name, await readFile(path.join(root, 'src/main', name + '.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
@@ -55,6 +55,12 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
   const { files: _files, ...definition } = manifest
   definitions.push(definition)
   if (only && only !== manifest.id) continue
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(manifest.version)) throw new Error(`Release versions must have three numeric components: ${manifest.id}`)
+  if (manifest.id === 'shader-testing') {
+    const agent = JSON.parse(await readFile(path.join(root, 'feature-plugins/shader-shared/src/main/shaderSessionAgent.json'), 'utf8'))
+    const sourceHash = createHash('sha256').update((await readFile(path.join(root, 'resources/shader-runtime/ShaderSessionAgent.java'), 'utf8')).replaceAll('\r\n', '\n')).digest('hex')
+    if (agent.sourceSha256 !== sourceHash) throw new Error('Shader session adapter is stale; run node scripts/compile-shader-session-agent.mjs')
+  }
   const output = path.join(outputRoot, manifest.id)
   const relativeOutput = path.relative(outputRoot, path.resolve(output))
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(relativeOutput)) throw new Error(`Invalid feature output: ${manifest.id}`)
@@ -67,7 +73,8 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
     host(/^react-dom$/, exportsOf('react-dom', 'ReactDOM')),
     host(/^react\/jsx-runtime$/, exportsOf('react/jsx-runtime', 'jsxRuntime')),
     host(/InteractionDialogs$/, 'export const { useConfirmDialog, usePromptDialog } = window.__modmindFeatureHost.dialogs'),
-    host(/MiniPaintEditor$/, 'export default window.__modmindFeatureHost.MiniPaintEditor')
+    host(/MiniPaintEditor$/, 'export default window.__modmindFeatureHost.MiniPaintEditor'),
+    host(/MonacoCodeEditor$/, 'export default window.__modmindFeatureHost.MonacoCodeEditor')
   ] })
   if (!Object.values(rendererBuild.metafile.outputs).some(file => file.cssBundle)) await writeFile(path.join(output, 'renderer.css'), '')
   for (const [name, input] of Object.entries(manifest.assets ?? {})) {
@@ -75,7 +82,14 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
     const sourcePath = path.resolve(root, input)
     const relative = path.relative(root, sourcePath)
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`Asset source outside repository: ${input}`)
-    if (assetFiles[name]) {
+    const skillStudios = (manifest.studios ?? []).filter(studio => studio.skillAssetGroup === name)
+    if (skillStudios.length) {
+      const names = [...new Set(skillStudios.flatMap(studio => Object.values(studio.ai).flatMap(profile => [...profile.skills, ...(profile.variants ?? []).flatMap(variant => variant.skills)])))]
+      for (const skill of names) {
+        if (!/^[a-z][a-z0-9-]{0,63}$/.test(skill)) throw new Error('Invalid studio skill name')
+        await cp(path.join(sourcePath, skill), path.join(output, 'assets', name, skill), { recursive: true, dereference: false })
+      }
+    } else if (assetFiles[name]) {
       for (const file of assetFiles[name]) {
         if (typeof file !== 'string' || !/^[A-Za-z0-9_.-]+$/.test(file) || file === '.' || file === '..') throw new Error(`Invalid asset file: ${name}/${file}`)
         const destination = path.join(output, 'assets', name, file)
@@ -136,7 +150,7 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
   }
   await hashAssets(path.join(output, 'assets'), 'assets')
   await writeFile(path.join(output, 'manifest.json'), JSON.stringify({ ...definition, files }, null, 2))
-  const archivePath = path.join(outputRoot, `${manifest.id}.mmfeature`)
+  const archivePath = path.join(outputRoot, `${manifest.id}.${manifest.studios?.length ? 'mmstudio' : 'mmfeature'}`)
   await new Promise((resolve, reject) => {
     const out = createWriteStream(archivePath), zip = archiver('zip', { zlib: { level: 9 } })
     out.on('close', resolve); out.on('error', reject); zip.on('error', reject); zip.pipe(out)
@@ -147,5 +161,21 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
   console.log(archivePath)
 }
 if (only && !definitions.some(definition => definition.id === only)) throw new Error(`Unknown feature: ${only}`)
-await writeFile(path.join(outputRoot, 'catalog.json'), JSON.stringify(definitions, null, 2))
-await writeFile(path.join(root, 'src/shared/featurePluginCatalog.json'), JSON.stringify(definitions, null, 2))
+const catalogContent = JSON.stringify(definitions, null, 2)
+async function writeCatalog(file) {
+  const previous = await readFile(file, 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error })
+  if (previous === catalogContent) return
+  const temporary = `${file}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporary, catalogContent)
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(temporary, file); break }
+      catch (error) {
+        if (!['EBUSY', 'EPERM', 'EACCES', 'UNKNOWN'].includes(error.code) || attempt >= 6) throw error
+        await new Promise(resolve => setTimeout(resolve, Math.min(100 * 2 ** attempt, 1000)))
+      }
+    }
+  } finally { await rm(temporary, { force: true }).catch(() => undefined) }
+}
+await writeCatalog(path.join(outputRoot, 'catalog.json'))
+await writeCatalog(path.join(root, 'src/shared/featurePluginCatalog.json'))

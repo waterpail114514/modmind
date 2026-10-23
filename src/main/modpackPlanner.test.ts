@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, createModpackTemplate, readModpackManifest } from './modpackService'
 import { createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
-import { applyModpackPlan, planModpack } from "../../feature-plugins/modpack-mods/src/main/modpackPlanner"
+import { applyModpackPlan, planModpack } from '../../feature-plugins/modpack-mods/src/main/modpackPlanner'
 import type { ModFile, ModProviderRegistry } from './modProviderService'
 
 const roots: string[] = []
@@ -57,7 +57,7 @@ describe('modpack planner', () => {
     const rootFile: ModFile = { provider: 'modrinth', projectId: 'root', versionId: 'root-v1', versionName: '1', filename: 'root.jar', primary: true, side: 'both', dependencies: [{ provider: 'modrinth', projectId: 'api', versionId: 'missing', kind: 'required' }], sources: [{ id: 'fixture', label: 'fixture', url: 'https://example.test/root.jar' }] }
     const registry = {
       search: async () => [{ provider: 'modrinth', total: 1, hits: [{ provider: 'modrinth', projectId: 'root', slug: 'root', name: 'Root', summary: '', projectUrl: '', clientSide: 'both', serverSide: 'both', downloads: 1 }] }],
-      versions: async (_provider: string, projectId: string) => projectId === 'root' ? [rootFile] : [],
+      versions: async (_provider: string, projectId: string) => projectId === 'root' ? [rootFile] : [{ ...rootFile, projectId: 'api', versionId: 'different', filename: 'api.jar', dependencies: [] }],
       install: async () => { throw new Error('not called') }
     } as unknown as ModProviderRegistry
     const result = await planModpack(registry, project('/tmp/pack'), { required: ['Root'] })

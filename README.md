@@ -31,7 +31,7 @@ ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感�
 
 | 你的设备 | 选择的安装包 |
 | --- | --- |
-| Windows | `ModMind-Setup-<版本>.exe` |
+| Windows 10 及以上（x64） | `ModMind-Setup-<版本>.exe` |
 | Mac · Apple Silicon（M 系列） | 文件名包含 `arm64` 的 `.dmg` 或 `.zip` |
 | Mac · Intel | 文件名包含 `x64` 的 `.dmg` 或 `.zip` |
 
@@ -76,7 +76,7 @@ Java 模组的真实界面测试实验性接入 [Minecraft Mod MCP](https://gith
 
 ## 本地开发
 
-使用 **Node.js 22**。首次克隆后执行：
+使用 **Node.js 22.12 或更新的受支持版本**。首次克隆后执行：
 
 ```sh
 git clone https://github.com/waterpail114514/modmind.git
@@ -87,18 +87,20 @@ npm run dev
 
 ### 检查与测试
 
-`npm test` 包含独立 MCP 仓库的测试，因此首次运行前还需检出该仓库。下面的提交与当前 macOS CI 固定版本一致：
+`npm test` 包含独立 MCP 仓库的测试。首次运行前使用以下命令检出固定版本；已有检出目录会保留并校验：
 
 ```sh
-git clone https://github.com/waterpail114514/ModMind-MCP.git modmind-mcp-open-source
-git -C modmind-mcp-open-source checkout f21d65950f255243e941554d1463729ad1056b41
+npm run setup:tests
 ```
 
 ```sh
 npm run typecheck
+npm run sync:mcp
 npm test
 npm run build
 ```
+
+`npm run sync:mcp` 从应用内 MCP 源码生成独立检出的服务实现；执行前请保存该文件已有修改并检查生成差异。`npm test` 会检查两份实现是否同步，并应用固定版本的换行分帧与图片回归补丁。`npm run verify:workspace` 校验工作区依赖和 MCP 固定提交。测试默认最多使用 4 个 worker。
 
 构建前会自动检查主题颜色与插件模板是否和源码一致。部分集成测试需要 Java 或额外运行环境，请同时查看测试输出中的跳过项。
 
@@ -138,7 +140,10 @@ Windows 更新文件位于 `release/update`。稳定版使用 `latest.yml`，预
 | [ModMind 官网](https://ether-studio.top/) | 客户端下载、使用流程、账号与模型服务 |
 | [发布记录](https://github.com/waterpail114514/modmind/releases) | 安装包、更新日志与校验文件 |
 | [问题反馈](https://github.com/waterpail114514/modmind/issues) | 报告问题与提出建议 |
-| [插件开发指南](docs/plugin-development.zh-CN.md) | 插件清单、面板、工具与权限 |
+| [mmfeature 与 mmstudio 开发](docs/extensions-development.zh-CN.md) | 原生功能包、领域工作台、最小示例、MCP 与构建安装 |
+| [ModMind 开发者工作台](docs/developer-workbench.zh-CN.md) | 应用内独立开发工程、AI 创作、UI 预览、动作与 MCP 调试、扩展包导出 |
+| [光影工作台开发](docs/shader-studio-development.zh-CN.md) | 六个模块、源码导航、验证边界与 MCP 调用参考 |
+| [第三方插件开发指南](docs/plugin-development.zh-CN.md) | iframe 面板、plugin.json、工具与权限 |
 | [真实交互测试说明](docs/minecraft-mcp-integration.zh-CN.md) | 支持范围、测试方式与限制 |
 | [Fabric API 测试策略](docs/fabric-api-test-policy.zh-CN.md) | 测试实例的 API 管理配置 |
 | [ModMind-MCP](https://github.com/waterpail114514/ModMind-MCP) | 独立维护的 MCP 服务 |

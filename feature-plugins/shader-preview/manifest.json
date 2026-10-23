@@ -1,0 +1,81 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "shader-preview",
+  "name": "效果预览",
+  "version": "1.0.1",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "dependencies": [
+    "studio-shader"
+  ],
+  "capabilities": [
+    {
+      "id": "shader-preview",
+      "name": "效果预览",
+      "description": "读取并预览工程真实 final 片元阶段，支持当前画面的源码匹配截图，不代表完整 Iris 游戏渲染。"
+    }
+  ],
+  "views": [
+    {
+      "id": "shader-preview",
+      "label": "效果预览",
+      "component": "ShaderPreview",
+      "icon": "Sun",
+      "group": "测试与构建",
+      "order": 30,
+      "loaders": [
+        "iris"
+      ],
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "inventory",
+              "preview",
+              "preview-image"
+            ]
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_shader_preview",
+      "action": "query",
+      "description": "Read shader inventory, expanded final fragment source (preview), or the currently visible final preview as an image (preview-image). Image readback requires the preview page open and its rendered source hash matching the current project. Scope is final-only; it does not reproduce Iris buffers, shadows, geometry/compute or full OpenGL rendering, and is never proof of in-game correctness."
+    }
+  ],
+  "studioIds": [
+    "minecraft-shader"
+  ],
+  "loaders": [
+    "iris"
+  ]
+}

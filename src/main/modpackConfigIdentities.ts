@@ -3,36 +3,10 @@ import path from 'node:path'
 import type { ProjectInfo } from '../shared/types'
 import type { ModConfigIdentity } from '../shared/contentFileFilters'
 import { readModpackManifest } from './modpackService'
-import { modpackModsRoot, modpackOverridesRoot } from './modpackPaths'
-import type { ModpackContentFeatures } from '../shared/modpackContentFeatures'
+import { modpackModsRoot } from './modpackPaths'
 import { readModJarIdentities } from './jarInspection'
 
 const cache = new Map<string, Promise<ModConfigIdentity[]>>()
-
-/** Only inspect the directories used by these content tools; no second whole-project scan. */
-export async function modpackContentFeatures(project: ProjectInfo): Promise<ModpackContentFeatures> {
-  const [manifest, mods] = await Promise.all([readModpackManifest(project), modpackConfigIdentities(project)])
-  const ids = new Set(mods.map(mod => mod.id.toLowerCase()))
-  const result = { ftbQuests: ids.has('ftbquests'), patchouli: ids.has('patchouli') }
-  const isDirectory = async (file: string): Promise<boolean> => {
-    try { return (await fs.lstat(file)).isDirectory() }
-    catch (error) { if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return false; throw error }
-  }
-  for (const root of new Set([modpackOverridesRoot(project, manifest), project.path])) {
-    result.ftbQuests ||= await isDirectory(path.join(root, 'config', 'ftbquests', 'quests'))
-    result.patchouli ||= await isDirectory(path.join(root, 'patchouli_books'))
-    if (!result.patchouli) for (const kind of ['data', 'assets']) {
-      const parent = path.join(root, 'kubejs', kind)
-      if (!await isDirectory(parent)) continue
-      const namespaces = await fs.readdir(parent, { withFileTypes: true })
-      for (const namespace of namespaces.filter(entry => entry.isDirectory())) {
-        result.patchouli ||= await isDirectory(path.join(parent, namespace.name, 'patchouli_books'))
-        if (result.patchouli) break
-      }
-    }
-  }
-  return result
-}
 
 export async function modpackConfigIdentities(project: ProjectInfo): Promise<ModConfigIdentity[]> {
   const manifest = await readModpackManifest(project)

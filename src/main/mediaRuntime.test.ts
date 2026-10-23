@@ -10,6 +10,20 @@ import { runSoundFfmpeg } from '../../feature-plugins/sound-studio/src/main/soun
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
+
+async function tamperAfterWindowsHandleRelease(binary: string): Promise<void> {
+  // An exited ffmpeg process can briefly retain its image handle on Windows.
+  const delays = [100, 200, 400, 600, 700]
+  for (let attempt = 0; ; attempt += 1) {
+    try { await fs.appendFile(binary, 'tampered'); return }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (process.platform !== 'win32' || !['EBUSY', 'EPERM'].includes(code ?? '') || attempt >= delays.length) throw error
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]))
+    }
+  }
+}
+
 it('loads media conversion exclusively from a verified optional package and enforces dependent lifecycle', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-media-')); roots.push(root)
   const service = new FeaturePluginService(root, { requireFrom: path.resolve('package.json'), capabilities: { runtime: {} }, options: () => ({}), busy: () => false, changed: () => undefined })
@@ -34,7 +48,7 @@ it('loads media conversion exclusively from a verified optional package and enfo
   await service.setEnabled('media-runtime', true)
   const active = service.service<{ executable: () => string }>('media-runtime')
   active.executable()
-  await fs.appendFile(binary, 'tampered')
+  await tamperAfterWindowsHandleRelease(binary)
   expect(() => active.executable()).toThrow('校验失败')
   await service.shutdown()
 }, 30000)

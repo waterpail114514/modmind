@@ -147,7 +147,7 @@ const { chromium } = require('playwright')
     assert.equal(await picker.evaluate(element => element === document.activeElement), true)
     for (const dark of [false, true]) {
       if (dark) await page.locator('#toggle-dark').click()
-      for (const width of [1280, 800, 480]) {
+      for (const width of [1280, 1080]) {
         await page.setViewportSize({ width, height: 900 })
         await page.screenshot({ path: path.join(directory, `${dark ? 'dark' : 'light'}-${width}.png`), fullPage: true })
         assert.ok(await toolbar.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `toolbar overflow at ${width}`)
@@ -277,7 +277,7 @@ const { chromium } = require('playwright')
     assert.equal(presetSaved.nodes.find(node => node.id === 'prompt-1').data.prompt, initialName)
     for (const dark of [false, true]) {
       if (dark) await presetPage.locator('#toggle-dark').click()
-      for (const width of [1280, 780, 390]) {
+      for (const width of [1280, 1080]) {
         await presetPage.setViewportSize({ width, height: 900 })
         await template.scrollIntoViewIfNeeded()
         assert.ok(await presetPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'preset inspector must not overflow horizontally')
@@ -328,7 +328,7 @@ const { chromium } = require('playwright')
     assert.equal(await multiPage.locator('.image-workflow-node-output').count(), 4)
     assert.equal(await multiPage.locator('.image-output-preview').count(), 4)
     assert.equal(await multiPage.locator('.image-output-loading').count(), 0)
-    for (const width of [1280, 390]) {
+    for (const width of [1280, 1080]) {
       await multiPage.setViewportSize({ width, height: 900 })
       assert.ok(await multiPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
       await multiPage.screenshot({ path: path.join(directory, `multi-reference-${width}.png`), fullPage: true })

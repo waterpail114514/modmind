@@ -1,3 +1,4 @@
+vi.mock('./networkRequest', async (importOriginal) => ({ ...(await importOriginal<typeof import('./networkRequest')>()), networkFetch: (input: string | URL, init?: RequestInit) => globalThis.fetch(input, init) }))
 import { afterEach, expect, it, vi } from 'vitest'
 import { requestAiName } from './aiNaming'
 

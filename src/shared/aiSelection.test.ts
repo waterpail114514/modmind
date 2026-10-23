@@ -20,4 +20,11 @@ describe('independent surface AI choices', () => {
     expect(readSurfaceAiSelection('{bad')).toBeUndefined()
     expect(readSurfaceAiSelection(JSON.stringify({ backend: 'legacy-backend', model: 'obsolete', reasoningLevel: 'max' }))).toBeUndefined()
   })
+  it('preserves native LS bindings and rejects unknown or mismatched account types', () => {
+    const selection = { backend: 'quota', account: 'ls', group: '25', billing: 'quota', model: 'upstream-model', reasoningLevel: 'auto' }
+    expect(readSurfaceAiSelection(JSON.stringify(selection))).toEqual(selection)
+    for (const route of [{ account: 'ls', billing: 'free' }, { account: 'trial:valid', billing: 'quota' }, { account: 'unknown', billing: 'quota' }]) {
+      expect(() => normalizeAiModelSelection({ model: 'upstream-model', reasoningLevel: 'auto', ...route })).toThrow()
+    }
+  })
 })

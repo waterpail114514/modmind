@@ -47,11 +47,12 @@ const MINECRAFT_SYNC_TIMEOUT_MS = 11 * 60_000
 const MAX_FETCH_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_DIAGNOSTIC_LOGS = 500
 const MAX_LOG_MESSAGE_LENGTH = 10_000
+const sharedStorageWriteTails = new Map<string, Promise<void>>()
 
 export class PluginRuntime {
   private readonly options: PluginRuntimeOptions
   private readonly hosts = new Map<string, HostProcess>()
-  private readonly storageWriteTails = new Map<string, Promise<void>>()
+  private readonly storageWriteTails = sharedStorageWriteTails
   private readonly diagnostics = new Map<string, PluginDiagnostics>()
   private records: Map<string, PluginRecord> = new Map()
 
@@ -384,8 +385,8 @@ export class PluginRuntime {
       }
       case 'storageGet': {
         if (!record.manifest.permissions.includes('storage')) throw new Error('缺少权限：storage')
-        await this.storageWriteTails.get(record.manifest.id)?.catch(() => undefined)
         const file = this.storageFile(record.manifest.id)
+        await this.storageWriteTails.get(file)?.catch(() => undefined)
         const store = await this.readStore(file)
         return store[String(args.key)] ?? null
       }
@@ -418,7 +419,10 @@ export class PluginRuntime {
           signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS)
         })
         const contentLength = Number(response.headers.get('content-length') ?? '0')
-        if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_RESPONSE_BYTES) throw new Error('网络响应超过 2 MiB')
+        if (Number.isFinite(contentLength) && contentLength > MAX_FETCH_RESPONSE_BYTES) {
+          if (response.body) await response.body.cancel().catch(() => undefined)
+          throw new Error('网络响应超过 2 MiB')
+        }
         const chunks: Buffer[] = []
         let total = 0
         if (response.body) {
@@ -468,13 +472,14 @@ export class PluginRuntime {
   }
 
   private async enqueueStorageWrite(pluginId: string, operation: () => Promise<void>): Promise<void> {
-    const previous = this.storageWriteTails.get(pluginId) ?? Promise.resolve()
+    const key = this.storageFile(pluginId)
+    const previous = this.storageWriteTails.get(key) ?? Promise.resolve()
     const current = previous.catch(() => undefined).then(operation)
-    this.storageWriteTails.set(pluginId, current)
+    this.storageWriteTails.set(key, current)
     try {
       await current
     } finally {
-      if (this.storageWriteTails.get(pluginId) === current) this.storageWriteTails.delete(pluginId)
+      if (this.storageWriteTails.get(key) === current) this.storageWriteTails.delete(key)
     }
   }
 

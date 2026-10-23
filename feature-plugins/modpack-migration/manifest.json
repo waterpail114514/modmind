@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "modpack-migration",
   "name": "版本迁移",
-  "version": "1.5.0-plugintest",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -24,5 +24,14 @@
       "name": "版本迁移",
       "description": "评估目标版本与依赖兼容性，选择迁移取舍、生成迁移结果并恢复历史迁移。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
     }
+  ],
+  "studioIds": [
+    "minecraft-modpack"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge"
   ]
 }

@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { DownloadActivityStore } from './downloadActivityService'
 
 describe('download activity store', () => {
+  it('retains nested failure reasons when AggregateError has an empty message', () => {
+    const store = new DownloadActivityStore()
+    const id = store.start({ label: 'NeoForge installer' })
+    store.fail(id, new AggregateError([new Error('read ECONNRESET'), Object.assign(new Error('invalid archive'), { name: 'InvalidZipError' })]))
+    expect(store.snapshot().activities[0].error).toContain('ECONNRESET')
+    expect(store.snapshot().activities[0].error).toContain('InvalidZipError')
+  })
   it('publishes progress and keeps failure reasons until dismissed', () => {
     const store = new DownloadActivityStore()
     const listener = vi.fn()

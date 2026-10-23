@@ -1,3 +1,4 @@
+import { serializeProjectMutation } from './projectMutation'
 import type {
   ModpackContentDelivery,
   ModpackContentDownloadInput,
@@ -16,6 +17,7 @@ import { createHash, randomUUID } from 'node:crypto'
 export const MODPACK_CONTENT_INVENTORY_FILE = 'modmind.pack-content.json'
 
 export const MAX_CONTENT_FILE_BYTES = 512 * 1024 * 1024
+const MAX_CONTENT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 
 export const CONTENT_KINDS = new Set<ModpackContentKind>([
   'config', 'scripts', 'datapacks', 'quests', 'resourcepacks', 'shaderpacks', 'ui', 'worlds', 'client', 'server', 'other'
@@ -94,7 +96,7 @@ export function classifyPath(relative: string): ModpackContentKind {
   return 'other'
 }
 
-export async function registerImportedPackContent(project: ProjectInfo, files: Array<{ path: string; sha1: string; sourceUrl: string; size: number; scope?: ModpackContentScope }>): Promise<void> {
+export const registerImportedPackContent = serializeProjectMutation(async function registerImportedPackContent(project: ProjectInfo, files: Array<{ path: string; sha1: string; sourceUrl: string; size: number; scope?: ModpackContentScope }>): Promise<void> {
   const inventory = await readStoredInventory(project)
   const items = new Map(inventory.items.map(item => [item.path, item]))
   for (const file of files) {
@@ -104,7 +106,7 @@ export async function registerImportedPackContent(project: ProjectInfo, files: A
     items.set(file.path, { id: itemId(file.path), path: file.path, kind, scope: file.scope ?? defaultScope(kind), delivery: 'remote', ...hashes, sourceUrl: file.sourceUrl, addedAt: new Date().toISOString() })
   }
   if (files.length) await writeStoredInventory(project, { version: 1, items: [...items.values()] })
-}
+})
 
 export function itemId(relative: string): string {
   return `content:${normalizeRelative(relative)}`
@@ -129,7 +131,7 @@ export function normalizeItem(value: unknown): ModpackContentItem | null {
   if (entry.sourceUrl !== undefined && (typeof entry.sourceUrl !== 'string' || !/^https:\/\//i.test(entry.sourceUrl))) return null
   if (entry.sha1 !== undefined && !validHash(entry.sha1, 40)) return null
   if (entry.sha512 !== undefined && !validHash(entry.sha512, 128)) return null
-  if (entry.size !== undefined && (!Number.isSafeInteger(entry.size) || (entry.size as number) < 1 || (entry.size as number) > MAX_CONTENT_FILE_BYTES)) return null
+  if (entry.size !== undefined && (!Number.isSafeInteger(entry.size) || (entry.size as number) < (entry.directory === true ? 0 : 1) || (entry.size as number) > (entry.directory === true ? MAX_CONTENT_TOTAL_BYTES : MAX_CONTENT_FILE_BYTES))) return null
   return {
     id: itemId(relative),
     path: relative,
@@ -163,11 +165,11 @@ export async function readStoredInventory(project: ProjectInfo): Promise<Modpack
 export async function writeStoredInventory(project: ProjectInfo, inventory: ModpackContentInventory): Promise<ModpackContentInventory> {
   if (inventory.version !== 1 || inventory.items.some((item) => !normalizeItem(item))) throw new Error('内容清单格式无效')
   const target = inventoryPath(project)
-  const pending = `${target}.pending-${process.pid}`
+  const pending = `${target}.pending-${randomUUID()}`
   await fs.writeFile(pending, `${JSON.stringify(inventory, null, 2)}\n`, 'utf8')
   try { await fs.rename(pending, target) } finally { await fs.rm(pending, { force: true }).catch(() => undefined) }
   invalidateModpackContentCache(project)
-  return readStoredInventory(project)
+  return inventory
 }
 
 export async function hashFile(filePath: string): Promise<{ sha1: string; sha512: string; size: number }> {

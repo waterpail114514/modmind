@@ -2,15 +2,17 @@ import type { BlockbenchAction, BlockbenchBounds, BlockbenchBridgeStatus } from 
 import type { LocalServerEvent, LocalServerState, LocalTestApi, MinecraftApi, MinecraftRuntimeState } from './minecraft'
 import type { MappingsApi } from './mappings'
 import type { ProductionApi, ProjectFileMutationResult } from './production'
+import type { ServerFixtureJar } from './serverScenario'
 import type { ImageGenerationRequest, ImageGenerationResult, ImageHistoryItem, ImageProcessingOptions, ImageProcessingResult, ImageStudioCapabilities, ImageStudioSettings, ImageStudioSettingsInput } from './imageStudio'
 import type { AssetIntentCandidate, AssetIntentPreview, AssetIntentProgram, AssetRefinementCandidate, AssetRefinementPreview, AssetRefinementProgram } from './assetIntent'
 import type {AdvancedAssetCandidate, AdvancedAssetComparison, AdvancedAssetPreviewOptions, AdvancedAssetProgram, AssetVisualReview, ReferenceImageAssetCandidate, ReferenceImageAssetProgram} from './advancedAsset'
+import type { PatchouliBookInput } from './patchouli'
 
 export type JavaLoaderKind = 'fabric' | 'quilt' | 'forge' | 'neoforge'
 export type AddonPlatformKind = 'bedrock' | 'netease-pc' | 'netease-mobile'
 export type ServerPluginPlatform = 'paper' | 'spigot' | 'folia' | 'velocity'
-export type LoaderKind = JavaLoaderKind | AddonPlatformKind | ServerPluginPlatform
-export type ProjectKind = 'mod' | 'modpack' | 'server-plugin'
+export type LoaderKind = JavaLoaderKind | AddonPlatformKind | ServerPluginPlatform | (string & {})
+export type ProjectKind = 'mod' | 'modpack' | 'server-plugin' | (string & {})
 
 export type LoaderSupportTier = 'stable' | 'experimental'
 
@@ -27,6 +29,10 @@ export interface LoaderVersionOption {
 }
 
 export interface ProjectInfo {
+  studioName?: string
+  studioValues?: Record<string, string>
+  /** Optional domain provider; old projects resolve by kind and platform. */
+  studioId?: string
   /** Stable identity retained when relocating the project. */
   projectId?: string
   /** Conversation-only project; loader/version fields are not build targets until initialized. */
@@ -49,6 +55,8 @@ export interface ProjectInfo {
 }
 
 export interface ProjectCreateInput {
+  studioValues?: Record<string, string>
+  studioId?: string
   name: string
   loader: LoaderKind
   minecraftVersion: string
@@ -537,6 +545,8 @@ export interface ExistingModpackAnalysis {
 }
 
 export interface ExistingProjectAnalysis {
+  minecraftVersions?: string[]
+  studio?: { id: string; name: string; pluginId: string; available: boolean }
   sourcePath: string
   sourceName: string
   kind: ExistingProjectKind
@@ -732,6 +742,7 @@ export type DeviceConnectionStatus = 'disconnected' | 'authorizing' | 'connected
 export type DeviceKeyStatus = 'ACTIVE' | 'FROZEN'
 
 export interface DeviceConnectionState {
+  account?: string
   status: DeviceConnectionStatus
   configured: boolean
   provider?: 'custom'
@@ -830,12 +841,15 @@ export interface ExternalAgentConfiguration {
   reasoningEffortOptions?: Record<string, ReasoningEffort[]>
   reasoningEffort?: ReasoningEffort
   apiKey?: string
+  /** Save input only: remove the previous connection's encrypted credential. */
+  clearApiKey?: boolean
   hasStoredKey?: boolean
 }
 
 export interface BeginnerAiPreferences {
   model: string
   account?: string
+  group?: string
   billing?: 'quota' | 'free'
   reasoningLevel: BeginnerReasoningLevel
   fastMode: boolean
@@ -859,7 +873,9 @@ export interface AgentSettings {
   /** Historical storage key; applies to both workbench engines, never inspiration or external terminals. */
   codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
+  /** @deprecated Legacy storage compatibility; builds use the managed automatic policy. */
   allowBuildScriptChanges: boolean
+  /** @deprecated Legacy storage compatibility; not an effective runtime preference. */
   preferLocalGradle: boolean
   gradleExecutable?: string
   gradleDownloadSource: 'auto' | 'china' | 'official'
@@ -911,12 +927,21 @@ export interface ExternalAgentProviderSetup {
   executable?: string
   configPath?: string
   detail: string
+  settings?: AgentSettings
 }
 
 export interface AiModelInfo {
   id: string
+  name?: string
+  family?: string
+  description?: string
+  recommended?: boolean
   optionKey?: string
   account?: string
+  group?: string | null
+  groupLabel?: string
+  routeCurrent?: boolean
+  modelEvidence?: 'verified' | 'unknown'
   billing?: 'quota' | 'free'
   available?: boolean
   unavailableReason?: string
@@ -1004,6 +1029,7 @@ export interface AiNotice {
 }
 
 export interface AiOutputEvent {
+  inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   notice?: AiNotice
   kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage'
   content: string
@@ -1032,6 +1058,10 @@ export interface AiOutputEvent {
 }
 
 export interface InspirationChatMessage {
+  /** Selection snapshot for this turn; history never adopts later capability choices. */
+  inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
+  generation?: number
+  promptEdit?: string
   usage?: AiTokenUsage
   notice?: AiNotice
   role: 'user' | 'assistant'
@@ -1314,7 +1344,23 @@ export interface DownloadActivitySnapshot {
   activities: DownloadActivity[]
 }
 
+/**
+ * A renderer-owned application dialog.  Main-process workflows use this
+ * instead of Electron's native message box so that confirmations and notices
+ * inherit ModMind's theme and keyboard/focus behavior.
+ */
+export interface AppDialogRequest {
+  id: string
+  kind: 'confirm' | 'info'
+  title: string
+  message: string
+  detail?: string
+  confirmLabel?: string
+  cancelLabel?: string
+}
+
 export interface ModMindApi {
+  developer: import('./developerWorkbench').DeveloperApi
   skills: {
     list: () => Promise<import('./userSkills').UserSkill[]>
     read: (name: string) => Promise<import('./userSkills').UserSkillDocument>
@@ -1341,6 +1387,8 @@ export interface ModMindApi {
     onOpenSettings: (listener: () => void) => () => void
     onOpenView: (listener: (view: SidebarViewId) => void) => () => void
     onDetachedWindowClosed: (listener: (target: DetachedWindowTarget) => void) => () => void
+    onDialogRequest: (listener: (request: AppDialogRequest) => void) => () => void
+    resolveDialog: (requestId: string, confirmed: boolean) => Promise<void>
     onCloseRequested: (listener: () => void) => () => void
     resolveClose: (choice: 'tray' | 'quit' | 'cancel', remember: boolean) => Promise<void>
     minimize: () => Promise<void>
@@ -1405,6 +1453,7 @@ export interface ModMindApi {
   }
   modpack: {
     get: () => Promise<ModpackManifest>
+    refreshMods: () => Promise<ModpackManifest>
     resumeImport: () => Promise<ModpackManifest>
     cancelImport: () => Promise<void>
     importStatus: () => Promise<ModpackImportStatus | null>
@@ -1422,7 +1471,6 @@ export interface ModMindApi {
     sync: () => Promise<MinecraftRuntimeState>
     listContent: (refresh?: boolean) => Promise<ModpackContentInventory>
     configModIdentities: (projectPath: string) => Promise<import('./contentFileFilters').ModConfigIdentity[]>
-    contentFeatures: (projectPath: string) => Promise<import('./modpackContentFeatures').ModpackContentFeatures>
     onModsChanged: (listener: (projectPath: string) => void) => () => void
     contentProjectPath: (contentPath: string) => Promise<string>
     importContent: (kind: ModpackContentKind, scope?: ModpackContentScope) => Promise<ModpackContentImportResult | null>
@@ -1458,11 +1506,14 @@ export interface ModMindApi {
     saveFtbQuestBook: (book: FtbQuestBook, projectPath?: string) => Promise<FtbQuestSaveResult>
     writeFtbQuest: (input: unknown) => Promise<string>
     writePatchouliBook: (input: unknown) => Promise<string[]>
+    readPatchouliBooks: () => Promise<PatchouliBookInput[]>
     applyKeybindPreset: (input: unknown, allowConflicts?: boolean) => Promise<unknown>
     buildServerPack: (input: unknown) => Promise<unknown>
     installServerRuntime: (input: unknown) => Promise<unknown>
     verifyServerJoin: (input: unknown) => Promise<unknown>
     runServerScenario: (input: unknown) => Promise<unknown>
+    pickScenarioJars: () => Promise<ServerFixtureJar[]>
+    removeScenarioJar: (file: string) => Promise<ServerFixtureJar[]>
     getServerState: () => Promise<LocalServerState>
     startServer: (input: unknown) => Promise<LocalServerState>
     stopServer: () => Promise<LocalServerState>
@@ -1494,7 +1545,7 @@ export interface ModMindApi {
   settings: {
     revealSecret: (key: 'codex' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
     getAgent: () => Promise<AgentSettings>
-    saveAgent: (settings: AgentSettings) => Promise<AgentSettings>
+    saveAgent: (settings: import('./agentSettingsPatch').AgentSettingsPatch) => Promise<AgentSettings>
     onAppearanceChanged: (listener: (appearance: import('./appTheme').AppAppearance) => void) => () => void
     pickBackground: () => Promise<import('./appTheme').BackgroundMedia | null>
     listAgentModels: (kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => Promise<AiModelInfo[]>
@@ -1517,6 +1568,7 @@ export interface ModMindApi {
     saveAiPreferences: (preferences: BeginnerAiPreferences) => Promise<BeginnerAiPreferences>
     listModels: (force?: boolean) => Promise<AiModelInfo[]>
     getModelCatalog: (force?: boolean) => Promise<import('./quotaModels').QuotaModelCatalog>
+    discoverModels: () => Promise<import('./quotaModels').QuotaModelCatalog>
     refreshConnections: () => Promise<import('./quotaModels').QuotaModelCatalog>
     resetModelSelection: (surface: 'workspace' | 'inspiration') => Promise<void>
     onAiPreferences: (listener: (preferences: BeginnerAiPreferences) => void) => () => void
@@ -1558,8 +1610,11 @@ export interface ModMindApi {
   conversations: {
     list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => Promise<ConversationSummary[]>
     read: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
+    readProjection?: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
     create: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
+    ensureProjection?: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
+    saveProjection?: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
     replaceView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view']) => Promise<ConversationDocument>
     eventsSince: (projectPath: string, conversationId: string, generation: number, afterSequence?: number, limit?: number) => Promise<ConversationEventsPage>
     fork: (projectPath: string, input: ConversationForkInput) => Promise<ConversationDocument>
@@ -1632,6 +1687,8 @@ export interface ModMindApi {
   localTest: LocalTestApi
   production: ProductionApi
   inspiration: {
+    readWorkflow: (projectPath: string, identity: { conversationId: string; turnId: string; generation: number }) => Promise<import('./inspirationKnowledge').InspirationWorkflowRecord | null>
+    commitWorkflow: (projectPath: string, identity: { conversationId: string; turnId: string; generation: number }, edits: Array<{ index: number; title: string; content: string }>, undo?: boolean) => Promise<import('./inspirationKnowledge').InspirationWorkflowRecord>
     listModels: (backend: CodingBackend) => Promise<AiModelInfo[]>
     readEvidence: (projectPath: string, input: import('./inspirationEvidence').InspirationEvidenceRequest) => Promise<import('./inspirationEvidence').InspirationEvidence>
     readKnowledge: (projectPath: string) => Promise<import('./inspirationKnowledge').InspirationNote[]>
@@ -1652,6 +1709,7 @@ export interface ModMindApi {
     createProjectFromJar: (input: import('./decompileModuleExport').CreateProjectFromDecompiledInput) => Promise<ProjectInfo | null>
   }
   featurePlugins: import('./featurePlugins').FeaturePluginApi
+  studios: import('./studios').StudioApi
   imageStudio: {
     getSettings: () => Promise<ImageStudioSettings>
     saveSettings: (settings: ImageStudioSettingsInput) => Promise<ImageStudioSettings>

@@ -59,26 +59,48 @@ export async function archiveSignatureForFile(filePath: string): Promise<'tar' |
 }
 
 export async function extractTar(filePath: string, destination: string, onEntry?: ArchiveEntryCallback): Promise<void> {
-  const source = createReadStream(filePath)
   const signature = await archiveSignatureForFile(filePath)
-  const input: AsyncIterable<Buffer> = signature === 'gzip' ? source.pipe(createGunzip()) : source
+  const source = createReadStream(filePath)
+  const input = signature === 'gzip' ? source.pipe(createGunzip()) : source
+  source.on('error', (error) => input.destroy(error))
   let pending = Buffer.alloc(0)
   let longPath: string | undefined
   let paxPath: string | undefined
   let finished = false
-
-  const take = (size: number): Buffer | null => {
-    if (pending.length < size) return null
-    const result = pending.subarray(0, size)
-    pending = pending.subarray(size)
-    return result
-  }
-
+  let entry: { type: string; remaining: number; padding: number; metadata: Buffer[]; file?: Awaited<ReturnType<typeof fs.open>>; target?: string } | undefined
+  try {
   for await (const chunk of input) {
     pending = Buffer.concat([pending, chunk])
     while (!finished) {
-      const header = take(512)
-      if (!header) break
+      if (entry) {
+        const count = Math.min(pending.length, entry.remaining)
+        if (count) {
+          const payload = pending.subarray(0, count)
+          if (entry.file) {
+            let offset = 0
+            while (offset < payload.length) {
+              const { bytesWritten } = await entry.file.write(payload, offset, payload.length - offset)
+              if (!bytesWritten) throw new Error('TAR output write made no progress')
+              offset += bytesWritten
+            }
+          } else if (entry.type === 'x' || entry.type === 'L') entry.metadata.push(Buffer.from(payload))
+          pending = pending.subarray(count)
+          entry.remaining -= count
+        }
+        if (entry.remaining) break
+        const skip = Math.min(pending.length, entry.padding)
+        pending = pending.subarray(skip)
+        entry.padding -= skip
+        if (entry.padding) break
+        if (entry.file) await entry.file.close()
+        if (entry.type === 'x') paxPath = parsePaxPath(Buffer.concat(entry.metadata))
+        if (entry.type === 'L') longPath = Buffer.concat(entry.metadata).toString('utf8').replace(/\0+$/, '')
+        entry = undefined
+        continue
+      }
+      if (pending.length < 512) break
+      const header = pending.subarray(0, 512)
+      pending = pending.subarray(512)
       if (isZeroBlock(header)) {
         finished = true
         break
@@ -88,18 +110,9 @@ export async function extractTar(filePath: string, destination: string, onEntry?
       const prefix = text(header.subarray(345, 500))
       const headerPath = prefix ? `${prefix}/${name}` : name
       const size = octal(header.subarray(124, 136))
-      const blocks = Math.ceil(size / 512)
-      if (pending.length < blocks * 512) {
-        pending = Buffer.concat([header, pending])
-        break
-      }
-      const payload = take(blocks * 512)!.subarray(0, size)
-      if (type === 'x') {
-        paxPath = parsePaxPath(payload)
-        continue
-      }
-      if (type === 'L') {
-        longPath = payload.toString('utf8').replace(/\0+$/, '')
+      entry = { type, remaining: size, padding: (512 - size % 512) % 512, metadata: [] }
+      if (type === 'x' || type === 'L') {
+        if (size > 64 * 1024) throw new Error('TAR path metadata exceeds 64 KiB')
         continue
       }
       const entryPath = safeEntryPath(paxPath ?? longPath ?? headerPath)
@@ -113,9 +126,19 @@ export async function extractTar(filePath: string, destination: string, onEntry?
         await fs.mkdir(target, { recursive: true })
       } else if (type === '0') {
         await fs.mkdir(path.dirname(target), { recursive: true })
-        await fs.writeFile(target, payload)
+        entry.target = target
+        entry.file = await fs.open(target, 'w')
       }
     }
+    if (finished) break
   }
   if (!finished) throw new Error('TAR archive ended before its end-of-archive marker')
+  } finally {
+    if (entry?.file) {
+      await entry.file.close().catch(() => undefined)
+      if (entry.target) await fs.rm(entry.target, { force: true }).catch(() => undefined)
+    }
+    input.destroy()
+    source.destroy()
+  }
 }

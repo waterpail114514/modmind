@@ -1,0 +1,18 @@
+.agent-picker-menu:has(.conversation-picker-list) { display: flex; flex-direction: column; max-height: min(360px, calc(100dvh - 100px)); overflow: hidden; }
+.conversation-picker-list { min-width: 0; min-height: 0; width: 100%; }
+.conversation-picker-search { display: flex; align-items: center; gap: 4px; margin-bottom: 5px; }
+.conversation-picker-search input { flex: 1; min-width: 0; width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--agent-fill-3); border-radius: 5px; color: var(--agent-text-1); background: var(--agent-surface); font: inherit; font-size: 12px; }
+.agent-picker-menu .conversation-picker-search > button { flex: 0 0 auto; width: auto; min-height: 32px; padding: 0 7px; font-size: 11px; }
+.conversation-picker-virtual-list { max-height: max(80px, calc(100dvh - 220px)); overscroll-behavior: contain; }
+.conversation-picker-virtual-list .agent-conversation-item, .conversation-picker-virtual-list .inspiration-conversation-option { height: 40px; min-height: 40px; box-sizing: border-box; }
+.conversation-picker-virtual-list .inspiration-conversation-option > .inspiration-conversation-select { min-width: 0; }
+.conversation-picker-virtual-list .inspiration-conversation-select > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.conversation-picker-search input:focus-visible { outline: 2px solid var(--focus-stroke); outline-offset: -1px; }
+.agent-history-state { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; width: min(800px, calc(100% - 40px)); margin: 12px auto; color: var(--agent-text-2); font-size: 12px; }
+.agent-history-state > svg { flex: 0 0 auto; }
+.agent-history-state > div { flex: 1 1 180px; min-width: 0; display: grid; gap: 4px; }
+.agent-history-state strong { font-size: 13px; font-weight: 500; }
+.agent-history-state span { overflow-wrap: anywhere; }
+.agent-history-state.error > svg { color: var(--theme-danger); }
+.agent-history-placeholder { flex: 1; min-height: 80px; }
+@container (max-width: 600px) { .agent-history-state { width: calc(100% - 28px); } }

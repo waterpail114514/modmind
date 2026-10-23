@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "versions",
   "name": "版本记录",
-  "version": "1.5.0-plugintest",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -24,5 +24,23 @@
       "name": "版本记录",
       "description": "创建、查看、恢复和删除项目快照，管理 Git 版本以及 Java 与服务端插件迁移。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
     }
+  ],
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack",
+    "minecraft-server-plugin"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge",
+    "bedrock",
+    "netease-pc",
+    "netease-mobile",
+    "paper",
+    "spigot",
+    "folia",
+    "velocity"
   ]
 }

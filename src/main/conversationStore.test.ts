@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConversationStore } from './conversationStore'
 import { WorkbenchDataStore } from './workbenchDataStore'
 
@@ -34,6 +34,206 @@ async function fixture(): Promise<{ project: string; userData: string; data: Wor
 }
 
 describe('ConversationStore', () => {
+  it('rejects reads and appends when the sole existing journal is unreadable', async () => {
+    const { project, userData, store } = await fixture()
+    const id = 'ws-denied'
+    await store.ensureProjection(project, { id, surface: 'workspace' })
+    await store.appendUser(project, id, 0, 'first', 'must remain')
+    const buckets = await fs.readdir(path.join(userData, 'workbench-journal'))
+    const primary = path.join(project, '.modmind', 'workbench-journal', id, 'events.jsonl')
+    await fs.rm(path.join(userData, 'workbench-journal', buckets[0], id, 'events.jsonl'))
+    await fs.rm(path.join(project, '.modmind', 'conversations-v3', `${id}.jsonl`))
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    const originalStat = fs.stat.bind(fs)
+    const mock = vi.spyOn(fs, 'stat').mockImplementation((async (target: Parameters<typeof fs.stat>[0]) => {
+      if (String(target) === primary) throw Object.assign(new Error('read denied'), { code: 'EACCES' })
+      return originalStat(target)
+    }) as typeof fs.stat)
+    try {
+      await expect(reopened.readProjection(project, id)).rejects.toThrow('could not be read')
+      await expect(reopened.eventsSince(project, id, 0)).rejects.toThrow('could not be read')
+      await expect(reopened.appendUser(project, id, 0, 'second', 'must not write')).rejects.toThrow('could not be read')
+    } finally { mock.mockRestore() }
+    expect((await reopened.readProjection(project, id))?.lastSequence).toBe(1)
+    expect((await reopened.appendUser(project, id, 0, 'second', 'safe retry')).sequence).toBe(2)
+  })
+
+  it('retains an index compaction watermark when cleanup leaves a stale replica', async () => {
+    const { project, userData, store } = await fixture()
+    await store.ensureProjection(project, { id: 'ws-deleted', surface: 'workspace' })
+    const compatibility = path.join(project, '.modmind', 'conversations-v3', 'index-updates.jsonl')
+    const counters = (store as unknown as { indexWrites: Map<string, number> }).indexWrites
+    counters.set(`${project.toLowerCase()}\n$conversation-index`, 1_023)
+    const open = fs.open.bind(fs), remove = fs.rm.bind(fs)
+    const openMock = vi.spyOn(fs, 'open').mockImplementation((async (target, flags, ...args) => {
+      if (String(target) === compatibility && flags === 'a+') throw Object.assign(new Error('append denied'), { code: 'EACCES' })
+      return open(target, flags, ...args)
+    }) as typeof fs.open)
+    const removeMock = vi.spyOn(fs, 'rm').mockImplementation((async (target, ...args) => {
+      if (String(target) === compatibility) throw Object.assign(new Error('cleanup denied'), { code: 'EACCES' })
+      return remove(target, ...args)
+    }) as typeof fs.rm)
+    try { await store.delete(project, 'ws-deleted') }
+    finally { openMock.mockRestore(); removeMock.mockRestore() }
+    expect(await store.list(project)).toEqual([])
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    expect(await reopened.list(project)).toEqual([])
+    // A restarted logical clock must advance past the compacted watermark too.
+    await reopened.ensureProjection(project, { id: 'ws-new', surface: 'workspace' })
+    expect((await reopened.list(project)).map(summary => summary.id)).toEqual(['ws-new'])
+  })
+
+  it('uses projection, indexed pages and append without replaying all journal strings', async () => {
+    const { project, store, data } = await fixture()
+    await store.ensureProjection(project, { id: 'ws-projection', surface: 'workspace' })
+    const fullJournal = vi.spyOn(data, 'readJournal')
+    await store.appendUser(project, 'ws-projection', 0, 'first', { prompt: 'retain' })
+    const saved = await store.saveProjection(project, 'ws-projection', 0, { timeline: [{ sequence: 1, content: 'retain' }] })
+    expect(saved).toMatchObject({ events: [], lastSequence: 1, checkpointSequence: 1 })
+    expect((await store.ensureProjection(project, { id: 'ws-projection', surface: 'workspace' })).events).toEqual([])
+    expect((await store.readProjection(project, 'ws-projection'))?.lastSequence).toBe(1)
+    expect((await store.eventsSince(project, 'ws-projection', 0)).events).toHaveLength(1)
+    expect(fullJournal).not.toHaveBeenCalled()
+  })
+
+  it('invalidates offsets for external edits and keeps the latest duplicate across replicas', async () => {
+    const { project, userData, store, data } = await fixture()
+    await store.create(project, { id: 'ws-offsets', surface: 'workspace' })
+    const events = Array.from({ length: 1_025 }, (_, index) => ({ eventId: `e-${index}`, conversationId: 'ws-offsets', generation: 0, turnId: 'turn', sequence: index + 1, kind: 'system', time: 'T', payload: index }))
+    await data.appendJournal(project, '.modmind/conversations-v3/ws-offsets.jsonl', events.map(event => JSON.stringify(event)).join('\n') + '\n')
+    expect((await store.eventsSince(project, 'ws-offsets', 0, 1_024, 1)).events[0].sequence).toBe(1_025)
+    // Move the first event to the end in just one replica. Pages must deduplicate
+    // before applying their sequence window, matching a complete recovery read.
+    const replacement = { ...events[0], sequence: 2_000, payload: 'newest' }
+    const compatibility = path.join(project, '.modmind', 'conversations-v3', 'ws-offsets.jsonl')
+    await fs.appendFile(compatibility, JSON.stringify(replacement) + '\n')
+    expect((await store.eventsSince(project, 'ws-offsets', 0, 0, 1)).events.map(event => event.sequence)).toEqual([2])
+    expect((await store.readProjection(project, 'ws-offsets'))?.lastSequence).toBe(2_000)
+    expect((await store.eventsSince(project, 'ws-offsets', 0, 1_999, 1)).events[0].payload).toBe('newest')
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    expect((await reopened.eventsSince(project, 'ws-offsets', 0, 0, 2)).events.map(event => event.sequence)).toEqual([2, 3])
+    // The event truth survives corruption of both kinds of disposable index.
+    await fs.writeFile(`${compatibility}.offsets.json`, '{}')
+    await fs.writeFile(`${compatibility}.offsets.bin`, 'broken')
+    const repaired = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(repaired)
+    expect((await repaired.eventsSince(project, 'ws-offsets', 0, 1_999, 1)).events[0].sequence).toBe(2_000)
+  })
+
+  it('serializes sequences and generation changes across independent store instances', async () => {
+    const { project, userData, store } = await fixture()
+    const other = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(other)
+    await store.ensureProjection(project, { id: 'ws-shared', surface: 'workspace' })
+    const appended = await Promise.all(Array.from({ length: 8 }, (_, index) => (index % 2 ? other : store).appendUser(project, 'ws-shared', 0, `t-${index}`, index)))
+    expect(appended.map(event => event.sequence).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    await other.replaceView(project, 'ws-shared', 0, {})
+    await expect(store.saveProjection(project, 'ws-shared', 0, {})).rejects.toThrow('新分支')
+    await expect(store.eventsSince(project, 'ws-shared', 0)).rejects.toThrow('重新载入历史')
+    expect((await store.appendUser(project, 'ws-shared', 1, 'fresh', null)).sequence).toBe(1)
+  })
+
+  it('splits a stream batch larger than 8 MiB without rejecting valid individual events', async () => {
+    const { project, store } = await fixture()
+    await store.ensureProjection(project, { id: 'ws-batch', surface: 'workspace' })
+    const jobs = Array.from({ length: 20 }, (_, index) => store.appendOutput(project, { kind: 'delta', content: `${index}:` + 'x'.repeat(450_000), time: 'T', conversationId: 'ws-batch', generation: 0, turnId: 'turn' }))
+    await store.flush()
+    const results = await Promise.all(jobs)
+    expect(results.map(event => event.sequence)).toEqual(Array.from({ length: 20 }, (_, index) => index + 1))
+    expect((await store.eventsSince(project, 'ws-batch', 0)).events).toHaveLength(20)
+  }, 30_000)
+
+  it('updates a large compatible summary baseline without rewriting it for each mutation', async () => {
+    const { project, userData, store, data } = await fixture()
+    const template = await store.create(project, { id: 'ws-summary', surface: 'workspace' })
+    const summaries = Array.from({ length: 2_000 }, (_, index) => ({ ...template, id: `ws-${index}`, events: undefined, view: undefined, native: undefined, nativeTurns: undefined }))
+    await data.write(project, '.modmind/conversations-v2/index.json', JSON.stringify(summaries))
+    const before = await data.read(project, '.modmind/conversations-v2/index.json')
+    await store.rename(project, 'ws-summary', 'changed')
+    await store.appendUser(project, 'ws-summary', 0, 't', 'continue')
+    expect((await data.read(project, '.modmind/conversations-v2/index.json')).revision).toBe(before.revision)
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    expect((await reopened.list(project)).find(summary => summary.id === 'ws-summary')?.title).toBe('changed')
+    await reopened.delete(project, 'ws-summary')
+    expect((await store.list(project)).some(summary => summary.id === 'ws-summary')).toBe(false)
+  })
+
+  it('reads and appends beyond the JavaScript argument-count limit from a real journal', async () => {
+    const { project, store, userData } = await fixture()
+    await store.create(project, { id: 'ws-large', surface: 'workspace' })
+    const count = 150_000
+    const lines = Array.from({ length: count }, (_, index) => JSON.stringify({ eventId: `e-${index}`, conversationId: 'ws-large', generation: 0, turnId: 'turn', sequence: index + 1, kind: 'user', time: 'T', payload: { prompt: 'retained' } })).join('\n') + '\n'
+    const journal = path.join(project, '.modmind', 'conversations-v3', 'ws-large.jsonl')
+    await fs.mkdir(path.dirname(journal), { recursive: true })
+    await fs.writeFile(journal, lines)
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    const page = await reopened.eventsSince(project, 'ws-large', 0, count - 1, 1)
+    expect(page.events.map(event => event.sequence)).toEqual([count])
+    const first = await reopened.eventsSince(project, 'ws-large', 0, 0, 5_000)
+    expect(first.events).toHaveLength(5_000)
+    expect([first.events[0].sequence, first.events.at(-1)?.sequence, first.nextSequence]).toEqual([1, 5_000, 5_000])
+    const second = await reopened.eventsSince(project, 'ws-large', 0, first.nextSequence!, 5_000)
+    expect([second.events[0].sequence, second.events.at(-1)?.sequence, second.nextSequence]).toEqual([5_001, 10_000, 10_000])
+    expect((await reopened.appendUser(project, 'ws-large', 0, 'new-turn', { prompt: 'next' })).sequence).toBe(count + 1)
+  }, 30_000)
+  it('retains borrowed and shared native sessions when deleting conversation records', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native', undefined, undefined, 'managed-home')
+    const branch = await store.fork(project, { sourceConversationId: 'ws-parent', backend: 'codex', view: {} })
+    expect(await store.nativeSessionsForDeletion(project, branch.id)).toEqual({})
+    expect(await store.nativeSessionsForDeletion(project, 'ws-parent')).toEqual({})
+    await store.setNativeState(project, branch.id, branch.generation, 'codex', 'branch-native', undefined, undefined, 'managed-home')
+    expect((await store.nativeSessionsForDeletion(project, branch.id)).codex?.sessionId).toBe('branch-native')
+    expect((await store.nativeSessionsForDeletion(project, 'ws-parent')).codex?.sessionId).toBe('parent-native')
+  })
+  it('blocks a fork until native deletion and parent removal finish', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native')
+    const nativeFile = path.join(project, 'native-session.jsonl')
+    await fs.writeFile(nativeFile, 'native history')
+    let started!: () => void
+    let release!: () => void
+    const deleting = new Promise<void>(resolve => { started = resolve })
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    const deletion = store.delete(project, 'ws-parent', async sessions => {
+      expect(sessions.codex?.sessionId).toBe('parent-native')
+      started()
+      await barrier
+      await fs.unlink(nativeFile)
+    })
+    await deleting
+    const fork = store.fork(project, { sourceConversationId: 'ws-parent', id: 'ws-branch', backend: 'codex', view: {} })
+      .then(value => ({ value }), error => ({ error }))
+    release()
+    await deletion
+    expect(await fork).toEqual({ error: expect.objectContaining({ message: '要分支的原对话不存在' }) })
+    expect(await store.read(project, 'ws-branch')).toBeNull()
+    await expect(fs.stat(nativeFile)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+  it('preserves the native session when a fork precedes parent deletion', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native')
+    const nativeFile = path.join(project, 'native-session.jsonl')
+    await fs.writeFile(nativeFile, 'native history')
+    const fork = store.fork(project, { sourceConversationId: 'ws-parent', id: 'ws-branch', backend: 'codex', view: {} })
+    const deletion = store.delete(project, 'ws-parent', async sessions => {
+      expect(sessions).toEqual({})
+      if (sessions.codex) await fs.unlink(nativeFile)
+    })
+    await Promise.all([fork, deletion])
+    expect((await store.read(project, 'ws-branch'))?.native.codex?.sessionId).toBe('parent-native')
+    expect(await fs.readFile(nativeFile, 'utf8')).toBe('native history')
+  })
+  it('preserves the parent and releases the lifecycle lane if native deletion fails', async () => {
+    const { project, store } = await fixture()
+    await store.create(project, { id: 'ws-parent', surface: 'workspace' })
+    await store.setNativeState(project, 'ws-parent', 0, 'codex', 'parent-native')
+    await expect(store.delete(project, 'ws-parent', async () => { throw new Error('native unavailable') })).rejects.toThrow('native unavailable')
+    const branch = await store.fork(project, { sourceConversationId: 'ws-parent', backend: 'codex', view: {} })
+    expect(branch.native.codex?.sessionId).toBe('parent-native')
+    expect(await store.read(project, 'ws-parent')).not.toBeNull()
+  })
   it('keeps pinned conversations first and protects manual names from late AI or view saves', async () => {
     const { project, store, userData } = await fixture()
     await store.create(project, { id: 'ws-first', surface: 'workspace', title: '用户首问' })
@@ -88,7 +288,7 @@ describe('ConversationStore', () => {
     expect(restored?.events).toEqual([])
     await reopened.replaceView(project, updated.id, 1, { messages: [] })
     expect((await reopened.read(project, updated.id))?.view.messages).toEqual([])
-    expect(await reopened.eventsSince(project, updated.id, 0)).toMatchObject({ events: [] })
+    await expect(reopened.eventsSince(project, updated.id, 0)).rejects.toThrow('重新载入历史')
   })
 
   it('rejects a queued old stream when replacing history and accepts the new generation', async () => {

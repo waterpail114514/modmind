@@ -1,5 +1,6 @@
+import { serializeProjectMutation } from './projectMutation'
 import { assertContentTarget } from './contentInstallTransaction'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, type Dirent } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -96,11 +97,11 @@ export function createModpackManifest(project: ProjectInfo): ModpackManifest {
   }
 }
 
-export async function writeModpackManifest(project: ProjectInfo, manifest: ModpackManifest): Promise<ModpackManifest> {
+export const writeModpackManifest = serializeProjectMutation(async function writeModpackManifest(project: ProjectInfo, manifest: ModpackManifest): Promise<ModpackManifest> {
   if (!isModpackProject(project)) throw new Error('The active project is not a modpack')
   validateManifest(manifest)
   const target = manifestPath(project)
-  const pending = `${target}.pending`
+  const pending = `${target}.pending-${randomUUID()}`
   await fs.writeFile(pending, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   try {
     await fs.rename(pending, target)
@@ -111,7 +112,7 @@ export async function writeModpackManifest(project: ProjectInfo, manifest: Modpa
     try { listener(project.path) } catch { /* UI notifications must not fail an already completed write. */ }
   }
   return manifest
-}
+})
 
 export async function readModpackManifest(project: ProjectInfo): Promise<ModpackManifest> {
   if (!isModpackProject(project)) throw new Error('The active project is not a modpack')
@@ -172,6 +173,42 @@ function validateManifest(manifest: ModpackManifest): void {
   if (manifest.source && !normalizeImportSource(manifest.source)) throw new Error(`${MODPACK_MANIFEST} 的 source 字段无效`)
 }
 
+const modRefreshes = new Map<string, Promise<ModpackManifest>>()
+
+export function refreshModpackMods(project: ProjectInfo): Promise<ModpackManifest> {
+  const key = path.resolve(project.path)
+  const pending = modRefreshes.get(key)
+  if (pending) return pending
+  const refresh = scanModpackMods(project).finally(() => { modRefreshes.delete(key) })
+  modRefreshes.set(key, refresh)
+  return refresh
+}
+
+async function scanModpackMods(project: ProjectInfo): Promise<ModpackManifest> {
+  const manifest = await readModpackManifest(project)
+  const directory = modpackModsRoot(project, manifest)
+  const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  })
+  const previous = new Map(manifest.mods.map(mod => [mod.fileName.toLowerCase(), mod]))
+  const mods: ModpackManagedMod[] = []
+  // Bound open file streams when scanning large packs; every refresh verifies the actual bytes.
+  const jars = entries.filter(entry => entry.isFile() && isSafeModJarFileName(entry.name))
+  for (let offset = 0; offset < jars.length; offset += 4) {
+    mods.push(...await Promise.all(jars.slice(offset, offset + 4).map(async entry => {
+      const record = await fileRecord(path.join(directory, entry.name), entry.name, manifest.source ? 0 : 1_024)
+      const old = previous.get(entry.name.toLowerCase())
+      return { ...record, addedAt: old?.addedAt ?? record.addedAt }
+    })))
+  }
+  mods.sort((left, right) => left.fileName.localeCompare(right.fileName))
+  // Keep upstream locks untouched so audits can still detect missing or replaced files.
+  const current = await readModpackManifest(project)
+  if (JSON.stringify(current.mods) === JSON.stringify(mods)) return current
+  return writeModpackManifest(project, { ...current, mods })
+}
+
 export async function createModpackTemplate(project: ProjectInfo): Promise<void> {
   const manifest = createModpackManifest(project)
   await fs.mkdir(path.join(project.path, 'mods'), { recursive: true })
@@ -181,7 +218,7 @@ export async function createModpackTemplate(project: ProjectInfo): Promise<void>
   await fs.writeFile(path.join(project.path, 'README.md'), '# Modpack workspace\n\nManage third-party JARs in `mods/`, pack overrides in `overrides/`, and editable self-made mods in `modules/`.\n', 'utf8')
 }
 
-export async function adoptExternalModpack(project: ProjectInfo, source: ModpackImportSource): Promise<ModpackManifest> {
+export const adoptExternalModpack = serializeProjectMutation(async function adoptExternalModpack(project: ProjectInfo, source: ModpackImportSource): Promise<ModpackManifest> {
   if (!isModpackProject(project)) throw new Error('The active project is not a modpack')
   const modsDirectory = modpackModsRoot(project, source)
   await fs.mkdir(modsDirectory, { recursive: true })
@@ -198,7 +235,7 @@ export async function adoptExternalModpack(project: ProjectInfo, source: Modpack
   await writeModpackManifest(project, { ...createModpackManifest(project), mods: mods.sort((left, right) => left.fileName.localeCompare(right.fileName)), modules: previous?.modules ?? [], source })
   if (source.format === 'modrinth') await registerImportedModrinthFiles(project)
   return reconcileImportedModpack(project)
-}
+})
 
 async function registerImportedModrinthFiles(project: ProjectInfo): Promise<void> {
   const files = await readImportedModrinthFiles(project.path)
@@ -231,7 +268,7 @@ async function registerImportedModrinthFiles(project: ProjectInfo): Promise<void
   await registerImportedPackContent(project, content)
 }
 
-export async function reconcileImportedModpack(project: ProjectInfo): Promise<ModpackManifest> {
+export const reconcileImportedModpack = serializeProjectMutation(async function reconcileImportedModpack(project: ProjectInfo): Promise<ModpackManifest> {
   const manifest = await readModpackManifest(project)
   if (manifest.source?.format !== 'curseforge') return manifest
   const state = await reconcileCurseForgePack(project.path, modpackOverridesRoot(project, manifest))
@@ -266,7 +303,7 @@ export async function reconcileImportedModpack(project: ProjectInfo): Promise<Mo
   await writeModpackLock(project, lock)
   await registerImportedPackContent(project, content)
   return writeModpackManifest(project, { ...manifest, source })
-}
+})
 
 export async function assertModpackDependenciesReady(project: ProjectInfo): Promise<ModpackManifest> {
   const manifest = await reconcileImportedModpack(project)
@@ -331,7 +368,7 @@ async function fileRecord(filePath: string, fileName: string, minimumSize = 1_02
   }
 }
 
-export async function addModpackFiles(project: ProjectInfo, sources: string[]): Promise<ModpackManifest> {
+export const addModpackFiles = serializeProjectMutation(async function addModpackFiles(project: ProjectInfo, sources: string[]): Promise<ModpackManifest> {
   const manifest = await readModpackManifest(project)
   const additions = await Promise.all(sources.map(async (source) => {
     const fileName = safeJarFileName(source)
@@ -345,9 +382,9 @@ export async function addModpackFiles(project: ProjectInfo, sources: string[]): 
   for (const entry of additions) mods.set(entry.fileName.toLowerCase(), entry)
   await writeModpackManifest(project, { ...manifest, mods: [...mods.values()].sort((left, right) => left.fileName.localeCompare(right.fileName)) })
   return reconcileImportedModpack(project)
-}
+})
 
-export async function removeModpackFile(project: ProjectInfo, fileName: string): Promise<ModpackManifest> {
+export const removeModpackFile = serializeProjectMutation(async function removeModpackFile(project: ProjectInfo, fileName: string): Promise<ModpackManifest> {
   if (!isSafeModJarFileName(fileName)) throw new Error('Invalid mod file name')
   const manifest = await readModpackManifest(project)
   await fs.rm(path.join(modpackModsRoot(project, manifest), fileName), { force: true })
@@ -358,22 +395,22 @@ export async function removeModpackFile(project: ProjectInfo, fileName: string):
     await writeModpackLock(project, { ...lock, mods: lock.mods.filter((mod) => mod.fileName.toLowerCase() !== normalizedFileName) })
   }
   return nextManifest.source?.format === 'curseforge' ? reconcileImportedModpack(project) : nextManifest
-}
+})
 
-export async function addModpackModule(project: ProjectInfo, module: ModpackLocalModule): Promise<ModpackManifest> {
+export const addModpackModule = serializeProjectMutation(async function addModpackModule(project: ProjectInfo, module: ModpackLocalModule): Promise<ModpackManifest> {
   const manifest = await readModpackManifest(project)
   const modules = [...manifest.modules.filter((entry) => entry.namespace !== module.namespace), { ...module, side: module.side ?? 'both' }]
   return writeModpackManifest(project, { ...manifest, modules })
-}
+})
 
-export async function updateModpackModuleSide(project: ProjectInfo, namespace: string, side: ModpackModuleSide): Promise<ModpackManifest> {
+export const updateModpackModuleSide = serializeProjectMutation(async function updateModpackModuleSide(project: ProjectInfo, namespace: string, side: ModpackModuleSide): Promise<ModpackManifest> {
   if (!/^[a-z0-9_]{1,64}$/.test(namespace) || !['client', 'server', 'both', 'unknown'].includes(side)) throw new Error('invalid self-made mod side')
   const manifest = await readModpackManifest(project)
   if (!manifest.modules.some((module) => module.namespace === namespace)) throw new Error('self-made mod was not found')
   return writeModpackManifest(project, { ...manifest, modules: manifest.modules.map((module) => module.namespace === namespace ? { ...module, side } : module) })
-}
+})
 
-export async function removeModpackModule(project: ProjectInfo, namespace: string, trash: (target: string) => Promise<void>): Promise<ModpackManifest> {
+export const removeModpackModule = serializeProjectMutation(async function removeModpackModule(project: ProjectInfo, namespace: string, trash: (target: string) => Promise<void>): Promise<ModpackManifest> {
   if (!/^[a-z0-9_]{1,64}$/.test(namespace)) throw new Error('自制模组标识无效')
   const manifest = await readModpackManifest(project)
   const module = manifest.modules.find((entry) => entry.namespace === namespace)
@@ -405,7 +442,7 @@ export async function removeModpackModule(project: ProjectInfo, namespace: strin
     }
   }
   return updated
-}
+})
 
 async function collectPackEntries(root: string, prefix: string, include: (relative: string) => boolean = () => true): Promise<Array<{ name: string; path: string }>> {
   const entries: Array<{ name: string; path: string }> = []
@@ -426,7 +463,7 @@ async function collectPackEntries(root: string, prefix: string, include: (relati
 function isInstanceOverride(relative: string): boolean {
   const top = relative.split('/')[0].toLowerCase()
   if (top === 'mods') return !/\.jar$/i.test(relative)
-  return !['.modmind', '.git', 'mods', 'modules', 'logs', 'crash-reports', 'saves', 'screenshots', 'assets', 'libraries', 'versions', 'natives', 'downloads', 'build', 'out', 'run'].includes(top)
+  return !['.modmind', '.git', 'mods', 'modules', 'client-overrides', 'server-overrides', 'logs', 'crash-reports', 'saves', 'screenshots', 'assets', 'libraries', 'versions', 'natives', 'downloads', 'build', 'out', 'run'].includes(top)
     && !['modmind.project.json', 'modmind.pack.json', 'modrinth.index.json', 'manifest.json', 'minecraftinstance.json', 'modlist.html', 'instance.cfg', 'mmc-pack.json'].includes(top)
 }
 
@@ -459,17 +496,29 @@ function managedDestination(root: string, relative: string): string {
 }
 
 /** Copies pack configuration and assets to a managed test instance without touching user-owned files. */
-export async function syncModpackOverrides(project: ProjectInfo, destinationRoot: string, previousFiles: string[] = []): Promise<string[]> {
+export async function syncModpackOverrides(project: ProjectInfo, destinationRoot: string, previousFiles: string[] = [], side: 'client' | 'server' = 'client'): Promise<string[]> {
   const manifest = await readModpackManifest(project)
   const sourceRoot = modpackOverridesRoot(project, manifest)
-  const managedPaths = new Set((await readManagedModpackContent(project)).items.map((item) => item.path))
+  const content = (await readManagedModpackContent(project)).items
+  const managedPaths = new Set(content.map((item) => item.path))
   const previous = previousFiles.filter((value) => typeof value === 'string' && safeRelativeOverride(value))
-  const files = await collectOverrideFiles(sourceRoot, excludesModsFromOverrides(manifest), managedPaths)
+  const filesByPath = new Map((await collectOverrideFiles(sourceRoot, excludesModsFromOverrides(manifest), managedPaths))
+    .filter(relative => !content.some(item => item.scope !== 'common' && item.scope !== side && (relative === item.path || relative.startsWith(`${item.path}/`))))
+    .map(relative => [relative, managedDestination(sourceRoot, relative)]))
+  const sideRoot = path.join(project.path, `${side}-overrides`)
+  for (const relative of await collectOverrideFiles(sideRoot, false, new Set())) filesByPath.set(relative, managedDestination(sideRoot, relative))
+  const files = [...filesByPath.keys()]
   const current = new Set(files)
-  await Promise.all(previous.filter((relative) => !current.has(relative)).map((relative) => fs.rm(managedDestination(destinationRoot, relative), { force: true })))
+  await Promise.all(previous.filter((relative) => !current.has(relative)).map(async relative => {
+    const target = managedDestination(destinationRoot, relative)
+    await assertContentTarget(destinationRoot, target)
+    await fs.rm(target, { force: true })
+  }))
   for (const relative of files) {
-    const source = managedDestination(sourceRoot, relative)
+    const source = filesByPath.get(relative)!
     const destination = managedDestination(destinationRoot, relative)
+    await assertContentTarget(project.path, source)
+    await assertContentTarget(destinationRoot, destination)
     const sourceStat = await fs.stat(source)
     const destinationStat = await fs.stat(destination).catch(() => null)
     if (destinationStat?.size === sourceStat.size && await sha256File(source) === await sha256File(destination)) continue
@@ -672,6 +721,13 @@ export async function createModrinthPackArchive(project: ProjectInfo, release: {
     }
     const overrideEntries = await collectPackEntries(overrides, 'overrides', include)
     for (const entry of overrideEntries) entries.push(await readExportEntry(entry.path, entry.name, budget))
+  }
+  for (const side of ['client', 'server']) {
+    const prefix = `${side}-overrides`
+    const root = path.join(project.path, prefix)
+    await assertContentTarget(project.path, root)
+    if (!await fs.stat(root).then(stat => stat.isDirectory()).catch(() => false)) continue
+    for (const entry of await collectPackEntries(root, prefix)) entries.push(await readExportEntry(entry.path, entry.name, budget))
   }
   entries.push({ name: 'modrinth.index.json', data: Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8') })
   const duplicateNames = entries.map((entry) => entry.name).filter((name, index, all) => all.indexOf(name) !== index)

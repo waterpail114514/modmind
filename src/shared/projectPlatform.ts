@@ -31,5 +31,5 @@ export function platformLabel(platform: LoaderKind): string {
     'netease-pc': '网易版 PC',
     'netease-mobile': '网易版手游'
   }
-  return labels[platform]
+  return labels[platform] ?? platform
 }

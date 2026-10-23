@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "model-studio",
   "name": "模型",
-  "version": "1.5.0-plugintest-r7",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -27,5 +27,23 @@
   ],
   "assets": {
     "blockbench": "feature-plugins/model-studio/assets/blockbench"
-  }
+  },
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack",
+    "minecraft-server-plugin"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge",
+    "bedrock",
+    "netease-pc",
+    "netease-mobile",
+    "paper",
+    "spigot",
+    "folia",
+    "velocity"
+  ]
 }

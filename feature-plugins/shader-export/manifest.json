@@ -1,0 +1,129 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "shader-export",
+  "name": "检查与导出",
+  "version": "1.0.1",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "dependencies": [
+    "studio-shader"
+  ],
+  "capabilities": [
+    {
+      "id": "shader-export",
+      "name": "检查与导出",
+      "description": "检查 include、GLSL 语法和渲染阶段，导出带 SHA-256 与工程版本的独立光影 ZIP。"
+    }
+  ],
+  "views": [
+    {
+      "id": "shader-export",
+      "label": "检查与导出",
+      "component": "ShaderExport",
+      "icon": "PackageCheck",
+      "group": "测试与构建",
+      "order": 50,
+      "loaders": [
+        "iris"
+      ],
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "inventory",
+              "validate"
+            ]
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    },
+    {
+      "id": "package",
+      "handler": "package",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    },
+    {
+      "id": "export",
+      "handler": "export",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_shader_validate",
+      "action": "query",
+      "description": "Read active shader inventory (inventory) or run static GLSL syntax, include boundary/cycle, stage pairing and delivery license checks (validate). Return structured issues, parsed/skipped stages and exact revision. Syntax-checked is not full OpenGL compilation and does not prove Iris in-game behavior."
+    },
+    {
+      "name": "modmind_shader_export",
+      "action": "package",
+      "description": "Validate and export the current Iris shader pack as a ZIP under build. Returns verified path, SHA-256, project revision and syntax report. Never packages project metadata or recovery history. This does not prove in-game behavior; use the separately installed testing module for runtime evidence."
+    }
+  ],
+  "studioIds": [
+    "minecraft-shader"
+  ],
+  "loaders": [
+    "iris"
+  ]
+}

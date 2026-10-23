@@ -36,6 +36,7 @@ jobs:
           test "$(node -p process.arch)" = "${{ matrix.arch }}"
           test "$(uname -m)" = "${{ matrix.machine }}"
       - run: npm ci
+      - run: npm run sync:mcp
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

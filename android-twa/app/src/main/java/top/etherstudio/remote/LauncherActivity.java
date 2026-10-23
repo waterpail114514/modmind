@@ -3,8 +3,6 @@ package top.etherstudio.remote;
 import android.net.Uri;
 import android.os.Bundle;
 
-import com.google.androidbrowserhelper.trusted.LauncherActivity;
-
 /**
  * Opens the Ether Studio remote control page inside a Trusted Web Activity.
  *
@@ -12,7 +10,7 @@ import com.google.androidbrowserhelper.trusted.LauncherActivity;
  * path changes on the site; only this constant would need updating if the
  * origin itself ever moves (which would also require new assetlinks.json).
  */
-public class LauncherActivity extends LauncherActivity {
+public class LauncherActivity extends com.google.androidbrowserhelper.trusted.LauncherActivity {
     private static final Uri LAUNCH_URL = Uri.parse("https://ether-studio.top/");
 
     @Override

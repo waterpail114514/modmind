@@ -49,10 +49,10 @@ export interface FeatureStoreSnapshot {
   cached: boolean
   job?: FeatureStoreJob
 }
-export function featureGroups(definition?: Pick<FeaturePluginDefinition, 'views'>): string[] {
-  return [...new Set(definition?.views?.map(view => view.group ?? '工具') ?? [])].filter(Boolean).slice(0,16).sort((a,b) => a.localeCompare(b, 'zh-CN'))
+export function featureGroups(definition?: Pick<FeaturePluginDefinition, 'views' | 'studios'>): string[] {
+  return [...new Set([...(definition?.studios?.length ? ['工作台'] : []), ...(definition?.views?.map(view => view.group ?? '工具') ?? [])])].filter(Boolean).slice(0,16).sort((a,b) => a.localeCompare(b, 'zh-CN'))
 }
-export const FEATURE_GROUP_ORDER = ['创作', '开发', '测试与构建', '资源', '内容', '运行', '项目', '工具', '支持组件']
+export const FEATURE_GROUP_ORDER = ['工作台', '创作', '开发', '测试与构建', '资源', '内容', '运行', '项目', '工具', '支持组件']
 export function orderedFeatureGroups(entries: Array<{ groups: string[] }>): string[] {
   const groups = [...new Set(entries.flatMap(entry => entry.groups.length ? entry.groups : ['支持组件']))]
   return groups.sort((a,b) => (FEATURE_GROUP_ORDER.indexOf(a) < 0 ? 99 : FEATURE_GROUP_ORDER.indexOf(a)) - (FEATURE_GROUP_ORDER.indexOf(b) < 0 ? 99 : FEATURE_GROUP_ORDER.indexOf(b)) || a.localeCompare(b, 'zh-CN'))

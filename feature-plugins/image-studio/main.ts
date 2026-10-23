@@ -1,3 +1,4 @@
+import { scopedFilePath } from '../../src/main/scopedFilePath'
 import { ImageStudioService, type ImageStudioServiceOptions } from './src/main/imageStudioService'
 import type { FeaturePluginInvocationContext, FeaturePluginRuntime } from '../../src/shared/featurePlugins'
 import type { ImageProcessingOptions } from '../../src/shared/imageStudio'
@@ -23,31 +24,34 @@ export function activate(options: ImageStudioServiceOptions & { host?: NativeFea
   const actions = {
     info: (input: Record<string, unknown>) => service.describe(input.includeModels === true),
     generate: async (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => {
-      const generated = await service.generate(input, 'agent')
-      const files: string[] = []
-      const assets: Array<{ path?: string; dataUrl?: string; handoffAvailable: boolean }> = []
+      context.signal?.throwIfAborted()
       const project = host?.requireProject()
       if (context.projectPath && project?.path !== context.projectPath) throw new Error('项目已经切换，请重新生成图片')
+      const toolDirectory = (project?.toolDataDirectory ?? '.modmind').replaceAll('\\', '/')
+      const outputRelative = path.posix.join(toolDirectory, 'image-studio', 'generated')
+      if (project) {
+        await scopedFilePath(project.path, toolDirectory)
+        await scopedFilePath(project.path, outputRelative)
+      }
+      const generated = await service.generate(input, 'agent', context.signal)
+      const files: string[] = []
+      const assets: Array<{ path?: string; dataUrl?: string; handoffAvailable: boolean }> = []
       for (const [index, asset] of generated.assets.entries()) {
         let relative: string | undefined
         if (project) {
           const decoded = decode(asset.dataUrl)
-          relative = path.posix.join(project.toolDataDirectory ?? '.modmind', 'image-studio', 'generated', `${safeName(generated.jobId)}-${index + 1}.${decoded.extension}`)
-          const output = path.resolve(project.path, ...relative.split('/'))
-          const child = path.relative(project.path, output)
-          if (!child || child.startsWith('..') || path.isAbsolute(child)) throw new Error('图片产物目录不在当前项目内')
+          relative = path.posix.join(outputRelative, `${safeName(generated.jobId)}-${index + 1}.${decoded.extension}`)
+          const output = await scopedFilePath(project.path, relative)
           await fs.mkdir(path.dirname(output), { recursive: true })
-          const actualRoot = await fs.realpath(project.path)
-          const actualDirectory = await fs.realpath(path.dirname(output))
-          const canonical = path.relative(actualRoot, actualDirectory)
-          if (canonical.startsWith('..') || path.isAbsolute(canonical)) throw new Error('图片产物目录通过链接指向项目外部')
           await fs.writeFile(output, decoded.bytes)
           files.push(relative)
         }
         const handoffAvailable = asset.dataUrl.startsWith('data:image/') && asset.dataUrl.length <= 8 * 1024 * 1024
         assets.push({ ...(relative ? { path: relative } : {}), ...(handoffAvailable ? { dataUrl: asset.dataUrl } : {}), handoffAvailable })
       }
-      return { success: !generated.error, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(generated.error ? { error: generated.error } : {}) }
+      const cancelled = context.signal?.aborted === true
+      const error = generated.error ?? (cancelled ? '生成已停止，已完成的图片已保存' : undefined)
+      return { success: !error, cancelled, jobId: generated.jobId, files, assets, credits: generated.credits, hosted: generated.hosted, revisedPrompt: generated.revisedPrompt, ...(error ? { error } : {}) }
     },
     perfectPixel: (input: Record<string, unknown>) => service.process('perfect-pixel', String(input.dataUrl), { perfectPixel: input.perfectPixel } as ImageProcessingOptions),
     removeBackground: (input: Record<string, unknown>) => service.process('remove-background', String(input.dataUrl))

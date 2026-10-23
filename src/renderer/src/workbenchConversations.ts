@@ -1,4 +1,5 @@
 import type { AiTokenUsage } from '../../shared/types'
+import type { ConversationSummary } from '../../shared/types'
 import type { WorkbenchTimelineItem } from './workbenchTimeline'
 
 /**
@@ -16,6 +17,22 @@ export interface WorkbenchConversation {
   sessionScope: string
   pinned?: boolean
   titleSource?: 'ai' | 'manual'
+}
+
+/** Merge the durable index with legacy-only threads without nested linear scans. */
+export function mergeWorkbenchConversationIndexes(legacy: WorkbenchConversation[], durable: ConversationSummary[]): WorkbenchConversation[] {
+  const byId = new Map(legacy.map(entry => [entry.id, entry]))
+  const merged: WorkbenchConversation[] = durable.map(entry => {
+    const previous = byId.get(entry.id)
+    byId.delete(entry.id)
+    return {
+      id: entry.id, title: entry.title, createdAt: entry.createdAt, updatedAt: entry.updatedAt,
+      sessionScope: workbenchSessionScope(entry.id), pinned: entry.pinned, titleSource: entry.titleSource,
+      ...(entry.agentMode === 'beginner' || previous?.agentMode === 'beginner' ? { agentMode: 'beginner' as const } : {})
+    }
+  })
+  for (const entry of byId.values()) merged.push(entry)
+  return sortWorkbenchConversations(merged)
 }
 
 export const WORKBENCH_LEGACY_SCOPE = 'workspace'

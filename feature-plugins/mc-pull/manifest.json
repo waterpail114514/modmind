@@ -1,0 +1,321 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "mc-pull",
+  "name": "游戏数据采集",
+  "version": "1.14.2",
+  "description": "从用户选择的本地游戏实例采集名称、方块和基础图标，按项目和实例保存，供建筑预览使用。可导入已有探针产物；交接包未包含探针 jar。",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": [
+    "runtime"
+  ],
+  "dependencies": [],
+  "views": [
+    {
+      "id": "pull",
+      "label": "游戏数据采集",
+      "component": "PullWorkspace",
+      "icon": "Download",
+      "group": "创作",
+      "order": 62
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "mc-pull",
+      "name": "游戏数据采集",
+      "description": "用游戏内探针采集方块/物品/图标/贴图，按数据包存进项目，供 3D 建筑预览使用。"
+    }
+  ],
+  "actions": [
+    {
+      "id": "pull:status",
+      "handler": "pull_status",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "probeDir": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:run",
+      "handler": "pull_run",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "maxIcons": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:installProbe",
+      "handler": "pull_install_probe",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:importProbe",
+      "handler": "pull_import_probe",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "probeDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "outPx": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:cancel",
+      "handler": "pull_cancel",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "on": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:select",
+      "handler": "pull_select",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:clear",
+      "handler": "pull_clear",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:exportPack",
+      "handler": "pull_export_pack",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:launch",
+      "handler": "pull_launch",
+      "permission": "process",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "maxMemoryMb": {
+            "type": "integer",
+            "minimum": 1024
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:chooseInstance",
+      "handler": "pull_choose_instance",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    }
+  ],
+  "assetFiles": {
+    "notices.txt": "feature-plugins/mc-pull/NOTICES.txt"
+  },
+  "tools": [
+    {
+      "name": "modmind_mc_capture_status",
+      "action": "pull:status",
+      "description": "查询当前项目采集包、实例与导入进度，区分基础采集和探针数据。"
+    },
+    {
+      "name": "modmind_mc_capture_run",
+      "action": "pull:run",
+      "description": "从本地实例采集名称、基础图标与方块标识到当前项目，不启动游戏。"
+    },
+    {
+      "name": "modmind_mc_capture_select",
+      "action": "pull:select",
+      "description": "切换当前项目的采集包，建筑预览会使用选中的实例资源。"
+    },
+    {
+      "name": "modmind_mc_capture_export",
+      "action": "pull:exportPack",
+      "description": "将采集包导出为当前项目内的 ZIP，返回产物路径与大小。"
+    },
+    {
+      "name": "modmind_mc_capture_import_probe",
+      "action": "pull:importProbe",
+      "description": "将本地已有的游戏内探针采集产物导入当前项目，需要现成的 index.json 和图片页。"
+    }
+  ]
+}

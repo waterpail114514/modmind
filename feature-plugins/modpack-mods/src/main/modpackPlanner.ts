@@ -1,12 +1,13 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ProjectInfo } from "../../../../src/shared/types"
-import type { McmodManualRequirement, McmodSearchResult } from "../../../../src/shared/types"
-import { addModpackFiles, readModpackManifest, writeModpackManifest } from "../../../../src/main/modpackService"
-import { modpackModsRoot } from "../../../../src/main/modpackPaths"
-import { auditModpackLock, lockedModFromFile, MODPACK_LOCK_FILE, readModpackLock, writeModpackLock, type ModpackLock } from "../../../../src/main/modpackLockService"
-import { safeModJarFileName } from "../../../../src/main/modpackFilename"
-import { candidateRuntimeSide, type AutomaticModPlatform, type ModCandidate, type ModDependency, type ModDependencyKind, type ModFile, type ModProviderRegistry } from "../../../../src/main/modProviderService"
+import type { ProjectInfo } from '../../../../src/shared/types'
+import type { McmodManualRequirement, McmodSearchResult } from '../../../../src/shared/types'
+import { addModpackFiles, readModpackManifest, writeModpackManifest } from '../../../../src/main/modpackService'
+import { modpackModsRoot } from '../../../../src/main/modpackPaths'
+import { auditModpackLock, lockedModFromFile, MODPACK_LOCK_FILE, readModpackLock, writeModpackLock, type ModpackLock } from '../../../../src/main/modpackLockService'
+import { safeModJarFileName } from '../../../../src/main/modpackFilename'
+import { withProjectMutation } from '../../../../src/main/projectMutation'
+import { candidateRuntimeSide, type AutomaticModPlatform, type ModCandidate, type ModDependency, type ModDependencyKind, type ModFile, type ModProviderRegistry } from '../../../../src/main/modProviderService'
 
 export interface ModpackConcept {
   required: string[]
@@ -118,7 +119,7 @@ async function planEntry(registry: ModProviderRegistry, options: ResolveEntryOpt
       }
     }
     const versions = await registry.versions(candidate.provider, candidate.projectId, { minecraftVersion: project.minecraftVersion, loader: project.loader as 'fabric' | 'quilt' | 'forge' | 'neoforge' })
-    const selected = (versionId ? versions.find((version) => version.versionId === versionId) : undefined) ?? versions.find((version) => version.primary) ?? versions[0]
+    const selected = versionId ? versions.find((version) => version.versionId === versionId) : versions.find((version) => version.primary) ?? versions[0]
     if (!selected) return { request, ...(parent ? { parent } : {}), ...(dependencyKind ? { dependencyKind } : {}), ...(blocking !== undefined ? { blocking } : {}), candidate, versions, reason: versionId ? `required version ${versionId} is not compatible` : 'compatible project has no downloadable JAR' }
     return { request, ...(parent ? { parent } : {}), ...(dependencyKind ? { dependencyKind } : {}), ...(blocking !== undefined ? { blocking } : {}), candidate, versions, selected: selected.side === 'unknown' ? { ...selected, side: candidateRuntimeSide(candidate) } : selected }
   } catch (error) {
@@ -274,6 +275,10 @@ function safeModFileName(value: string): string {
 }
 
 export async function applyModpackPlan(registry: ModProviderRegistry, project: ProjectInfo, plan: ModpackPlan, signal?: AbortSignal): Promise<ApplyPlanResult> {
+  return withProjectMutation(project.path, () => applyModpackPlanUnlocked(registry, project, plan, signal))
+}
+
+async function applyModpackPlanUnlocked(registry: ModProviderRegistry, project: ProjectInfo, plan: ModpackPlan, signal?: AbortSignal): Promise<ApplyPlanResult> {
   if (project.kind !== 'modpack') throw new Error('a modpack project is required')
   if (!plan.success) throw new Error(`cannot apply an unresolved modpack plan: ${[...plan.conflicts, ...plan.warnings].join('; ')}`)
   const current = await readModpackLock(project)

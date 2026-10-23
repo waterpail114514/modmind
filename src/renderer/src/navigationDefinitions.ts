@@ -1,19 +1,19 @@
 import { Code2, FolderOpen, Hammer, LayoutGrid, Lightbulb, MessageSquareText, Puzzle, Settings, type LucideIcon } from 'lucide-react'
 import type { ProjectInfo, SidebarViewId, UiMode } from '../../shared/types'
 import type { PluginRecord } from '../../shared/plugins'
-import type { ModpackContentFeatures } from '../../shared/modpackContentFeatures'
 import { isJavaLoader } from '../../shared/projectPlatform'
 import type { SidebarGroup } from './sidebarLayout'
 import type { FeaturePageDefinition } from './featurePluginTypes'
+import type { StudioDefinition } from '../../shared/studios'
 
 export interface NavigationEntry { id: SidebarViewId; label: string; icon: LucideIcon }
 
-export function buildNavigationDefinitions({ project, uiMode, plugins, featurePages = [] }: {
+export function buildNavigationDefinitions({ project, uiMode, plugins, featurePages = [], studio }: {
   project: ProjectInfo | null
   uiMode: UiMode
   plugins: PluginRecord[]
   featurePages?: FeaturePageDefinition[]
-  contentFeatures?: ModpackContentFeatures
+  studio?: StudioDefinition
   imageStudioEnabled?: boolean
 }): {
   baseVisibleNavGroups: SidebarGroup<NavigationEntry>[]
@@ -32,6 +32,7 @@ export function buildNavigationDefinitions({ project, uiMode, plugins, featurePa
     { label: '项目', items: [{ id: 'workspace', label: '项目', icon: FolderOpen }] },
     { label: '应用', items: [{ id: 'features', label: '功能', icon: LayoutGrid }, { id: 'settings', label: '设置', icon: Settings }] }
   ]
+  for (const group of groups) group.items = group.items.filter(item => !studio?.navigation?.hideCoreViews.includes(item.id as 'build'))
   for (const page of [...featurePages].sort((a, b) => (a.order ?? 50) - (b.order ?? 50))) {
     if (page.supports && !page.supports(project, uiMode)) continue
     let group = groups.find(entry => entry.label === page.group)
@@ -48,7 +49,7 @@ export function buildNavigationDefinitions({ project, uiMode, plugins, featurePa
   const navLabelMap = Object.fromEntries(groups.flatMap(group => group.items.map(item => [item.id, item.label]))) as Partial<Record<SidebarViewId, string>>
   const navOrderStorageKey = `modmind-sidebar-order:feature-v1:${uiMode}:${project?.kind ?? 'launcher'}:${project && isJavaLoader(project.loader) ? 'java' : 'addon'}`
   return {
-    baseVisibleNavGroups: groups.map((group, index) => ({ ...group, groupKey: String(index) })),
+    baseVisibleNavGroups: groups.map((group, index) => ({ ...group, groupKey: String(index) })).filter(group => group.items.length),
     navLabelMap,
     navOrderStorageKey,
     sidebarLayoutStorageKey: navOrderStorageKey.replace('modmind-sidebar-order:', 'modmind-sidebar-layout:v1:')

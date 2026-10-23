@@ -149,9 +149,9 @@ try {
     await picker.getByRole('button', { name: 'Gemini', exact: true }).click()
     assert.equal(await picker.locator('.quota-model-row .quota-no-cache-mark').count(), 4)
     assert.equal(await picker.locator('.quota-model-families .quota-no-cache-mark').count(), 0)
-    for (const width of [1440,1100,900,600,390]) {
+    for (const width of [1440, 1100, 1080]) {
     await page.setViewportSize({ width, height: 950 })
-    const collapse=page.getByRole('button',{name:width<600?'收起侧栏':'展开侧栏',exact:true})
+    const collapse=page.getByRole('button',{name:'展开侧栏',exact:true})
     if(await collapse.count())await collapse.click()
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     await picker.locator('.quota-model-rows').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {}))))
@@ -297,6 +297,6 @@ try {
   const session=await fs.readFile(path.join(profile,'quota-routing-session.enc'),'utf8')
   assert.ok(!session.includes('fixture-routing-token'))
   assert.deepEqual(errors,[])
-  await fs.writeFile(path.join(work,'report.json'),JSON.stringify({success:true,checks:['real settings JSX and IPC','route selection and model readback','legacy cross-route catalogue','paid to free to paid','free model and family marks','route-specific no-cache model marks, never on families','seven family portraits and recommended ModMind portrait decoded, clear of text/buttons; short lists retain 520px frame, long lists reveal more legs','continuous portrait masking at 1440/1100/900/600/390, no breakpoint visibility toggle','recommended portrait has provisional caption; no portrait in search views','zero-balance free state','trial v1 URL normalization','keyboard family selection','search empty recovery','503 then retry','light/dark at 1440/1100/900/600/390','offline retained catalogue','encrypted session'],errors},null,2))
+  await fs.writeFile(path.join(work,'report.json'),JSON.stringify({success:true,checks:['real settings JSX and IPC','route selection and model readback','legacy cross-route catalogue','paid to free to paid','free model and family marks','route-specific no-cache model marks, never on families','seven family portraits and recommended ModMind portrait decoded, clear of text/buttons; short lists retain 520px frame, long lists reveal more legs','continuous portrait masking at 1440/1100/1080, no breakpoint visibility toggle','recommended portrait has provisional caption; no portrait in search views','zero-balance free state','trial v1 URL normalization','keyboard family selection','search empty recovery','503 then retry','light/dark at 1440/1100/1080','offline retained catalogue','encrypted session'],errors},null,2))
   console.log(`PASS: quota model settings. ${work}`)
 } finally { await app?.close() }

@@ -3,6 +3,7 @@ import path from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import type { ProjectInfo } from '../shared/types'
 import { inspectNeteaseEntrypoints } from './neteaseEntrypoints'
+import { scopedFilePath } from './scopedFilePath'
 
 const PACK_DIRECTORIES = ['behavior_pack', 'resource_pack'] as const
 
@@ -102,9 +103,18 @@ async function packEntries(root: string, delivery = false): Promise<Array<{ name
 
 interface BedrockManifest {
   format_version?: unknown
-  header?: { name?: unknown; uuid?: unknown; version?: unknown; min_engine_version?: unknown }
-  modules?: Array<{ type?: unknown; uuid?: unknown; entry?: unknown }>
-  dependencies?: Array<{ uuid?: unknown }>
+  header?: { name?: unknown; description?: unknown; uuid?: unknown; version?: unknown; min_engine_version?: unknown }
+  modules?: Array<{ type?: unknown; uuid?: unknown; entry?: unknown; version?: unknown; language?: unknown }>
+  dependencies?: Array<{ uuid?: unknown; version?: unknown; module_name?: unknown }>
+}
+
+function validVersion(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length === 3 && value.every(part => typeof part === 'number' && Number.isSafeInteger(part) && part >= 0)
+}
+
+function safeNamespace(project: ProjectInfo): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(project.namespace) || project.namespace.includes('..')) throw new Error('Project namespace is unsafe for an archive filename')
+  return project.namespace
 }
 
 function validUuid(value: unknown): value is string {
@@ -115,13 +125,25 @@ export async function inspectBedrockAddon(project: ProjectInfo): Promise<{ succe
   const logs: string[] = []
   const manifests = new Map<string, BedrockManifest>()
   for (const directory of PACK_DIRECTORIES) {
-    const manifestPath = path.join(project.path, directory, 'manifest.json')
     try {
+      const manifestPath = await scopedFilePath(project.path, `${directory}/manifest.json`)
       const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as BedrockManifest
       if (manifest.format_version !== 2) throw new Error('format_version must be 2')
       if (!validUuid(manifest.header?.uuid)) throw new Error('header UUID is missing or invalid')
-      if (!Array.isArray(manifest.header?.version) || manifest.header.version.length !== 3) throw new Error('header version must contain three numbers')
-      if (!manifest.modules?.length || manifest.modules.some((module) => !validUuid(module.uuid))) throw new Error('module UUID is missing or invalid')
+      if (typeof manifest.header?.name !== 'string' || !manifest.header.name.trim() || typeof manifest.header.description !== 'string') throw new Error('header name and description are required')
+      if (!validVersion(manifest.header?.version) || !validVersion(manifest.header?.min_engine_version)) throw new Error('header version and min_engine_version must contain three nonnegative integers')
+      if (!Array.isArray(manifest.modules) || !manifest.modules.length || manifest.modules.some(module => !validUuid(module.uuid) || typeof module.type !== 'string' || !module.type.trim() || !validVersion(module.version))) throw new Error('module type, UUID and version are required')
+      for (const module of manifest.modules) {
+        if (module.type !== 'script') continue
+        if (typeof module.entry !== 'string' || !module.entry) throw new Error('script entry is required')
+        const entry = await scopedFilePath(path.join(project.path, directory), module.entry)
+        if (!(await fs.stat(entry)).isFile()) throw new Error('script entry must be a file inside its pack')
+      }
+      if (manifest.dependencies !== undefined && !Array.isArray(manifest.dependencies)) throw new Error('dependencies must be an array')
+      for (const dependency of manifest.dependencies ?? []) {
+        if (dependency.uuid !== undefined && (!validUuid(dependency.uuid) || !validVersion(dependency.version))) throw new Error('pack dependency UUID and version are invalid')
+        if (dependency.module_name !== undefined && (typeof dependency.module_name !== 'string' || typeof dependency.version !== 'string' || !dependency.version)) throw new Error('module dependency name and version are invalid')
+      }
       manifests.set(directory, manifest)
       logs.push(`PASS  ${directory}/manifest.json`)
     } catch (error) {
@@ -132,7 +154,7 @@ export async function inspectBedrockAddon(project: ProjectInfo): Promise<{ succe
   const resource = manifests.get('resource_pack')
   if (behavior && resource) {
     const resourceUuid = resource.header?.uuid
-    const linked = behavior.dependencies?.some((dependency) => dependency.uuid === resourceUuid)
+    const linked = behavior.dependencies?.some((dependency) => dependency.uuid === resourceUuid && JSON.stringify(dependency.version) === JSON.stringify(resource.header?.version))
     logs.push(`${linked ? 'PASS' : 'FAIL'}  behavior pack links the resource pack UUID`)
     const uuids = [behavior.header?.uuid, resource.header?.uuid, ...behavior.modules!.map((module) => module.uuid), ...resource.modules!.map((module) => module.uuid)]
     logs.push(`${new Set(uuids).size === uuids.length ? 'PASS' : 'FAIL'}  pack and module UUIDs are unique`)
@@ -147,19 +169,27 @@ export async function inspectBedrockAddon(project: ProjectInfo): Promise<{ succe
 
 export async function buildBedrockAddon(project: ProjectInfo): Promise<string> {
   if (project.loader !== 'bedrock') throw new Error('Only Bedrock projects can be packaged as .mcaddon')
+  safeNamespace(project)
+  const source = await scopedFilePath(project.path, 'src/main.js')
+  const sourceStat = await fs.stat(source).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error })
+  if (sourceStat?.isFile()) {
+    const target = await scopedFilePath(project.path, 'behavior_pack/scripts/main.js')
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.copyFile(source, target)
+  }
   const inspection = await inspectBedrockAddon(project)
   if (!inspection.success) throw new Error(`Bedrock Add-On validation failed:\n${inspection.logs.join('\n')}`)
-  const output = path.join(project.path, 'build')
+  const output = await scopedFilePath(project.path, 'build')
   await fs.mkdir(output, { recursive: true })
   const packs: Array<{ name: string; data: Buffer }> = []
   for (const directory of PACK_DIRECTORIES) {
     const data = createStoredZip(await packEntries(path.join(project.path, directory)))
     const kind = directory === 'behavior_pack' ? 'behavior' : 'resources'
     const fileName = `${project.namespace}-${kind}.mcpack`
-    await fs.writeFile(path.join(output, fileName), data)
+    await fs.writeFile(await scopedFilePath(output, fileName), data)
     packs.push({ name: fileName, data })
   }
-  const addonPath = path.join(output, `${project.namespace}.mcaddon`)
+  const addonPath = await scopedFilePath(output, `${project.namespace}.mcaddon`)
   await fs.writeFile(addonPath, createStoredZip(packs))
   return addonPath
 }
@@ -192,6 +222,7 @@ export async function inspectNeteaseProject(project: ProjectInfo): Promise<{ suc
 
 export async function buildNeteaseArchive(project: ProjectInfo): Promise<string> {
   if (project.loader !== 'netease-pc' && project.loader !== 'netease-mobile') throw new Error('Only NetEase projects can be packaged as workbench archives')
+  safeNamespace(project)
   const inspection = await inspectNeteaseProject(project)
   if (!inspection.success) throw new Error(`NetEase project validation failed:\n${inspection.logs.join('\n')}`)
   const entries: Array<{ name: string; data: Buffer }> = []
@@ -199,9 +230,9 @@ export async function buildNeteaseArchive(project: ProjectInfo): Promise<string>
     entries.push({ name: `${directory}/`, data: Buffer.alloc(0) })
     for (const entry of await packEntries(path.join(project.path, directory), true)) entries.push({ ...entry, name: `${directory}/${entry.name}` })
   }
-  const output = path.join(project.path, 'build')
+  const output = await scopedFilePath(project.path, 'build')
   await fs.mkdir(output, { recursive: true })
-  const target = path.join(output, `${project.namespace}-netease-${project.loader === 'netease-mobile' ? 'mobile' : 'pc'}.zip`)
+  const target = await scopedFilePath(output, `${project.namespace}-netease-${project.loader === 'netease-mobile' ? 'mobile' : 'pc'}.zip`)
   await fs.writeFile(target, createStoredZip(entries, true))
   return target
 }

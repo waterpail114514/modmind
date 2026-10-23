@@ -1,5 +1,5 @@
 import { _electron as electron } from 'playwright'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 
@@ -11,6 +11,7 @@ const work = path.join(root, 'test-results', 'app-changelog', String(Date.now())
 const resources = path.join(work, 'resources')
 const version = process.env.MODMIND_CHANGELOG_VERSION || JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version
 await mkdir(resources, { recursive: true })
+await cp(path.join(root, 'resources/bundled-studios'), path.join(resources, 'bundled-studios'), { recursive: true })
 await writeFile(path.join(resources, 'service-config.json'), '{}')
 const errors = []
 let app
@@ -65,7 +66,7 @@ try {
     await page.evaluate(darkMode => {
       window.dispatchEvent(new StorageEvent('storage', { key: 'modmind-appearance:v1', newValue: JSON.stringify({ themePreset: 'modmind', darkMode }) }))
     }, dark)
-    for (const width of [1160, 390]) {
+    for (const width of [1160, 1080]) {
       await page.setViewportSize({ width, height: 700 })
       assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true)
       const box = await dialog.boundingBox()

@@ -1,0 +1,56 @@
+{
+  "actions": [
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": ["workbench", "inspiration"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation"],
+        "properties": {
+          "operation": {"type": "string", "enum": ["list", "read", "validate"]},
+          "path": {"type": "string", "maxLength": 240},
+          "name": {"type": "string", "maxLength": 120},
+          "dataUrl": {"type": "string", "maxLength": 12000000},
+          "model": {"type": "string", "enum": ["slim", "classic"]},
+          "projectPath": {"type": "string", "maxLength": 2000}
+        }
+      }
+    },
+    {
+      "id": "manage",
+      "handler": "manage",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation"],
+        "properties": {
+          "operation": {"type": "string", "enum": ["save", "export"]},
+          "name": {"type": "string", "minLength": 1, "maxLength": 120},
+          "dataUrl": {"type": "string", "maxLength": 12000000},
+          "model": {"type": "string", "enum": ["slim", "classic"]},
+          "targetPath": {"type": "string", "maxLength": 1000},
+          "projectPath": {"type": "string", "maxLength": 2000}
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_skin_query",
+      "action": "query",
+      "description": "查询当前项目已保存的 Minecraft 皮肤、读取皮肤 PNG，或按 Slim/Classic UV 规则验证 64×64 PNG。"
+    },
+    {
+      "name": "modmind_skin_manage",
+      "action": "manage",
+      "description": "通过皮肤工坊保存或导出经过像素检查的 Minecraft 皮肤。保存写入当前项目 .modmind/skins，导出需要提供 dataUrl。"
+    }
+  ]
+}

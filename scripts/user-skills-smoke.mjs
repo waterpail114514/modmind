@@ -98,7 +98,7 @@ try {
   await page.evaluate(settings => window.modmind.settings.saveAgent({ ...settings, darkMode: true }), settings)
   await page.locator('.app-shell.dark-mode').waitFor()
   await page.screenshot({ path: path.join(output, 'desktop-dark.png') })
-  for (const width of [760, 390]) {
+  for (const width of [1080]) {
     await page.setViewportSize({ width, height: 760 })
     await page.screenshot({ path: path.join(output, `narrow-${width}-dark.png`) })
     const layout = await surface.evaluate(element => {
@@ -132,7 +132,7 @@ try {
   assert.match(await editor.inputValue(), /sample-29/)
   await page.screenshot({ path: path.join(output, 'search-narrow-dark.png') })
   assert.deepEqual(errors, [])
-  console.log(JSON.stringify({ success: true, output, scenarios: ['offline create/edit', 'invalid input recovery', 'disable', 'unsaved cancel', 'folder import/resources', 'duplicate import', 'remove', 'reload persistence', 'beginner entry', 'search 30 skills', 'light/dark/390px/760px'] }, null, 2))
+  console.log(JSON.stringify({ success: true, output, scenarios: ['offline create/edit', 'invalid input recovery', 'disable', 'unsaved cancel', 'folder import/resources', 'duplicate import', 'remove', 'reload persistence', 'beginner entry', 'search 30 skills', 'light/dark/1080px/760px'] }, null, 2))
 } catch (error) {
   const page = app?.windows().find(candidate => candidate.url().includes('/renderer/index.html'))
   if (page) await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => undefined)

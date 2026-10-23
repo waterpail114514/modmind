@@ -43,6 +43,38 @@ describe('redactSensitiveContent', () => {
 })
 
 describe('restoreManagedTreeExact', () => {
+  it('rejects unlisted snapshot files before restoring any live file', async () => {
+    const root = await temporaryDirectory()
+    const snapshot = path.join(root, 'snapshot'), project = path.join(root, 'project')
+    await fs.mkdir(snapshot); await fs.mkdir(project)
+    await fs.writeFile(path.join(snapshot, 'listed.txt'), 'before')
+    await fs.writeFile(path.join(snapshot, 'unlisted.txt'), 'unexpected')
+    await fs.writeFile(path.join(project, 'listed.txt'), 'current')
+    await expect(restoreManagedTreeExact(snapshot, project, ['listed.txt'], () => false, copyTree)).rejects.toThrow(/unlisted/)
+    expect(await fs.readFile(path.join(project, 'listed.txt'), 'utf8')).toBe('current')
+    await expect(fs.stat(path.join(project, 'unlisted.txt'))).rejects.toThrow()
+  })
+  it('rejects a missing original before changing any live file', async () => {
+    const root = await temporaryDirectory()
+    const snapshot = path.join(root, 'snapshot'), project = path.join(root, 'project')
+    await fs.mkdir(snapshot); await fs.mkdir(project)
+    await fs.writeFile(path.join(snapshot, 'first.txt'), 'before')
+    await fs.writeFile(path.join(project, 'first.txt'), 'current')
+    await fs.writeFile(path.join(project, 'missing.txt'), 'keep')
+    await expect(restoreManagedTreeExact(snapshot, project, ['first.txt', 'missing.txt'], () => false, copyTree)).rejects.toThrow()
+    expect(await fs.readFile(path.join(project, 'first.txt'), 'utf8')).toBe('current')
+    expect(await fs.readFile(path.join(project, 'missing.txt'), 'utf8')).toBe('keep')
+  })
+  it('does not restore through an ancestor junction', async () => {
+    const root = await temporaryDirectory()
+    const snapshot = path.join(root, 'snapshot'), project = path.join(root, 'project'), outside = path.join(root, 'outside')
+    await fs.mkdir(path.join(snapshot, 'src'), { recursive: true }); await fs.mkdir(project); await fs.mkdir(outside)
+    await fs.writeFile(path.join(snapshot, 'src', 'file.txt'), 'before')
+    await fs.writeFile(path.join(outside, 'file.txt'), 'outside')
+    await fs.symlink(outside, path.join(project, 'src'), process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(restoreManagedTreeExact(snapshot, project, ['src/file.txt'], () => false, copyTree)).rejects.toThrow(/link/)
+    expect(await fs.readFile(path.join(outside, 'file.txt'), 'utf8')).toBe('outside')
+  })
   it('restores changed files and removes files created after the snapshot', async () => {
     const root = await temporaryDirectory()
     const snapshot = path.join(root, 'snapshot')
@@ -70,6 +102,28 @@ describe('restoreManagedTreeExact', () => {
 })
 
 describe('restoreManagedPathsFromSnapshot', () => {
+  it('uses the manifest to identify originals and never reads unlisted files through source junctions', async () => {
+    const root = await temporaryDirectory()
+    const snapshot = path.join(root, 'snapshot'), project = path.join(root, 'project'), outside = path.join(root, 'outside')
+    await fs.mkdir(snapshot); await fs.mkdir(path.join(project, 'extra'), { recursive: true }); await fs.mkdir(outside)
+    await fs.writeFile(path.join(snapshot, 'original.txt'), 'before')
+    await fs.writeFile(path.join(outside, 'unlisted.txt'), 'outside')
+    await fs.symlink(outside, path.join(snapshot, 'extra'), process.platform === 'win32' ? 'junction' : 'dir')
+    await fs.writeFile(path.join(project, 'extra', 'unlisted.txt'), 'task-created')
+    await restoreManagedPathsFromSnapshot(snapshot, project, ['extra/unlisted.txt'], { files: ['original.txt'] })
+    await expect(fs.stat(path.join(project, 'extra', 'unlisted.txt'))).rejects.toThrow()
+    expect(await fs.readFile(path.join(outside, 'unlisted.txt'), 'utf8')).toBe('outside')
+  })
+  it('distinguishes a missing backup from a task-created file using the manifest', async () => {
+    const root = await temporaryDirectory()
+    const snapshot = path.join(root, 'snapshot'), project = path.join(root, 'project')
+    await fs.mkdir(snapshot); await fs.mkdir(project)
+    await fs.writeFile(path.join(project, 'original.txt'), 'current')
+    await fs.writeFile(path.join(project, 'new.txt'), 'new')
+    await expect(restoreManagedPathsFromSnapshot(snapshot, project, ['new.txt', 'original.txt'], { files: ['original.txt'] })).rejects.toThrow()
+    expect(await fs.readFile(path.join(project, 'original.txt'), 'utf8')).toBe('current')
+    expect(await fs.readFile(path.join(project, 'new.txt'), 'utf8')).toBe('new')
+  })
   it('rolls back only Agent-attributed files and preserves unrelated user changes', async () => {
     const root = await temporaryDirectory()
     const snapshot = path.join(root, 'snapshot')

@@ -1,0 +1,167 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "shader-source",
+  "name": "光影源码",
+  "version": "1.0.1",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "dependencies": [
+    "studio-shader"
+  ],
+  "capabilities": [
+    {
+      "id": "shader-source",
+      "name": "光影源码",
+      "description": "查找和编辑 Iris 光影源码，校验保存版本并撤销最近一次未被后续修改覆盖的保存。"
+    }
+  ],
+  "views": [
+    {
+      "id": "shader-source",
+      "label": "光影源码",
+      "component": "ShaderSources",
+      "icon": "FileCode2",
+      "group": "开发",
+      "order": 10,
+      "loaders": [
+        "iris"
+      ],
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "query",
+      "handler": "query",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "inventory",
+              "read"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "read"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "path"
+              ]
+            }
+          }
+        ]
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    },
+    {
+      "id": "edit",
+      "handler": "edit",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "save",
+              "undo"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 2097152
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "save"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "path",
+                "content",
+                "revision"
+              ]
+            }
+          }
+        ]
+      },
+      "studioIds": [
+        "minecraft-shader"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_shader_query",
+      "action": "query",
+      "description": "Read the active Iris shader source inventory (files, programs, revisions, declared options and profiles) or one existing shader text file. Operations: inventory, read. This source module does not provide syntax validation, preview images or game logs. Use the separately installed export, preview or testing tools when available."
+    },
+    {
+      "name": "modmind_shader_edit",
+      "action": "edit",
+      "description": "Save an existing shader text file with its exact revision (save), or undo the latest unchanged source/option save from shared recovery history (undo). Read first. Refuses stale revisions, links and paths outside shaders. Use normal project file tools to create new stages and resources. Option changes require the separately installed options module."
+    }
+  ],
+  "studioIds": [
+    "minecraft-shader"
+  ],
+  "loaders": [
+    "iris"
+  ]
+}

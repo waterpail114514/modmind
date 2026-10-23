@@ -142,21 +142,29 @@ describe('native turn readiness gate', () => {
     expect(await fs.readFile(f.counter, 'utf8')).toBe('1')
   })
 
-  it('reconnects a dropped running session but never replays an unconfirmed write', async () => {
-    for (const mode of ['runtime-loss', 'unsafe-loss']) {
+  // The unsafe fixture leaves both read requests unanswered (2 × 3 s), in
+  // addition to three Node starts and process cleanup under parallel test load.
+  for (const [mode, abortMs] of [['runtime-loss', 10_000], ['unsafe-loss', 20_000]] as const) {
+    it(`reconnects a dropped running session but never replays an unconfirmed write (${mode})`, async () => {
       const f = await fixture(mode)
-      const run = runExternalAgent({ ...f, kind: 'codex', forceCodexAppServer: true, prompt: 'original task', persistentRetry: true, signal: AbortSignal.timeout(10000), onOutput: vi.fn(), onProgress: vi.fn() })
+      const run = runExternalAgent({ ...f, kind: 'codex', forceCodexAppServer: true, prompt: 'original task', persistentRetry: true, signal: AbortSignal.timeout(abortMs), onOutput: vi.fn(), onProgress: vi.fn() })
       if (mode === 'unsafe-loss') {
         await expect(run).rejects.toMatchObject({ name: 'ExternalAgentUnsafeInterruptionError' })
-        expect(await fs.readFile(f.counter, 'utf8')).toBe('1')
+        // Two fresh app servers only read the persisted native turn. Neither
+        // may replay the user task while the write remains unconfirmed.
+        expect(await fs.readFile(f.counter, 'utf8')).toBe('3')
+        const calls = (await fs.readFile(f.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+        expect(calls.filter(call => call.method === 'turn/start')).toHaveLength(1)
+        expect(calls.filter(call => call.method === 'thread/read')).toHaveLength(2)
+        expect(calls.filter(call => call.attempt > 1).every(call => ['initialize', 'initialized', 'thread/read'].includes(call.method))).toBe(true)
       } else {
         await expect(run).resolves.toMatchObject({ summary: 'done' })
         const calls = (await fs.readFile(f.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
         expect(calls.find(call => call.attempt === 2 && call.method === 'thread/resume')?.params.threadId).toBe('tool-thread')
         expect(JSON.stringify(calls.find(call => call.attempt === 2 && call.method === 'turn/start'))).toContain('不要重复已完成')
       }
-    }
-  }, 20000)
+    }, abortMs + 2_000)
+  }
 
   it('retries when a completed model answer says project tools are missing, then accepts a working turn', async () => {
     const f = await fixture('model-no-tools')

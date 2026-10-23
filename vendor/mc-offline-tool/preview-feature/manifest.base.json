@@ -1,0 +1,124 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "mc-preview",
+  "name": "3D 建筑预览",
+  "version": "1.14.12",
+  "description": "用本地游戏数据的 3D 建筑预览与建造：物品栏选方块、放置/删除/撤销、导入导出 .schem/.litematic、材料清单；镜像 X/Z 双轴、不完整方块自动连接/贴面、投影虚影（**差异方块带方块贴图**、一致区域淡影；差异过大时自动降级为纯色以免卡顿，可一键隐藏虚影）与按投影补全、移到原点（整场 / 框选的那一片）、坐标轴方向指示；分层为纯绘制筛选（拖滑块零重建，切口自动补顶面）；贴图按建筑按需打包。",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": ["runtime"],
+  "dependencies": [],
+  "views": [
+    {
+      "id": "preview",
+      "label": "3D 建筑预览",
+      "component": "PreviewWorkspace",
+      "icon": "Boxes",
+      "group": "创作",
+      "order": 61
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "mc-preview",
+      "name": "3D 建筑预览",
+      "description": "本地游戏数据的 3D 预览与建造（物品栏/编辑/导入导出）。"
+    }
+  ],
+  "actions": [
+    {
+      "id": "preview:open",
+      "handler": "preview_open",
+      "permission": "read",
+      "projectRequired": false,
+      "surfaces": ["workbench"],
+      "inputSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+    },
+    {
+      "id": "preview:scene",
+      "handler": "preview_scene",
+      "permission": "read",
+      "projectRequired": false,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["states"],
+        "properties": {
+          "states": {
+            "type": "array",
+            "items": { "type": "string", "maxLength": 512 }
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:items",
+      "handler": "preview_items",
+      "permission": "read",
+      "projectRequired": false,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": { "type": "string", "maxLength": 1024 }
+        }
+      }
+    },
+    {
+      "id": "preview:icons",
+      "handler": "preview_icons",
+      "permission": "read",
+      "projectRequired": false,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ids"],
+        "properties": {
+          "projectPath": { "type": "string", "maxLength": 1024 },
+          "ids": {
+            "type": "array",
+            "items": { "type": "string", "maxLength": 512 }
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:import",
+      "handler": "preview_import",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "dataBase64"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 512 },
+          "dataBase64": { "type": "string", "maxLength": 33554432 }
+        }
+      }
+    },
+    {
+      "id": "preview:export",
+      "handler": "preview_export",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["format", "build"],
+        "properties": {
+          "format": { "type": "string", "maxLength": 32 },
+          "build": { "type": "object" }
+        }
+      }
+    }
+  ]
+}

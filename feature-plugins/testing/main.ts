@@ -2,6 +2,10 @@ import { app,dialog } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CreationFeedbackService } from '../../src/main/creationFeedbackService'
+import { probeJavaHomeInfo } from '../../src/main/buildRuntime'
+import { ServerFixtureService } from './src/main/serverFixtureService'
+import { IsolatedServerScenarioService } from './src/main/isolatedServerScenarioService'
+import { installFixtureRuntime } from './src/main/serverFixtureRuntime'
 import { diagnosticJournal } from '../../src/main/diagnosticLog'
 import { downloadActivities } from '../../src/main/downloadActivityService'
 import type { NativeFeatureHost } from '../../src/main/index'
@@ -39,6 +43,30 @@ let localServerManager: LocalServerManager | null = null
 let playerTestService: PlayerTestService | null = null
 let localTestService: LocalTestService | null = null
 let headlessMcService: HeadlessMcService | null = null
+const serverFixtures = new ServerFixtureService()
+const isolatedServerScenarios = new IsolatedServerScenarioService({
+  fixtures: serverFixtures,
+  java: (project, signal) => host.withMinecraftResourceLock(async () => {
+    signal.throwIfAborted()
+    const javaPath = await host.aiProjectContext.run(project, () => requireMinecraftRuntime().ensureServerTestJava(signal))
+    const probe = await probeJavaHomeInfo(javaPath)
+    if (!probe.valid) throw new Error('隔离测试 Java 不可用')
+    return { path: javaPath, version: String(probe.major) }
+  }),
+  install: (options, project) => host.withMinecraftResourceLock(() => installFixtureRuntime(path.join(app.getPath('userData'), 'server-scenario-runtimes'), options, project))
+})
+async function isolatedServerScenarioOperation(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  if (!host.currentProject || !sameProjectPath(project.path, host.currentProject.path)) throw new Error('隔离测试需要当前项目')
+  const operation = input.operation ?? 'start'
+  if (operation === 'files') return { jars: serverFixtures.list(project) }
+  if (operation === 'state') return isolatedServerScenarios.read(project, typeof input.taskId === 'string' ? input.taskId : undefined, typeof input.waitSeconds === 'number' ? input.waitSeconds : 0)
+  if (operation === 'cancel') {
+    if (typeof input.taskId !== 'string') throw new Error('取消需要任务 ID')
+    return isolatedServerScenarios.cancel(project, input.taskId)
+  }
+  if (operation !== 'start') throw new Error('隔离场景操作无效')
+  return isolatedServerScenarios.start(project, input, signal)
+}
 const serverEvidenceCursors = new Map<string, number>()
 minecraftRuntime = new MinecraftRuntimeManager({
     getProject: () => host.aiProjectContext.getStore() ?? host.currentProject,
@@ -682,6 +710,7 @@ diagnosticHandle('modpack:verifyServerJoin', async (_event, input: unknown) => {
 diagnosticHandle('modpack:runServerScenario', async (_event, input: unknown) => {
     const project = host.requireProject();
     const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+    if (value.fixture || value.operation) return isolatedServerScenarioOperation(project, value)
     if (!Array.isArray(value.steps) || !value.steps.length)
         throw new Error('server scenario requires at least one step');
     const steps = value.steps.map((step) => {
@@ -699,6 +728,19 @@ diagnosticHandle('modpack:runServerScenario', async (_event, input: unknown) => 
     const outputDirectory = typeof value.outputDirectory === 'string' && value.outputDirectory.trim() ? value.outputDirectory : path.join(project.path, host.projectDataDirectory(project), 'server-scenario');
     return managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: value.onlineMode === true, javaPath, steps, onEvent: (event) => host.mainWindow?.webContents.send('minecraft:event', event) });
 });
+diagnosticHandle('modpack:pickScenarioJars', async () => {
+  const project = host.requireProject()
+  if (project.kind !== 'modpack') throw new Error('隔离服务端测试需要整合包项目')
+  const picked = await dialog.showOpenDialog(host.mainWindow!, { title: '选择隔离测试 JAR', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Minecraft Mod JAR', extensions: ['jar'] }] })
+  if (picked.canceled) return serverFixtures.list(project)
+  if (!host.currentProject || !sameProjectPath(project.path, host.currentProject.path)) throw new Error('项目已切换，请重新选择')
+  return serverFixtures.select(project, picked.filePaths)
+})
+diagnosticHandle('modpack:removeScenarioJar', (_event, file: unknown) => {
+  if (typeof file !== 'string') throw new Error('测试 JAR 路径无效')
+  return serverFixtures.remove(host.requireProject(), file)
+})
+
 diagnosticHandle('local-test:getState', () => localTestService?.getState());
 diagnosticHandle('local-test:start', (_event, options: LocalTestOptions) => {
     if (!localTestService)
@@ -795,8 +837,10 @@ actions.modpack_verify_server_join = async (input, context) => {
   const outputDirectory = host.publicMcpOutputDirectory(project, input, path.join(project.path, '.modmind', 'server-pack'))
   return host.withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port: typeof input.port === 'number' ? input.port : 25565, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, '.modmind', 'headlessmc', 'server-join'), managedMinecraftDirectory: requireMinecraftRuntime().managedMinecraftDirectory(), onEvent: host.forwardMinecraftRuntimeEvent }))
 }
-actions.modpack_run_server_scenario = async input => {
+actions.modpack_run_server_scenario = async (input, context) => {
   const project = host.requireProject()
+  if (context.readOnly && !['state', 'files'].includes(String(input.operation))) throw new Error('只读会话禁止运行或取消场景')
+  if (input.fixture || input.operation) return isolatedServerScenarioOperation(project, input, context.signal)
   if (!Array.isArray(input.steps) || !input.steps.length) throw new Error('server scenario requires at least one step')
   const steps = input.steps.map(step => {
     if (!step || typeof step !== 'object') throw new Error('invalid server scenario step')
@@ -807,14 +851,14 @@ actions.modpack_run_server_scenario = async input => {
   const outputDirectory = host.publicMcpOutputDirectory(project, input, path.join(project.path, '.modmind', 'server-scenario'))
   return host.withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port: typeof input.port === 'number' ? input.port : 25565, acceptEula: input.acceptEula !== false, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: host.forwardMinecraftRuntimeEvent }))
 }
-return { actions, buildServerPack, minecraftRuntime: minecraftRuntime!, localServerManager: localServerManager!, playerTestService: playerTestService!, localTestService: localTestService!, headlessMcService: headlessMcService!, syncCurrentKubeJsServerScripts, requireHeadlessMc, runHeadlessMinecraftSmoke, runManagedRenderedTest, runProjectTestMatrix, localServerAgentOperation, managedServerJoin, managedServerScenario,
-isBusy: () => Boolean(localTestService?.isBusy() || localServerManager?.isBusy() || minecraftRuntime?.isBusy() || playerTestService?.isBusy() || headlessMcService?.isBusy()),
+return { actions, isolatedServerScenarioOperation, isolatedServerScenarios, buildServerPack, minecraftRuntime: minecraftRuntime!, localServerManager: localServerManager!, playerTestService: playerTestService!, localTestService: localTestService!, headlessMcService: headlessMcService!, syncCurrentKubeJsServerScripts, requireHeadlessMc, runHeadlessMinecraftSmoke, runManagedRenderedTest, runProjectTestMatrix, localServerAgentOperation, managedServerJoin, managedServerScenario,
+isBusy: () => Boolean(isolatedServerScenarios.isBusy() || localTestService?.isBusy() || localServerManager?.isBusy() || minecraftRuntime?.isBusy() || playerTestService?.isBusy() || headlessMcService?.isBusy()),
 async dispose() {
-  const results = await Promise.allSettled([playerTestService?.stop(), localTestService?.stop(), headlessMcService?.stop(), localServerManager?.destroy(), minecraftRuntime?.stop()])
+  const results = await Promise.allSettled([isolatedServerScenarios.stop(), playerTestService?.stop(), localTestService?.stop(), headlessMcService?.stop(), localServerManager?.destroy(), minecraftRuntime?.stop()])
   minecraftRuntime?.destroy()
   const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
   if (failed) throw failed.reason
 },
-async projectChanged(projectPath: string | null) { await playerTestService?.projectChanged(projectPath ?? undefined); serverEvidenceCursors.clear() }
+async projectChanged(projectPath: string | null) { await isolatedServerScenarios.projectChanged(projectPath ?? undefined); await playerTestService?.projectChanged(projectPath ?? undefined); serverEvidenceCursors.clear() }
 }
 }

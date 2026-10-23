@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import type { ConversationEventRecord } from '../../shared/types'
 import { replayInspirationEvents, replayInspirationEventsAsync } from './inspirationOutput'
 
@@ -10,13 +10,15 @@ const events: ConversationEventRecord[] = Array.from({ length: 3_000 }, (_, inde
 
 it('yields during inspiration replay and preserves all durable output', async () => {
   let ticks = 0
+  let elapsed = 0
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed += .1)
   const timer = setInterval(() => { ticks++ }, 0)
   try {
     const result = await replayInspirationEventsAsync([], events)
     expect(ticks).toBeGreaterThan(1)
     expect(result).toEqual(replayInspirationEvents([], events))
     expect(result).toHaveLength(events.length)
-  } finally { clearInterval(timer) }
+  } finally { clearInterval(timer); clock.mockRestore() }
 })
 
 it('cancels a switched-away history before publishing its replay', async () => {

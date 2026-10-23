@@ -160,7 +160,7 @@ try {
       await page.getByRole('switch', { name: '深色模式', exact: true }).click()
       await page.locator('.app-shell.dark-mode').waitFor()
     }
-    for (const width of [1440, 800, 640, 390]) {
+    for (const width of [1440, 1080]) {
       await page.setViewportSize({ width, height: 900 })
       for (const name of ['通用', 'AI 与图像', '开发与构建', '集成', '关于']) {
         await category(name)

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { detectedProjectVersion, migrateProjectVersion112 } from './projectVersionMigration'
 
@@ -46,6 +46,29 @@ async function fakeWrapper(projectRoot: string): Promise<void> {
 }
 
 describe('project version migration', () => {
+  it('reports an incomplete rollback and preserves the original backup', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-rollback-error-'))
+    const originalCopy = fs.copyFile.bind(fs)
+    let backup = ''
+    const copy = vi.spyOn(fs, 'copyFile').mockImplementation(async (source, target, flags) => {
+      if (String(source).includes(`${path.sep}migrations${path.sep}`) && String(target) === path.join(root, 'build.gradle')) {
+        backup = String(source)
+        throw Object.assign(new Error('restore locked'), { code: 'EACCES' })
+      }
+      return originalCopy(source, target, flags)
+    })
+    try {
+      const project = oldProject(root)
+      await writeOldTemplate(project)
+      const original = await fs.readFile(path.join(root, 'build.gradle'), 'utf8')
+      await expect(migrateProjectVersion112(project, async () => { throw new Error('wrapper failed') })).rejects.toThrow('部分文件未能恢复')
+      expect(await fs.readFile(backup, 'utf8')).toBe(original)
+      expect(JSON.parse(await fs.readFile(path.join(root, 'modmind.project.json'), 'utf8')).projectVersion).toBeUndefined()
+    } finally {
+      copy.mockRestore()
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  })
   it('detects signed 1.1.2 templates but not imported custom projects', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-project-version-'))
     try {

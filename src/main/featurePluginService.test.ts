@@ -21,6 +21,18 @@ async function fixture(code = 'exports.activate = () => ({ hello: () => "ready" 
   return { files, manifest }
 }
 describe('native application feature lifecycle', () => {
+  it('rejects a testingV2 update on an earlier host and keeps the previous version usable', async () => {
+    const { manager: service, options } = await manager()
+    await service.install(await fixture(undefined, { version: '1.0.1' }))
+    const next = await fixture(undefined, { version: '1.0.2', hostCapabilities: ['testingV2'] })
+    await expect(service.update(next)).rejects.toThrow('宿主缺少')
+    expect(service.list()[0].version).toBe('1.0.1')
+    expect(service.service<{ hello: () => string }>('image-studio').hello()).toBe('ready')
+    Object.assign(options.capabilities, { testingV2: true })
+    await service.update(next)
+    expect(service.list()[0].version).toBe('1.0.2')
+    expect(service.service<{ hello: () => string }>('image-studio').hello()).toBe('ready')
+  })
   it('installs atomically, serves only verified public assets, persists disabling and preserves unrelated user data', async () => {
     const { root, manager: service, options } = await manager()
     expect(service.list()).toEqual([])
@@ -210,6 +222,19 @@ describe('native application feature lifecycle', () => {
     emitters[1]('progress', { latest: true })
     expect(events).toHaveLength(2)
     expect(events[1]).toEqual({ id: 'event-fixture', name: 'progress', value: { latest: true } })
+  })
+  it('reports background plugin activity and forwards turn cleanup to loaded runtimes', async () => {
+    const { manager: service, options } = await manager()
+    const signals: AbortSignal[] = []; let busy = true
+    options.options = () => ({ stop: (signal: AbortSignal) => { signals.push(signal); busy = false }, busy: () => busy })
+    await service.install(await fixture('exports.activate=o=>({isBusy:o.busy,stopForSignal:o.stop})', { id: 'owned-session-fixture' }))
+    service.service('owned-session-fixture')
+    expect(service.hasBusyRuntime()).toBe(true)
+    const controller = new AbortController()
+    await service.stopForSignal(controller.signal)
+    expect(signals).toEqual([controller.signal])
+    expect(service.hasBusyRuntime()).toBe(false)
+    await service.shutdown()
   })
   it('resolves plugin-local CommonJS assets and clears them when the plugin is replaced', async () => {
     const { manager: service, root } = await manager()

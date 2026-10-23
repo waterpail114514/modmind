@@ -1,0 +1,197 @@
+.app-shell .main-content:has(.server-test-workspace) {
+  overflow: hidden;
+}
+
+.app-shell .server-test-workspace[data-section='server'] {
+  container: server-workspace / inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.app-shell .server-test-workspace > .server-panel-toolbar {
+  flex: 0 0 auto;
+  min-height: 56px;
+  margin: 0;
+  padding: 10px 20px;
+}
+
+.server-test-workspace .server-panel-switch {
+  display: none;
+}
+
+.app-shell .server-test-workspace[data-section='server'] .server-panel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 20px;
+  align-items: stretch;
+  padding: 16px 20px 20px;
+  overflow: hidden;
+}
+
+.app-shell .server-test-workspace .server-console-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.server-test-workspace .server-panel-section-heading,
+.server-test-workspace .server-command-bar {
+  flex: 0 0 auto;
+}
+
+.app-shell .server-test-workspace .server-console-output {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-shell .server-test-workspace .server-console-empty {
+  height: 100%;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  white-space: normal;
+  padding: 24px 12px;
+}
+
+.app-shell .server-test-workspace .server-side-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 0 4px 16px 20px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: transparent;
+}
+
+.server-test-workspace .server-side-heading {
+  margin: 16px 0 12px;
+  font-size: var(--type-body);
+  font-weight: 600;
+}
+
+.server-test-workspace .server-side-panel .modpack-tool-actions {
+  margin: 0;
+  gap: 8px;
+}
+
+.app-shell .server-test-workspace .server-operation-list {
+  display: grid;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.app-shell .server-test-workspace .server-operation {
+  min-height: 40px;
+  padding: 8px 0;
+  border-radius: 4px;
+}
+
+.server-test-workspace .server-configuration {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.server-test-workspace .server-configuration > summary {
+  min-height: 40px;
+  padding: 8px 0;
+  font-weight: 500;
+}
+
+.server-test-workspace .server-configuration > .modpack-form-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 0 16px;
+}
+
+.server-test-workspace .server-configuration .server-plugin-settings {
+  padding: 12px 0 16px;
+  border: 0;
+}
+
+.server-test-workspace .server-plugin-settings .modpack-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.server-test-workspace .server-runtime-details {
+  margin: 16px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.server-test-workspace .server-runtime-details dl {
+  display: grid;
+  gap: 10px;
+}
+
+.server-test-workspace .server-panel-notice {
+  margin: 0 0 12px;
+}
+
+@container server-workspace (max-width: 820px) {
+  .app-shell .server-test-workspace[data-section='server'] .server-panel-grid {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 12px;
+    padding-inline: 12px;
+  }
+
+  .app-shell .server-test-workspace .server-side-panel {
+    padding-left: 12px;
+  }
+}
+
+@container server-workspace (max-width: 640px) {
+  .server-test-workspace .server-panel-switch {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 12px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .server-test-workspace .server-panel-switch button {
+    min-height: 40px;
+    padding: 8px 4px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--muted);
+  }
+
+  .server-test-workspace .server-panel-switch button[aria-selected='true'] {
+    border-bottom-color: var(--theme-accent);
+    color: var(--text);
+  }
+
+  .app-shell .server-test-workspace[data-section='server'] .server-panel-grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .server-test-workspace[data-panel='logs'] .server-side-panel,
+  .server-test-workspace[data-panel='settings'] .server-console-panel {
+    display: none;
+  }
+
+  .app-shell .server-test-workspace .server-side-panel {
+    padding-left: 0;
+    border-left: 0;
+  }
+}

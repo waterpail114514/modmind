@@ -1,11 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 interface Portrait { family: string; src: string }
 
 export default function QuotaModelCharacter({ family, src, animated, direction }: Portrait & { animated: boolean; direction: 'next' | 'previous' }) {
+  const frame = useRef<HTMLDivElement>(null)
   const [{ displayed, portraits }, setView] = useState<{ displayed: Portrait; portraits: Portrait[] }>({
     displayed: { family, src }, portraits: [{ family, src }]
   })
+
+  useLayoutEffect(() => {
+    const element = frame.current
+    if (!element) return
+    const measure = (): void => {
+      for (const layer of element.querySelectorAll<HTMLElement>('.quota-model-character-layer')) {
+        const image = layer.querySelector<HTMLImageElement>('.quota-model-character-sharp')
+        if (image?.naturalWidth) layer.dataset.fullArt = String(image.offsetTop + image.offsetHeight <= layer.clientHeight)
+      }
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    element.querySelectorAll('.quota-model-character-sharp').forEach(image => observer.observe(image))
+    element.addEventListener('load', measure, true)
+    return () => { observer.disconnect(); element.removeEventListener('load', measure, true) }
+  }, [portraits])
 
   useEffect(() => {
     let cancelled = false
@@ -37,7 +55,7 @@ export default function QuotaModelCharacter({ family, src, animated, direction }
     return () => clearTimeout(timer)
   }, [displayed])
 
-  return <div className="quota-model-character" data-family={family} data-animated={animated} data-direction={direction}>
+  return <div className="quota-model-character" ref={frame} data-family={family} data-animated={animated} data-direction={direction}>
     {portraits.map(portrait => <div key={portrait.family} className="quota-model-character-layer"
       data-family={portrait.family} data-active={portrait.family === displayed.family} aria-hidden={portrait.family !== displayed.family}
       onTransitionEnd={event => {
@@ -49,7 +67,6 @@ export default function QuotaModelCharacter({ family, src, animated, direction }
       }}>
       <img className="quota-model-character-soft" src={portrait.src} alt="" draggable={false} />
       <img className="quota-model-character-sharp" src={portrait.src} alt="" draggable={false} />
-      {portrait.family === '推荐' && <small className="quota-model-character-note">暂定，不代表最终效果</small>}
     </div>)}
   </div>
 }

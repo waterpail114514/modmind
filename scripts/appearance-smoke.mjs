@@ -96,7 +96,7 @@ try {
   await page.getByLabel('背景适配', { exact: true }).selectOption('contain')
   await saved(s => s.background.fit === 'contain')
   checks.push('Imported image renders after source removal and reload; opacity, blur and fit persist')
-  await page.setViewportSize({ width: 1000, height: 600 })
+  await page.setViewportSize({ width: 1080, height: 680 })
   const main = page.locator('.settings-scroll-area')
   await main.evaluate(el => { el.scrollTop = 0 })
   const bounds = await main.boundingBox()
@@ -123,8 +123,7 @@ try {
   await page.keyboard.press('PageDown')
   await wait(() => document.querySelector('.settings-scroll-area').scrollTop > 40)
   checks.push('Shared inset scrollbar stays below settings header; native wheel, thumb dragging and PageDown work')
-  for (const width of [1440, 780, 420]) {
-    if (width === 420) await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
+  for (const width of [1440, 1080]) {
     await page.setViewportSize({ width, height: 960 })
     await page.locator('#settings-appearance').scrollIntoViewIfNeeded()
     await shot(`image-${width}`)

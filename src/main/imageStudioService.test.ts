@@ -1,3 +1,4 @@
+vi.mock('./networkRequest', async (importOriginal) => ({ ...(await importOriginal<typeof import('./networkRequest')>()), networkFetch: (input: string | URL, init?: RequestInit) => globalThis.fetch(input, init) }))
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -21,7 +22,11 @@ const roots: string[] = []
 afterEach(async () => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
-  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
+  // Sharp may release a worker-owned file handle just after the assertion
+  // completes on Windows. Let the sandbox cleanup retry that transient
+  // directory race instead of turning a passing product assertion into a
+  // suite failure.
+  await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })))
 })
 
 function settings(apiKey: string, clearApiKey = false) {
@@ -41,6 +46,58 @@ function generationRequest(overrides: Partial<ImageGenerationRequest> = {}): Ima
 }
 
 describe('ImageStudioService hosted credential freshness', () => {
+  it('aborts the real secondary image download without creating the next billed request', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-url-cancel-')); roots.push(root)
+    const controller = new AbortController()
+    let generations = 0
+    let origin = ''
+    const server = createServer((request, response) => {
+      if (request.url === '/v1/images/generations') {
+        generations += 1; request.resume()
+        response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ data: [{ url: `${origin}/image.png` }] }))
+      } else {
+        response.writeHead(200, { 'Content-Type': 'image/png' }); response.write(Buffer.alloc(10))
+        setTimeout(() => controller.abort(), 20)
+      }
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+    const getHostedLease = vi.fn(async () => ({ baseUrl: `${origin}/v1`, apiKey: 'fixture', jobId: 'job', model: 'image-model', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    try {
+      await expect(service.generate(generationRequest({ count: 3, model: 'images' }), 'agent', controller.signal)).rejects.toThrow()
+      expect(generations).toBe(1); expect(getHostedLease).toHaveBeenCalledTimes(1)
+      expect(await service.history()).toEqual([])
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
+  })
+  it('cancels an active request and does not acquire another image lease', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-cancel-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://image.test/v1', apiKey: 'fixture', jobId: 'job', model: 'image-model', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      queueMicrotask(() => controller.abort())
+      await new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
+    }))
+    await expect(service.generate(generationRequest({ count: 3, model: 'images' }), 'agent', controller.signal)).rejects.toThrow()
+    expect(getHostedLease).toHaveBeenCalledTimes(1)
+    expect(await service.history()).toEqual([])
+  })
+
+  it('returns already generated image bytes if history replacement fails and preserves old history', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-history-failure-')); roots.push(root)
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: async () => ({ baseUrl: 'https://image.test/v1', apiKey: 'fixture', jobId: 'job', model: 'image-model', reservedCredits: 1 }) })
+    const old = '[{"id":"previous"}]'; await fs.writeFile(path.join(root, 'image-studio-history.json'), old)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] }))))
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(Object.assign(new Error('disk blocked'), { code: 'EACCES' }))
+    const result = await service.generate(generationRequest({ count: 3, model: 'images' }))
+    expect(result.assets).toHaveLength(1)
+    expect(result.assets[0].dataUrl).toBe('data:image/png;base64,aW1hZ2U=')
+    expect(result.error).toContain('历史记录保存失败')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(await fs.readFile(path.join(root, 'image-studio-history.json'), 'utf8')).toBe(old)
+    expect((await fs.readdir(root)).filter(name => name.endsWith('.tmp'))).toEqual([])
+  })
   it('uses the synced image API without requesting a hosted lease', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-synced-image-'))
     roots.push(root)
@@ -85,7 +142,7 @@ describe('ImageStudioService hosted credential freshness', () => {
     const getHostedLease = vi.fn(async (request?: ImageGenerationRequest) => {
       expect(request?.count).toBe(1)
       events.push(`lease:${completed + 1}`)
-      return { baseUrl: `https://hosted-${completed + 1}.example.test/v1`, apiKey: `key-${completed + 1}`, jobId: `job-${completed + 1}`, reservedCredits: 1 }
+      return { baseUrl: `https://hosted-${completed + 1}.example.test/v1`, apiKey: `key-${completed + 1}`, jobId: `job-${completed + 1}`, model: 'image-model', reservedCredits: 1 }
     })
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(hosted ? '' : 'own-key'))
@@ -126,7 +183,7 @@ describe('ImageStudioService hosted credential freshness', () => {
     const getHostedLease = vi.fn(async () => {
       leases += 1
       if (leases === 2 && failure === 'lease') throw new Error('lease unavailable')
-      return { baseUrl: 'https://hosted.example.test/v1', apiKey: 'key', jobId: `job-${leases}`, reservedCredits: 1 }
+      return { baseUrl: 'https://hosted.example.test/v1', apiKey: 'key', jobId: `job-${leases}`, model: 'image-model', reservedCredits: 1 }
     })
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(''))
@@ -160,7 +217,7 @@ describe('ImageStudioService hosted credential freshness', () => {
       events.push(`lease:${current}`)
       await Promise.resolve()
       events.push(`ready:${current}`)
-      return { baseUrl: `https://hosted-${current}.example.test/v1`, apiKey: `temporary-${current}`, jobId: `job-${current}`, reservedCredits: 1 }
+      return { baseUrl: `https://hosted-${current}.example.test/v1`, apiKey: `temporary-${current}`, jobId: `job-${current}`, model: 'image-model', reservedCredits: 1 }
     })
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(''))
@@ -178,49 +235,48 @@ describe('ImageStudioService hosted credential freshness', () => {
     await expect(service.generate(request)).rejects.toThrow('HTTP 401')
     await expect(service.generate(request)).resolves.toMatchObject({ jobId: 'job-3', hosted: true })
     expect(getHostedLease).toHaveBeenCalledTimes(3)
-    expect(getHostedLease).toHaveBeenNthCalledWith(3, request)
+    expect(getHostedLease).toHaveBeenNthCalledWith(3, request, undefined)
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(events).toEqual(['lease:1', 'ready:1', 'fetch:1', 'lease:2', 'ready:2', 'fetch:2', 'lease:3', 'ready:3', 'fetch:3'])
   })
 
-  it('refreshes credentials for each model lookup and again before generation', async () => {
+  it('reads hosted metadata without creating leases and acquires a lease only for generation', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-model-lease-'))
     roots.push(root)
     let leaseNumber = 0
     const getHostedLease = vi.fn(async () => {
       const current = ++leaseNumber
-      return { baseUrl: `https://hosted-${current}.example.test/v1`, apiKey: `temporary-${current}`, jobId: `job-${current}`, reservedCredits: 0 }
+      return { baseUrl: `https://hosted-${current}.example.test/v1`, apiKey: `temporary-${current}`, jobId: `job-${current}`, model: 'image-model', reservedCredits: 0 }
     })
-    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    const getHostedImageProvider = vi.fn(async () => ({ available: true, model: 'server-image-model', provider: 'ls' }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease, getHostedImageProvider })
     await service.saveSettings(settings(''))
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
-      expect(url).toBe(`https://hosted-${leaseNumber}.example.test/v1/${leaseNumber < 3 ? 'models' : 'images/generations'}`)
+      expect(url).toBe(`https://hosted-${leaseNumber}.example.test/v1/images/generations`)
       expect(init.headers).toMatchObject({ Authorization: `Bearer temporary-${leaseNumber}` })
-      return new Response(JSON.stringify({ data: leaseNumber < 3 ? [{ id: 'image-model' }] : [{ b64_json: 'AA==' }] }))
+      return new Response(JSON.stringify({ data: [{ b64_json: 'AA==' }] }))
     })
     vi.stubGlobal('fetch', fetchMock)
-    await service.capabilities()
-    await service.capabilities()
+    expect((await service.capabilities()).models).toEqual(['server-image-model'])
+    expect((await service.capabilities()).models).toEqual(['server-image-model'])
+    expect(getHostedLease).not.toHaveBeenCalled()
     await service.generate(generationRequest())
-    expect(getHostedLease).toHaveBeenCalledTimes(3)
-    expect(getHostedLease).toHaveBeenNthCalledWith(1)
-    expect(getHostedLease).toHaveBeenNthCalledWith(2)
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(getHostedImageProvider).toHaveBeenCalledTimes(2)
+    expect(getHostedLease).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['models', 'generations', 'edits'] as const)('does not reuse a previous key when the next lease fails (%s)', async (operation) => {
+  it.each(['generations', 'edits'] as const)('does not reuse a previous key when the next lease fails (%s)', async (operation) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-lease-failure-'))
     roots.push(root)
     const getHostedLease = vi.fn()
-      .mockResolvedValueOnce({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'old-key', jobId: 'job', reservedCredits: 0 })
+      .mockResolvedValueOnce({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'old-key', jobId: 'job', model: 'image-model', reservedCredits: 0 })
       .mockRejectedValueOnce(new Error('lease unavailable'))
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(''))
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'image-model', b64_json: 'AA==' }] })))
     vi.stubGlobal('fetch', fetchMock)
-    const invoke = () => operation === 'models'
-      ? service.capabilities()
-      : service.generate(generationRequest(operation === 'edits' ? { referenceImage: 'data:image/png;base64,AA==' } : {}))
+    const invoke = () => service.generate(generationRequest(operation === 'edits' ? { referenceImage: 'data:image/png;base64,AA==' } : {}))
     await invoke()
     await expect(invoke()).rejects.toThrow('lease unavailable')
     expect(getHostedLease).toHaveBeenCalledTimes(2)
@@ -254,11 +310,141 @@ describe('ImageStudioService upstream errors', () => {
   })
 })
 
+describe('ImageStudioService independent official image context', () => {
+  it.each(['json', 'sse'])('redacts and bounds temporary credentials in upstream errors (%s)', async format => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-reflected-error-')); roots.push(root)
+    const key = 'opaque-image-key', unknownKey = 'sk-other-image-secret', session = 'mdr_other-session-secret'
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://ls.example.test/v1', apiKey: key, model: 'gpt-image-2', provider: 'ls' as const, jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    const payload = JSON.stringify({ error: { message: `${key} ${unknownKey} ${session} ${'detail '.repeat(2000)}` } })
+    const fetcher = vi.fn(async () => new Response(format === 'sse' ? `event: error\ndata: ${payload}\n\n` : payload, { status: format === 'sse' ? 200 : 400, headers: { 'Content-Type': format === 'sse' ? 'text/event-stream' : 'application/json' } }))
+    vi.stubGlobal('fetch', fetcher)
+    const error = await service.generate({ prompt: 'generate', count: 3 }).catch(error => error as Error)
+    const message = (error as Error).message
+    for (const secret of [key, unknownKey, session]) expect(message).not.toContain(secret)
+    expect(message).toContain('[REDACTED]')
+    expect(message.length).toBeLessThan(2100)
+    expect(fetcher).toHaveBeenCalledOnce(); expect(getHostedLease).toHaveBeenCalledOnce()
+  })
+
+  it('bounds oversized upstream error reads and cancels the body without another generation', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-large-error-')); roots.push(root)
+    let reads = 0
+    const cancelled = vi.fn()
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://ls.example.test/v1', apiKey: 'secret', model: 'gpt-image-2', jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    const fetcher = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { reads += 1; controller.enqueue(new TextEncoder().encode('secret'.repeat(4096))) },
+      cancel: cancelled
+    }), { status: 500 }))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(service.generate({ prompt: 'generate', count: 3 })).rejects.toThrow('上游错误信息过大或无法读取，已省略')
+    expect(reads).toBeLessThan(6); expect(cancelled).toHaveBeenCalledOnce()
+    expect(fetcher).toHaveBeenCalledOnce(); expect(getHostedLease).toHaveBeenCalledOnce()
+  })
+
+  it.each(['\n', '\r\n', '\r'])('parses byte-split SSE frames and the final event at EOF (%j)', async newline => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-sse-chunks-')); roots.push(root)
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: async () => ({ baseUrl: 'https://ls.example.test/v1', apiKey: 'key', model: 'model', provider: 'ls', jobId: 'job', reservedCredits: 1 }) })
+    const bytes = new TextEncoder().encode([': ping', 'event: image_generation.partial_image', 'data: {"b64_json":"AA=="}', '', 'event: image_generation.completed', `data: ${JSON.stringify({ b64_json: 'AQ==', output_format: 'webp', revised_prompt: '完整图片' })}`, ''].join(newline))
+    let offset = 0
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ pull(controller) { if (offset < bytes.length) controller.enqueue(bytes.subarray(offset, ++offset)); else controller.close() } }), { headers: { 'Content-Type': 'text/event-stream' } })))
+    const result = await service.generate({ prompt: 'stream test' })
+    expect(result.assets[0].dataUrl).toBe('data:image/webp;base64,AQ==')
+    expect(result.revisedPrompt).toBe('完整图片')
+  })
+
+  it.each([
+    { provider: 'ls' as const, references: 0 }, { provider: 'ls' as const, references: 1 },
+    { provider: 'ls' as const, references: 2 }, { provider: 'secondary' as const, references: 0 },
+    { provider: 'primary' as const, references: 0 }
+  ])('uses lease model, URL and key through a real HTTP request ($provider, refs=$references)', async ({ provider, references }) => {
+    const sharp = (await import('sharp')).default
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#ff0000' } }).png().toBuffer()
+    const received: Array<{ url?: string; headers: import('node:http').IncomingHttpHeaders; body: Buffer }> = []
+    const streamed = provider !== 'primary'
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(Buffer.from(chunk))
+      received.push({ url: req.url, headers: req.headers, body: Buffer.concat(chunks) })
+      if (!streamed) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })); return }
+      res.setHeader('Content-Type', 'text/event-stream')
+      const type = references ? 'image_edit' : 'image_generation'
+      const sse = `: connected\r\nevent: ${type}.partial_image\r\ndata: ${JSON.stringify({ type: `${type}.partial_image`, b64_json: 'AA==', partial_image_index: 0 })}\r\n\r\nevent: ${type}.completed\r\ndata: ${JSON.stringify({ type: `${type}.completed`, b64_json: png.toString('base64'), revised_prompt: '完整图片' })}\r\n\r\ndata: [DONE]\r\n\r\n`
+      // Break every line and UTF-8 sequence across arbitrary stream chunks.
+      const bytes = Buffer.from(sse)
+      for (let index = 0; index < bytes.length; index += 7) res.write(bytes.subarray(index, index + 7))
+      res.end()
+    })
+    server.listen(0, '127.0.0.1'); await once(server, 'listening')
+    try {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-independent-image-')); roots.push(root)
+      const context = { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1/`, apiKey: 'lease-image-key', model: 'lease-image-model', provider, jobId: 'lease-job', reservedCredits: 1 }
+      const getHostedLease = vi.fn(async () => context)
+      const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+      await service.saveSettings({ ...settings(''), model: '' })
+      const result = await service.generate({ prompt: 'one output', model: 'stale-chat-model', referenceImages: Array.from({ length: references }, () => `data:image/png;base64,${png.toString('base64')}`) }, 'agent')
+      expect(getHostedLease).toHaveBeenCalledTimes(1)
+      expect(received).toHaveLength(1)
+      expect(received[0].url).toBe(`/v1/images/${references ? 'edits' : 'generations'}`)
+      expect(received[0].headers.authorization).toBe('Bearer lease-image-key')
+      if (references) {
+        expect(received[0].headers['content-type']).toMatch(/^multipart\/form-data; boundary=/)
+        const form = await new Response(new Uint8Array(received[0].body), { headers: { 'Content-Type': received[0].headers['content-type']! } }).formData()
+        expect(form.get('model')).toBe('lease-image-model')
+        expect(form.get('stream')).toBe('true'); expect(form.get('partial_images')).toBe('3')
+        const files = form.getAll(references === 1 ? 'image' : 'image[]') as File[]
+        expect(await Promise.all(files.map(async file => Buffer.from(await file.arrayBuffer())))).toEqual(Array.from({ length: references }, () => png))
+      } else {
+        expect(JSON.parse(received[0].body.toString())).toMatchObject({ model: 'lease-image-model', n: 1, ...(streamed ? { stream: true, partial_images: 3 } : {}) })
+        if (!streamed) expect(JSON.parse(received[0].body.toString())).not.toHaveProperty('stream')
+      }
+      expect(result.assets).toHaveLength(1)
+      expect(result.assets[0]).toMatchObject({ model: 'lease-image-model', dataUrl: `data:image/png;base64,${png.toString('base64')}` })
+      expect((await service.getSettings()).model).toBe('')
+      expect((await fs.readFile(path.join(root, 'image-studio-settings.json'), 'utf8'))).not.toContain('lease-image-key')
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) }
+  })
+
+  it.each(['partial', 'error', 'upstream-503', 'invalid'])('keeps failed streamed edits from creating a new lease or a text-only fallback (%s)', async failure => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-no-rebill-')); roots.push(root)
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://ls.example.test/v1', apiKey: 'lease-key', model: 'leased-model', provider: 'ls' as const, jobId: 'job', reservedCredits: 1 }))
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
+    const bodies = {
+      partial: 'event: image_edit.partial_image\ndata: {"b64_json":"AA=="}\n\n',
+      error: 'event: error\ndata: {"error":{"message":"quota failed lease-key"}}\n\n',
+      'upstream-503': '{"error":{"message":"upstream unavailable"}}', invalid: 'data: not-json\n\n'
+    }
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(bodies[failure as keyof typeof bodies], { status: failure === 'upstream-503' ? 503 : 200, headers: { 'Content-Type': failure === 'upstream-503' ? 'application/json' : 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const invocation = service.generate({ prompt: 'edit this', referenceImage: 'data:image/png;base64,AA==', count: 3 })
+    await expect(invocation).rejects.toThrow(failure === 'partial' ? '未返回最终完整图片' : failure === 'error' ? 'quota failed [REDACTED]' : failure === 'invalid' ? '无效数据' : 'HTTP 503')
+    expect(fetchMock).toHaveBeenCalledTimes(1); expect(getHostedLease).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toContain('/images/edits')
+    expect(await service.history()).toEqual([])
+  })
+
+  it('accepts a direct binary image response and refreshes the image selection for the next generation', async () => {
+    const sharp = (await import('sharp')).default
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#00ff00' } }).png().toBuffer()
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-binary-')); roots.push(root)
+    let lease = 0
+    const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: async () => ({ baseUrl: `https://image-${++lease}.example.test/v1`, apiKey: `image-key-${lease}`, model: `model-${lease}`, jobId: `job-${lease}`, reservedCredits: 1 }) })
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(new Uint8Array(png), { headers: { 'Content-Type': 'image/png' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    for (const index of [1, 2]) {
+      const result = await service.generate({ prompt: 'new task' })
+      expect(result.assets[0]).toMatchObject({ model: `model-${index}`, dataUrl: `data:image/png;base64,${png.toString('base64')}` })
+      expect(fetchMock.mock.calls[index - 1][0]).toBe(`https://image-${index}.example.test/v1/images/generations`)
+    }
+  })
+})
+
 describe('ImageStudioService settings', () => {
   it.each([{ edit: false, hosted: false }, { edit: true, hosted: false }, { edit: false, hosted: true }, { edit: true, hosted: true }])('uses the saved model and falls back from empty base64 to URL ($edit, $hosted)', async ({ edit, hosted }) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-request-'))
     roots.push(root)
-    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'temporary-key', jobId: 'job', reservedCredits: 1 }))
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'temporary-key', jobId: 'job', model: 'image-model', reservedCredits: 1 }))
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings({ ...settings(hosted ? '' : 'test-key'), model: 'custom-provider-model' })
     const sharp = (await import('sharp')).default
@@ -272,15 +458,16 @@ describe('ImageStudioService settings', () => {
     expect(getHostedLease).toHaveBeenCalledTimes(hosted ? 1 : 0)
     expect(fetchMock.mock.calls[0][0]).toBe(`https://${hosted ? 'hosted' : 'images'}.example.test/v1/images/${edit ? 'edits' : 'generations'}`)
     const body = fetchMock.mock.calls[0][1].body
-    expect(edit ? body.get('model') : JSON.parse(body).model).toBe('custom-provider-model')
+    expect(edit ? body.get('model') : JSON.parse(body).model).toBe(hosted ? 'image-model' : 'custom-provider-model')
     expect(fetchMock.mock.calls[1][0]).toBe('https://images.example.test/result.png')
-    expect(result.assets[0]).toMatchObject({ model: 'custom-provider-model', dataUrl: `data:image/png;base64,${png.toString('base64')}` })
+    expect(result.assets[0]).toMatchObject({ model: hosted ? 'image-model' : 'custom-provider-model', dataUrl: `data:image/png;base64,${png.toString('base64')}` })
   })
 
-  it.each([false, true])('loads actual models with the appropriate credentials (hosted=%s)', async (hosted) => {
+  it('loads custom models with the user credentials', async () => {
+    const hosted = false
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-models-'))
     roots.push(root)
-    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1/', apiKey: 'temporary-key', jobId: 'job', reservedCredits: 0 }))
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1/', apiKey: 'temporary-key', jobId: 'job', model: 'image-model', reservedCredits: 0 }))
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(hosted ? '' : 'own-key'))
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'gpt-image-2' }, { id: 'flux-pro' }, { id: 'gpt-image-2' }, { id: '' }, {}] })))
@@ -324,7 +511,7 @@ describe('ImageStudioService settings', () => {
 describe('Image Studio workbench and UI parity', () => {
   it.each([false, true])('keeps every reference in each multipart request for both sources (hosted=%s)', async hosted => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-multiref-')); roots.push(root)
-    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'key', jobId: 'job', reservedCredits: 1 }))
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'key', jobId: 'job', model: 'image-model', reservedCredits: 1 }))
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(hosted ? '' : 'own-key'))
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
@@ -390,7 +577,7 @@ describe('Image Studio workbench and UI parity', () => {
 
   it.each([false, true])('uses the same configuration and parameters for both sources (hosted=%s)', async hosted => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-parity-')); roots.push(root)
-    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'hosted-key', jobId: 'job', reservedCredits: 1 }))
+    const getHostedLease = vi.fn(async () => ({ baseUrl: 'https://hosted.example.test/v1', apiKey: 'hosted-key', jobId: 'job', model: 'image-model', reservedCredits: 1 }))
     const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease })
     await service.saveSettings(settings(hosted ? '' : 'own-key'))
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ data: [{ b64_json: 'AA==' }] })))
@@ -399,7 +586,7 @@ describe('Image Studio workbench and UI parity', () => {
     for (const source of ['manual', 'agent'] as const) {
       const result = await service.generate(input, source)
       expect(result.assets).toHaveLength(2)
-      expect(result.assets[0]).toMatchObject({ model: 'override-model', size: '1536x1024', quality: 'high', hosted })
+      expect(result.assets[0]).toMatchObject({ model: hosted ? 'image-model' : 'override-model', size: '1536x1024', quality: 'high', hosted })
     }
     expect(getHostedLease).toHaveBeenCalledTimes(hosted ? 4 : 0)
     expect(fetchMock).toHaveBeenCalledTimes(4)
@@ -407,7 +594,7 @@ describe('Image Studio workbench and UI parity', () => {
       expect(url).toBe(`https://${hosted ? 'hosted' : 'images'}.example.test/v1/images/edits`)
       expect(new Headers(init.headers).get('Authorization')).toBe(`Bearer ${hosted ? 'hosted-key' : 'own-key'}`)
       const body = init.body as FormData
-      expect(Object.fromEntries(['model', 'size', 'quality', 'moderation', 'n'].map(key => [key, body.get(key)]))).toEqual({ model: 'override-model', size: '1536x1024', quality: 'high', moderation: 'low', n: '1' })
+      expect(Object.fromEntries(['model', 'size', 'quality', 'moderation', 'n'].map(key => [key, body.get(key)]))).toEqual({ model: hosted ? 'image-model' : 'override-model', size: '1536x1024', quality: 'high', moderation: 'low', n: '1' })
       expect(body.get('prompt')).toBe('Flat solid #123456 background. A cat')
     }
     expect((await service.getSettings()).model).toBe('image-model')
@@ -465,7 +652,7 @@ describe('Image Studio workbench and UI parity', () => {
     await service.saveSettings(settings(''))
     await expect(service.describe()).resolves.toMatchObject({ credentialSource: 'hosted', settings: { model: 'image-model' }, presets: expect.any(Array) })
     expect(getHostedLease).not.toHaveBeenCalled()
-    await expect(service.describe(true)).resolves.toMatchObject({ settings: { model: 'image-model' }, capabilitiesError: 'lease unavailable' })
+    await expect(service.describe(true)).resolves.toMatchObject({ settings: { model: 'image-model' }, capabilitiesError: '请刷新账号连接后读取生图配置' })
     await service.saveSettings(settings('own-secret-key'))
     expect(JSON.stringify(await service.describe())).not.toContain('own-secret-key')
   })

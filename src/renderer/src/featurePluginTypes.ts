@@ -43,13 +43,14 @@ export interface FeatureSettingsDefinition {
   category: 'general' | 'ai' | 'development' | 'integrations' | 'about'
   keywords: string
   className?: string
-  supports?: (project: ProjectInfo | null) => boolean
+  supports?: (project: ProjectInfo | null, uiMode: UiMode) => boolean
   component: ComponentType<FeaturePageContext>
   exportName?: string
 }
 
 export interface FeatureRendererModule {
   apiVersion: 2
+  supports?: (project: ProjectInfo | null, uiMode: UiMode) => boolean
   pages: FeaturePageDefinition[]
   settings?: FeatureSettingsDefinition[]
   launcherActions?: ComponentType<FeaturePageContext>[]

@@ -1,8 +1,10 @@
 import type { CodingResult, InspirationChatMessage } from '../../shared/types'
 import { replayUserText } from '../../shared/aiReplay'
-import { latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
+import { mergeContextUsage } from '../../shared/contextUsage'
 import type { AiOutputEvent, ConversationEventRecord } from '../../shared/types'
 import { aiNoticeDetails, presentLegacyAiNotice } from '../../shared/aiNotice'
+import { isInspirationProtocol } from '../../shared/inspirationWorkflow'
+import { ReplayTextBuffer } from './replayTextBuffer'
 
 type IdFactory = () => string
 
@@ -56,12 +58,6 @@ export function buildInspirationRows(messages: InspirationChatMessage[]): Inspir
   return rows
 }
 
-function mergeOutputText(current: string, incoming: string): string {
-  if (!current || incoming.startsWith(current)) return incoming
-  if (!incoming || current.endsWith(incoming)) return current
-  return `${current}${incoming}`
-}
-
 /** Rebuilds a stale view from events that were durably committed before a crash. */
 export function replayInspirationEvents(messages: InspirationChatMessage[], events: ConversationEventRecord[]): InspirationChatMessage[] {
   const replay = replayInspirationSteps(messages, events)
@@ -91,65 +87,184 @@ export async function replayInspirationEventsAsync(
   }
 }
 
+type InspirationReplayNode = { message: InspirationChatMessage; next?: InspirationReplayNode; previous?: InspirationReplayNode }
+
+/** Tool steps insert before an answer without shifting every later message. */
+class InspirationReplayList {
+  private head?: InspirationReplayNode
+  private tail?: InspirationReplayNode
+  private readonly assistants = new Map<string | undefined, InspirationReplayNode>()
+  private readonly ids = new Map<string, number>()
+  private readonly notices = new Map<string, Set<InspirationReplayNode>>()
+  private readonly streaming = new Map<string | undefined, Set<InspirationReplayNode>>()
+  private readonly pendingText = new WeakMap<InspirationReplayNode, ReplayTextBuffer>()
+  private usage: InspirationChatMessage['usage']
+  private beforeUsageTail: InspirationChatMessage['usage']
+  private usageTail?: InspirationReplayNode
+  private usageDirty = false
+
+  assistant(turnId: string): InspirationReplayNode | undefined { return this.assistants.get(turnId) }
+  hasId(id: string | undefined): boolean { return id !== undefined && this.ids.has(id) }
+  delta(node: InspirationReplayNode, content: string, sequence: number): void {
+    let text = this.pendingText.get(node)
+    if (!text) { text = new ReplayTextBuffer(node.message.content); this.pendingText.set(node, text) }
+    text.append(content)
+    this.replace(node, { ...node.message, content: '', sequence })
+  }
+  flush(node: InspirationReplayNode): void {
+    const text = this.pendingText.get(node)
+    if (!text) return
+    this.pendingText.delete(node)
+    this.replace(node, { ...node.message, content: text.value() })
+  }
+  private noticeKey(message: InspirationChatMessage): string | undefined {
+    return message.kind === 'tool' && message.notice ? JSON.stringify([message.turnId ?? message.sessionId, message.notice.key]) : undefined
+  }
+  private index(node: InspirationReplayNode, previous?: InspirationChatMessage): void {
+    const message = node.message
+    if (previous?.id !== message.id) {
+      if (previous?.id) {
+        const count = this.ids.get(previous.id)! - 1
+        if (count) this.ids.set(previous.id, count)
+        else this.ids.delete(previous.id)
+      }
+      if (message.id) this.ids.set(message.id, (this.ids.get(message.id) ?? 0) + 1)
+    }
+    if (message.role === 'assistant' && message.kind !== 'tool' && !this.assistants.has(message.turnId)) this.assistants.set(message.turnId, node)
+    const oldNotice = previous && this.noticeKey(previous)
+    const notice = this.noticeKey(message)
+    if (oldNotice !== notice) {
+      if (oldNotice) this.notices.get(oldNotice)?.delete(node)
+      if (notice) { let rows = this.notices.get(notice); if (!rows) { rows = new Set(); this.notices.set(notice, rows) }; rows.add(node) }
+    }
+    const oldStreaming = previous?.status === 'streaming'
+    const nowStreaming = message.status === 'streaming'
+    if (oldStreaming !== nowStreaming || previous?.sessionId !== message.sessionId) {
+      if (oldStreaming) this.streaming.get(previous?.sessionId)?.delete(node)
+      if (nowStreaming) { let rows = this.streaming.get(message.sessionId); if (!rows) { rows = new Set(); this.streaming.set(message.sessionId, rows) }; rows.add(node) }
+    }
+  }
+  push(message: InspirationChatMessage): InspirationReplayNode {
+    const node = { message, previous: this.tail }
+    if (this.tail) this.tail.next = node
+    else this.head = node
+    this.tail = node
+    this.index(node)
+    if (message.usage && !this.usageDirty) { this.beforeUsageTail = this.usage; this.usage = mergeContextUsage(this.usage, message.usage); this.usageTail = node }
+    return node
+  }
+  insertBefore(anchor: InspirationReplayNode, message: InspirationChatMessage): void {
+    const node = { message, next: anchor, previous: anchor.previous }
+    if (anchor.previous) anchor.previous.next = node
+    else this.head = node
+    anchor.previous = node
+    this.index(node)
+    if (message.usage) this.usageDirty = true
+  }
+  replace(node: InspirationReplayNode, message: InspirationChatMessage): void {
+    const previous = node.message
+    node.message = message
+    this.index(node, previous)
+    if (previous.usage !== message.usage) {
+      if (!this.usageDirty && this.usageTail === node && message.usage) this.usage = mergeContextUsage(this.beforeUsageTail, message.usage)
+      else if (!this.usageDirty && !previous.usage && message.usage && node === this.tail) {
+        this.beforeUsageTail = this.usage; this.usage = mergeContextUsage(this.usage, message.usage); this.usageTail = node
+      } else this.usageDirty = true
+    }
+  }
+  latestUsage(): InspirationChatMessage['usage'] {
+    if (this.usageDirty) {
+      this.usage = undefined; this.usageTail = undefined; this.beforeUsageTail = undefined
+      for (let node = this.head; node; node = node.next) if (node.message.usage) {
+        this.beforeUsageTail = this.usage; this.usage = mergeContextUsage(this.usage, node.message.usage); this.usageTail = node
+      }
+      this.usageDirty = false
+    }
+    return this.usage
+  }
+  notice(event: AiOutputEvent): void {
+    const key = JSON.stringify([event.turnId ?? event.sessionId, event.notice!.key])
+    const rows = this.notices.get(key)
+    const previous = rows?.values().next().value?.message
+    if (previous?.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return
+    const message: InspirationChatMessage = { role: 'assistant', kind: 'tool', id: previous?.id ?? event.eventId ?? `notice:${event.turnId ?? event.sessionId}:${event.notice!.key}`, turnId: event.turnId, sessionId: event.sessionId, sequence: event.sequence, time: event.time, content: event.content, status: inspirationStepStatus(event), isFinal: false, notice: event.notice }
+    if (rows?.size) { for (const node of rows) this.replace(node, message); return }
+    const pending = this.streaming.get(event.sessionId)?.values().next().value
+    if (pending) this.insertBefore(pending, message)
+    else this.push(message)
+  }
+  toArray(): InspirationChatMessage[] {
+    const result: InspirationChatMessage[] = []
+    for (let node = this.head; node; node = node.next) { this.flush(node); result.push(node.message) }
+    return result
+  }
+}
+
 function* replayInspirationSteps(messages: InspirationChatMessage[], events: ConversationEventRecord[]): Generator<void, InspirationChatMessage[], void> {
-  let result = [...messages]
-  const lastViewSequence = messages.reduce((sequence, message) => Math.max(sequence, message.sequence ?? 0), 0)
+  const result = new InspirationReplayList()
+  let lastViewSequence = 0
+  for (const message of messages) {
+    yield
+    result.push(message)
+    lastViewSequence = Math.max(lastViewSequence, message.sequence ?? 0)
+  }
   for (const record of events.filter((event) => event.kind === 'output' && event.sequence > lastViewSequence).sort((left, right) => left.sequence - right.sequence)) {
     yield
     if (!record.payload || typeof record.payload !== 'object') continue
     const raw = record.payload as AiOutputEvent
     let event = raw.kind === 'warning' || raw.kind === 'error' ? { ...raw, content: presentLegacyAiNotice(raw.content, raw.kind === 'warning') } : raw
-    if (event.usage) event = { ...event, usage: mergeContextUsage(latestContextUsage(result), event.usage) }
+    if (event.usage) event = { ...event, usage: mergeContextUsage(result.latestUsage(), event.usage) }
     const turnId = event.turnId ?? record.turnId
     if (event.notice && event.terminal !== true && (event.kind === 'retry' || event.kind === 'warning')) {
-      result = upsertInspirationNotice(result, { ...event, turnId, eventId: record.eventId, sequence: record.sequence })
+      result.notice({ ...event, turnId, eventId: record.eventId, sequence: record.sequence })
       continue
     }
-    let index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
+    const node = result.assistant(turnId)
+    if (node && event.kind !== 'delta' && event.kind !== 'usage') result.flush(node)
     if (event.kind === 'usage') {
-      if (index >= 0) result[index] = { ...result[index], usage: event.usage }
+      if (node) result.replace(node!, { ...node!.message, usage: event.usage })
       else if (event.usage) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: '', status: 'streaming', isFinal: false, sessionId: event.sessionId, usage: event.usage })
       continue
     }
     if (event.kind === 'delta' || event.kind === 'response') {
-      if (index < 0) result.push({ role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
+      if (!node) result.push({ role: 'assistant', inspirationFeatures: event.inspirationFeatures, generation: event.generation, id: `${turnId}:assistant`, turnId, content: event.content, status: 'streaming', isFinal: false, sessionId: event.sessionId, sequence: record.sequence })
       else {
-        const message = result[index]
-        result[index] = { ...message, content: event.kind === 'delta' ? mergeOutputText(message.content, event.content) : event.content || message.content, sequence: record.sequence }
+        if (event.kind === 'delta') result.delta(node, event.content, record.sequence)
+        else result.replace(node, { ...node.message, content: event.content || node.message.content, sequence: record.sequence })
       }
       continue
     }
     if (event.kind === 'answer') {
-      const completed: InspirationChatMessage = { role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence, ...(event.usage || (index >= 0 && result[index].usage) ? { usage: event.usage ?? result[index].usage } : {}) }
-      if (index < 0) result.push(completed)
-      else result[index] = completed
+      const completed: InspirationChatMessage = { ...(node ? node!.message : {}), inspirationFeatures: event.inspirationFeatures ?? (node ? node!.message.inspirationFeatures : undefined), generation: event.generation, role: 'assistant', id: `${turnId}:assistant`, turnId, content: event.content, status: 'completed', isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence, ...(event.usage || (node && node!.message.usage) ? { usage: event.usage ?? node!.message.usage } : {}) }
+      if (!node) result.push(completed)
+      else result.replace(node!, completed)
       continue
     }
     if ((event.kind === 'error' || event.kind === 'warning') && event.terminal === true) {
       const status = event.kind === 'warning' ? event.notice?.key === 'context-stall' ? 'warning' as const : 'cancelled' as const : 'error' as const
       const failed: InspirationChatMessage = {
-        ...(index >= 0 ? result[index] : { role: 'assistant' as const, id: `${turnId}:assistant`, turnId }),
+        ...(node ? node!.message : { role: 'assistant' as const, id: `${turnId}:assistant`, turnId }),
         content: event.content, notice: event.notice, status, isFinal: true, sessionId: event.sessionId, time: event.time, sequence: record.sequence
       }
-      if (index < 0) result.push(failed)
+      if (!node) result.push(failed)
       else {
-        const provisional = result[index]
+        const provisional = node!.message
         const progress = provisional.content.trim() && provisional.content.trim() !== event.content.trim()
           ? { ...provisional, kind: 'tool' as const, id: `${record.eventId}:partial`, status: 'completed' as const, isFinal: false, sequence: record.sequence }
           : null
-        result.splice(index, 1, ...(progress ? [progress] : []), failed)
+        if (progress) result.insertBefore(node!, progress)
+        result.replace(node!, failed)
       }
       continue
     }
     if (!event.content.trim()) continue
     const step: InspirationChatMessage = { role: 'assistant', kind: 'tool', id: record.eventId, turnId, content: event.content, time: event.time, status: inspirationStepStatus(event), isFinal: false, sessionId: event.sessionId, sequence: record.sequence }
-    if (!result.some((message) => message.id === step.id)) {
-      index = result.findIndex((message) => message.role === 'assistant' && message.turnId === turnId && message.kind !== 'tool')
-      if (index < 0) result.push(step)
-      else result.splice(index, 0, step)
+    if (!result.hasId(step.id)) {
+      if (!node) result.push(step)
+      else result.insertBefore(node, step)
     }
   }
-  return result
+  return result.toArray()
 }
 
 export function deleteInspirationTimelineItem(messages: InspirationChatMessage[], messageIndex: number): InspirationChatMessage[] {
@@ -172,7 +287,7 @@ function defaultId(): string {
 }
 
 function progressStep(message: InspirationChatMessage, sessionId: string, createId: IdFactory): InspirationChatMessage | null {
-  if (!message.content.trim()) return null
+  if (!message.content.trim() || isInspirationProtocol(message.content)) return null
   return {
     role: 'assistant', kind: 'tool', id: createId(), content: message.content,
     status: 'completed', isFinal: false, sessionId
@@ -213,6 +328,7 @@ export function settleInspirationReply(
     return [
       ...(progress ? [progress] : []),
       {
+        ...message,
         id: message.id,
         ...(message.usage ? { usage: message.usage } : {}),
         turnId: message.turnId,
@@ -249,7 +365,7 @@ export function settleInspirationCancellation(
     const progress = message.content.trim() && message.content !== '正在停止任务…' ? progressStep(message, sessionId, createId) : null
     return [
       ...(progress ? [progress] : []),
-      { ...message, role: 'assistant' as const, content: '请求已暂停', status: 'cancelled' as const, isFinal: true, sessionId, time: new Date().toISOString() }
+      { ...message, role: 'assistant' as const, content: isInspirationProtocol(message.content) ? message.content : '请求已暂停', status: 'cancelled' as const, isFinal: true, sessionId, time: new Date().toISOString() }
     ]
   })
 }

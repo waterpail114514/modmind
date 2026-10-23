@@ -1,0 +1,94 @@
+.shader-workspace { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--theme-text); background: var(--theme-canvas); overflow: auto; }
+.shader-toolbar { min-height: 52px; flex: 0 0 auto; padding: 8px 16px; border-bottom: 1px solid var(--theme-line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.shader-object { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.shader-toolbar-actions, .shader-delivery-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shader-message { padding: 10px 16px; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; flex: 0 0 auto; }
+.shader-source-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); flex: 1; min-height: 400px; }
+.shader-files { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--theme-line); }
+.shader-search { margin: 12px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--theme-line); padding: 7px 8px; border-radius: 5px; }
+.shader-search input { min-width: 0; width: 100%; border: 0; background: transparent; color: inherit; outline: 0; font-size: 12px; }
+.shader-file-list { overflow: auto; }
+.shader-file-list button { width: 100%; min-height: 34px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; text-align: left; }
+.shader-file-list button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shader-file-list button.active { background: var(--theme-selected); color: var(--theme-accent); }
+.shader-file-list button:hover { background: var(--theme-panel); }
+.shader-editor { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.shader-editor > section { flex: 1; min-height: 320px; }
+.shader-file-heading { min-height: 39px; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--theme-line); }
+.shader-file-heading code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.shader-empty { min-height: 200px; display: flex; flex-direction: column; gap: 16px; align-items: center; justify-content: center; color: var(--theme-muted); padding: 24px; font-size: 13px; text-align: center; }
+.shader-options-list { width: min(720px, 100%); padding: 20px; box-sizing: border-box; }
+.shader-option-filters { display: flex; gap: 10px; align-items: center; padding-block: 12px; flex-wrap: wrap; }
+.shader-option-filters .shader-search { margin: 0; flex: 1 1 160px; min-width: 0; }
+.shader-option-filters > select { max-width: 100%; flex: 0 1 160px; }
+.shader-option-group { min-width: 0; }
+.shader-option-group h3 { margin: 18px 0 4px; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.shader-option-diagnostics { padding-block: 12px; font-size: 12px; color: var(--theme-warning); overflow-wrap: anywhere; }
+.shader-option-diagnostics summary { cursor: pointer; }
+.shader-profile { justify-content: space-between; font-size: 13px; }
+.shader-profile, .shader-option-row { min-height: 64px; display: flex; align-items: center; gap: 20px; border-bottom: 1px solid var(--theme-line); }
+.shader-option-row > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.shader-option-row strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.shader-option-row code { font-size: 11px; color: var(--theme-muted); overflow-wrap: anywhere; }
+.shader-option-row select, .shader-profile select { width: 150px; }
+.shader-option-row > .shader-slider { flex: 0 1 220px; display: flex; flex-direction: row; align-items: center; gap: 10px; }
+.shader-slider input { min-width: 60px; width: 100%; accent-color: var(--theme-accent); }
+.shader-slider output { flex: 0 0 36px; font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+.shader-workspace select { min-height: 32px; min-width: 0; border: 1px solid var(--theme-line); border-radius: 5px; padding: 4px 8px; background: var(--theme-surface); color: inherit; }
+.shader-preview-view { min-height: 430px; display: flex; flex-direction: column; flex: 1; }
+.shader-preview-toolbar { min-height: 46px; padding: 6px 16px; display: flex; align-items: center; gap: 12px; }
+.shader-preview-toolbar > span { flex: 1; min-width: 0; font-size: 12px; }
+.shader-preview-toolbar .segmented-control { display: flex; flex: 0 0 auto; width: auto; }
+.shader-preview-toolbar .segmented-control button { display: grid; place-items: center; width: 32px; height: 30px; min-width: 32px; padding: 0; }
+.shader-scene { min-height: 340px; flex: 1; width: 100%; position: relative; overflow: hidden; }
+.shader-scene canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.shader-preview-error { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; color: var(--theme-danger); max-height: 180px; overflow: auto; }
+.shader-status { flex: 0 0 auto; padding: 10px 16px; font-size: 12px; color: var(--theme-muted); border-top: 1px solid var(--theme-line); overflow-wrap: anywhere; }
+.shader-delivery { padding: 20px; }
+.shader-validation-summary { margin-block: 20px 12px; font-size: 13px; }
+.shader-issue { display: flex; gap: 10px; padding: 12px 0; border: 0; border-bottom: 1px solid var(--theme-line); width: 100%; text-align: left; background: transparent; color: var(--theme-text); }
+.shader-issue.error > svg { color: var(--theme-danger); }
+.shader-issue.warning > svg { color: var(--theme-warning); }
+.shader-issue > span { display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; min-width: 0; font-size: 12px; }
+.shader-issue code { color: var(--theme-muted); }
+.shader-game { padding: 16px; min-width: 0; }
+.shader-test-modes { display: inline-flex; margin-bottom: 16px; width: auto; }
+.shader-game > .shader-test-modes { max-width: 100%; width: auto; }
+.shader-test-modes button { min-height: 32px; padding: 5px 12px; }
+.shader-test-modes button[aria-pressed="true"] { color: var(--theme-accent); background: var(--theme-selected); }
+.shader-session-controls { display: flex; flex-direction: column; gap: 16px; }
+.shader-session-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shader-session-actions > select { flex: 1 1 180px; max-width: 360px; }
+.shader-session-issues { padding-block: 4px; color: var(--theme-muted); font-size: 12px; overflow-wrap: anywhere; }
+.shader-session-issues p { margin-block: 6px; }
+.shader-session-state { min-height: 160px; border-top: 1px solid var(--theme-line); padding-top: 16px; font-size: 13px; overflow-wrap: anywhere; }
+.shader-session-state dl { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 10px; }
+.shader-session-state dt { color: var(--theme-muted); }
+.shader-session-state dd { margin: 0; min-width: 0; }
+.shader-session-state summary { cursor: pointer; color: var(--theme-muted); }
+.shader-session-state pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.shader-game-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.shader-game-controls > span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.shader-game-log { margin-top: 16px; }
+.shader-log-heading { padding-block: 10px; font-size: 12px; }
+.shader-game-log pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; padding: 12px; background: var(--theme-panel); border-radius: 5px; }
+.shader-comparison-controls { display: flex; gap: 16px; padding-block: 16px; flex-wrap: wrap; }
+.shader-comparison-controls label { display: flex; flex: 1; gap: 8px; align-items: center; min-width: 150px; font-size: 12px; }
+.shader-comparison-controls select { flex: 1; width: 100px; }
+.shader-comparison-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.shader-comparison-images figure { margin: 0; min-width: 0; }
+.shader-comparison-images img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: var(--theme-panel); }
+.shader-comparison-images figcaption { overflow-wrap: anywhere; color: var(--theme-muted); font-size: 11px; padding: 6px 0; }
+@media (max-width: 760px) {
+  .shader-source-layout { grid-template-columns: minmax(0, 1fr); }
+  .shader-files { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--theme-line); }
+  .shader-editor { min-height: 380px; }
+  .shader-comparison-images { grid-template-columns: 1fr; }
+  .shader-toolbar { padding-inline: 10px; }
+  .shader-object { white-space: normal; overflow-wrap: anywhere; }
+  .shader-option-row select { width: 90px; }
+  .shader-preview-toolbar { padding: 8px; flex-wrap: wrap; }
+  .shader-preview-toolbar > span { flex-basis: 150px; }
+  .shader-options-list { padding: 12px; }
+  .shader-option-row > .shader-slider { flex-basis: 130px; }
+}

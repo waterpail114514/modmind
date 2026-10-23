@@ -6,6 +6,7 @@ import {
   isValidWorkbenchConversationId,
   migrateLegacyConversation,
   normalizeWorkbenchConversations,
+  mergeWorkbenchConversationIndexes,
   removeWorkbenchConversation,
   sortWorkbenchConversations,
   titleFromUserText,
@@ -15,6 +16,16 @@ import {
 } from './workbenchConversations'
 
 describe('workbench conversations', () => {
+  it('merges durable metadata once while keeping legacy-only threads and beginner identity', () => {
+    const legacy = normalizeWorkbenchConversations([
+      { id: 'ws-shared', title: 'old', createdAt: '2026-01-01', updatedAt: '2026-01-01', agentMode: 'beginner' },
+      { id: 'ws-legacy', title: 'legacy', createdAt: '2026-01-01', updatedAt: '2026-01-01' }
+    ])
+    const result = mergeWorkbenchConversationIndexes(legacy, [{ id: 'ws-shared', surface: 'workspace', title: 'renamed', createdAt: '2026-01-01', updatedAt: '2026-02-01', generation: 2, pinned: true }])
+    expect(result.map(item => item.id)).toEqual(['ws-shared', 'ws-legacy'])
+    expect(result[0]).toMatchObject({ title: 'renamed', pinned: true, agentMode: 'beginner', sessionScope: 'workspace/ws-shared' })
+    expect(legacy[0].title).toBe('old')
+  })
   it('keeps pinned conversations above newer unpinned ones after reload', () => {
     const stored = normalizeWorkbenchConversations([
       { id: 'ws-old', title: '旧对话', createdAt: '2026-01-01', updatedAt: '2026-01-01', pinned: true, titleSource: 'manual' },

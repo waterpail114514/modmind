@@ -4,9 +4,9 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { nativeFeatureResourcePath } from '../../../sdk/nativeResources'
-import type { DecompileRemapInfo } from "../../../../src/shared/decompile"
-import { verifiedDownload } from "../../../../src/main/downloadService"
-import { readValidatedTextCache } from "../../../../src/main/validatedTextCache"
+import type { DecompileRemapInfo } from '../../../../src/shared/decompile'
+import { verifiedDownload } from '../../../../src/main/downloadService'
+import { readValidatedTextCache } from '../../../../src/main/validatedTextCache'
 
 /** Pinned tiny-remapper release bundled with ModMind. */
 export const TINY_REMAPPER_VERSION = '0.14.0'
@@ -203,7 +203,8 @@ export function validateYarnMappings(content: string): void {
   if (!classes || !content.endsWith('\n')) throw new Error('Yarn 映射格式无效：内容为空或被截断')
 }
 
-export async function ensureYarnMappings(cacheRoot: string, minecraftVersion: string, options: { download: (request: Parameters<typeof verifiedDownload.download>[0]) => ReturnType<typeof verifiedDownload.download>; listVersions?: (base: string) => Promise<YarnVersionEntry[]> }): Promise<string> {
+export async function ensureYarnMappings(cacheRoot: string, minecraftVersion: string, options: { download: (request: Parameters<typeof verifiedDownload.download>[0]) => ReturnType<typeof verifiedDownload.download>; listVersions?: (base: string) => Promise<YarnVersionEntry[]>; signal?: AbortSignal }): Promise<string> {
+  options.signal?.throwIfAborted()
   const destination = yarnMappingsCachePath(cacheRoot, minecraftVersion)
   await readValidatedTextCache(destination, async () => {
     const listVersions = options.listVersions ?? defaultListYarnVersions
@@ -217,13 +218,16 @@ export async function ensureYarnMappings(cacheRoot: string, minecraftVersion: st
         sources: YARN_DOWNLOAD_HOSTS.map((host, index) => ({ id: `yarn-${index}`, label: `yarn ${chosen.version}`, url: yarnV2MappingsUrl(chosen).replace('https://maven.fabricmc.net', host) })),
         destination: staging,
         maxBytes: 32 * 1024 * 1024,
-        retriesPerSource: 1
+        retriesPerSource: 1,
+        signal: options.signal
       })
+      options.signal?.throwIfAborted()
       return await extractTinyFromYarnJar(staging)
     } finally {
       await fs.rm(staging, { force: true }).catch(() => undefined)
     }
   }, validateYarnMappings)
+  options.signal?.throwIfAborted()
   return destination
 }
 
@@ -236,7 +240,7 @@ async function defaultListYarnVersions(base: string): Promise<YarnVersionEntry[]
 
 /** Extracts `mappings/mappings.tiny` from a yarn v2 jar using the bundled 7za helper. */
 async function extractTinyFromYarnJar(jarPath: string): Promise<string> {
-  const { extractSevenZipArchive } = await import("../../../../src/main/sevenZipArchive")
+  const { extractSevenZipArchive } = await import('../../../../src/main/sevenZipArchive')
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-yarn-'))
   try {
     await extractSevenZipArchive(jarPath, temporary)

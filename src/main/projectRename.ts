@@ -36,8 +36,14 @@ async function collectEntries(root: string): Promise<ProjectEntry[]> {
   return entries
 }
 
+function replaceIdentifier(text: string, previous: string, next: string): string {
+  if (!previous || previous === next) return text
+  const escaped = previous.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return text.replace(new RegExp(`(?<![A-Za-z0-9_$-])${escaped}(?![A-Za-z0-9_$-])`, 'g'), () => next)
+}
+
 function renamedPath(relative: string, previousNamespace: string, nextNamespace: string): string {
-  return relative.split('/').map((segment) => segment.replaceAll(previousNamespace, nextNamespace)).join('/')
+  return relative.split('/').map(segment => replaceIdentifier(segment, previousNamespace, nextNamespace)).join('/')
 }
 
 function isBinary(content: Buffer): boolean {
@@ -57,6 +63,7 @@ export async function renameProjectFiles(
   const entries = await collectEntries(root)
   const manifestSet = new Set(manifestNames)
   const moves = entries
+    .filter(entry => !manifestSet.has(entry.relative))
     .map((entry) => ({ ...entry, target: renamedPath(entry.relative, project.namespace, nextProject.namespace) }))
     .filter((entry) => entry.relative !== entry.target)
 
@@ -81,12 +88,18 @@ export async function renameProjectFiles(
   const staging = path.join(root, `.modmind-rename-${process.pid}-${Date.now()}`)
   await fs.mkdir(staging)
   const staged = new Map<string, string>()
+  const journal: Array<{ source: string; destination: string }> = []
+  const changedContents: Array<{ target: string; original: Buffer }> = []
+  let preserveRecovery = false
   try {
+    // A failed recovery must still leave a persistent copy of the original text.
+    await fs.writeFile(path.join(staging, 'original-text.json'), JSON.stringify([...contents].map(([relative, content]) => ({ relative, base64: content.toString('base64') }))))
     // Stage changed entries first so directory moves cannot invalidate a child source path.
     for (const [index, move] of [...moves].sort((left, right) => right.relative.split('/').length - left.relative.split('/').length).entries()) {
       const source = path.join(root, ...move.relative.split('/'))
       const temporary = path.join(staging, String(index))
       await fs.rename(source, temporary)
+      journal.push({ source, destination: temporary })
       staged.set(move.relative, temporary)
     }
 
@@ -100,6 +113,7 @@ export async function renameProjectFiles(
       const destination = path.join(root, ...move.target.split('/'))
       await fs.mkdir(path.dirname(destination), { recursive: true })
       await fs.rename(temporary, destination)
+      journal.push({ source: temporary, destination })
     }
 
     const changedFiles: string[] = []
@@ -108,17 +122,32 @@ export async function renameProjectFiles(
       const original = contents.get(entry.relative)
       if (!original) continue
       const previous = original.toString('utf8')
-      const next = previous
-        .replaceAll(project.namespace, nextProject.namespace)
-        .replaceAll(project.name, nextProject.name)
+      const next = replaceIdentifier(replaceIdentifier(previous, project.namespace, nextProject.namespace), project.name, nextProject.name)
       if (next === previous) continue
       const targetRelative = renamedPath(entry.relative, project.namespace, nextProject.namespace)
-      await fs.writeFile(path.join(root, ...targetRelative.split('/')), next, 'utf8')
+      const target = path.join(root, ...targetRelative.split('/'))
+      changedContents.push({ target, original })
+      await fs.writeFile(target, next, 'utf8')
       changedFiles.push(targetRelative)
     }
     changedFiles.push(...moves.filter((entry) => entry.type === 'file').map((entry) => entry.target))
     return { changedFiles: [...new Set(changedFiles)].sort() }
+  } catch (error) {
+    const failures: unknown[] = []
+    for (const change of changedContents.reverse()) {
+      try { await fs.writeFile(change.target, change.original) } catch (failure) { failures.push(failure) }
+    }
+    for (const move of journal.reverse()) {
+      try { await fs.mkdir(path.dirname(move.source), { recursive: true }); await fs.rename(move.destination, move.source) }
+      catch (failure) { failures.push(failure) }
+    }
+    if (failures.length) {
+      preserveRecovery = true
+      await fs.writeFile(path.join(staging, 'recovery.json'), JSON.stringify({ journal, failed: failures.map(String) }, null, 2)).catch(() => undefined)
+      throw new AggregateError([error, ...failures], `项目重命名未能完全恢复，原文件和恢复记录保留在：${staging}`)
+    }
+    throw error
   } finally {
-    await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)
+    if (!preserveRecovery) await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined)
   }
 }

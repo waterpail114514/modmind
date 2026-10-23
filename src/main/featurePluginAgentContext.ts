@@ -9,6 +9,7 @@ export function featurePluginCapabilityPrompt(catalog: FeaturePluginCatalogEntry
   const entries = catalog.map(entry => ({
     id: entry.id, name: entry.name, state: entry.state, description: entry.description,
     capabilities: entry.manifest?.capabilities ?? [],
+    studios: entry.manifest?.studios?.map(({ id, name, projectKind, loaders, defaultTarget }) => ({ id, name, projectKind, loaders, defaultTarget })) ?? [],
     installHint: entry.available ? undefined : entry.installHint, download: entry.download
   }))
   return `MODMIND INSTALLABLE CAPABILITIES (current host data):

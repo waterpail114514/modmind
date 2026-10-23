@@ -1,0 +1,220 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "version": "1.5.0",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "assets": {
+    "skills": "resources/codex-skills",
+    "starters": "resources/server-plugin-starters"
+  },
+  "hostCapabilities": [
+    "studioV1"
+  ],
+  "id": "studio-server-plugin",
+  "name": "服务端插件工作台",
+  "capabilities": [
+    {
+      "id": "studio-server-plugin",
+      "name": "服务端插件工作台",
+      "description": "创建和开发 Paper、Spigot、Folia、Velocity 插件；提供专属工作台、灵感台上下文与按需 skills。"
+    }
+  ],
+  "studios": [
+    {
+      "apiVersion": 1,
+      "id": "minecraft-server-plugin",
+      "name": "服务端插件工作台",
+      "projectKind": "server-plugin",
+      "loaders": [
+        "paper",
+        "spigot",
+        "folia",
+        "velocity"
+      ],
+      "defaultTarget": {
+        "loader": "paper",
+        "version": "1.21.1"
+      },
+      "templateHandler": "server-plugin",
+      "creation": {
+        "fields": [
+          {
+            "id": "name",
+            "title": "项目名称",
+            "type": "input",
+            "bind": "name",
+            "required": true,
+            "maxLength": 80,
+            "placeholder": "项目名称"
+          },
+          {
+            "id": "edition",
+            "title": "游戏版本",
+            "type": "options",
+            "default": "java",
+            "readOnly": true,
+            "options": [{ "value": "java", "title": "Java 版" }]
+          },
+          {
+            "id": "loader",
+            "title": "插件 API",
+            "type": "options",
+            "bind": "loader",
+            "required": true,
+            "default": "paper",
+            "options": [
+              {
+                "value": "paper",
+                "title": "Paper"
+              },
+              {
+                "value": "spigot",
+                "title": "Spigot"
+              },
+              {
+                "value": "folia",
+                "title": "Folia"
+              },
+              {
+                "value": "velocity",
+                "title": "Velocity"
+              }
+            ]
+          },
+          {
+            "id": "version",
+            "title": "游戏 / API 版本",
+            "type": "select",
+            "bind": "minecraftVersion",
+            "required": true,
+            "default": "1.21.1",
+            "source": {
+              "kind": "loader-versions",
+              "loaderField": "loader"
+            }
+          }
+        ]
+      },
+      "adoption": {
+        "handler": "server-plugin",
+        "priority": 70,
+        "markers": []
+      },
+      "skillAssetGroup": "skills",
+      "ai": {
+        "workbench": {
+          "instructions": "Java server plugin project. SERVER PLUGIN PROJECT: {{name}}; platform/API {{loader}} {{apiVersion}}; Java {{javaVersion}}.\nImplement in the existing project. Use modmind_build_project, modmind_local_server and modmind_resource_pack for managed build/test/resource operations. Never route this plugin to Fabric/Forge or a client mods directory.\nInspect plugin.yml, paper-plugin.yml or Velocity metadata and Gradle/Maven before changing code. Use platform API, compileOnly for server APIs, and separate runtime plugin dependencies in server-plugins/. Preserve existing commands, permissions and data. Handle player/console permissions, async I/O, lifecycle cleanup, and explicit Folia scheduler ownership. Velocity is a proxy API, not Bukkit. Prefer mature libraries only when needed; Vault requires an actual economy provider. Do not claim compatibility from compilation alone; report core readiness, plugin enablement and scenario evidence separately.\nFor implementation, migration or runtime investigation, use minecraft-server-plugin-development from the supplied skill directory. Bound caches and work queues; release owned tasks, pools, listeners and player/world references on their lifecycle boundaries. Verify async completion after disconnect/disable and measure repeated workload cleanup before claiming memory safety.\nResource packs live in resource-packs/<id>/ with pack.mcmeta and assets/. Reuse the resource pack workspace and existing image/model tools. Exported resources are separate from the plugin JAR unless the project explicitly embeds them.",
+          "skills": [
+            "minecraft-server-plugin-development",
+            "minecraft-content-assets",
+            "modmind-image-assets",
+            "minecraft-release",
+            "headless-minecraft-testing"
+          ],
+          "greetings": [
+            "Hi！今天想做什么样的服务端插件？",
+            "把脑海里的点子，变成一个服务端插件吧。",
+            "今天，给方块世界添点什么？",
+            "一个新玩法，就从这里开始。",
+            "准备好做点有趣的东西了吗？",
+            "让你的世界，多一种可能。",
+            "从一个小点子，开始今天的创作。",
+            "想让玩家遇见什么惊喜？",
+            "今天的方块世界，由你来定义。",
+            "把你想玩的，亲手做出来。",
+            "来做一个属于你的服务端插件吧。",
+            "你的下一个作品，会是什么样？",
+            "先说说你最想实现的那个点子。",
+            "从第一块积木，搭起新玩法。",
+            "今天想给冒险加点什么？",
+            "让一个有趣的想法落地吧。",
+            "给熟悉的世界，添一点新鲜感。",
+            "一起做点值得分享的东西。",
+            "下一段冒险，从你的创意开始。",
+            "今天想改变哪一条游戏规则？",
+            "把「如果可以」变成「现在可以」。",
+            "来，把这个点子做成真的。",
+            "一个小改动，也能带来新乐趣。",
+            "想创造怎样的游戏体验？",
+            "从你喜欢的玩法开始做起。",
+            "今天，我们来丰富这个世界。",
+            "为下一次联机，准备一点惊喜。",
+            "让创意有一个可以游玩的版本。",
+            "新作品的第一步，你来说。",
+            "把想象，放进方块世界。"
+          ],
+          "starters": [
+            {
+              "title": "每日签到与奖励",
+              "prompt": "为当前服务端插件实现每日签到、权限与持久化，验证重复领取和重启后记录。"
+            },
+            {
+              "title": "家与传送",
+              "prompt": "实现设家与回家指令，包含权限、移动取消与数据保存。使用当前平台 API。"
+            },
+            {
+              "title": "插件联动与兼容",
+              "prompt": "检查当前插件 API、运行依赖和目标核心，补充可验证的兼容检查。"
+            }
+          ]
+        },
+        "inspiration": {
+          "instructions": "SERVER PLUGIN INSPIRATION: {{name}}; platform/API {{loader}} {{apiVersion}}.\nDiscuss requirements and compatibility only; do not edit, download, build or launch. Explore commands, permissions, persistence, multiplayer experience and plugin integrations. Respect Folia scheduler ownership and distinguish Velocity proxy APIs from Bukkit. Compare mature plugin integrations and concrete acceptance scenarios before handoff.",
+          "skills": [
+            "minecraft-server-plugin-development",
+            "modmind-image-assets"
+          ],
+          "greetings": [
+            "先不急着动手，聊聊你的点子。",
+            "如果世界多一条规则，会怎样？",
+            "今天，想让想象走多远？",
+            "一个好问题，就是灵感的开始。",
+            "还没想清楚？我们一起想。",
+            "把那个有点模糊的想法说出来。",
+            "换个角度，看看这个世界。",
+            "有没有一个你一直想玩的玩法？",
+            "今天，让好奇心带路。",
+            "先聊可能性，再决定怎么做。",
+            "给想象留一点自由。",
+            "你的小点子，也值得认真聊聊。",
+            "如果不按常规来，会怎样？",
+            "让我们为冒险找一个新方向。",
+            "从「为什么」开始，也很好。",
+            "想法还没成形，也可以开始。",
+            "你希望玩家记住什么？",
+            "有些好玩法，来自一个小疑问。",
+            "今天想探索哪种可能？",
+            "来聊一个有趣的「假如」。",
+            "让零散的念头，慢慢连起来。",
+            "我们可以先把问题想简单。",
+            "给熟悉的玩法，找个新视角。",
+            "最让你好奇的部分是什么？",
+            "不用急着选，我们先看看。",
+            "一起找到那个值得做的点子。",
+            "从一段体验，想到一种玩法。",
+            "先把想法摊开，再挑最有趣的。",
+            "想让这个世界变得哪里不一样？",
+            "下一次惊喜，可以从这里想起。"
+          ],
+          "starters": [
+            {
+              "title": "每日签到与奖励",
+              "prompt": "帮我设计适合当前服务器的签到奖励，讨论防刷与经济平衡，先不修改文件。"
+            },
+            {
+              "title": "家与传送",
+              "prompt": "讨论传送插件的冷却、成本与多人体验，优先复用成熟 API，先不修改工程。"
+            },
+            {
+              "title": "插件联动与兼容",
+              "prompt": "分析当前插件适合联动哪些成熟插件，以及 Paper、Spigot、Folia 或代理目标的边界。"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

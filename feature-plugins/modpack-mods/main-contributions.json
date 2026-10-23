@@ -1,6 +1,18 @@
 {
   "actions": [
     {
+      "id": "modpack:refreshMods",
+      "handler": "modpack:refreshMods",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "properties": { "args": { "type": "array", "maxItems": 0 } },
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "modpack:importStatus",
       "handler": "modpack:importStatus",
       "permission": "write",
@@ -615,6 +627,11 @@
     }
   ],
   "tools": [
+    {
+      "name": "modmind_modpack_refresh_mods",
+      "action": "modpack:refreshMods",
+      "description": "Rescan the active Java modpack's local JAR directory and persist additions, removals and changed hashes to its manifest. Preserves source, modules and upstream locks for audit. Returns the current manifest; does not download files."
+    },
     {
       "name": "modmind_modpack_plan",
       "action": "modpack_plan",

@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from './safeExtractZip'
 import type { ProjectInfo } from '../shared/types'
 import { fetchTextWithRetry } from './networkRequest'
 import { verifiedDownload } from './downloadService'

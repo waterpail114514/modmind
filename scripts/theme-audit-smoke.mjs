@@ -124,7 +124,6 @@ try {
     const handle = (name, fn) => { ipcMain.removeHandler(name); ipcMain.handle(name, fn) }
     // Catalog lookups are unrelated to theme rendering and must not delay the audit.
     handle('image-studio:capabilities', () => ({ models: ['gpt-image-2'], sizes: ['1024x1024'], qualities: ['medium'], moderations: ['auto'] }))
-    handle('modpack:contentFeatures', () => ({ ftbQuests: true, patchouli: true }))
   })
   const allPages = []
   const migrationPagesOnly = process.argv.includes('--migration-pages')

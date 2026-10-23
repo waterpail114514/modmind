@@ -10,4 +10,4 @@ for (const entry of upstream.files) {
 }
 let module = '// Generated from pinned Minecraft Development templates; run scripts/sync-plugin-starter-assets.mjs.\n'
 for (const [name, file] of [['BUKKIT_STARTER','bukkit.java.ft'],['VELOCITY3_STARTER','velocity3.java.ft'],['STARTER_LICENSE','LICENSE-LGPL.txt'],['STARTER_GPL','LICENSE-GPL.txt']]) module += `export const ${name} = ${JSON.stringify(await fs.readFile(path.join(source, file), 'utf8'))}\n`
-await fs.writeFile(path.join(root, 'src/main/serverPluginStarters.ts'), module)
+await fs.writeFile(path.join(root, 'feature-plugins/studio-server-plugin/src/main/serverPluginStarters.ts'), module)

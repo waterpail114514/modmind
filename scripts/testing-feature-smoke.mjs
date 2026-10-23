@@ -109,14 +109,13 @@ try {
   await fs.writeFile(resource, 'damaged cache')
   const repaired = await app.evaluate(() => globalThis.__testingHost().featurePluginService.service('server-pack-runtime').resource('ServerPackCreator-8.1.2.jar'))
   assert.equal(createHash('sha256').update(await fs.readFile(repaired)).digest('hex'), '6ecb5f604326a8cb74ede15f667d170e2001cd968ab7f99592a0045ff27b0fca')
-  for (const [width, dark] of [[1440,false],[780,true],[390,true]]) {
+  for (const [width, dark] of [[1440, false], [1080, true]]) {
     await page.setViewportSize({ width, height: 900 })
     await page.evaluate(darkMode => window.dispatchEvent(new StorageEvent('storage', { key: 'modmind-appearance:v1', newValue: JSON.stringify({ themePreset: 'modmind', darkMode }) })), dark)
     for (const label of ['游戏测试','服务端测试']) {
       const expand = page.getByRole('button', { name: '展开侧栏', exact: true })
       if (await expand.count()) await expand.click()
       await select(label)
-      if (width < 700) await page.getByRole('button', { name: '收起侧栏', exact: true }).click()
       await page.waitForTimeout(400)
       await page.screenshot({ path: path.join(work, `${label}-${width}.png`), animations: 'disabled' })
     }

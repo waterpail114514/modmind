@@ -1,6 +1,9 @@
 import waterpailAvatar from '../assets/authors/waterpail.webp'
 import lemonAvatar from '../assets/authors/lemon.webp'
 import anonymousAvatar from '../assets/authors/anonymous.webp'
+import xiaobowenAvatar from '../assets/authors/xiaobowen.webp'
+import hydrargyrumAvatar from '../assets/authors/hydrargyrum.webp'
+import yecairenAvatar from '../assets/authors/yecairen.webp'
 import sq0Avatar from '../assets/authors/sq0.webp'
 import lihuiAvatar from '../assets/authors/lihui.webp'
 import callAvatar from '../assets/authors/c-all.webp'
@@ -20,15 +23,13 @@ const groups = [
   {
     title: '社区贡献者',
     people: [
+      { name: 'XiaoBowen', avatar: xiaobowenAvatar },
       { name: '佚名即无名', avatar: anonymousAvatar },
-      { name: 'SQ0', avatar: sq0Avatar }
-    ]
-  },
-  {
-    title: '优化素材贡献者',
-    people: [
+      { name: 'SQ0', avatar: sq0Avatar },
       { name: '理惠', avatar: lihuiAvatar },
-      { name: 'C.all', avatar: callAvatar }
+      { name: 'C.all', avatar: callAvatar },
+      { name: 'Hydrargyrum', avatar: hydrargyrumAvatar },
+      { name: '野菜仁', avatar: yecairenAvatar }
     ]
   }
 ]

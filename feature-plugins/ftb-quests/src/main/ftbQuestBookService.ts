@@ -1,10 +1,10 @@
-import { chapterSource, tableIdBigInt, validateFtbQuestBook } from "../../../../src/shared/ftbQuestValidation"
+import { chapterSource, tableIdBigInt, validateFtbQuestBook } from '../../../../src/shared/ftbQuestValidation'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import JSON5 from 'json5'
 import { Byte, Short, Int, Float, parse as parseSnbt, stringify as stringifySnbt } from 'ftbq-nbt'
-import type { FtbQuestBook, FtbQuestBookFormat, FtbQuestDiagnostic, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestRewardDocument, FtbQuestRewardTable, FtbQuestRewardTableEntry, FtbQuestSaveResult, FtbQuestTaskDocument, ProjectInfo } from "../../../../src/shared/types"
+import type { FtbQuestBook, FtbQuestBookFormat, FtbQuestDiagnostic, FtbQuestDocumentChapter, FtbQuestDocumentQuest, FtbQuestRewardDocument, FtbQuestRewardTable, FtbQuestRewardTableEntry, FtbQuestSaveResult, FtbQuestTaskDocument, ProjectInfo } from '../../../../src/shared/types'
 
 type RawRecord = Record<string, unknown>
 
@@ -168,7 +168,7 @@ async function readChapterFiles(root: string): Promise<Array<{ source: string; c
   return Promise.all(entries.filter((entry) => entry.isFile() && /\.(snbt|json5)$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name)).map(async (entry) => ({ source: `chapters/${entry.name}`, content: await fs.readFile(path.join(chapters, entry.name), 'utf8') })))
 }
 
-export { validateFtbQuestBook } from "../../../../src/shared/ftbQuestValidation"
+export { validateFtbQuestBook } from '../../../../src/shared/ftbQuestValidation'
 
 export async function readFtbQuestBook(project: ProjectInfo): Promise<FtbQuestBook> {
   return exclusive(project, () => readBook(project))
@@ -315,7 +315,17 @@ async function saveBook(project: ProjectInfo, input: FtbQuestBook): Promise<FtbQ
     if (desired.has(target)) throw new Error(`reward table filename is duplicated: ${table.filename}`)
     desired.set(target, compile(compiledRewardTable(table, format), table.source))
   }
-  const removed = [...existing].filter((file) => !desired.has(file))
+  // Resolve existing aliases on the actual filesystem, including default macOS
+  // volumes, before deciding which previous filenames need removal.
+  const canonical = async (file: string): Promise<string> => {
+    const resolved = await fs.realpath(file).catch(error => { if (missing(error)) return file; throw error })
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+  }
+  const desiredPaths = new Set(await Promise.all([...desired.keys()].map(canonical)))
+  if (desiredPaths.size !== desired.size) throw new Error('任务书包含重复文件名（忽略大小写）')
+  const previousFiles = [...existing]
+  const previousPaths = await Promise.all(previousFiles.map(canonical))
+  const removed = previousFiles.filter((_, index) => !desiredPaths.has(previousPaths[index]))
   const original = new Map<string, string | null>()
   for (const target of new Set([...desired.keys(), ...removed])) original.set(target, await fs.readFile(target, 'utf8').catch((error) => { if (missing(error)) return null; throw error }))
   const temporary = new Map<string, string>()

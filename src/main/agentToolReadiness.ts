@@ -50,18 +50,18 @@ function record(value: unknown): RecordValue {
   return value && typeof value === 'object' ? value as RecordValue : {}
 }
 
-export function agentToolInventoryReady(value: unknown): boolean {
-  const summary = agentToolInventorySummary(value)
+export function agentToolInventoryReady(value: unknown, requiredTools: readonly string[] = CORE_AGENT_TOOLS): boolean {
+  const summary = agentToolInventorySummary(value, requiredTools)
   return summary.missing.length === 0 && (summary.status === 'connected' || summary.status === 'unknown')
 }
 
-export function agentToolInventorySummary(value: unknown): { status: string; count: number; missing: string[] } {
+export function agentToolInventorySummary(value: unknown, requiredTools: readonly string[] = CORE_AGENT_TOOLS): { status: string; count: number; missing: string[] } {
   const server = record(value)
   const state = server.runtimeStatus
   const names = Array.isArray(server.tools)
     ? server.tools.map(tool => typeof tool === 'string' ? tool : record(tool).name)
     : Object.entries(record(server.tools)).flatMap(([key, tool]) => [key, record(tool).name])
-  const required = [MCP_PROBE_TOOL, ...CORE_AGENT_TOOLS]
+  const required = [MCP_PROBE_TOOL, ...requiredTools]
   return {
     status: server.toolsError || server.error ? 'error' : state == null ? 'unknown' : String(state),
     count: new Set(names.filter((name): name is string => typeof name === 'string')).size,
@@ -75,6 +75,7 @@ export async function waitForAgentTools(options: {
   signal: AbortSignal
   timeoutMs?: number
   pollMs?: number
+  requiredTools?: readonly string[]
 }): Promise<void> {
   const timeout = AbortSignal.timeout(options.timeoutMs ?? 20_000)
   const signal = AbortSignal.any([options.signal, timeout])
@@ -94,7 +95,7 @@ export async function waitForAgentTools(options: {
         if (cursor && (cursors.has(cursor) || cursors.size >= 100)) throw new Error('工具目录分页无效。')
         if (cursor) cursors.add(cursor)
       } while (cursor)
-      if (server && agentToolInventoryReady(server)) return
+      if (server && agentToolInventoryReady(server, options.requiredTools)) return
       const state = server?.runtimeStatus ?? server?.status
       if (['failed', 'cancelled', 'disabled', 'authenticationRequired', 'needs-auth'].includes(String(state))) {
         throw new Error(`ModMind 工具连接状态：${String(state)}。`)

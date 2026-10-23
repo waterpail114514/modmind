@@ -9,7 +9,7 @@ import type { LoaderVersionOption, ProjectInfo } from '../shared/types'
 
 const roots: string[] = []
 async function documents(): Promise<string> { const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-draft-')); roots.push(root); return root }
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))) })
 const compatibility: LoaderVersionOption = { loader: 'fabric', minecraftVersion: '1.21.1', loaderVersion: '0.16.14', apiVersion: '0.116.4+1.21.1', javaVersion: 21, channel: 'release', supportTier: 'stable', notes: [] }
 const scaffold = async (project: ProjectInfo): Promise<void> => {
   for (const [relative, content] of Object.entries(projectTemplateFiles(project))) {
@@ -20,6 +20,17 @@ const scaffold = async (project: ProjectInfo): Promise<void> => {
 }
 
 describe('conversation-only projects', () => {
+  it('does not create empty override directories through an ancestor junction', async () => {
+    const parent = await documents()
+    const draft = await createDraftProject(parent, 'Fabric 1.21.1 整合包')
+    const outside = path.join(parent, 'outside'); await fs.mkdir(outside)
+    await fs.symlink(outside, path.join(draft.path, 'overrides'), process.platform === 'win32' ? 'junction' : 'dir')
+    try {
+      await expect(initializeDraftProject(draft.path, { resolve: async () => compatibility, scaffold: createModpackTemplate })).rejects.toThrow(/link|不能写入已有路径/)
+      expect(await fs.readdir(outside)).toEqual([])
+      expect(JSON.parse(await fs.readFile(path.join(draft.path, 'modmind.project.json'), 'utf8')).draft).toBeDefined()
+    } finally { await fs.unlink(path.join(draft.path, 'overrides')) }
+  })
   it('names the default namespace before scaffolding and keeps it stable after initialization', async () => {
     const draft = await createDraftProject(await documents(), 'Fabric 1.21.1 \u95ea\u7535\u5251\u6a21\u7ec4')
     const history = path.join(draft.path, '.modmind', 'history.json')

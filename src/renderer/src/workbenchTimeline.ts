@@ -1,6 +1,7 @@
 import { normalizeAiTurnReplay, replayUserText } from '../../shared/aiReplay'
 import { contextTokens, latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import { presentLegacyAiNotice } from '../../shared/aiNotice'
+import { ReplayTextBuffer } from './replayTextBuffer'
 import type { AiNotice, AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationEventRecord, PipelineEvent } from '../../shared/types'
 
 export type WorkbenchTimelineDiff = { path: string; added: number; removed: number; additions: string[]; removals: string[] }
@@ -18,6 +19,7 @@ export type WorkbenchTimelineItem = {
   streamId?: string
   eventId?: string
   stage?: string
+  connectionActivity?: string
   sequence?: number
   status?: 'running' | 'done' | 'warning' | 'error'
   terminal?: boolean
@@ -102,7 +104,38 @@ export function isWorkbenchInternalPrompt(content: string): boolean {
 }
 
 export function normalizeWorkbenchTimeline(items: WorkbenchTimelineItem[]): WorkbenchTimelineItem[] {
-  return orderTimeline(items.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content))))
+  const result: WorkbenchTimelineItem[] = []
+  const connections = new Map<string, number>()
+  for (const item of orderTimeline(items.filter((item) => !(item.kind === 'user' && isWorkbenchInternalPrompt(item.content))))) {
+    const key = connectionActivityIdentity(item)
+    const index = key ? connections.get(key) : undefined
+    if (index !== undefined) result[index] = mergeConnectionActivity(result[index], item)
+    else {
+      if (key) connections.set(key, result.length)
+      result.push(item)
+    }
+  }
+  return result
+}
+
+// Reconnects repeat these host lifecycle messages; domain steps remain separate.
+function connectionActivity(item: Pick<WorkbenchTimelineItem, 'kind' | 'content' | 'connectionActivity'>): string | undefined {
+  if (item.connectionActivity) return item.connectionActivity
+  if (item.kind === 'start') return `start:${item.content}`
+  if (item.kind !== 'thinking' && item.kind !== 'tool') return undefined
+  const title = item.content.split('\n')[0]
+  return ['正在准备工具', 'Codex 已恢复会话', 'Codex 正在分析项目'].includes(title) ? title : undefined
+}
+
+function connectionActivityIdentity(item: WorkbenchTimelineItem): string | undefined {
+  const activity = connectionActivity(item)
+  const turn = item.turnId ?? item.runId
+  return activity && turn ? JSON.stringify([turn, activity]) : undefined
+}
+
+function mergeConnectionActivity(previous: WorkbenchTimelineItem, incoming: WorkbenchTimelineItem): WorkbenchTimelineItem {
+  if (previous.sequence !== undefined && incoming.sequence !== undefined && previous.sequence >= incoming.sequence) return previous
+  return { ...previous, ...incoming, id: previous.id, time: previous.time }
 }
 
 function mergeStreamingText(current: string, incoming: string): string {
@@ -308,6 +341,8 @@ export function reduceWorkbenchOutput(
     const settled = event.kind === 'retry'
       ? current.map((item) => item.kind === 'response' && item.status === 'running' && sameOutputTurn(item, event) ? { ...item, status: 'done' as const } : item)
       : current
+    if (event.kind === 'start' && (event.turnId || event.runId || event.sessionId)
+      && settled.some(item => item.kind === 'start' && sameOutputTurn(item, event) && item.content === content)) return settled
     return orderTimeline([...settled, { id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, status: event.kind === 'retry' ? 'warning' : 'done', ...(event.kind === 'retry' ? { terminal: false, recoverable: true } : {}) }])
   }
   const kind: WorkbenchTimelineItem['kind'] = event.kind === 'tool' ? 'tool' : event.kind === 'warning' ? 'warning' : event.kind === 'error' ? 'error' : 'status'
@@ -342,14 +377,25 @@ export function reduceWorkbenchProgress(
     kind,
     content,
     time: event.time,
-    runId: event.runId,
+    runId: event.runId ?? event.sessionId,
     turnId: event.turnId,
     sequence: event.sequence,
+    eventId: event.eventId,
+    connectionActivity: connectionActivity({ kind, content: event.title }),
     stage: event.stage,
     ...(event.changedFiles ? { changedFiles: event.changedFiles } : {}),
     status,
     ...(event.terminal !== undefined ? { terminal: event.terminal } : {}),
     ...(event.recoverable !== undefined ? { recoverable: event.recoverable } : {})
+  }
+  const connectionKey = connectionActivityIdentity(item)
+  const connectionIndex = connectionKey ? currentItems.findIndex(candidate => connectionActivityIdentity(candidate) === connectionKey) : -1
+  if (connectionIndex >= 0) {
+    const previous = items[connectionIndex]
+    if (previous.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return items
+    const next = [...currentItems]
+    next[connectionIndex] = mergeConnectionActivity(previous, item)
+    return orderTimeline(next)
   }
   if (index < 0) {
     // A running stage followed by its terminal update is one lifecycle item;
@@ -370,9 +416,9 @@ export function reduceWorkbenchProgress(
 }
 
 /**
- * Rebuilds the visible timeline from the complete durable journal. This follows
- * the same item-reconciliation rule as Codex/OpenCode: only a matching stream
- * updates an existing projection item; all other records retain their order.
+ * Rebuilds the visible timeline from the complete durable journal. Matching
+ * streams and host connection activities update existing projection
+ * items; domain steps retain their order.
  */
 export function replayWorkbenchEvents(
   view: WorkbenchTimelineItem[],
@@ -409,7 +455,268 @@ export async function replayWorkbenchEventsAsync(
   }
 }
 
-function* replayWorkbenchSteps(
+// Replay keeps mutable row handles behind indexes. Live reducers above remain
+// immutable; rebuilding a journal must not copy and sort its whole prefix for
+// every token or tool event.
+type ReplayRow = { item: WorkbenchTimelineItem; time: number; ordinal: number; keys: string[] }
+type ReplayGroup = { rows: Set<ReplayRow>; first?: ReplayRow; last?: ReplayRow; dirty?: boolean }
+const replayKey = (kind: string, ...parts: unknown[]): string => JSON.stringify([kind, ...parts])
+const replayTurn = (item: WorkbenchTimelineItem): string | undefined => item.turnId ?? item.runId
+function compareReplayRows(left: ReplayRow, right: ReplayRow): number {
+  const a = left.item
+  const b = right.item
+  const at = left.time
+  const bt = right.time
+  if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt
+  const as = Number.isSafeInteger(a.sequence) ? a.sequence! : Number.MAX_SAFE_INTEGER
+  const bs = Number.isSafeInteger(b.sequence) ? b.sequence! : Number.MAX_SAFE_INTEGER
+  if (as !== bs && as !== Number.MAX_SAFE_INTEGER && bs !== Number.MAX_SAFE_INTEGER) return as - bs
+  if (as !== bs) return as === Number.MAX_SAFE_INTEGER ? -1 : 1
+  return left.ordinal - right.ordinal
+}
+
+class WorkbenchReplayProjection {
+  readonly rows: ReplayRow[] = []
+  private readonly groups = new Map<string, ReplayGroup>()
+  private readonly running = new Set<ReplayRow>()
+  private readonly thinking = new Set<ReplayRow>()
+  private readonly usageRows = new Set<ReplayRow>()
+  private readonly streamSequences = new Map<string, number>()
+  private readonly pendingText = new WeakMap<ReplayRow, ReplayTextBuffer>()
+  private usageDirty = true
+  private usage: AiTokenUsage | undefined
+  private usageTail?: ReplayRow
+
+  private keys(item: WorkbenchTimelineItem, row: ReplayRow): string[] {
+    const turn = replayTurn(item)
+    const keys = [replayKey('id', item.id), replayKey('turn', turn)]
+    if (item.eventId) keys.push(replayKey('event', turn, item.eventId))
+    if (item.sequence !== undefined) keys.push(replayKey('sequence', turn, item.sequence))
+    if (item.notice && item.terminal !== true) keys.push(replayKey('notice', turn, item.notice.key))
+    const connection = connectionActivityIdentity(item)
+    if (connection) keys.push(replayKey('connection', connection))
+    if (item.kind === 'start') keys.push(replayKey('start', turn, item.content))
+    if (item.kind === 'thinking' && item.status === 'running') keys.push(replayKey('lifecycle', item.runId, item.turnId, item.stage))
+    if (item.kind === 'response' || item.kind === 'answer') {
+      keys.push(replayKey('stream', turn, item.streamId))
+      if (item.sequence !== undefined) keys.push(replayKey('streamSequence', turn, item.streamId))
+      if (item.status === 'done') keys.push(replayKey('streamDone', turn, item.streamId))
+      if (item.kind === 'answer') keys.push(replayKey('answerText', item.turnId ?? item.runId ?? item.time, item.content.trim()))
+      if (item.kind === 'response') {
+        if (!this.pendingText.has(row) && (item.status === 'running' || item.status === 'done')) keys.push(replayKey('responseText', turn, item.content.trim()))
+        if (item.status === 'running') keys.push(replayKey('streamRunning', turn, item.streamId), replayKey('runningResponseTurn', turn))
+      }
+    }
+    return keys
+  }
+
+  add(item: WorkbenchTimelineItem): ReplayRow {
+    const row = { item, time: Date.parse(item.time), ordinal: this.rows.length, keys: [] as string[] }
+    this.rows.push(row)
+    this.replace(row, item)
+    return row
+  }
+
+  replace(row: ReplayRow, item: WorkbenchTimelineItem): void {
+    const previous = row.item
+    const orderChanged = previous.time !== item.time || previous.sequence !== item.sequence
+    const keys = this.keys(item, row)
+    for (const key of row.keys) {
+      if (keys.includes(key)) continue
+      const group = this.groups.get(key)!
+      group.rows.delete(row)
+      if (!group.rows.size) this.groups.delete(key)
+      else if (group.first === row || group.last === row) group.dirty = true
+    }
+    if (previous.usage !== item.usage || orderChanged && item.usage) this.usageDirty = true
+    row.item = item
+    if (orderChanged) row.time = Date.parse(item.time)
+    for (const key of keys) {
+      let group = this.groups.get(key)
+      if (!group) { group = { rows: new Set() }; this.groups.set(key, group) }
+      const existing = group.rows.has(row)
+      group.rows.add(row)
+      if (existing && orderChanged && (group.first === row || group.last === row)) group.dirty = true
+      if (!group.first || compareReplayRows(row, group.first) < 0) group.first = row
+      if (!group.last || compareReplayRows(row, group.last) > 0) group.last = row
+    }
+    row.keys = keys
+    if ((item.kind === 'response' || item.kind === 'answer') && item.sequence !== undefined) {
+      const stream = replayKey('stream', replayTurn(item), item.streamId)
+      this.streamSequences.set(stream, Math.max(this.streamSequences.get(stream) ?? -Infinity, item.sequence))
+    }
+    if (item.status === 'running') this.running.add(row)
+    else this.running.delete(row)
+    if (item.kind === 'thinking' && item.status === 'running') this.thinking.add(row)
+    else this.thinking.delete(row)
+    if (item.usage) {
+      const newUsage = !this.usageRows.has(row)
+      this.usageRows.add(row)
+      if (newUsage && !this.usageDirty && (!this.usageTail || compareReplayRows(row, this.usageTail) >= 0)) {
+        this.usage = mergeContextUsage(this.usage, item.usage)
+        this.usageTail = row
+      } else if (newUsage) this.usageDirty = true
+    } else this.usageRows.delete(row)
+  }
+
+  get(kind: string, parts: unknown[], last = false): ReplayRow | undefined {
+    const group = this.groups.get(replayKey(kind, ...parts))
+    if (!group) return undefined
+    if (group.dirty) {
+      group.first = undefined; group.last = undefined
+      for (const row of group.rows) {
+        if (!group.first || compareReplayRows(row, group.first) < 0) group.first = row
+        if (!group.last || compareReplayRows(row, group.last) > 0) group.last = row
+      }
+      group.dirty = false
+    }
+    return last ? group.last : group.first
+  }
+
+  settle(thinkingOnly = false, turn?: { key: string | undefined }): void {
+    const rows = turn ? this.groups.get(replayKey('runningResponseTurn', turn.key))?.rows : thinkingOnly ? this.thinking : this.running
+    if (!rows) return
+    // Replacement deletes the current handle from this Set. Set iteration
+    // remains stable, and each running activity is settled only once.
+    for (const row of rows) { this.flushText(row); this.replace(row, { ...row.item, status: 'done' }) }
+  }
+
+  private flushText(row: ReplayRow): void {
+    const text = this.pendingText.get(row)
+    if (!text) return
+    this.pendingText.delete(row)
+    this.replace(row, { ...row.item, content: text.value() })
+  }
+
+  latestUsage(): AiTokenUsage | undefined {
+    if (this.usageDirty) {
+      const rows = [...this.usageRows].sort(compareReplayRows)
+      this.usage = latestWorkbenchUsage(rows.map(row => row.item))
+      this.usageTail = rows.at(-1)
+      this.usageDirty = false
+    }
+    return this.usage
+  }
+
+  output(incoming: AiOutputEvent, normalize: (value: string) => string): void {
+    let event = incoming.usage ? { ...incoming, usage: mergeContextUsage(this.latestUsage(), incoming.usage) } : incoming
+    const turn = event.turnId ?? event.runId ?? event.sessionId
+    if (event.kind === 'usage') {
+      const row = event.usage ? this.get('turn', [turn], true) : undefined
+      if (row) this.replace(row, { ...row.item, usage: event.usage })
+      return
+    }
+    if (event.kind === 'warning' || event.kind === 'error') event = { ...event, content: presentLegacyAiNotice(event.content, event.kind === 'warning') }
+    if (event.eventId && this.get('event', [turn, event.eventId]) || event.sequence !== undefined && this.get('sequence', [turn, event.sequence])) return
+    const content = normalize(event.content)
+    // An unkeyed final answer matches the response that was running before
+    // settling; this is the same pre-settlement check as the live reducer.
+    const streamId = streamIdentity(event)
+    const runningStream = this.get('streamRunning', [turn, streamId], true)
+    if (event.kind === 'answer' || (event.kind === 'error' || event.kind === 'warning') && event.terminal === true) this.settle()
+    const identity = eventIdentity(event)
+    if (event.notice && event.terminal !== true && ['warning', 'retry'].includes(event.kind)) {
+      const row = this.get('notice', [turn, event.notice.key])
+      const previous = row?.item
+      if (previous?.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return
+      const item: WorkbenchTimelineItem = {
+        id: previous?.id ?? `notice:${turn}:${event.notice.key}`, kind: event.kind as 'warning' | 'retry', content, time: event.time,
+        runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId,
+        status: 'warning', terminal: false, recoverable: true,
+        notice: { ...event.notice, occurrences: event.notice.occurrences ?? previous?.notice?.occurrences }
+      }
+      if (event.kind === 'retry') this.settle(false, { key: turn })
+      if (row) this.replace(row, item)
+      else this.add(item)
+      return
+    }
+    if (event.kind === 'delta' || event.kind === 'stream-start') {
+      // Sequence values in a valid journal are unique and processed in order;
+      // restored rows can nevertheless contain a newer stream checkpoint.
+      if (event.sequence !== undefined && (this.streamSequences.get(replayKey('stream', turn, streamId)) ?? -Infinity) >= event.sequence) return
+      if (!runningStream && (event.streamId || event.itemId) && this.get('streamDone', [turn, streamId])) return
+      if (runningStream) {
+        if (event.kind !== 'stream-start') {
+          let text = this.pendingText.get(runningStream)
+          if (!text) { text = new ReplayTextBuffer(runningStream.item.content); this.pendingText.set(runningStream, text) }
+          text.append(content)
+          this.replace(runningStream, { ...runningStream.item, content: '', sequence: event.sequence ?? runningStream.item.sequence, eventId: event.eventId, status: 'running' })
+        }
+        return
+      }
+      const base = `stream:${turn ?? 'legacy'}:${streamId}:${identity}`
+      let id = base
+      for (let suffix = 2; this.get('id', [id]); suffix++) id = `${base}:${suffix}`
+      this.add({ id, kind: 'response', content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, eventId: event.eventId, status: 'running' })
+      return
+    }
+    if (content.startsWith('__CODE_DIFF__')) {
+      try {
+        const diff = JSON.parse(content.slice('__CODE_DIFF__'.length)) as WorkbenchTimelineDiff[]
+        this.add({ id: `diff:${identity}`, kind: 'diff', content: '代码修改已应用', time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: 'done', diff })
+      } catch {
+        this.add({ id: `warning:${identity}`, kind: 'warning', content: '代码修改已应用，但 Diff 详情无法解析', time: event.time, runId: event.runId, turnId: event.turnId, sequence: event.sequence, status: 'warning', terminal: false, recoverable: true })
+      }
+      return
+    }
+    if (event.kind === 'response' || event.kind === 'answer') {
+      const stream = event.streamId || event.itemId ? this.get('stream', [turn, streamId], true) : runningStream
+      if (stream) {
+        this.flushText(stream)
+        if (stream.item.kind === 'answer' && event.kind === 'response') return
+        if (event.sequence !== undefined && stream.item.sequence !== undefined && event.sequence < stream.item.sequence) return
+        this.replace(stream, { ...stream.item, kind: event.kind, content: content || stream.item.content, status: 'done', sequence: event.sequence ?? stream.item.sequence, eventId: event.eventId, ...(event.kind === 'answer' ? { terminal: true } : {}), ...(event.usage ? { usage: event.usage } : {}) })
+        return
+      }
+      if (event.kind === 'answer') {
+        if (this.get('answerText', [turn ?? event.time, content.trim()])) return
+        const response = this.get('responseText', [turn, content.trim()], true)
+        if (response) {
+          this.replace(response, { ...response.item, kind: 'answer', content: content || response.item.content, time: event.time, sequence: event.sequence ?? response.item.sequence, eventId: event.eventId, status: 'done', terminal: true, ...(event.usage ? { usage: event.usage } : {}) })
+          return
+        }
+      }
+      const id = `${event.kind}:${turn ?? 'legacy'}:${streamId}:${identity}`
+      if (!this.get('id', [id])) this.add({ id, kind: event.kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, itemId: event.itemId, streamId, sequence: event.sequence, eventId: event.eventId, status: 'done', ...(event.usage ? { usage: event.usage } : {}) })
+      return
+    }
+    if (event.kind === 'start' || event.kind === 'retry') {
+      if (event.kind === 'retry') this.settle(false, { key: turn })
+      if (event.kind === 'start' && turn && this.get('start', [turn, content])) return
+      this.add({ id: `${event.kind}:${identity}`, kind: event.kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, status: event.kind === 'retry' ? 'warning' : 'done', ...(event.kind === 'retry' ? { terminal: false, recoverable: true } : {}) })
+      return
+    }
+    const kind: WorkbenchTimelineItem['kind'] = event.kind === 'tool' ? 'tool' : event.kind === 'warning' ? 'warning' : event.kind === 'error' ? 'error' : 'status'
+    const errorLike = event.kind === 'error' || event.kind === 'warning'
+    const terminal = errorLike ? event.terminal === true : event.terminal
+    const recoverable = errorLike ? event.recoverable ?? !terminal : event.recoverable
+    this.add({ id: `${kind}:${identity}`, kind, content, notice: event.notice, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, stage: event.kind,
+      status: event.kind === 'error' ? 'error' : event.kind === 'warning' ? 'warning' : 'done', ...(terminal !== undefined ? { terminal } : {}), ...(recoverable !== undefined ? { recoverable } : {}) })
+  }
+
+  progress(event: PipelineEvent, normalize: (value: string) => string): void {
+    if (event.notice) { this.output({ ...event, kind: 'retry', content: event.detail, notice: event.notice, terminal: false, recoverable: true }, normalize); return }
+    const identity = event.eventId || event.id || (event.sequence !== undefined ? `seq-${event.sequence}` : undefined) || event.runId || event.sessionId || event.time
+    const id = `${identity}:progress`
+    const content = [normalize(event.title), normalize(event.detail)].filter(Boolean).join('\n')
+    const status = event.status === 'running' ? 'running' : event.status === 'error' ? 'error' : event.status === 'warning' ? 'warning' : 'done'
+    const kind: WorkbenchTimelineItem['kind'] = event.status === 'error' ? 'error' : event.status === 'warning' ? 'warning' : event.status === 'running' ? 'thinking' : 'tool'
+    const item: WorkbenchTimelineItem = { id, kind, content, time: event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, sequence: event.sequence, eventId: event.eventId, connectionActivity: connectionActivity({ kind, content: event.title }), stage: event.stage,
+      ...(event.changedFiles ? { changedFiles: event.changedFiles } : {}), status, ...(event.terminal !== undefined ? { terminal: event.terminal } : {}), ...(event.recoverable !== undefined ? { recoverable: event.recoverable } : {}) }
+    const connection = connectionActivityIdentity(item)
+    const connectionRow = connection ? this.get('connection', [connection]) : undefined
+    if (connectionRow?.item.sequence !== undefined && event.sequence !== undefined && connectionRow.item.sequence >= event.sequence) return
+    const idRow = this.get('id', [id])
+    const lifecycle = !idRow && status !== 'running' ? this.get('lifecycle', [item.runId, item.turnId, item.stage]) : undefined
+    this.settle(true)
+    if (connectionRow) this.replace(connectionRow, mergeConnectionActivity(connectionRow.item, item))
+    else if (idRow || lifecycle) this.replace((idRow || lifecycle)!, item)
+    else this.add(item)
+  }
+}
+
+
+function* replayWorkbenchLegacySteps(
   view: WorkbenchTimelineItem[],
   events: ConversationEventRecord[],
   normalizeActivity: (value: string) => string = (value) => value,
@@ -418,7 +725,7 @@ function* replayWorkbenchSteps(
   if (!events.length) return normalizeWorkbenchTimeline(view)
   const replayedTurns = new Set(events.filter((event) => event.kind === 'output' || event.kind === 'progress').map((event) => event.turnId))
   // Forks and migrated conversations can have older turns only in the saved view.
-  const result = view.filter((item) => item.kind === 'user' ? !isWorkbenchInternalPrompt(item.content)
+  let result = view.filter((item) => item.kind === 'user' ? !isWorkbenchInternalPrompt(item.content)
     : !replayedTurns.has(item.turnId ?? `turn-${item.runId}`)).map((item) => ({ ...item }))
   const knownUsers = new Map(result.filter((item) => item.kind === 'user' && item.turnId).map((item) => [item.turnId!, item]))
   const seenEvents = new Set<string>()
@@ -441,14 +748,72 @@ function* replayWorkbenchSteps(
       continue
     }
     if (record.kind === 'progress' && record.payload && typeof record.payload === 'object') {
-      result.splice(0, result.length, ...reduceWorkbenchProgress(result, { ...(record.payload as PipelineEvent), sequence: record.sequence, eventId: record.eventId }, normalizeActivity))
+      result = reduceWorkbenchProgress(result, workbenchRecordPayload<PipelineEvent>(record), normalizeActivity)
       continue
     }
     if (record.kind === 'output' && record.payload && typeof record.payload === 'object') {
-      result.splice(0, result.length, ...reduceWorkbenchOutput(result, { ...(record.payload as AiOutputEvent), sequence: record.sequence, eventId: record.eventId }, normalizeOutput))
+      result = reduceWorkbenchOutput(result, workbenchRecordPayload<AiOutputEvent>(record), normalizeOutput)
     }
   }
   return settleWorkbenchActivity(orderTimeline(result))
+}
+
+/** Journal envelopes are authoritative fallbacks for older sparse payloads. */
+function workbenchRecordPayload<T extends AiOutputEvent | PipelineEvent>(record: ConversationEventRecord): T {
+  const payload = record.payload as T
+  return { ...payload, time: payload.time ?? record.time, runId: payload.runId ?? record.runId,
+    turnId: payload.turnId ?? record.turnId, sequence: record.sequence, eventId: record.eventId }
+}
+
+function* replayWorkbenchSteps(
+  view: WorkbenchTimelineItem[],
+  events: ConversationEventRecord[],
+  normalizeActivity: (value: string) => string,
+  normalizeOutput: (value: string) => string
+): Generator<void, WorkbenchTimelineItem[], void> {
+  if (!events.length) return normalizeWorkbenchTimeline(view)
+  // The historical comparator deliberately preserves invalid legacy dates.
+  // Its mixed valid/invalid ordering is not transitive, so retain the original
+  // reducer path for those malformed records instead of guessing their order.
+  const sequences = new Set<number>()
+  const turns = new Set<string>()
+  for (const record of events) {
+    yield
+    const time = record.kind === 'output' || record.kind === 'progress'
+      ? (record.payload as { time?: string } | undefined)?.time ?? record.time : record.time
+    if (!Number.isFinite(Date.parse(time ?? '')) || sequences.has(record.sequence)) {
+      return yield* replayWorkbenchLegacySteps(view, events, normalizeActivity, normalizeOutput)
+    }
+    sequences.add(record.sequence)
+    if (record.kind === 'output' || record.kind === 'progress') turns.add(record.turnId)
+  }
+  const projection = new WorkbenchReplayProjection()
+  const knownUsers = new Map<string, ReplayRow>()
+  for (const item of view) {
+    yield
+    if (!Number.isFinite(Date.parse(item.time))) return yield* replayWorkbenchLegacySteps(view, events, normalizeActivity, normalizeOutput)
+    if (item.kind === 'user' ? isWorkbenchInternalPrompt(item.content) : turns.has(item.turnId ?? `turn-${item.runId}`)) continue
+    const row = projection.add({ ...item })
+    if (item.kind === 'user' && item.turnId) knownUsers.set(item.turnId, row)
+  }
+  const seen = new Set<string>()
+  for (const record of [...events].sort((a, b) => a.sequence - b.sequence)) {
+    yield
+    if (seen.has(record.eventId)) continue
+    seen.add(record.eventId)
+    if (record.kind === 'user') {
+      const prompt = (record.payload as { prompt?: unknown } | undefined)?.prompt
+      if (typeof prompt === 'string' && isWorkbenchInternalPrompt(prompt)) continue
+      const previous = knownUsers.get(record.turnId)
+      if (previous) projection.replace(previous, { ...previous.item, sequence: record.sequence })
+      else knownUsers.set(record.turnId, projection.add({ id: `user:${record.eventId}`, kind: 'user', content: typeof prompt === 'string' ? prompt : '', time: record.time, runId: record.runId, turnId: record.turnId, sequence: record.sequence, status: 'done' }))
+    } else if (record.payload && typeof record.payload === 'object') {
+      if (record.kind === 'output') projection.output(workbenchRecordPayload<AiOutputEvent>(record), normalizeOutput)
+      else if (record.kind === 'progress') projection.progress(workbenchRecordPayload<PipelineEvent>(record), normalizeActivity)
+    }
+  }
+  projection.settle()
+  return projection.rows.sort(compareReplayRows).map(row => row.item)
 }
 
 export function normalizeStoredWorkbenchTimeline(item: WorkbenchTimelineItem): WorkbenchTimelineItem {

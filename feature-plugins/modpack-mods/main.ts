@@ -3,6 +3,7 @@ import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState 
 import { promises as fs, readFileSync, createReadStream } from "node:fs"
 import path from "node:path"
 import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, readModpackImportStatus, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from "../../src/main/modpackService"
+import { refreshModpackMods } from '../../src/main/modpackService'
 import { downloadActivities } from "../../src/main/downloadActivityService"
 import { modpackModsRoot, modpackOverridesRoot } from "../../src/main/modpackPaths"
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, Tray } from "electron"
@@ -77,6 +78,8 @@ const host = options.host
 const packImportControllers = new Map<string, AbortController>()
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
 const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+
+actions['modpack:refreshMods'] = () => refreshModpackMods(host.requireProject())
 diagnosticHandle('modpack:importStatus', () => readModpackImportStatus(host.requireProject()));
 diagnosticHandle('modpack:cancelImport', () => { packImportControllers.get(host.requireProject().path)?.abort(); return undefined; });
 diagnosticHandle('modpack:resumeImport', async () => {

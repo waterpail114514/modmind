@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>SEL waiting</title></head>
+<body style="margin:0;overflow:hidden">
+<pre id="dump"></pre>
+<script>
+function done(s) { document.title = s; }
+var fr = document.createElement('iframe');
+fr.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0';
+fr.src = 'index.html';
+document.body.appendChild(fr);
+var n = 0;
+function boot() {
+  n++;
+  var w = fr.contentWindow, R = w && w.__PREVIEW_READY__, T = w && w.__PREVIEW_TEST__;
+  if (!(R && R.ok && T && T.actAtTest)) {
+    if (n > 600) return done('ERR 面板没就绪 n=' + n);
+    return setTimeout(boot, 100);
+  }
+  setTimeout(function () { run(w); }, 500);
+}
+function run(w) {
+  var A = w.__APP__, T = w.__PREVIEW_TEST__, L = [];
+  try {
+    var cv = w.document.querySelector('canvas');
+    function pev(type, cx, cy) {
+      cv.dispatchEvent(new w.PointerEvent(type, { bubbles: true, cancelable: true, composed: true,
+        pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0,
+        buttons: type === 'pointerup' ? 0 : 1, clientX: cx, clientY: cy }));
+    }
+    function sel() { var r = A.selRegion; return r ? [r.x1, r.z1, r.x2, r.z2] : null; }
+    function fmt(s) { return s ? s.join(',') : 'null'; }
+    var S = A.source.size;
+    w.document.getElementById('m_select').click();
+    A.vp.fit(); A.vp.draw();
+    // ★ project 返回的就是页面坐标（viewport.js 里已加过 canvasRect 的偏移）⇒ 不要再加偏移
+    var mid = T.project([S[0] / 2, 0, S[2] / 2]);
+    L.push('世界=' + S.join('x') + ' 中心格=[' + (S[0] / 2) + ',' + (S[2] / 2) + '] 屏幕=' + (mid ? mid.map(Math.round).join(',') : 'null'));
+    function inRange(r) {
+      return !!r && r.every(function (v) { return Number.isFinite(v); })
+        && r[0] >= 0 && r[2] >= 0 && r[0] < S[0] && r[2] < S[2];
+    }
+    function dragTest(tag, dx, dy) {
+      A.vp.fit(); A.vp.draw();
+      var s = T.project([S[0] / 2, 0, S[2] / 2]);
+      pev('pointerdown', s[0], s[1]);
+      var start = sel();
+      pev('pointermove', s[0] + dx, s[1] + dy);
+      var after = sel();
+      pev('pointerup', s[0] + dx, s[1] + dy);
+      var end = sel();
+      L.push(tag + ' 起=' + fmt(start) + ' 拖后=' + fmt(after) + ' 抬=' + fmt(end) + ' 界内=' + (inRange(end) ? 'YES' : '★NO'));
+    }
+    dragTest('横向 dx=+120,dy=0    ', 120, 0);
+    dragTest('横向 dx=-120,dy=0    ', -120, 0);
+    dragTest('纵向 dx=0,dy=+90     ', 0, 90);
+    dragTest('纵向 dx=0,dy=-90     ', 0, -90);
+    dragTest('斜向 dx=+100,dy=+70  ', 100, 70);
+    dragTest('越界 dx=+2000,dy=+2000', 2000, 2000);
+    dragTest('越界 dx=-2000,dy=-2000', -2000, -2000);
+    // 二道保险：直接塞一个越界的 selRegion，看 selCells 吐什么
+    var saved = A.selRegion;
+    A.selRegion = { x1: -5, z1: -5, x2: 999, z2: 999 };
+    var cells = T.selCells();
+    var okCells = cells.length > 0 && cells.every(function (c) { return c[0] >= 0 && c[0] < S[0] && c[1] >= 0 && c[1] < S[2]; });
+    L.push('selCells(-5..999) 格数=' + cells.length + ' 全界内=' + (okCells ? 'YES' : '★NO'));
+    A.selRegion = saved;
+  } catch (e) {
+    L.push('ERR=' + ((e && e.message) || e));
+  }
+  document.getElementById('dump').textContent = L.join('\n');
+  done('SEL ok ' + L.length);
+}
+boot();
+</script>
+</body>
+</html>

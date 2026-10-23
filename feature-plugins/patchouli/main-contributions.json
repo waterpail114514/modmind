@@ -51,6 +51,41 @@
           "categories"
         ]
       }
+    },
+    {
+      "id": "modpack:readPatchouliBooks",
+      "handler": "modpack:readPatchouliBooks",
+      "permission": "read",
+      "projectRequired": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "modpack_read_patchouli_books",
+      "handler": "modpack_read_patchouli_books",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
     }
   ],
   "tools": [
@@ -58,6 +93,11 @@
       "name": "modmind_modpack_write_patchouli_book",
       "action": "modpack_write_patchouli_book",
       "description": "Write a validated Patchouli book, categories, entries and pages into pack overrides."
+    },
+    {
+      "name": "modmind_modpack_read_patchouli_books",
+      "action": "modpack_read_patchouli_books",
+      "description": "Read existing Patchouli books with revision baselines before editing."
     }
   ]
 }

@@ -51,6 +51,7 @@ function harness(usage?: DeviceUsage) {
     disconnectedDeviceState: (message: string) => ({ status: 'disconnected', message }),
     quotaModelsForCredentials: vi.fn(async (_current: Credentials) => [{ id: 'free-model' }]),
     reconcileQuotaModelPreferences: vi.fn(async () => undefined),
+    readBeginnerAiPreferences: vi.fn(async (): Promise<{ model: string; account?: string; group?: string }> => ({ model: 'free-model' })),
     ensureQuotaAccountReady: undefined as unknown as () => Promise<void>
   }
   vm.runInNewContext(preflightCode, sandbox)
@@ -121,6 +122,13 @@ describe('quota account readiness for free upstream routes', () => {
   it('leaves model access to the actual request when model discovery is unavailable', async () => {
     const h = harness(zeroUsage())
     h.quotaModelsForCredentials.mockRejectedValueOnce(new Error('404 Not Found'))
+    await expect(h.ensureQuotaAccountReady()).resolves.toBeUndefined()
+    expect(h.reconcileQuotaModelPreferences).not.toHaveBeenCalled()
+  })
+
+  it('does not replace a model pinned to an exact provider and group during a usage preflight', async () => {
+    const h = harness(zeroUsage())
+    h.readBeginnerAiPreferences.mockResolvedValue({ model: 'selected-model', account: 'ls', group: 'original-group' })
     await expect(h.ensureQuotaAccountReady()).resolves.toBeUndefined()
     expect(h.reconcileQuotaModelPreferences).not.toHaveBeenCalled()
   })

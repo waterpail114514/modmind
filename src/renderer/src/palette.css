@@ -71,6 +71,33 @@
 .app-shell :where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), select, textarea) {
   color: var(--theme-text); background-color: var(--theme-surface); border: 1px solid var(--theme-line); border-radius: 6px;
 }
+.app-shell select:not([multiple]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--theme-muted) 50%),
+    linear-gradient(135deg, var(--theme-muted) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 50%, calc(100% - 8px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.app-shell .minimal-quota-preferences select,
+.app-shell .image-workflow-switcher select {
+  background-image: none;
+}
+.app-shell input[type='search'] {
+  appearance: none;
+  -webkit-appearance: none;
+}
+.app-shell input[type='number']::-webkit-inner-spin-button,
+.app-shell input[type='number']::-webkit-outer-spin-button {
+  margin: 0;
+  opacity: .55;
+}
+.app-shell summary::marker {
+  color: var(--theme-muted);
+}
 .app-shell input:is([type='checkbox'], [type='radio'], [type='range']) { accent-color: var(--theme-action); }
 .app-shell:is(.dark-mode, :not(.dark-mode)) :is(.titlebar, .main-content, .project-launcher, .production-page, .modpack-workspace, .standard-page, .settings-page, .empty-state) { background: var(--mm-background); color: var(--text); border-color: var(--line); }
 .app-shell:is(.dark-mode, :not(.dark-mode)) .sidebar { background: var(--mm-sidebar); border-color: var(--line); backdrop-filter: none; }

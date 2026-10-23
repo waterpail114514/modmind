@@ -4,6 +4,10 @@ Var pid
 
 ; Keep electron-builder's process checks, including the uninstaller checks.
 !macro customCheckAppRunning
+  ; Newer templates initialize this only on their non-custom branch.
+  !ifmacrodef IS_POWERSHELL_AVAILABLE
+    !insertmacro IS_POWERSHELL_AVAILABLE
+  !endif
   !insertmacro _CHECK_APP_RUNNING
   ; installUtil.nsh has been expanded by this point. Replace only its call
   ; macro, not the bundled template or signed uninstaller generation.

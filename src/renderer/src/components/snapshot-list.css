@@ -1,0 +1,7 @@
+.snapshot-list-window { min-width: 0; }
+.snapshot-search { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--theme-muted); }
+.snapshot-search input { min-width: 0; flex: 1; }
+.snapshot-search > span { white-space: nowrap; }
+.snapshot-virtual-list { min-width: 0; }
+.snapshot-virtual-list .snapshot-row { min-height: 72px; }
+.snapshot-virtual-list h3 { overflow-wrap: anywhere; }

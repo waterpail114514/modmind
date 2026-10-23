@@ -3,6 +3,7 @@ import { beginnerReasoningLevelFor, migrateLegacyReasoningLevel } from '../share
 import { isReasoningEffort, normalizeReasoningEffortOptions, selectedReasoningEfforts } from '../shared/modelReasoning'
 import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows } from '../shared/modelContext'
 import type { AiModelInfo, BeginnerAiPreferences, BeginnerReasoningLevel } from '../shared/types'
+import { validProviderAccount, validProviderKind } from '../shared/providerAccounts'
 
 export interface StoredQuotaModelPreferences {
   version: 3
@@ -29,7 +30,8 @@ export function normalizeQuotaModelPreferences(value: unknown, fallback: Beginne
   const selectedLevel = reasoningLevel(record.reasoningLevel, model, record.reasoningEffort, fallback.reasoningLevel)
   return {
     model,
-    ...(typeof record.account === 'string' && /^(primary|secondary|deepseek|trial:[a-zA-Z0-9._-]{1,128})$/.test(record.account) && (record.billing === 'free') === record.account.startsWith('trial:') ? { account: record.account, billing: record.billing === 'free' ? 'free' as const : 'quota' as const } : {}),
+    ...(validProviderAccount(record.account) && validProviderKind(record.account, record.billing === 'free' ? 'free' : 'paid') ? { account: record.account, billing: record.billing === 'free' ? 'free' as const : 'quota' as const } : {}),
+    ...(validProviderKind(record.account, 'paid') && record.billing !== 'free' && typeof record.group === 'string' && record.group.trim() && record.group.length <= 512 && !/[\x00-\x1f\x7f]/.test(record.group) ? { group: record.group } : {}),
     reasoningLevel: selectedLevel === 'auto' || selectedReasoningEfforts(model, reasoningEffortOptions).includes(selectedLevel) ? selectedLevel : 'auto',
     fastMode: typeof record.fastMode === 'boolean' ? record.fastMode : fallback.fastMode,
     ...(modelContextWindows ? { modelContextWindows } : {}),

@@ -45,7 +45,7 @@ try{
   zip.append(JSON.stringify(manifest),{name:'manifest.json'});for(const name of Object.keys(manifest.files))zip.file(path.join(root,'feature-plugin-dist/image-studio',name),{name});await zip.finalize();const bytes=await zipDone,sha256=createHash('sha256').update(bytes).digest('hex')
   const release=index.features.find(entry=>entry.id==='image-studio');Object.assign(release,{version:manifest.version,path:`features/packages/image-studio/${manifest.version}/${sha256}.mmfeature`,sha256,size:bytes.length,changelog:['验证在线识别更新。','更新时保留已保存的项目内容。']});extra.set(release.path,bytes)
   await page.waitForTimeout(5100);await page.getByRole('button',{name:'检查更新',exact:true}).click();await row().getByRole('button',{name:'更新',exact:true}).waitFor()
-  for(const dark of[false,true])for(const width of[1440,780,390]){
+  for(const dark of[false,true])for(const width of[1440, 1080]){
     await page.evaluate(darkMode=>window.dispatchEvent(new StorageEvent('storage',{key:'modmind-appearance:v1',newValue:JSON.stringify({themePreset:'modmind',darkMode})})),dark)
     await page.setViewportSize({width,height:900});if(width<1100)await page.locator('.feature-store-back').click()
     const bounds=await page.locator('.features-page').boundingBox();assert.ok(bounds&&bounds.x>=-1&&bounds.x+bounds.width<=width+1)
@@ -60,6 +60,6 @@ try{
   assert.equal(await fs.readFile(path.join(profile,'saved-project-sentinel.txt'),'utf8'),'preserved')
   offline=true;await page.waitForTimeout(5100);await page.getByRole('button',{name:'检查更新',exact:true}).click();await page.locator('.feature-store-notice').getByText(/未开放/).waitFor();assert.equal(await page.locator('.feature-store-row').count(),5)
   assert.ok(requests.length>0&&requests.every(request=>request.method==='GET'));assert.deepEqual(errors,[])
-  await fs.writeFile(path.join(work,'result.json'),JSON.stringify({pass:true,requests,errors,checks:['17 official entries','matching sidebar categories','download and load image feature','version update detection','same-id update without uninstall','light/dark at 1440/780/390','narrow details and back','uninstall preserves user files','403 preserves cached catalogue','GET requests only']},null,2))
+  await fs.writeFile(path.join(work,'result.json'),JSON.stringify({pass:true,requests,errors,checks:['17 official entries','matching sidebar categories','download and load image feature','version update detection','same-id update without uninstall','light/dark at 1440/1080','narrow details and back','uninstall preserves user files','403 preserves cached catalogue','GET requests only']},null,2))
   console.log(work)
 }finally{if(app)await app.close().catch(()=>undefined);server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}

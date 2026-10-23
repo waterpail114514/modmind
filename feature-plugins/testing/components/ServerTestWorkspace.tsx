@@ -4,6 +4,8 @@ import { ClipboardList, FileCheck2, FolderOpen, LoaderCircle, Play, RotateCw, Se
 import type { ProjectInfo, ServerPackManifest } from "../../../src/shared/types"
 import type { LocalServerState, LocalTestState } from "../../../src/shared/minecraft"
 import { ServerPluginSettings } from "./ServerPluginSettings"
+import ServerScenarioControls from './ServerScenarioControls'
+import '../server-test.css'
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === 'object' ? value as Record<string, unknown> : {} }
 function initialServerState(project: ProjectInfo): LocalServerState { return { stage: 'idle', minecraftVersion: project.minecraftVersion, loader: project.loader, loaderVersion: project.loaderVersion, running: false, recentLogs: [], message: '本机服务端尚未启动' } }
 function serverStageLabel(stage: LocalServerState['stage']): string { return ({ idle: '未启动', preparing: '准备中', building: '构建中', installing: '安装运行时', starting: '启动中', running: '运行中', stopping: '停止中', stopped: '已停止', error: '需要处理' })[stage] }
@@ -27,14 +29,13 @@ export default function ServerTestWorkspace({ project }: { project: ProjectInfo 
   const [testUsername, setTestUsername] = useState(() => localStorage.getItem('modmind.minecraft.username') || 'ModMindDev')
   const [testMemory, setTestMemory] = useState(() => Number(localStorage.getItem('modmind.minecraft.memory')) || 4096)
   const [consoleTab, setConsoleTab] = useState<'server' | 'client'>('server')
+  const [panel, setPanel] = useState<'logs' | 'settings'>('logs')
   const [serverState, setServerState] = useState<LocalServerState>(() => initialServerState(project))
   const serverConsoleRef = useRef<HTMLDivElement>(null)
   const followConsoleRef = useRef(true)
   const [serverCommand, setServerCommand] = useState('')
   const [serverOnlineMode, setServerOnlineMode] = useState(false)
   const [serverPackManifest, setServerPackManifest] = useState<ServerPackManifest | null>(null)
-  const [scenarioCommand, setScenarioCommand] = useState('say ModMind 本机场景通过')
-  const [scenarioEvidence, setScenarioEvidence] = useState('ModMind 本机场景通过')
   useEffect(() => {
     let active = true
     const acceptTest = (state: LocalTestState): void => { if (active && (!state.projectPath || state.projectPath === project.path)) setTestState(state) }
@@ -99,25 +100,30 @@ export default function ServerTestWorkspace({ project }: { project: ProjectInfo 
           <button className="secondary-button" disabled={Boolean(busy) || testPreparing || !testState.active || !testOptionsValid} onClick={() => run('test-restart', async () => { await window.modmind.localTest.stop(); return startTest() }, () => '')}><RotateCw size={15} />重新测试</button>
         </div>
       </header>
-      <div className="local-test-status" role={testState.stage === 'error' ? 'alert' : 'status'}><span>{testState.message}</span><span>客户端：{testState.client?.running ? '运行中' : testState.client?.message || '未启动'}</span></div>
-      {project.loader === 'velocity' ? <p className="server-runtime-message">Velocity 需要后端世界服，请在运维与验证中单独启动服务端。</p> : null}
-      <details className="server-configuration"><summary>测试设置<span>{testUsername} · {testMemory} MB · 本机离线</span></summary><div className="modpack-form-grid"><label>玩家名<input value={testUsername} maxLength={16} disabled={testState.active} onChange={event => setTestUsername(event.target.value)} /></label><label>客户端内存（MB）<input type="number" min={1024} max={16384} step={512} value={testMemory} disabled={testState.active} onChange={event => setTestMemory(Number(event.target.value))} /></label></div></details>
-      {project.kind === 'server-plugin' ? <details className="server-configuration"><summary>核心与运行配置<span>核心、Java、内存与端口</span></summary><ServerPluginSettings project={project} disabled={serverBusy || serverState.running || testState.active} /></details> : null}
-      {serverState.stage === 'error' && serverState.message ? <p className="server-runtime-message" role="alert">{serverState.message}</p> : null}
-      <details className="server-runtime-details"><summary>运行详情</summary><dl><div><dt>Loader</dt><dd>{project.loader} {project.loaderVersion || '未记录'}</dd></div><div><dt>进程</dt><dd>{serverState.pid ?? '未启动'}</dd></div><div><dt>日志文件</dt><dd>{serverState.logPath || '启动后生成'}</dd></div></dl></details>
-      {operationProgress ? <section className="server-operation-progress" aria-live="polite">
-        <div className="server-operation-progress-copy"><span>{operationProgress.message}</span><strong>{operationBytes || (operationPercent === undefined ? '处理中' : `${operationPercent}%`)}</strong></div>
-        <div className="server-operation-progress-track" role="progressbar" aria-label="服务端操作进度" aria-valuemin={0} aria-valuemax={100} {...(operationPercent === undefined ? {} : { 'aria-valuenow': operationPercent })}>
-          <span className={operationPercent === undefined ? 'indeterminate' : undefined} style={operationPercent === undefined ? undefined : { width: `${operationPercent}%` }} />
-        </div>
-      </section> : null}
+      <div className="server-panel-switch" role="tablist" aria-label="服务端测试视图">
+        <button type="button" role="tab" aria-selected={panel === 'logs'} onClick={() => setPanel('logs')}>日志</button>
+        <button type="button" role="tab" aria-selected={panel === 'settings'} onClick={() => setPanel('settings')}>设置与验证</button>
+      </div>
       <section className="server-panel-grid">
         <div className="server-console-panel">
           <div className="server-panel-section-heading"><div className="local-test-console-tabs" role="tablist" aria-label="测试日志"><button role="tab" aria-selected={consoleTab === 'server'} onClick={() => setConsoleTab('server')}>服务端</button><button role="tab" aria-selected={consoleTab === 'client'} onClick={() => setConsoleTab('client')}>客户端</button></div><span className="server-console-count">{consoleLogs.length} 行</span></div>
-          <div ref={serverConsoleRef} onScroll={event => { const node = event.currentTarget; followConsoleRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40 }} className="server-console-output" role="log" aria-label={consoleTab === 'server' ? '服务端日志' : '客户端日志'} aria-live="off">{consoleLogs.length ? consoleLogs.map((entry, index) => <div key={`${entry.time}-${index}`}><span className="server-console-gutter">{serverLogTime(entry.time)}</span><span>{entry.message}</span></div>) : <div className="server-console-empty">暂无{consoleTab === 'server' ? '服务端' : '客户端'}日志</div>}</div>
+          <div ref={serverConsoleRef} tabIndex={0} onScroll={event => { const node = event.currentTarget; followConsoleRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40 }} className="server-console-output" role="log" aria-label={consoleTab === 'server' ? '服务端日志' : '客户端日志'} aria-live="off">{consoleLogs.length ? consoleLogs.map((entry, index) => <div key={`${entry.time}-${index}`}><span className="server-console-gutter">{serverLogTime(entry.time)}</span><span>{entry.message}</span></div>) : <div className="server-console-empty">暂无{consoleTab === 'server' ? '服务端' : '客户端'}日志</div>}</div>
           {consoleTab === 'server' ? <form className="server-command-bar" onSubmit={(event) => { event.preventDefault(); const command = serverCommand.trim(); if (!command || !serverState.running || serverBusy) return; runServerAction('command', () => window.modmind.modpack.sendServerCommand(command), `已发送命令：${command}`); setServerCommand('') }}><TerminalSquare size={16} /><input value={serverCommand} onChange={(event) => setServerCommand(event.target.value)} disabled={!serverState.running || serverBusy} placeholder={serverState.running ? '输入服务器命令，例如 list' : '启动服务端后可输入命令'} aria-label="服务器命令" /><button className="secondary-button compact" type="submit" disabled={!serverState.running || !serverCommand.trim() || serverBusy}>发送</button></form> : null}
         </div>
-        <details className="server-side-panel"><summary>运维与验证</summary>
+        <aside className="server-side-panel" aria-label="测试设置与验证" tabIndex={0}>
+          {notice ? <div className={`server-panel-notice ${serverNoticeTone}`} role="status">{notice}</div> : null}
+          {testState.active || testState.stage === 'error' ? <div className="local-test-status" role={testState.stage === 'error' ? 'alert' : 'status'}><span>{testState.message}</span><span>客户端：{testState.client?.running ? '运行中' : testState.client?.message || '未启动'}</span></div> : null}
+          {project.loader === 'velocity' ? <p className="server-runtime-message">Velocity 需要后端世界服，请单独启动服务端。</p> : null}
+          {serverState.stage === 'error' && serverState.message ? <p className="server-runtime-message" role="alert">{serverState.message}</p> : null}
+          {operationProgress ? <section className="server-operation-progress" aria-live="polite">
+            <div className="server-operation-progress-copy"><span>{operationProgress.message}</span><strong>{operationBytes || (operationPercent === undefined ? '处理中' : `${operationPercent}%`)}</strong></div>
+            <div className="server-operation-progress-track" role="progressbar" aria-label="服务端操作进度" aria-valuemin={0} aria-valuemax={100} {...(operationPercent === undefined ? {} : { 'aria-valuenow': operationPercent })}>
+              <span className={operationPercent === undefined ? 'indeterminate' : undefined} style={operationPercent === undefined ? undefined : { width: `${operationPercent}%` }} />
+            </div>
+          </section> : null}
+          <details className="server-configuration"><summary>测试设置<span>{testMemory} MB</span></summary><div className="modpack-form-grid"><label>玩家名<input value={testUsername} maxLength={16} disabled={testState.active} onChange={event => setTestUsername(event.target.value)} /></label><label>客户端内存（MB）<input type="number" min={1024} max={16384} step={512} value={testMemory} disabled={testState.active} onChange={event => setTestMemory(Number(event.target.value))} /></label></div></details>
+          {project.kind === 'server-plugin' ? <details className="server-configuration"><summary>核心与运行配置</summary><ServerPluginSettings project={project} disabled={serverBusy || serverState.running || testState.active} /></details> : null}
+          <h2 className="server-side-heading">运维与验证</h2>
           <div className="modpack-tool-actions"><button className="secondary-button" disabled={!startable || testState.active || Boolean(busy)} onClick={() => runServerAction('start', () => window.modmind.modpack.startServer(serverInput), '本机服务端已启动')}><Server size={15} />单独启动服务端</button><button className="secondary-button" disabled={serverBusy || testState.active || !serverState.running} onClick={() => runServerAction('restart', () => window.modmind.modpack.restartServer(serverInput), '本机服务端已重启')}><RotateCw size={15} />重启服务端</button></div>
 
           {project.kind === 'modpack' ? <><div className="server-operation-list">
@@ -129,12 +135,13 @@ export default function ServerTestWorkspace({ project }: { project: ProjectInfo 
             <button className="server-operation" disabled={serverBusy || !runtimeReadyToCheck} title={runtimeReadyToCheck ? undefined : '请先同步服务端包'} onClick={() => runServerAction('runtime', () => window.modmind.modpack.installServerRuntime(serverInput), '服务端运行时已就绪')}><Server size={17} /><span><strong>检查运行时</strong></span></button>
             <button className="server-operation" disabled={serverBusy || !runtimeReadyToCheck} title={runtimeReadyToCheck ? undefined : '请先同步服务端包'} onClick={() => runServerAction('verify', () => window.modmind.modpack.verifyServerJoin(serverInput), '本机联机验证已完成')}><ShieldCheck size={17} /><span><strong>启动并验证</strong></span></button>
           </div>
-          <div className="server-settings-block"><h3>启动设置</h3><label className="server-setting-row"><span>监听端口</span><input type="number" min={1024} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} disabled={serverState.running || serverBusy} /></label><label className="server-setting-row check-row"><input type="checkbox" checked={serverOnlineMode} onChange={(event) => setServerOnlineMode(event.target.checked)} disabled={serverState.running || serverBusy} /><span>启用正版在线验证</span></label></div></> : <div className="server-settings-block"><h3>场景验证</h3><label className="field-label">命令<input value={scenarioCommand} onChange={event => setScenarioCommand(event.target.value)} /></label><label className="field-label">预期新日志<input value={scenarioEvidence} onChange={event => setScenarioEvidence(event.target.value)} /></label><button className="secondary-button" disabled={!serverState.running || serverBusy || !scenarioCommand.trim() || !scenarioEvidence.trim()} onClick={() => runServerAction('scenario', () => window.modmind.modpack.runServerScenario({ steps: [{ command: scenarioCommand, expect: [scenarioEvidence] }] }), '场景验证通过')}><ShieldCheck size={15} />验证场景</button></div>}
-        </details>
+          <div className="server-settings-block"><h3>启动设置</h3><label className="server-setting-row"><span>监听端口</span><input type="number" min={1024} max={65535} value={port} onChange={(event) => setPort(Number(event.target.value))} disabled={serverState.running || serverBusy} /></label><label className="server-setting-row check-row"><input type="checkbox" checked={serverOnlineMode} onChange={(event) => setServerOnlineMode(event.target.checked)} disabled={serverState.running || serverBusy} /><span>启用正版在线验证</span></label></div></> : null}
+          <ServerScenarioControls key={project.path} project={project} running={serverState.running} disabled={serverBusy || Boolean(busy)} />
+          <details className="server-runtime-details"><summary>运行详情</summary><dl><div><dt>Loader</dt><dd>{project.loader} {project.loaderVersion || '未记录'}</dd></div><div><dt>进程</dt><dd>{serverState.pid ?? '未启动'}</dd></div><div><dt>日志文件</dt><dd>{serverState.logPath || '启动后生成'}</dd></div></dl></details>
+        </aside>
       </section>
-      {notice ? <div className={`server-panel-notice ${serverNoticeTone}`} role="status">{notice}</div> : null}
     </>
   }
 
-  return <div className="modpack-tool-workspace" data-section="server">{renderServerPanel()}</div>
+  return <div className="modpack-tool-workspace server-test-workspace" data-section="server" data-panel={panel}>{renderServerPanel()}</div>
 }

@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "modpack-content",
   "name": "文件清单",
-  "version": "1.5.0-plugintest",
+  "version": "1.5.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -96,5 +96,14 @@
       "name": "文件清单",
       "description": "查看和编辑整合包清单、配置、脚本、数据包、光影、界面、世界、玩家预设与服务端内容。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
     }
+  ],
+  "studioIds": [
+    "minecraft-modpack"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge"
   ]
 }

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import extractZip from 'extract-zip'
+import extractZip from '../../../../src/main/safeExtractZip'
 import type {
   DecompileFileEntry,
   DecompileInspectResult,
@@ -10,18 +10,18 @@ import type {
   DecompileProvenance,
   DecompileReferenceReport,
   DecompileRunResult
-} from "../../../../src/shared/decompile"
-import type { LoaderKind } from "../../../../src/shared/types"
-import { inspectDecompileJar } from "./decompileJarInspection"
-import { classifyObfuscation, decompileJarWithVineflower, summarizeDecompiledTree } from "./jarDecompileService"
-import { ensureYarnMappings, remapJarWithTinyRemapper, TINY_REMAPPER_VERSION, type YarnVersionEntry } from "./jarRemapService"
+} from '../../../../src/shared/decompile'
+import type { LoaderKind } from '../../../../src/shared/types'
+import { inspectDecompileJar } from './decompileJarInspection'
+import { classifyObfuscation, decompileJarWithVineflower, summarizeDecompiledTree } from './jarDecompileService'
+import { ensureYarnMappings, remapJarWithTinyRemapper, TINY_REMAPPER_VERSION, type YarnVersionEntry } from './jarRemapService'
 import {
   createDecompileCacheStaging,
   DECOMPILE_OUTPUT_DIRECTORY,
   enforceDecompileCacheLimit,
   readDecompileCacheEntry
-} from "./decompileCache"
-import { scanExtractedJarReferences } from "./classReferenceScanner"
+} from './decompileCache'
+import { scanExtractedJarReferences } from './classReferenceScanner'
 
 /** Default cache root under Electron userData; injectable for tests. */
 export interface DecompilePipelineOptions {
@@ -46,8 +46,13 @@ function emit(options: DecompilePipelineOptions, jarSha256: string, phase: Decom
 
 async function extractJarToTemp(jarPath: string): Promise<string> {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-decompile-scan-'))
-  await extractZip(jarPath, { dir: temporary })
-  return temporary
+  try {
+    await extractZip(jarPath, { dir: temporary })
+    return temporary
+  } catch (error) {
+    await fs.rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 /**
@@ -179,8 +184,9 @@ export async function runDecompilation(request: DecompileRunRequest, options: De
         if (!minecraftVersion) throw new Error('Fabric 模组重映射需要指定 Minecraft 版本')
         emit(options, sourceSha256, 'downloading-mappings', `正在获取 Minecraft ${minecraftVersion} 的 yarn 映射`)
         const mappingsPath = await ensureYarnMappings(options.cacheRoot, minecraftVersion, {
-          download: (req) => import("../../../../src/main/downloadService").then(({ verifiedDownload }) => verifiedDownload.download(req)),
-          listVersions: defaultYarnLister(options.signal)
+          download: (req) => import('../../../../src/main/downloadService').then(({ verifiedDownload }) => verifiedDownload.download(req)),
+          listVersions: defaultYarnLister(options.signal),
+          signal: options.signal
         })
         emit(options, sourceSha256, 'remapping', '正在运行 tiny-remapper 还原可读名称')
         const remappedJar = path.join(working, 'remapped.jar')
@@ -258,7 +264,7 @@ export async function runDecompilation(request: DecompileRunRequest, options: De
 
 function defaultYarnLister(signal?: AbortSignal): (base: string) => Promise<YarnVersionEntry[]> {
   return async (base) => {
-    const response = await fetch(base, { signal: signal ?? AbortSignal.timeout(20_000) })
+    const response = await fetch(base, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000) })
     if (!response.ok) throw new Error(`yarn 元数据请求失败（HTTP ${response.status}）`)
     const payload = await response.json() as unknown
     return Array.isArray(payload) ? payload as YarnVersionEntry[] : []

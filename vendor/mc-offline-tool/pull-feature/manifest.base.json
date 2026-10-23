@@ -1,0 +1,282 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "mc-pull",
+  "name": "游戏数据采集",
+  "version": "1.14.1",
+  "description": "打开面板即自动从本地游戏文件直读一份基础数据包（免启动游戏）；再装游戏内探针（Java）启动一次实例，即可升级为游戏内真渲染图标与真名字。数据按游戏实例分离保存（同一路径直接覆盖），可选可清。",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "hostCapabilities": [
+    "runtime"
+  ],
+  "dependencies": [],
+  "views": [
+    {
+      "id": "pull",
+      "label": "游戏数据采集",
+      "component": "PullWorkspace",
+      "icon": "Download",
+      "group": "创作",
+      "order": 62
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "mc-pull",
+      "name": "游戏数据采集",
+      "description": "用游戏内探针采集方块/物品/图标/贴图，按数据包存进项目，供 3D 建筑预览使用。"
+    }
+  ],
+  "actions": [
+    {
+      "id": "pull:status",
+      "handler": "pull_status",
+      "permission": "read",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "probeDir": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:run",
+      "handler": "pull_run",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "outDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "maxIcons": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:installProbe",
+      "handler": "pull_install_probe",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:importProbe",
+      "handler": "pull_import_probe",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "probeDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "outDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "outPx": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:cancel",
+      "handler": "pull_cancel",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "on": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:select",
+      "handler": "pull_select",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:clear",
+      "handler": "pull_clear",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:exportPack",
+      "handler": "pull_export_pack",
+      "permission": "write",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    {
+      "id": "pull:launch",
+      "handler": "pull_launch",
+      "permission": "process",
+      "projectRequired": false,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "maxMemoryMb": {
+            "type": "integer",
+            "minimum": 1024
+          }
+        }
+      }
+    }
+  ]
+}

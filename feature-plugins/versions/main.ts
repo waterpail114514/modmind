@@ -103,27 +103,13 @@ diagnosticHandle('snapshots:list', async (_event, projectPath?: string): Promise
     const project = projectPath?.trim() ? await host.readProjectInfo(path.resolve(projectPath)) : host.requireProject();
     if (!project)
         throw new Error('项目不存在或不是有效的 ModMind 项目');
-    const root = path.join(project.path, host.projectDataDirectory(project), 'snapshots');
-    if (!(await host.pathExists(root)))
-        return [];
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    const snapshots: SnapshotInfo[] = [];
-    for (const entry of entries) {
-        if (!entry.isDirectory())
-            continue;
-        try {
-            snapshots.push(JSON.parse(await fs.readFile(path.join(root, entry.name, 'snapshot.json'), 'utf8')) as SnapshotInfo);
-        }
-        catch {
-            // Ignore incomplete snapshots.
-        }
-    }
-    return snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return host.listSnapshotSummaries(project.path);
 });
 diagnosticHandle('snapshots:storage', async (_event, projectPath?: string) => {
     const project = projectPath?.trim() ? await host.readProjectInfo(path.resolve(projectPath)) : host.requireProject();
     if (!project)
         throw new Error('项目不存在或不是有效的 ModMind 项目');
+    host.scheduleSnapshotStorageMaintenance(project);
     return host.readSnapshotStorage(project.path);
 });
 diagnosticHandle('snapshots:restore', (_event, id: string, projectPath?: string): Promise<SnapshotRestoreResult> => host.restoreProjectSnapshot(id, projectPath));

@@ -1,4 +1,10 @@
 {
+  "studio-shader": "创建和接管 Iris 光影工程，提供光影工作台与灵感台；编辑、预览、验证和导出按需安装。",
+  "shader-source": "搜索和编辑光影源码，检查保存冲突，并撤销上次保存。",
+  "shader-options": "解析继承预设、布尔与 const 参数，按分组搜索，回写选项与程序开关并支持撤销。",
+  "shader-preview": "用三维示例场景预览工程 final 阶段，支持昼夜与轨道视角。",
+  "shader-testing": "手动部署光影，或检测本地环境并启动独立 Iris 测试会话、重载和读取实际管线。",
+  "shader-export": "检查 GLSL 和 include，导出并校验光影 ZIP。",
   "decompile": "查看 JAR 源码、分析结构，并将反编译结果用于项目开发。",
   "ftb-quests": "编排 FTB 任务、奖励与依赖关系，设计玩家引导。",
   "image-studio": "生成、编辑与处理图像，制作贴图和参考图。可在工作台与灵感台调用。",
@@ -15,6 +21,7 @@
   "relationships": "管理项目的前置依赖，检查联动关系和兼容性。",
   "resource-packs": "编辑、校验和导出资源包，管理贴图、声音与资源定义。",
   "sound-studio": "导入和制作音效、音乐，编排声音事件并管理声音工程。",
+  "skin-studio": "制作和修改 64×64 Minecraft 皮肤，支持 Slim、Classic、像素检查、项目保存和 PNG 导出。",
   "versions": "查看项目改动，保存版本记录并恢复历史内容。",
   "testing": "客户端、服务端、玩家操作与自动检查，提供隔离测试实例、截图、日志和场景验证。",
   "server-pack-runtime": "游戏与服务端测试使用的 ServerPackCreator 打包组件，随功能依赖安装。",

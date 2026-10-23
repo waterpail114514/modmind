@@ -1,6 +1,6 @@
-import type { ModMindApi, ProjectInfo } from "../../../src/shared/types"
-import type { LocalTestState, MinecraftLaunchOptions, MinecraftRuntimeState } from "../../../src/shared/minecraft"
-import { isJavaLoader } from "../../../src/shared/projectPlatform"
+import type { ModMindApi, ProjectInfo } from '../../../src/shared/types'
+import type { LocalTestState, MinecraftLaunchOptions, MinecraftRuntimeState } from '../../../src/shared/minecraft'
+import { isJavaLoader } from '../../../src/shared/projectPlatform'
 
 export function quickTestUnavailable(project: ProjectInfo): string | undefined {
   if (project.draft) return '请先确认项目信息并完成制作。'
@@ -49,7 +49,10 @@ export async function launchQuickGameTest(
   }
   const state = await api.minecraft.getState()
   await checkProject()
-  if (state.running) return state
+  if (state.running) {
+    if (state.projectPath === project.path) return state
+    throw new Error('另一个项目的游戏仍在运行，本项目尚未完成测试。')
+  }
   if (project.kind === 'modpack') await api.minecraft.syncModpack()
   else await api.minecraft.buildProject(project.path)
   await checkProject()

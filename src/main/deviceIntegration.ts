@@ -3,6 +3,9 @@ import { parseReasoningCapabilities } from '../shared/modelReasoning'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
 import { parseProviderSnapshot, type ProviderSnapshot } from './providerSync'
+import { networkFetch } from './networkRequest'
+import { readImageServiceErrorBody, sanitizeImageServiceError } from '../shared/imageServiceErrors'
+import { PROVIDER_SYNC_CAPABILITY_HEADERS } from '../shared/providerAccounts'
 
 export const DEFAULT_DEVICE_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_REASONING_EFFORT = 'high' as const
@@ -35,7 +38,7 @@ export class DeviceApiError extends Error {
   }
 }
 
-type FetchLike = typeof fetch
+type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 
 function isLocalHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
@@ -152,7 +155,7 @@ async function requestEnvelope<T>(fetcher: FetchLike, url: string, init: Request
   return envelope.data as T
 }
 
-export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<DeviceCodeResult> {
+export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fetcher: FetchLike = networkFetch): Promise<DeviceCodeResult> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/code`, {
     method: 'POST',
@@ -169,11 +172,11 @@ export async function requestDeviceCode(siteUrl: string, signal: AbortSignal, fe
   return { code, authUrl: auth.toString(), expiresIn: Math.min(expiresIn, 600) }
 }
 
-export async function pollDeviceCode(siteUrl: string, code: string, signal: AbortSignal, fetcher: FetchLike = fetch, customLocal = false): Promise<DevicePollResult> {
+export async function pollDeviceCode(siteUrl: string, code: string, signal: AbortSignal, fetcher: FetchLike = networkFetch, customLocal = false): Promise<DevicePollResult> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/poll`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(customLocal ? { 'X-ModMind-Custom-Local': '1' } : { 'X-ModMind-Sync-Version': '2' }) },
+    headers: { 'Content-Type': 'application/json', ...PROVIDER_SYNC_CAPABILITY_HEADERS, ...(customLocal ? { 'X-ModMind-Custom-Local': '1' } : { 'X-ModMind-Sync-Version': '2' }) },
     body: JSON.stringify({ code }),
     signal
   }, '查询授权状态失败')
@@ -211,7 +214,7 @@ function stringInteger(record: Record<string, unknown>, key: string): string {
   return value
 }
 
-export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<DeviceUsage> {
+export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: AbortSignal, fetcher: FetchLike = networkFetch): Promise<DeviceUsage> {
   const site = normalizeSiteUrl(siteUrl)
   const data = await requestEnvelope<Record<string, unknown>>(fetcher, `${site}/api/device/usage`, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -232,37 +235,112 @@ export async function queryDeviceUsage(siteUrl: string, apiKey: string, signal: 
   }
 }
 
-/** Request fresh image credentials with the account credential, never an image key. */
-export async function requestDeviceImageLease(
-  credentials: { siteUrl: string; apiKey: string; username: string },
-  signal: AbortSignal,
-  fetcher: FetchLike = fetch
-): Promise<{ baseUrl: string; apiKey: string }> {
-  const site = normalizeSiteUrl(credentials.siteUrl)
+export interface DeviceImageService {
+  selection: 'follow' | 'primary' | 'secondary' | 'ls'
+  provider: 'primary' | 'secondary' | 'ls' | null
+  available: boolean
+  message: string
+  choices: Array<{ account: 'primary' | 'secondary' | 'ls'; label: string; available: boolean }>
+  model: string | null
+  leasePath: string
+}
+
+export interface DeviceImageLease {
+  baseUrl: string
+  apiKey: string
+  model: string
+  provider?: 'primary' | 'secondary' | 'ls'
+  expiresAt?: string
+}
+
+export interface DeviceImageLeaseIdentity { requestId: string; timestamp: string }
+
+export function createDeviceImageLeaseIdentity(): DeviceImageLeaseIdentity {
+  return { requestId: randomUUID(), timestamp: new Date().toISOString() }
+}
+
+/** Metadata never issues an upstream key or reserves image credit. */
+export async function queryDeviceImageProvider(siteUrl: string, bearer: string, signal: AbortSignal, fetcher: FetchLike = networkFetch, additionalSecrets: readonly string[] = []): Promise<DeviceImageService> {
+  const secrets = [bearer, ...additionalSecrets]
   let response: Response
   try {
-    response = await fetcher(`${site}/api/device/image-lease`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.apiKey}`, 'Idempotency-Key': randomUUID() },
-      body: JSON.stringify({ username: credentials.username, timestamp: new Date().toISOString() }),
-      signal
-    })
+    response = await fetcher(`${normalizeSiteUrl(siteUrl)}/api/device/image-provider`, { headers: { Authorization: `Bearer ${bearer}`, ...PROVIDER_SYNC_CAPABILITY_HEADERS }, signal })
   } catch (error) {
     if (signal.aborted) throw error
-    throw new DeviceApiError('图片授权失败：无法连接账号服务，尚未调用生图接口', 0)
+    throw new DeviceApiError('读取生图配置失败：无法连接账号服务', 0)
   }
-  const payload: unknown = await response.json().catch(() => null)
-  const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
-  if (!response.ok || root.success === false) {
-    const detail = apiErrorMessage(payload, '账号服务未返回可读错误')
-    const recovery = response.status === 401 ? '；请重新连接 ModMind 账号，或在网页端重新同步接入凭证' : ''
-    throw new DeviceApiError(`图片授权失败（HTTP ${response.status}）：${detail}${recovery}。尚未调用生图接口`, response.status)
+  const raw = await readImageServiceErrorBody(response, signal)
+  let payload: unknown = null
+  try { if (raw !== null) payload = JSON.parse(raw) as unknown } catch { /* Report a bounded error below. */ }
+  const envelope = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+  if (!response.ok || envelope.success !== true || !envelope.data || typeof envelope.data !== 'object') throw new DeviceApiError(sanitizeImageServiceError(apiErrorMessage(payload, `读取生图配置失败（HTTP ${response.status}）`), secrets), response.status)
+  const data = envelope.data as Record<string, unknown>
+  const accounts = ['primary', 'secondary', 'ls']
+  if (!['follow', ...accounts].includes(String(data.selection)) || (data.provider !== null && !accounts.includes(String(data.provider))) || typeof data.available !== 'boolean') throw new DeviceApiError('生图配置响应无效', 200)
+  const model = typeof data.model === 'string' && data.model.trim() && data.model.length <= 128 ? data.model.trim() : null
+  if (data.available && (!model || !data.provider)) throw new DeviceApiError('生图配置缺少模型或供应商', 200)
+  const choices = (Array.isArray(data.choices) ? data.choices : []).flatMap((value) => {
+    const choice = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+    return accounts.includes(String(choice.account)) && typeof choice.available === 'boolean'
+      ? [{ account: choice.account as DeviceImageService['choices'][number]['account'], label: typeof choice.label === 'string' ? sanitizeImageServiceError(choice.label, secrets, 128) : String(choice.account), available: choice.available }] : []
+  })
+  return { selection: data.selection as DeviceImageService['selection'], provider: data.provider as DeviceImageService['provider'], available: data.available, message: typeof data.message === 'string' ? sanitizeImageServiceError(data.message, secrets) : '', choices, model, leasePath: '/api/device/image-lease' }
+}
+
+/** Request fresh image credentials with a routing session or account credential, never an image key. */
+export async function requestDeviceImageLease(
+  credentials: { siteUrl: string; apiKey: string; username: string; routingToken?: string },
+  signal: AbortSignal,
+  fetcher: FetchLike = networkFetch,
+  identity: DeviceImageLeaseIdentity = createDeviceImageLeaseIdentity()
+): Promise<DeviceImageLease> {
+  const site = normalizeSiteUrl(credentials.siteUrl)
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity.requestId) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(identity.timestamp) || !Number.isFinite(Date.parse(identity.timestamp))) throw new Error('图片授权请求标识或时间无效')
+  const bearer = credentials.routingToken || credentials.apiKey
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}`, 'Idempotency-Key': identity.requestId, ...PROVIDER_SYNC_CAPABILITY_HEADERS },
+    body: JSON.stringify({ username: credentials.username, timestamp: identity.timestamp }), signal
   }
-  const data = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root
-  const baseUrl = typeof data.baseUrl === 'string' && data.baseUrl.trim() ? normalizeRelayBaseUrl(data.baseUrl) : ''
-  const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : ''
-  if (!baseUrl || !apiKey) throw new DeviceApiError('图片授权失败：响应缺少临时 Key 或 Base URL，尚未调用生图接口', response.status)
-  return { baseUrl, apiKey }
+  const delay = (milliseconds: number) => new Promise<void>((resolve, reject) => {
+    signal.throwIfAborted()
+    const onAbort = () => { clearTimeout(timer); reject(signal.reason) }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve() }, milliseconds)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  for (let attempt = 0; ; attempt += 1) {
+    signal.throwIfAborted()
+    let response: Response
+    try { response = await fetcher(`${site}/api/device/image-lease`, init) }
+    catch (error) {
+      if (signal.aborted) throw error
+      if (attempt < 2) { await delay(250 * 2 ** attempt); continue }
+      throw new DeviceApiError('图片授权失败：无法连接账号服务，尚未调用生图接口', 0)
+    }
+    const raw = await readImageServiceErrorBody(response, signal)
+    let payload: unknown = null
+    try { if (raw !== null) payload = JSON.parse(raw) as unknown } catch { /* Report a bounded error below. */ }
+    const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+    if (!response.ok || root.success === false) {
+      const detail = sanitizeImageServiceError(apiErrorMessage(payload, '账号服务未返回可读错误'), [bearer, credentials.apiKey, credentials.routingToken ?? ''])
+      const retryable = response.status === 429 || response.status >= 500 || (response.status === 409 && /处理中|processing|pending/i.test(detail))
+      if (attempt < 2 && retryable) {
+        const retryAfter = response.headers.get('retry-after')
+        const wait = retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter) ? Number(retryAfter) * 1000 : retryAfter ? Math.max(0, Date.parse(retryAfter) - Date.now()) : 250 * 2 ** attempt
+        await delay(Number.isFinite(wait) ? Math.max(0, wait) : 1000); continue
+      }
+      const recovery = response.status === 401 ? '；请重新连接 ModMind 账号，或在网页端重新同步接入凭证' : ''
+      throw new DeviceApiError(`图片授权失败（HTTP ${response.status}）：${detail}${recovery}。尚未调用生图接口`, response.status)
+    }
+    const data = root.data && typeof root.data === 'object' ? root.data as Record<string, unknown> : root
+    const baseUrl = typeof data.baseUrl === 'string' && data.baseUrl.trim() ? normalizeRelayBaseUrl(data.baseUrl) : ''
+    const apiKey = typeof data.apiKey === 'string' ? data.apiKey.trim() : ''
+    const model = typeof data.model === 'string' ? data.model.trim() : ''
+    if (!baseUrl || !apiKey || !model || model.length > 128) throw new DeviceApiError('图片授权失败：响应缺少临时 Key、Base URL 或模型，尚未调用生图接口', response.status)
+    if (data.provider !== undefined && !['primary', 'secondary', 'ls'].includes(String(data.provider))) throw new DeviceApiError('图片授权失败：响应供应商无效，尚未调用生图接口', response.status)
+    if (data.expiresAt !== undefined && (typeof data.expiresAt !== 'string' || !Number.isFinite(Date.parse(data.expiresAt)) || Date.parse(data.expiresAt) <= Date.now())) throw new DeviceApiError('图片授权已失效，尚未调用生图接口', response.status)
+    return { baseUrl, apiKey, model, ...(data.provider ? { provider: data.provider as DeviceImageLease['provider'] } : {}), ...(typeof data.expiresAt === 'string' ? { expiresAt: data.expiresAt } : {}) }
+  }
 }
 
 export async function sendDeviceFastMode(
@@ -270,7 +348,7 @@ export async function sendDeviceFastMode(
   apiKey: string,
   enabled: boolean,
   signal: AbortSignal,
-  fetcher: FetchLike = fetch
+  fetcher: FetchLike = networkFetch
 ): Promise<void> {
   const site = normalizeSiteUrl(siteUrl)
   let response: Response
@@ -293,7 +371,7 @@ export async function sendDeviceFastMode(
   }
 }
 
-export async function checkAppVersion(siteUrl: string, currentVersion: string, signal: AbortSignal, fetcher: FetchLike = fetch): Promise<AppVersionCheckResult> {
+export async function checkAppVersion(siteUrl: string, currentVersion: string, signal: AbortSignal, fetcher: FetchLike = networkFetch): Promise<AppVersionCheckResult> {
   const site = normalizeSiteUrl(siteUrl)
   let response: Response
   try {
@@ -337,15 +415,20 @@ export function parseModelPayload(payload: unknown): AiModelInfo[] {
     else if (record.model !== undefined) entries = [record.model]
     else if (record.id !== undefined) entries = [record]
   }
+  const identifier = (value: unknown): string | undefined => typeof value === 'string' && value.trim() && value.trim().length <= 256 && !/[\x00-\x1f\x7f]/.test(value) ? value.trim() : undefined
+  const text = (value: unknown, max: number): string | undefined => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined
   const models = entries.map((entry): AiModelInfo | null => {
-    if (typeof entry === 'string' && entry.trim()) return { id: entry.trim() }
+    if (typeof entry === 'string') { const id = identifier(entry); return id ? { id } : null }
     if (!entry || typeof entry !== 'object') return null
-    const record = entry as { id?: unknown; name?: unknown; model?: unknown; owned_by?: unknown; ownedBy?: unknown }
-    const id = [record.id, record.name, record.model].find((value) => typeof value === 'string' && value.trim())
-    if (typeof id !== 'string' || id.length > 256) return null
+    const record = entry as Record<string, unknown>
+    const id = identifier([record.id, record.name, record.model].find(value => typeof value === 'string' && value.trim()))
+    if (!id) return null
     const ownedBy = typeof record.owned_by === 'string' ? record.owned_by : typeof record.ownedBy === 'string' ? record.ownedBy : undefined
+    const name = text(record.display_name, 256) ?? text(record.displayName, 256) ?? text(record.name, 256)
+    const family = text(record.family, 128), description = text(record.description, 1000)
     const reasoning = parseReasoningCapabilities(entry)
-    return { id: id.trim(), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}) }
+    return { id, ...(name && name !== id ? { name } : {}), ...(family ? { family } : {}), ...(description ? { description } : {}),
+      ...(typeof record.recommended === 'boolean' ? { recommended: record.recommended } : {}), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}) }
   }).filter((entry): entry is AiModelInfo => Boolean(entry))
   return [...new Map(models.map((model) => [model.id, model])).values()]
     .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }))

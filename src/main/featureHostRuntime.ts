@@ -13,8 +13,11 @@ import * as processTree from './processTree'
 import * as documentRead from './documentRead'
 import * as projectTextRead from './projectTextRead'
 import * as inspirationResearch from './inspirationResearch'
+import * as studioRegistry from './studioRegistry'
+import * as projectTemplates from './projectTemplates'
+import * as projectMutation from './projectMutation'
 
 export const featureHostRuntime = Object.freeze({
   buildRuntime, creationFeedbackService, diagnosticLog, downloadActivityService, downloadService, modpackService, modpackContentMetadata, curseForgePackMetadata,
-  agentProtection, nativeFeatureServices, networkRequest, processTree, documentRead, projectTextRead, inspirationResearch
+  agentProtection, nativeFeatureServices, networkRequest, processTree, documentRead, projectTextRead, inspirationResearch, studioRegistry, projectTemplates, projectMutation
 })

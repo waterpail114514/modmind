@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { createStoredZip } from './bedrockAddon'
-import { modpackConfigIdentities, modpackContentFeatures } from './modpackConfigIdentities'
+import { modpackConfigIdentities } from './modpackConfigIdentities'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -25,14 +25,6 @@ it.each(['archive', 'instance', 'workspace'])('reads installed mod IDs in the %s
   expect((await modpackConfigIdentities(project)).map(mod => mod.id)).toEqual(['create', 'local'])
   await writeMod('another_mod')
   expect((await modpackConfigIdentities(project)).map(mod => mod.id)).toEqual(['another_mod', 'local'])
-  expect(await modpackContentFeatures(project)).toEqual({ ftbQuests: false, patchouli: false })
-  await writeMod('ftbquests')
-  expect(await modpackContentFeatures(project)).toEqual({ ftbQuests: true, patchouli: false })
-  await writeMod('patchouli')
-  expect(await modpackContentFeatures(project)).toEqual({ ftbQuests: false, patchouli: true })
   await fs.unlink(jar)
-  const content = layout === 'instance' ? root : path.join(root, 'overrides')
-  await fs.mkdir(path.join(content, 'config/ftbquests/quests'), { recursive: true })
-  await fs.mkdir(path.join(content, 'kubejs/data/test/patchouli_books'), { recursive: true })
-  expect(await modpackContentFeatures(project)).toEqual({ ftbQuests: true, patchouli: true })
+  expect((await modpackConfigIdentities(project)).map(mod => mod.id)).toEqual(['local'])
 })

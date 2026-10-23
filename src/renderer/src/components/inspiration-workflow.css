@@ -1,0 +1,44 @@
+.inspiration-prompt-artifact { margin-top: 16px; border: 1px solid var(--theme-line); border-radius: 7px; overflow: hidden; background: var(--theme-surface); font-size: 14px; }
+.inspiration-prompt-artifact header { padding: 12px 16px; border-bottom: 1px solid var(--theme-line); }
+.inspiration-prompt-artifact strong { font-weight: 500; }
+.inspiration-prompt-body { min-height: 120px; max-height: 320px; overflow: auto; padding: 16px; overflow-wrap: anywhere; }
+.inspiration-prompt-artifact .markdown-message, .inspiration-workflow-knowledge-body .markdown-message { font-size: 14px; line-height: 1.8; }
+.inspiration-prompt-artifact .markdown-message p, .inspiration-workflow-knowledge-body .markdown-message p { color: var(--theme-text); font-size: inherit; }
+.inspiration-prompt-artifact > textarea { display: block; box-sizing: border-box; width: 100%; min-height: 220px; max-height: 320px; padding: 16px; resize: vertical; font: inherit; color: var(--theme-text); background: var(--theme-surface); border: 0; }
+.inspiration-prompt-artifact footer { min-height: 55px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--theme-line); }
+.inspiration-prompt-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inspiration-prompt-tools button, .inspiration-workflow-knowledge-action button, .inspiration-workflow-knowledge-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; cursor: pointer; padding: 6px; border: 0; background: transparent; color: var(--theme-text); }
+.inspiration-prompt-artifact .primary-button, .inspiration-workflow-knowledge-dialog .primary-button { font: inherit; padding: 7px 14px; border-radius: 6px; background: var(--theme-action); color: var(--theme-on-action); border: 0; white-space: nowrap; }
+.inspiration-prompt-artifact button:disabled, .inspiration-workflow-knowledge-dialog button:disabled { color: var(--theme-muted); cursor: default; }
+.inspiration-prompt-artifact .primary-button:disabled, .inspiration-workflow-knowledge-dialog .primary-button:disabled { background: var(--theme-inset); }
+.inspiration-workflow-error { margin: 10px 0; color: var(--theme-danger) !important; font-size: 14px !important; }
+.inspiration-prompt-artifact > .inspiration-workflow-error { padding: 0 16px; }
+.inspiration-workflow-questions { margin: 18px 0; display: grid; gap: 12px; font-size: 14px; }
+.inspiration-workflow-questions fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.inspiration-workflow-questions legend { margin-bottom: 10px; }
+.inspiration-question-options { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.inspiration-question-options button { padding: 7px 12px; font: inherit; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); color: var(--theme-text); cursor: pointer; }
+.inspiration-question-options button[aria-pressed='true'] { background: var(--theme-selected); }
+.inspiration-workflow-questions input { width: 100%; box-sizing: border-box; padding: 9px; font: inherit; }
+.inspiration-workflow-questions > button { justify-self: start; font: inherit; }
+.inspiration-workflow-suggestions { margin-top: 16px; font-size: 14px; }
+.inspiration-workflow-suggestions > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--theme-line); }
+.inspiration-workflow-suggestions button { font: inherit; white-space: nowrap; }
+.inspiration-workflow-knowledge-action { margin-top: 14px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 14px; }
+.inspiration-workflow-knowledge-dialog { width: min(700px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid var(--theme-line); border-radius: 8px; background: var(--theme-surface); color: var(--theme-text); font: inherit; font-size: 14px; }
+.inspiration-workflow-knowledge-dialog::backdrop { background: color-mix(in srgb, var(--theme-scrim) 30%, transparent); }
+.inspiration-workflow-knowledge-dialog header, .inspiration-workflow-knowledge-dialog footer { padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inspiration-workflow-knowledge-dialog header { border-bottom: 1px solid var(--theme-line); }
+.inspiration-workflow-knowledge-dialog footer { border-top: 1px solid var(--theme-line); }
+.inspiration-workflow-knowledge-dialog footer > div { display: flex; gap: 12px; }
+.inspiration-workflow-knowledge-body { height: min(400px, 50dvh); overflow: auto; padding: 8px 22px; }
+.inspiration-workflow-knowledge-body section { padding: 16px 0; border-bottom: 1px solid var(--theme-line); }
+.inspiration-workflow-knowledge-body section:last-child { border-bottom: 0; }
+.inspiration-knowledge-item-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.inspiration-knowledge-item-heading strong { font-size: 14px; font-weight: 500; }
+.inspiration-knowledge-item-heading > input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--theme-action); }
+.inspiration-knowledge-item-heading > input:not([type='checkbox']), .inspiration-workflow-knowledge-body textarea { width: 100%; box-sizing: border-box; padding: 8px; font: inherit; background: var(--theme-surface); color: var(--theme-text); border: 1px solid var(--theme-line); border-radius: 5px; }
+.inspiration-workflow-knowledge-body textarea { min-height: 150px; resize: vertical; }
+.inspiration-workflow-knowledge-body details { margin-bottom: 12px; }
+.inspiration-workflow-knowledge-body summary { cursor: pointer; }
+@media (max-width: 600px) { .inspiration-prompt-artifact footer, .inspiration-workflow-knowledge-dialog footer { flex-wrap: wrap; } .inspiration-workflow-knowledge-dialog footer > div { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; } }

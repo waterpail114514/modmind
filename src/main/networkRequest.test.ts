@@ -1,11 +1,13 @@
 import { createServer, type Server } from 'node:http'
 import net from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy, retryAfterDelay } from './networkRequest'
+import { FormData as UndiciFormData } from 'undici'
+import { fetchTextWithRetry, getNetworkProxyUrl, postJsonWithRetry, proxyDispatcher, setNetworkProxy, retryAfterDelay, networkFetch } from './networkRequest'
 
 let server: Server
 const hitCounts = new Map<string, number>()
 let port = 0
+let onRateLimitResponse: (() => void) | undefined
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -13,8 +15,16 @@ beforeAll(async () => {
     const hits = (hitCounts.get(key) ?? 0) + 1
     hitCounts.set(key, hits)
 
+    if (req.url?.startsWith('/redirect-')) {
+      res.writeHead(Number(req.url.slice('/redirect-'.length)), { location: '/echo' }); res.end(); return
+    }
+
     if (req.url === '/missing') { res.writeHead(404); res.end('missing'); return }
-    if (req.url === '/rate-limit') { res.writeHead(429); res.end('slow down'); return }
+    if (req.url === '/rate-limit') {
+      res.writeHead(429)
+      res.end('slow down', () => onRateLimitResponse?.())
+      return
+    }
 
     if (req.url === '/flaky' && req.method === 'GET' && hits === 1) {
       res.writeHead(502)
@@ -26,6 +36,11 @@ beforeAll(async () => {
       let body = ''
       req.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
       req.on('end', () => {
+        if (req.url === '/multipart') {
+          res.writeHead(200, { 'content-type': req.headers['content-type']! })
+          res.end(body)
+          return
+        }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ echoed: body ? JSON.parse(body) : null }))
       })
@@ -44,6 +59,22 @@ afterAll(async () => {
 })
 
 describe('networkRequest helpers', () => {
+  it.each([['native', FormData], ['undici', UndiciFormData]] as const)('preserves %s multipart fields, repeated files and filenames', async (_name, Form) => {
+    const body = new Form()
+    body.append('prompt', '两张参考图')
+    body.append('image[]', new Blob(['first'], { type: 'image/png' }), 'first.png')
+    body.append('image[]', new Blob(['second'], { type: 'image/png' }), 'second.png')
+    const response = await networkFetch(`http://127.0.0.1:${port}/multipart`, { method: 'POST', body: body as FormData })
+    const result = await response.formData()
+    expect(result.get('prompt')).toBe('两张参考图')
+    const images = result.getAll('image[]') as File[]
+    expect(images.map(image => [image.name, image.type])).toEqual([['first.png', 'image/png'], ['second.png', 'image/png']])
+    expect(await Promise.all(images.map(image => image.text()))).toEqual(['first', 'second'])
+  })
+  it('preserves POST bodies for 307 redirects and switches to GET for 303', async () => {
+    expect(await postJsonWithRetry<{ echoed: unknown }>(`http://127.0.0.1:${port}/redirect-307`, { probe: true })).toEqual({ echoed: { probe: true } })
+    expect(await fetchTextWithRetry(`http://127.0.0.1:${port}/redirect-303`, { method: 'POST' }, '{"probe":true}')).toBe('fine for /echo')
+  })
   it('honors Retry-After seconds and dates with a bounded wait', () => {
     expect(retryAfterDelay('2', 100)).toBe(2000)
     expect(retryAfterDelay('900', 100)).toBe(60000)
@@ -57,9 +88,10 @@ describe('networkRequest helpers', () => {
 
   it('cancels during retry backoff without another request', async () => {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 100)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    onRateLimitResponse = () => { timer = setTimeout(() => controller.abort(), 100) }
     try { await expect(fetchTextWithRetry(`http://127.0.0.1:${port}/rate-limit`, { signal: controller.signal })).rejects.toThrow() }
-    finally { clearTimeout(timer) }
+    finally { clearTimeout(timer); onRateLimitResponse = undefined }
     expect(hitCounts.get('GET /rate-limit')).toBe(1)
   })
   it('surfaces the last HTTP status after exhausting attempts', async () => {
@@ -101,6 +133,8 @@ describe('configured network proxy', () => {
     try {
       setNetworkProxy(`http://probe:secret@127.0.0.1:${(proxy.address() as net.AddressInfo).port}`)
       expect(await fetchTextWithRetry('http://proxy-test.invalid/echo', { attempts: 1 })).toContain('/echo')
+      const response = await networkFetch('http://proxy-test.invalid/echo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ streamingFetch: true }) })
+      expect(await response.json()).toEqual({ echoed: { streamingFetch: true } })
       expect(authorization).toBe(`Basic ${Buffer.from('probe:secret').toString('base64')}`)
     } finally { setNetworkProxy(''); for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => proxy.close(() => resolve())) }
   })

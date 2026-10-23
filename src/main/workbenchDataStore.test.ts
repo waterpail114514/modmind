@@ -34,6 +34,16 @@ afterEach(async () => {
 })
 
 describe('WorkbenchDataStore', () => {
+  it('rejects each malformed request even when a valid write coalesces over it', async () => {
+    const { project, store } = await fixture()
+    const key = '.modmind/workbench-timeline-validation.json'
+    const invalid = store.write(project, key, '{broken')
+    const valid = store.write(project, key, '[]')
+    await expect(invalid).rejects.toThrow('有效 JSON')
+    await valid
+    expect((await store.read(project, key)).content).toBe('[]')
+  })
+
   it('imports and preserves a legacy timeline larger than the old 32 MB byte limit', async () => {
     const { project, userData, store } = await fixture()
     const key = '.modmind/workbench-timeline-ws-large.json'

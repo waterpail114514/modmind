@@ -80,7 +80,7 @@ try {
   await importViaMenu(null, '直接使用原项目')
   await page.waitForFunction(async () => (await window.modmind.modpack.get()).modules.length === 3)
   assert.deepEqual(JSON.parse(await readFile(manifestFile, 'utf8')), manifest)
-  for (const width of [1440, 900]) {
+  for (const width of [1440, 1080]) {
     await page.setViewportSize({ width, height: 900 })
     await page.locator('summary[aria-label="导入已有模组项目"]').click()
     await page.getByRole('button', { name: '直接使用原项目', exact: true }).waitFor()

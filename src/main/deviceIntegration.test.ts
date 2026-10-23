@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { providerFixture } from './__fixtures__/providerSync'
+import * as network from './networkRequest'
 import {
   normalizeSiteUrl,
   openAiV1BaseUrl,
@@ -10,6 +11,8 @@ import {
   queryDeviceUsage,
   requestDeviceCode,
   requestDeviceImageLease,
+  queryDeviceImageProvider,
+  createDeviceImageLeaseIdentity,
   sendDeviceFastMode
 } from './deviceIntegration'
 
@@ -24,7 +27,14 @@ describe('device authorization v2', () => {
     const result=await pollDeviceCode('https://site.example','K7M3QX',new AbortController().signal,fetcher)
     expect(result).toMatchObject({status:'ok',apiKey:'paid-secret',sync:{connections:expect.any(Array)}})
     expect(new Headers(vi.mocked(fetcher).mock.calls[0][1]?.headers).get('X-ModMind-Sync-Version')).toBe('2')
+    expect(new Headers(vi.mocked(fetcher).mock.calls[0][1]?.headers).get('X-ModMind-Sync-Capabilities')).toBe('provider-ls')
     expect(JSON.stringify(result)).not.toContain('legacy-ignore')
+  })
+  it.each(['ls', 'trial:one'])('accepts native LS with default %s without rewriting its inference URL', async defaultAccount => {
+    const sync = providerFixture('ls').owner().sync
+    const fetcher = vi.fn(async () => jsonResponse({ success: true, data: { status: 'ok', ...sync, defaultAccount, username: 'alice', balanceCents: '0' } }))
+    const result = await pollDeviceCode('https://site.example', 'K7M3QX', new AbortController().signal, fetcher)
+    expect(result).toMatchObject({ status: 'ok', account: defaultAccount, sync: { connections: expect.arrayContaining([expect.objectContaining({ account: 'ls', kind: 'paid', inferenceBaseUrl: 'https://paid.example/v1' })]) } })
   })
   it('ignores stale custom parameters in v2 links and rejects an invalid full connection collection',async()=>{
     expect(parseDeviceDeepLink('mcdev://sync?site=https%3A%2F%2Fsite.example&code=K7M3QX&version=2&customApi=invalid','https://site.example')).toEqual({siteUrl:'https://site.example',code:'K7M3QX'})
@@ -34,16 +44,24 @@ describe('device authorization v2', () => {
 })
 
 describe('device integration protocol', () => {
+  it('uses the application network transport by default for device requests', async () => {
+    const transport = vi.spyOn(network, 'networkFetch').mockResolvedValue(jsonResponse({ success: true, data: { code: 'K7M3QX', authUrl: 'https://site.example.com/activate', expiresIn: 300 } }))
+    try {
+      const signal = new AbortController().signal
+      await expect(requestDeviceCode('https://site.example.com', signal)).resolves.toMatchObject({ code: 'K7M3QX' })
+      expect(transport).toHaveBeenCalledWith('https://site.example.com/api/device/code', expect.objectContaining({ method: 'POST', signal }))
+    } finally { transport.mockRestore() }
+  })
   it.each([false, true])('requests fresh image credentials using the account credential (envelope=%s)', async (envelope) => {
     let sequence = 0
     const fetcher = vi.fn(async () => {
-      const data = { baseUrl: 'https://images.example.com/v1/', apiKey: `image-key-${++sequence}` }
+      const data = { baseUrl: 'https://images.example.com/v1/', apiKey: `image-key-${++sequence}`, model: 'gpt-image-2' }
       return jsonResponse(envelope ? { success: true, data } : data)
     })
     const credentials = { siteUrl: 'https://site.example.com/', apiKey: 'account-key', username: 'someuser' }
     for (const index of [1, 2]) {
       await expect(requestDeviceImageLease(credentials, new AbortController().signal, fetcher))
-        .resolves.toEqual({ baseUrl: 'https://images.example.com/v1', apiKey: `image-key-${index}` })
+        .resolves.toEqual({ baseUrl: 'https://images.example.com/v1', apiKey: `image-key-${index}`, model: 'gpt-image-2' })
     }
     const calls = (fetcher.mock.calls as unknown as Array<[string, RequestInit]>)
     for (const [url, init] of calls) {
@@ -52,6 +70,98 @@ describe('device integration protocol', () => {
       expect(JSON.parse(String(init.body))).toEqual({ username: 'someuser', timestamp: expect.any(String) })
     }
     expect(new Headers(calls[0][1].headers).get('Idempotency-Key')).not.toBe(new Headers(calls[1][1].headers).get('Idempotency-Key'))
+  })
+
+  it('uses a routing session and preserves the complete independently selected image context', async () => {
+    const context = { baseUrl: 'https://ls.example.com/v1', apiKey: 'temporary-ls', model: 'gpt-image-2', provider: 'ls', expiresAt: new Date(Date.now() + 600_000).toISOString() }
+    const fetcher = vi.fn(async () => jsonResponse(context))
+    const credentials = { siteUrl: 'https://site.example.com', apiKey: 'secondary-chat-key', routingToken: 'mdr_routing', username: 'alice' }
+    await expect(requestDeviceImageLease(credentials, new AbortController().signal, fetcher)).resolves.toEqual(context)
+    expect(credentials.apiKey).toBe('secondary-chat-key')
+    expect(new Headers((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0][1].headers).get('Authorization')).toBe('Bearer mdr_routing')
+  })
+
+  it.each([409, 429, 503, 0])('retries only the lease with identical UUID and timestamp (HTTP %s)', async status => {
+    const context = { baseUrl: 'https://ls.example.com/v1', apiKey: 'temporary-ls', model: 'gpt-image-2', provider: 'ls' }
+    let calls = 0
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) => {
+      if (++calls === 1) {
+        if (!status) throw new Error('transport failed after send')
+        return new Response(JSON.stringify({ message: status === 409 ? '租约处理中' : '暂时不可用' }), { status, headers: { 'Retry-After': '0' } })
+      }
+      return jsonResponse(context)
+    })
+    const identity = createDeviceImageLeaseIdentity()
+    await expect(requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey: 'mdr_session', username: 'alice' }, new AbortController().signal, fetcher, identity)).resolves.toEqual(context)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const requests = fetcher.mock.calls.map(([, init]) => ({ headers: Object.fromEntries(new Headers(init.headers)), body: init.body }))
+    expect(requests[0]).toEqual(requests[1])
+    expect(JSON.parse(String(requests[0].body))).toEqual({ username: 'alice', timestamp: identity.timestamp })
+    expect(new Headers(requests[0].headers).get('Idempotency-Key')).toBe(identity.requestId)
+  })
+
+  it.each([401, 402, 403, 409])('does not retry a rejected or conflicting lease (HTTP %s)', async status => {
+    const fetcher = vi.fn(async () => jsonResponse({ message: '当前请求不可用' }, status))
+    await expect(requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey: 'mdr_session', username: 'alice' }, new AbortController().signal, fetcher)).rejects.toMatchObject({ status })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels during lease backoff before sending another authorization request', async () => {
+    const controller = new AbortController()
+    const fetcher = vi.fn(async () => {
+      setTimeout(() => controller.abort(new Error('cancelled image task')), 10)
+      return new Response('{"message":"请求过于频繁"}', { status: 429, headers: { 'Retry-After': '30' } })
+    })
+    await expect(requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey: 'mdr_session', username: 'alice' }, controller.signal, fetcher)).rejects.toThrow('cancelled image task')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { model: undefined }, { model: '' }, { provider: 'unknown' }, { expiresAt: 'invalid' },
+    { expiresAt: '2000-01-01T00:00:00.000Z' }
+  ])('rejects incomplete or expired official image contexts (%j)', async invalid => {
+    const fetcher = vi.fn(async () => jsonResponse({ baseUrl: 'https://images.example.test/v1', apiKey: 'temporary', model: 'gpt-image-2', provider: 'ls', ...invalid }))
+    await expect(requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey: 'mdr_session', username: 'alice' }, new AbortController().signal, fetcher)).rejects.toThrow(/图片授权/)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('queries independent image metadata without requesting an image lease', async () => {
+    const metadata = { selection: 'ls', provider: 'ls', available: true, message: '生图配置已就绪', choices: [{ account: 'ls', label: 'LS', available: true }], model: 'gpt-image-2', leasePath: '/api/device/image-lease' }
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) => jsonResponse({ success: true, data: metadata }))
+    await expect(queryDeviceImageProvider('https://site.example.com', 'mdr_session', new AbortController().signal, fetcher)).resolves.toEqual(metadata)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls[0][0]).toBe('https://site.example.com/api/device/image-provider')
+    expect(new Headers(fetcher.mock.calls[0][1].headers).get('Authorization')).toBe('Bearer mdr_session')
+  })
+
+  it.each([200, 403])('redacts and bounds reflected metadata and lease errors (HTTP %s)', async status => {
+    const apiKey = 'opaque-chat-secret', routingToken = 'opaque-routing-secret', ephemeral = 'sk-unknown-ephemeral-key'
+    const message = `${routingToken} ${apiKey} ${ephemeral} ${'details '.repeat(2000)}`
+    const fetcher = vi.fn(async () => jsonResponse({ success: false, message }, status))
+    const metadata = await queryDeviceImageProvider('https://site.example.com', routingToken, new AbortController().signal, fetcher, [apiKey]).catch(error => error as Error)
+    const lease = await requestDeviceImageLease({ siteUrl: 'https://site.example.com', apiKey, routingToken, username: 'alice' }, new AbortController().signal, fetcher).catch(error => error as Error)
+    for (const error of [metadata, lease]) {
+      expect(error).toBeInstanceOf(Error)
+      const text = (error as Error).message
+      for (const secret of [apiKey, routingToken, ephemeral]) expect(text).not.toContain(secret)
+      expect(text).toContain('[REDACTED]')
+      expect(text.length).toBeLessThan(1200)
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops reading oversized metadata errors before reflecting their bodies', async () => {
+    let reads = 0
+    const cancelled = vi.fn()
+    const fetcher = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) { reads += 1; controller.enqueue(new TextEncoder().encode('opaque-routing-secret'.repeat(1024))) },
+      cancel: cancelled
+    }), { status: 403 }))
+    const error = await queryDeviceImageProvider('https://site.example.com', 'opaque-routing-secret', new AbortController().signal, fetcher).catch(error => error as Error)
+    expect((error as Error).message).not.toContain('opaque-routing-secret')
+    expect((error as Error).message.length).toBeLessThan(100)
+    expect(reads).toBeLessThan(6)
+    expect(cancelled).toHaveBeenCalledOnce()
   })
 
   it('identifies rejected account credentials before any image API call', async () => {
@@ -243,6 +353,15 @@ describe('device integration protocol', () => {
     await expect(checkAppVersion('https://site.example.com', '1.4.0-beta.1', new AbortController().signal, fetcher)).resolves.toMatchObject({
       currentChannel: 'beta', targetChannel: 'beta', updateAvailable: true
     })
+  })
+
+  it('preserves bounded upstream model metadata without changing the inference identifier', () => {
+    expect(parseModelPayload({ data: [{ id: 'vendor/new-model', display_name: 'New Model', name: 'old alias', family: 'Custom', description: 'Provider description', recommended: true }] })).toEqual([
+      { id: 'vendor/new-model', name: 'New Model', family: 'Custom', description: 'Provider description', recommended: true }
+    ])
+    expect(parseModelPayload({ data: ['x'.repeat(257), 'invalid\nmodel', { id: 'gpt-6.1-sol', recommended: false }, { id: 'future-model', name: 'x'.repeat(300), description: 'y'.repeat(1200) }] })).toEqual([
+      { id: 'future-model', name: 'x'.repeat(256), description: 'y'.repeat(1000) }, { id: 'gpt-6.1-sol', recommended: false }
+    ])
   })
 
   it('uses API error messages and accepts singular or standard model payloads', async () => {
