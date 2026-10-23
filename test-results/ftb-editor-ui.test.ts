@@ -75,9 +75,9 @@ test('actual editor interactions against a temporary book and real main services
     await page.getByRole('alertdialog').getByRole('button', { name: '恢复', exact: true }).click()
     await page.waitForFunction(() => document.querySelector('.ftb-quest-message')?.textContent?.includes('已恢复'))
     expect((await readFtbQuestBook(project)).chapters[0].quests[0].title).toBe('First Quest')
-    await page.setViewportSize({ width: 390, height: 844 })
+    await page.setViewportSize({ width: 1080, height: 844 })
     await page.locator('.react-flow__node').first().click()
-    await page.screenshot({ path: path.resolve('test-results/ftb-editor-mobile.png'), fullPage: true })
+    await page.screenshot({ path: path.resolve('test-results/ftb-editor-desktop-minimum.png'), fullPage: true })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     expect(errors).toEqual([])
   } catch (error) { await page.screenshot({ path: path.resolve('test-results/ftb-editor-failure.png'), fullPage: true }); console.log((await page.locator('body').innerText()).slice(0, 3000)); throw error }

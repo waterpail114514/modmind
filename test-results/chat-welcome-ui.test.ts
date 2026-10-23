@@ -9,8 +9,8 @@ test('workbench and inspiration welcome suggestions fill drafts without sending 
   await server.listen()
   const browser = await chromium.launch({ headless: true })
   try {
-    for (const width of [1440, 390]) for (const mode of ['workbench', 'inspiration']) for (const dark of [false, true]) {
-      const page = await browser.newPage({ viewport: { width, height: width === 390 ? 844 : 1000 } })
+    for (const width of [1440, 1080]) for (const mode of ['workbench', 'inspiration']) for (const dark of [false, true]) {
+      const page = await browser.newPage({ viewport: { width, height: 1000 } })
       const errors: string[] = []
       page.on('pageerror', error => errors.push(error.message))
       await page.goto(`${server.resolvedUrls!.local[0]}test-results/chat-welcome-ui.html?mode=${mode}${dark ? '&dark' : ''}`)

@@ -4,12 +4,12 @@ import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
 
-test('workbench scroll and long conversation titles remain usable on desktop and mobile', async () => {
+test('workbench scroll and long conversation titles remain usable on desktop window sizes', async () => {
   const server = await createServer({ configFile: false, root: process.cwd(), plugins: [react()], optimizeDeps: { entries: ['test-results/workbench-scroll-ui.html'] }, server: { host: '127.0.0.1', port: 5198, strictPort: false } })
   await server.listen()
   const browser = await chromium.launch({ headless: true })
   try {
-    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 1080, height: 844 }]) {
       const page = await browser.newPage({ viewport })
       const errors: string[] = []
       page.on('pageerror', error => errors.push(error.message))
