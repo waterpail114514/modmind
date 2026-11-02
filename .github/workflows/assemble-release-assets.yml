@@ -1,0 +1,25 @@
+name: Assemble verified release uploads
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag
+        required: true
+      manifest:
+        description: Uploaded relay manifest asset name
+        required: true
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore and verify uploaded artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELAY_MANIFEST: ${{ inputs.manifest }}
+        run: node .github/scripts/assemble-release-assets.mjs
