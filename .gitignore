@@ -86,3 +86,15 @@ ui-check*.jpg
 !/docs/onboarding.zh-CN.md
 
 /dist-x1/
+
+# Maintainer storage administration stays local
+/tools/feature-publisher/
+/tools/contribution-publisher/
+/发布官方功能.cmd
+/更新贡献上传授权.cmd
+/准备官方功能.cmd
+/docs/official-features-publishing.zh-CN.md
+/scripts/prepare-feature-release.mjs
+/scripts/verify-official-feature-release.mjs
+/scripts/contributions-live-smoke.mjs
+**/credentials.dpapi
