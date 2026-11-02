@@ -40,6 +40,7 @@ function harness() {
     writeStoredBeginnerAiPreferences: vi.fn(async () => {}),
     updateQuotaModelPreferences: (_store: unknown, preferences: unknown) => preferences,
     fetchAvailableModels: vi.fn(async () => [{ id: 'new-user-model' }]),
+    fetchDeviceModelCatalog: vi.fn(async () => ({ models: [{ id: 'new-user-model' }] })),
     DEFAULT_BEGINNER_AI_PREFERENCES: fixture.preferences(), DEFAULT_DEVICE_MODEL: 'gpt-6.1-sol',
     activeAiRuns: new Map(), aiAbortControllers: new Map(),
     deviceStateWrites: { run: async (operation: () => Promise<unknown>) => operation() },
@@ -69,6 +70,7 @@ describe('website device sync production polling', () => {
     expect(h.current()).toMatchObject({ apiKey: 'new-paid-key', refreshBeforeSelection: true })
     expect(h.sandbox.providerSyncService.invalidate).not.toHaveBeenCalled()
     expect(h.sandbox.fetchAvailableModels).not.toHaveBeenCalled()
+    expect(h.sandbox.fetchDeviceModelCatalog).not.toHaveBeenCalled()
     expect(h.sandbox.writeStoredBeginnerAiPreferences).not.toHaveBeenCalled()
     expect(h.sandbox.emitAiPreferences).not.toHaveBeenCalled()
     expect(h.sessions.clear).not.toHaveBeenCalled()
@@ -103,6 +105,7 @@ describe('website device sync production polling', () => {
     delete h.next.defaults; delete h.next.bindings
     await h.run()
     expect(h.current().username).toBe('bob')
+    expect(h.sandbox.fetchDeviceModelCatalog).toHaveBeenCalledTimes(1)
     expect(h.current().sync.bindings).toBeUndefined()
     expect(h.sessions.clear).toHaveBeenCalledTimes(1)
     expect(h.sandbox.writeStoredBeginnerAiPreferences).toHaveBeenCalledTimes(1)
