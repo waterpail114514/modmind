@@ -10,12 +10,14 @@ const TIMEOUT_MS = 20_000
 
 function publicAddress(address: string): boolean {
   if (isIP(address) === 4) {
-    const [a, b] = address.split('.').map(Number)
+    const [a, b, c] = address.split('.').map(Number)
     return !([0, 10, 127].includes(a) || a >= 224 || a === 169 && b === 254
-      || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 100 && b >= 64 && b <= 127)
+      || a === 172 && b >= 16 && b <= 31 || a === 192 && (b === 168 || b === 0 && (c === 0 || c === 2))
+      || a === 100 && b >= 64 && b <= 127 || a === 198 && (b === 18 || b === 19 || b === 51 && c === 100)
+      || a === 203 && b === 0 && c === 113)
   }
   // Only globally routable IPv6 unicast; excludes loopback, link-local and IPv4 mappings.
-  return isIP(address) === 6 && /^[23][0-9a-f]{3}:/i.test(address)
+  return isIP(address) === 6 && /^[23][0-9a-f]{3}:/i.test(address) && !/^2001:0?db8:/i.test(address)
 }
 
 function webUrl(value: string): URL {
@@ -37,7 +39,10 @@ async function fetchPage(value: string, signal: AbortSignal) {
     signal.throwIfAborted()
     const addresses = await awaitWithAbort(lookup(url.hostname.replace(/^\[|\]$/g, ''), { all: true }), signal)
     signal.throwIfAborted()
-    if (!addresses.length || addresses.some(({ address }) => !publicAddress(address))) throw new Error('网页读取不支持本机或内网地址')
+    if (!addresses.length) throw new Error(`域名 ${url.hostname} 没有可用的 DNS 解析结果，请检查网络和 DNS 设置`)
+    if (addresses.some(({ address }) => !publicAddress(address))) {
+      throw new Error(`域名 ${url.hostname} 的 DNS 解析结果包含内网或保留地址，网页读取已停止。可能与代理的 fake-IP 模式或自定义 DNS 有关；请检查 DNS 设置，使用代理时可切换到 redir-host / 真实 IP 解析模式后重试`)
+    }
     const proxy = proxyDispatcher(url.href)
     // Pin direct connections to the validated addresses, including after redirects.
     const direct = proxy ? undefined : new Agent({ connect: { lookup: (_host, options, callback) => {

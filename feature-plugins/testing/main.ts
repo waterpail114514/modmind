@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { app,dialog } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -27,6 +29,7 @@ import { MinecraftRuntimeManager } from "./src/main/minecraftRuntime"
 import { nativeMcpFor } from "./src/main/nativeMinecraftMcp"
 import { NativeMinecraftTestService } from "./src/main/nativeMinecraftTestService"
 import { PlayerTestService } from "./src/main/playerTestService"
+import { BackgroundMinecraftTestService } from './src/main/backgroundMinecraftTestService'
 import { runRenderedMinecraftTest } from "./src/main/renderedMinecraftTest"
 import { readServerProfile, saveServerProfile, serverCoreVersions, serverCoreBuilds, importLocalServerCore } from "./src/main/serverCoreService"
 import { SERVER_PACK_CREATOR_MIN_JAVA } from "./src/main/serverPackCreatorService"
@@ -36,7 +39,7 @@ import type { ServerCore, ServerProfile } from '../../src/shared/serverPlugin'
 export function activate(options: { host: NativeFeatureHost; pluginDirectory: string }) {
 const host = options.host
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = input => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "testing" }, () => handler(host.event(), ...(input.args as any[]))) }
 const requireMinecraftRuntime = (): MinecraftRuntimeManager => minecraftRuntime!
 let minecraftRuntime: MinecraftRuntimeManager | null = null
 let localServerManager: LocalServerManager | null = null
@@ -81,6 +84,8 @@ minecraftRuntime = new MinecraftRuntimeManager({
         await host.requireAddonRelationshipService().refreshLinkedProjects((linked) => host.buildLinkedProjectTree(linked, signal, [project.path]), [project.path]);
     }
 });
+actions.build_status = () => minecraftRuntime!.buildRecoveryState()
+actions.cancel_build = () => minecraftRuntime!.cancelBuild()
 localServerManager = new LocalServerManager({
     getProject: () => host.currentProject,
     getJavaPath: (project, major) => project ? host.aiProjectContext.run(project, () => requireMinecraftRuntime().ensureJavaRuntime(undefined, major)) : requireMinecraftRuntime().ensureJavaRuntime(undefined, major),
@@ -123,6 +128,17 @@ playerTestService = new PlayerTestService({ server: () => {
             throw new Error('本机测试服务不可用');
         return localServerManager;
     }, currentProject: () => host.currentProject, headless: requireHeadlessMc, javaPreferences: async () => (await host.readSettings()).javaPreferences, onEvent: host.forwardMinecraftRuntimeEvent,
+    background: new BackgroundMinecraftTestService({
+        currentProject: () => host.currentProject,
+        launch: operation => host.withMinecraftResourceLock(operation),
+        build: (project, signal) => host.aiProjectContext.run(project, () => host.buildProjectWithLock(signal)),
+        server: () => localServerManager!,
+        createRuntime: (project, directory, vanilla) => new MinecraftRuntimeManager({
+            getProject: () => project, instanceDirectory: directory, vanillaClient: vanilla,
+            getJavaPreference: async () => (await host.readSettings()).javaPreferences,
+            onState: () => undefined, onEvent: host.forwardMinecraftRuntimeEvent
+        })
+    }),
     native: new NativeMinecraftTestService({
         currentProject: () => host.currentProject,
         build: (project, signal) => host.aiProjectContext.run(project, () => host.buildProjectWithLock(signal)),
@@ -236,21 +252,27 @@ async function runHeadlessMinecraftSmoke(project: ProjectInfo, signal?: AbortSig
 async function runManagedRenderedTest(project: ProjectInfo, signal?: AbortSignal) {
     if (project.kind === 'server-plugin' || !isJavaLoader(project.loader))
         throw new Error('此入口支持 Java Mod 和整合包；服务端插件请使用玩家测试的 rendered 模式，基岩版和网易版使用其官方测试工具');
-    if ((project.kind ?? 'mod') === 'mod' && nativeMcpFor(project.minecraftVersion, project.loader)) {
+    if (isJavaLoader(project.loader)) {
         if (!playerTestService)
             throw new Error('玩家测试服务不可用');
-        const session = await playerTestService.execute(project, 'session', { operation: 'start', mode: 'rendered' }, signal) as {
+        let session = await playerTestService.execute(project, 'session', { operation: 'start', mode: 'rendered' }, signal) as {
+            ready?: boolean; status?: string; error?: string;
             sessionId: string;
             observation: unknown;
         };
         try {
+            while (!session.ready) {
+                signal?.throwIfAborted();
+                if (['failed', 'cancelled', 'stopped'].includes(session.status ?? '')) throw new Error(session.error ?? '测试准备失败');
+                session = await playerTestService.execute(project, 'session', { operation: 'state', sessionId: session.sessionId, waitSeconds: 20 }, signal) as typeof session;
+            }
             const capture = await playerTestService.execute(project, 'capture', { sessionId: session.sessionId }, signal) as {
                 captures: Array<{
                     path: string;
                     dataUrl: string;
                 }>;
             };
-            return { success: true, backend: 'minecraft-mod-mcp', observation: session.observation, captures: capture.captures, visualVerified: false as const, gameplayVerified: false as const, clientStopped: true as const };
+            return { success: true, backend: 'background-agent', observation: session.observation, captures: capture.captures, visualVerified: false as const, gameplayVerified: false as const, clientStopped: true as const };
         }
         finally {
             await playerTestService.execute(project, 'session', { operation: 'stop', sessionId: session.sessionId });

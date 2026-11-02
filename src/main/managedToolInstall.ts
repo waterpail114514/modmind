@@ -7,12 +7,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 export async function withToolInstallLock<T>(directory: string, signal: AbortSignal | undefined, operation: () => Promise<T>): Promise<T> {
   await fs.mkdir(path.dirname(directory), { recursive: true })
   let release: (() => Promise<void>) | undefined
-  const deadline = Date.now() + 180_000
   while (!release) {
     signal?.throwIfAborted()
     try { release = await lockfile.lock(directory, { realpath: false, stale: 30_000, update: 10_000, retries: 0 }) }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ELOCKED' || Date.now() >= deadline) throw error
+      if ((error as NodeJS.ErrnoException).code !== 'ELOCKED') throw error
       await delay(250, undefined, { signal })
     }
   }

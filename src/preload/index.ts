@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSource } from '../shared/aiAttachments'
 import { diagnosticErrorPayload } from '../shared/diagnostics'
 import { presentClientResult } from '../shared/clientResult'
+import type { AiModelSelection } from '../shared/aiSelection'
 import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, AppDialogRequest, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
@@ -69,6 +70,28 @@ window.addEventListener('error', (event) => {
 window.addEventListener('unhandledrejection', (event) => {
   sendRendererDiagnostic({ subsystem: 'renderer', operation: 'unhandled-rejection', phase: 'error', level: 'error', message: 'Renderer unhandled promise rejection', error: rendererError(event.reason) })
 })
+
+window.addEventListener('DOMContentLoaded', () => {
+  let bucketStart = Date.now(), count = 0, suppressed = 0
+  const capture = (event: Event) => {
+    const now = Date.now()
+    if (now - bucketStart > 60_000) {
+      if (suppressed) sendRendererDiagnostic({ subsystem: 'renderer-ui', operation: 'interaction-suppressed', message: 'Repeated interactions omitted', data: { count: suppressed } })
+      bucketStart = now; count = 0; suppressed = 0
+    }
+    if (++count > 120) { suppressed++; return }
+    const target = event.target instanceof Element ? event.target.closest('button,a,input,select,textarea,[role="tab"],[role="option"],[role="treeitem"]') : null
+    if (!target) return
+    sendRendererDiagnostic({ subsystem: 'renderer-ui', operation: 'interaction', message: `${event.type} ${target.tagName.toLowerCase()}`, data: {
+      kind: event.type, element: target.tagName, id: target.id, role: target.getAttribute('role'),
+      label: (target.getAttribute('aria-label') ?? target.getAttribute('title') ?? (target.tagName === 'BUTTON' ? target.textContent : '') ?? '').slice(0, 160),
+      objectId: target.getAttribute('data-id'), selected: target.getAttribute('aria-selected'),
+      type: target.getAttribute('type'), checked: target instanceof HTMLInputElement && target.type === 'checkbox' ? target.checked : undefined
+    } })
+  }
+  document.addEventListener('click', capture, true)
+  document.addEventListener('change', capture, true)
+}, { once: true })
 
 const api: ModMindApi = {
   developer: {
@@ -301,6 +324,7 @@ const api: ModMindApi = {
     getKeybinds: () => invoke('modpack:getKeybinds'),
     readLock: () => invoke('modpack:readLock'),
     auditLock: () => invoke('modpack:auditLock'),
+    manageLock: (operation, projectPath) => invoke('modpack:manageLock', { operation }, projectPath),
     providers: () => invoke('modpack:providers'),
     recommendProviders: () => invoke('modpack:recommendProviders'),
     recommendMcmod: () => invoke('modpack:recommendMcmod'),
@@ -381,7 +405,8 @@ const api: ModMindApi = {
       return () => ipcRenderer.removeListener('snapshots:storageChanged', handler)
     },
     restore: (id: string, projectPath?: string) => invoke('snapshots:restore', id, projectPath),
-    delete: (id: string, projectPath?: string) => invoke('snapshots:delete', id, projectPath)
+    delete: (id: string, projectPath?: string) => invoke('snapshots:delete', id, projectPath),
+    deleteMany: (ids: string[], projectPath?: string) => invoke('snapshots:deleteMany', ids, projectPath)
   },
   settings: {
     pickBackground: () => invoke('settings:pickBackground'),
@@ -399,20 +424,30 @@ const api: ModMindApi = {
     probeJavaHome: (home: string): Promise<JavaProbeOutcome> => invoke('settings:probeJavaHome', home),
     pickJavaHome: (): Promise<string | null> => invoke('settings:pickJavaHome')
   },
+  contributions: {
+    getState: () => invoke('contributions:getState'),
+    beginConsent: () => invoke('contributions:beginConsent'),
+    enable: (token, version) => invoke('contributions:enable', token, version),
+    disable: () => invoke('contributions:disable'),
+    preview: () => invoke('contributions:preview')
+  },
   diagnostics: {
     reportError: (error, operation = 'page-error') => sendRendererDiagnostic({ subsystem: 'renderer', operation, phase: 'error', level: 'error', message: error.message, error }),
-    exportLogs: (pages?: DiagnosticPageSnapshot[]) => invoke('diagnostics:exportLogs', pages)
+    reportEvent: event => sendRendererDiagnostic({ subsystem: 'renderer-ui', operation: event.operation, phase: 'event', message: event.operation, data: event.data }),
+    pickAttachments: () => invoke('diagnostics:pickAttachments'),
+    readState: limit => invoke('diagnostics:readState', limit),
+    exportLogs: (pages, options) => invoke('diagnostics:exportLogs', pages, options)
   },
   device: {
     getState: () => invoke('device:getState'),
     authorize: () => invoke('device:authorize'),
     cancelAuthorization: () => invoke('device:cancelAuthorization'),
     disconnectLocal: () => invoke('device:disconnectLocal'),
-    refreshUsage: () => invoke('device:refreshUsage'),
+    refreshUsage: (options?: { force?: boolean; account?: string }) => invoke('device:refreshUsage', options),
     getAiPreferences: () => invoke('device:getAiPreferences'),
     saveAiPreferences: (preferences: BeginnerAiPreferences) => invoke('device:saveAiPreferences', preferences),
     listModels: (force?: boolean) => invoke('device:listModels', force),
-    getModelCatalog: (force?: boolean) => invoke('device:getModelCatalog', force),
+    getModelCatalog: (force?: boolean, cached?: boolean) => invoke('device:getModelCatalog', force, cached),
     discoverModels: () => invoke('device:discoverModels'),
     refreshConnections: () => invoke('device:refreshConnections'),
     resetModelSelection: (surface: 'workspace' | 'inspiration') => invoke('device:resetModelSelection', surface),
@@ -454,6 +489,14 @@ const api: ModMindApi = {
     }
   },
   ai: {
+    listQuestions: () => invoke('ai:listQuestions'),
+    answerQuestion: (context, answers) => invoke('ai:answerQuestion', context, answers),
+    dismissQuestion: context => invoke('ai:dismissQuestion', context),
+    onQuestionsChanged: listener => {
+      const handler = (): void => listener()
+      ipcRenderer.on('ai:questionsChanged', handler)
+      return () => ipcRenderer.removeListener('ai:questionsChanged', handler)
+    },
     listApprovals: () => invoke('ai:listApprovals'),
     respondApproval: (id, decision) => invoke('ai:respondApproval', id, decision),
     onApprovalsChanged: listener => {
@@ -501,6 +544,9 @@ const api: ModMindApi = {
     list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => invoke('conversations:list', projectPath, surface, includeArchived),
     read: (projectPath: string, conversationId: string) => invoke('conversations:read', projectPath, conversationId),
     readProjection: (projectPath: string, conversationId: string) => invoke('conversations:readProjection', projectPath, conversationId),
+    historyPage: (projectPath: string, conversationId: string, input?: import('../shared/types').ConversationHistoryPageInput) => invoke('conversations:historyPage', projectPath, conversationId, input),
+    saveHistoryWindow: (projectPath: string, conversationId: string, generation: number, token: string, start: number, items: unknown[]) => invoke('conversations:saveHistoryWindow', projectPath, conversationId, generation, token, start, items),
+    deleteHistoryItem: (projectPath: string, conversationId: string, generation: number, itemId: string) => invoke('conversations:deleteHistoryItem', projectPath, conversationId, generation, itemId),
     create: (projectPath: string, input: ConversationCreateInput) => invoke('conversations:create', projectPath, input),
     ensureProjection: (projectPath: string, input: ConversationCreateInput) => invoke('conversations:ensureProjection', projectPath, input),
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => invoke('conversations:saveView', projectPath, conversationId, generation, view, title),
@@ -516,7 +562,7 @@ const api: ModMindApi = {
     flush: () => invoke('conversations:flush')
   },
   beginnerCodex: {
-    prepare: (projectPath?: string) => invoke('beginner-codex:prepare', projectPath),
+    prepare: (projectPath?: string, selection?: AiModelSelection) => invoke('beginner-codex:prepare', projectPath, selection),
     onProgress: (listener: (progress: BeginnerCodexProgress) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, value: BeginnerCodexProgress): void => listener(presentResult(value, 'beginner-codex:progress'))
       ipcRenderer.on('beginner-codex:progress', handler)
@@ -599,6 +645,7 @@ const api: ModMindApi = {
     }
   },
   minecraft: {
+    playerTest: (projectPath: string, category: 'session' | 'observe' | 'action' | 'capture' | 'scenario', input: Record<string, unknown>) => invoke('minecraft:playerTest', projectPath, category, input),
     getState: () => invoke('minecraft:getState'),
     prepare: () => invoke('minecraft:prepare'),
     cancelPreparation: () => invoke('minecraft:cancelPreparation'),
@@ -744,7 +791,7 @@ const api: ModMindApi = {
       ipcRenderer.on('feature-plugins:event', listener)
       return () => { ipcRenderer.removeListener('feature-plugins:event', listener) }
     },
-    install: () => invoke('feature-plugins:install'),
+    install: (expectedId?: string) => expectedId === undefined ? invoke('feature-plugins:install') : invoke('feature-plugins:install', expectedId),
     onInstallPreview: (callback: (requestId: string, preview: import('../shared/featurePlugins').FeaturePluginInstallPreview) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, requestId: string, preview: import('../shared/featurePlugins').FeaturePluginInstallPreview): void => callback(requestId, preview)
       ipcRenderer.on('feature-plugins:installPreview', listener)

@@ -97,7 +97,7 @@ async function downloadVerified(
     destination: target,
     expectedHash: { algorithm: 'sha256', value: checksum },
     maxBytes: Math.max(expectedSize || 0, 512 * 1024 * 1024),
-    timeoutMs: 15 * 60_000,
+    stallTimeoutMs: 180_000, resume: true,
     retriesPerSource: DOWNLOAD_ATTEMPTS_PER_SOURCE,
     signal,
     onProgress: ({ downloaded, total, source }) => onProgress?.({ downloaded, total: total ?? expectedSize, source: source.label })
@@ -155,7 +155,7 @@ export async function ensureManagedJdk(
 
     const asset = await fetchAsset(major, signal)
     const temporary = await fs.mkdtemp(path.join(cacheRoot, `.temurin-${major}-`))
-    const archive = path.join(os.tmpdir(), `modmind-${process.pid}-${Date.now()}-${asset.name}`)
+    const archive = path.join(cacheRoot, 'archives', `${asset.checksum}-${path.basename(asset.name)}`)
     try {
       const source = await downloadVerified(jdkDownloadSources(asset.name, major, asset.link), archive, asset.checksum, asset.size ?? 0, onProgress, signal)
       const extracted = path.join(temporary, 'extracted')
@@ -174,7 +174,8 @@ export async function ensureManagedJdk(
       await fs.rename(home, destination)
       return { home: destination, major, source }
     } finally {
-      await fs.rm(archive, { force: true }).catch(() => undefined)
+      // A failed transfer keeps its verified-identity partial for the next run.
+      if (await validCachedJdk(destination, major)) await fs.rm(archive, { force: true }).catch(() => undefined)
       await fs.rm(temporary, { recursive: true, force: true }).catch(() => undefined)
     }
   })

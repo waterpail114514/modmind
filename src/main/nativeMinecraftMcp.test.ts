@@ -4,11 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { createHash } from 'node:crypto'
-import helper from "../../feature-plugins/testing/src/main/nativeMinecraftMcpHelper.json"
+import helper from '../../feature-plugins/testing/src/main/nativeMinecraftMcpHelper.json'
+import helper263 from './nativeMinecraftMcp263Helper.json'
 import { afterEach, expect, it, vi } from 'vitest'
-import { NativeMinecraftMcpClient, nativeMcpFor, prepareLocalMcpJar, restrictMcpServerAddress } from "../../feature-plugins/testing/src/main/nativeMinecraftMcp"
+import { NativeMinecraftMcpClient, nativeMcpFor, prepareLocalMcpJar, restrictMcpServerAddress } from '../../feature-plugins/testing/src/main/nativeMinecraftMcp'
 import { createStoredZip } from './bedrockAddon'
-import { archiveRead } from "./archiveInspection"
+import { archiveRead } from './archiveInspection'
 
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }))
 vi.mock('./downloadService', () => ({ verifiedDownload: { download: vi.fn() } }))
@@ -43,13 +44,28 @@ it('pins exact releases and does not substitute a nearby game version or loader'
   expect(nativeMcpFor('1.20.5', 'fabric')).toBeUndefined()
 })
 it('keeps bundled Java adapters reproducible from the checked-in source', async () => {
-  for (const entry of helper.classes) {
+  for (const entry of [...helper.classes, ...helper263.classes]) {
     expect(createHash('sha256').update((await fs.readFile(entry.source, 'utf8')).replaceAll('\r\n', '\n')).digest('hex')).toBe(entry.sourceSha256)
     const bytes = Buffer.from(entry.data, 'base64')
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(entry.classSha256)
     expect(bytes.readUInt32BE(0)).toBe(0xcafebabe)
-    expect(bytes.readUInt16BE(6)).toBe(52)
+    expect(bytes.readUInt16BE(6)).toBe(entry.source.endsWith('ModMind263InputHandler.java') ? 69 : 52)
   }
+})
+it.each(['fabric', 'forge', 'neoforge'])('selects the pinned SDL/GPU adapter only for exact 26.3 %s', loader => {
+  const entry = nativeMcpFor('26.3', loader)
+  expect(entry).toMatchObject({ release: 'v0.4.8', adapter: 'minecraft-26.3' })
+  expect(entry?.url).toContain(`/v0.4.8/minecraft-mcp-26.3-${loader}-v0.4.8.jar`)
+  expect(entry?.sha256).toMatch(/^[a-f0-9]{64}$/)
+  expect(nativeMcpFor('26.3.1', loader)).toBeUndefined()
+  expect(nativeMcpFor('26.2', loader)?.adapter).toBeUndefined()
+})
+it('refuses to patch an unreviewed 26.3 binary even when its caller supplies a matching hash', async () => {
+  const root = await directory(); const jar = path.join(root, 'modified.jar')
+  const bytes = Buffer.from('unreviewed input'); await fs.writeFile(jar, bytes)
+  const selected = nativeMcpFor('26.3', 'fabric')!
+  await expect(prepareLocalMcpJar(jar, selected)).rejects.toThrow('已审核')
+  await expect(prepareLocalMcpJar(jar, { ...selected, sha256: createHash('sha256').update(bytes).digest('hex') })).rejects.toThrow('已审核')
 })
 it('checks the owned process before every action and does not retry a failed mutation', async () => {
   const remote = await endpoint()

@@ -1,5 +1,15 @@
 # Third-Party Notices
 
+## @streamparser/json
+
+Conversation history paging uses `@streamparser/json` 0.0.26 to validate JSON incrementally.
+Upstream: https://github.com/juanjoDiaz/streamparser-json
+
+Copyright (c) 2020 Juanjo Diaz
+
+Provided under the MIT License; the MIT permission and warranty text reproduced
+in the React Zoom Pan Pinch section below applies.
+
 ## Driver.js
 
 Interactive first-run tutorials use Driver.js 1.9.0 for spotlights, positioning,
@@ -183,6 +193,23 @@ local ConversationStore journal; virtualization only limits mounted DOM nodes.
 - Version: 4.18.13
 - Project: https://github.com/petyosi/react-virtuoso
 - License: MIT
+
+## yazl
+
+ModMind uses unmodified `yazl` 3.3.1 (MIT, Copyright (c) 2014 Josh Wolfe)
+for streaming ZIP and ZIP64 MRPack exports. The package and its upstream license
+are included with the application dependencies.
+
+- Project: https://github.com/thejoshwolfe/yazl
+- License: MIT
+
+The existing in-memory ZIP helper cannot export large packs with bounded memory;
+the existing 7-Zip integration is designed for archive import. yazl provides the
+required streaming writer and automatic ZIP64 support as a small JavaScript
+dependency (about 58 KiB unpacked, plus buffer-crc32), without staging a second
+copy of the pack or downloading a runtime. Existing lock and inventory services
+continue to supply pack metadata and verified download sources. No upstream
+source modifications are made.
 
 ## proper-lockfile
 
@@ -443,3 +470,43 @@ transitive dependency licenses are collected by
 `scripts/prepare-developer-kit.mjs` into `THIRD_PARTY_NOTICES.txt`; type packages
 also retain their own license files. No external compiler service is required.
 See `docs/developer-workbench.zh-CN.md` for versions, compatibility and scope.
+
+## Background Game Control Agent
+
+The optional testing feature embeds ASM 9.11.1 (BSD-3-Clause, INRIA and France
+Telecom) inside its Java 8-compatible game control agent. ASM is relocated to
+`dev.modmind.gamecontrol.asm` to avoid conflicts with Minecraft loaders. The
+pinned upstream artifact and SHA256 are recorded in
+`scripts/compile-game-control-agent.mjs`; the complete license is retained in
+`resources/game-control/LICENSE-ASM.txt` and in the generated agent JAR.
+The bridge does not bundle Minecraft, game assets, or a Java runtime.
+
+
+## Forge 1.7.2 Java Compatibility
+
+Forge 1.7.2 on Java 8 uses the upstream LegacyJavaFixer 2.0.1 coremod (6,630 bytes), under the MIT license. This optional startup compatibility component does not provide game control. The embedded artifact is pinned to its official Forge Maven SHA256; its license is copied beside the JAR in the owned test instance.
+
+Upstream: https://github.com/MinecraftForge/LegacyJavaFixer
+Source revision: 4b28ed9af160b38236be8601b376f96f19f837e4
+
+The MIT License (MIT)
+
+Copyright (c) 2014 LexManos
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

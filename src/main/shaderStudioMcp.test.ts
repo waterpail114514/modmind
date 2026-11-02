@@ -15,6 +15,7 @@ import type { ProjectInfo } from '../shared/types'
 import type { ShaderDocument, ShaderInventory, ShaderTestState } from '../shared/shaderStudio'
 import { shaderRuntimeFixture } from './__fixtures__/shaderRuntimeFixture'
 import { saveRuntimeBinding } from '../../feature-plugins/shader-shared/src/main/shaderRuntimeEnvironment'
+import studioManifest from '../../feature-plugins/studio-shader/manifest.json'
 import type { ShaderRuntimeSession } from '../shared/shaderStudio'
 
 const modules = [
@@ -33,7 +34,7 @@ it('independently installs optional shader modules and verifies their actual MCP
   let current: ProjectInfo = { path: path.join(root, 'project'), name: 'Shader', kind: 'shader', studioId: 'minecraft-shader', loader: 'iris', minecraftVersion: '1.21.1', namespace: 'shader', createdAt: '' }
   let runtimeFixture: Awaited<ReturnType<typeof shaderRuntimeFixture>> | undefined
   const service = new FeaturePluginService(path.join(root, 'plugins'), {
-    requireFrom: path.resolve('package.json'), capabilities: { runtime: featureHostRuntime, studioV1: true },
+    requireFrom: path.resolve('package.json'), capabilities: { runtime: featureHostRuntime, diagnosticsV1: true, studioV1: true },
     busy: () => false, changed: () => undefined, projectRoot: () => current.path, project: () => current,
     options: () => ({ stateDirectory: path.join(root, 'application-state'), sessionDependencies: { javaHomes: async () => runtimeFixture ? [{ home: runtimeFixture.javaHome, major: 25 }] : [] }, host: { requireProject: () => current, assertProjectMutationAllowed: () => undefined } })
   })
@@ -42,7 +43,7 @@ it('independently installs optional shader modules and verifies their actual MCP
   await install('studio-shader', 'mmstudio')
   const registry = new StudioRegistry(() => service.catalog(), id => service.service(id), undefined, (id, action, input, context) => service.invoke(id, action, input, context)); configureStudios(registry)
   expect(registry.select(current).definition.name).toBe('光影工作台')
-  expect(service.manifest('studio-shader')).toMatchObject({ version: '1.2.0', views: [], actions: [], tools: [] })
+  expect(service.manifest('studio-shader')).toMatchObject({ version: studioManifest.version, views: [], actions: [], tools: [] })
   expect(service.tools('workbench', current)).toHaveLength(0)
   await fs.mkdir(current.path)
   await registry.scaffold(current, async files => { for (const [file, content] of Object.entries(files)) { const target = path.join(current.path, file); await fs.mkdir(path.dirname(target), { recursive: true }); await fs.writeFile(target, content) } })

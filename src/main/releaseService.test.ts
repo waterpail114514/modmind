@@ -14,6 +14,30 @@ afterEach(async () => {
 })
 
 describe('release preflight and publishing guard', () => {
+  it('defaults old packs to bundled export, persists download preference, and increments only the exported project on success', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'release-pack-mode-')); roots.push(root)
+    const project: ProjectInfo = { name: 'Pack', namespace: 'pack', path: path.join(root, 'a'), kind: 'modpack', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' }
+    const other: ProjectInfo = { ...project, namespace: 'other', path: path.join(root, 'b') }
+    for (const item of [project, other]) { await fs.mkdir(item.path); await createModpackTemplate(item) }
+    const source = path.join(root, 'mod.jar')
+    await fs.writeFile(source, Buffer.alloc(2048, 4))
+    await addModpackFiles(project, [source])
+    let current = project
+    const service = new ReleaseService(() => current, async () => ({ modrinthToken: '', curseForgeToken: '', githubToken: '' }), async () => {})
+    const defaults = await service.getSettings()
+    expect(defaults.modpackExportMode).toBe('bundled')
+    await expect(service.saveSettings({ ...defaults, modpackExportMode: 'invalid' as 'bundled' })).rejects.toThrow('导出方式无效')
+    await service.saveSettings({ ...defaults, modpackExportMode: 'download' })
+    current = other
+    const result = await service.exportModpack({}, project)
+    expect(result).toMatchObject({ success: true, mode: 'download', version: '0.1.0' })
+    expect(await service.getSettings(project)).toMatchObject({ version: '0.1.1', modpackExportMode: 'download' })
+    expect(await service.getSettings(other)).toMatchObject({ version: '0.1.0', modpackExportMode: 'bundled' })
+    await fs.unlink(path.join(project.path, 'mods/mod.jar'))
+    await expect(service.exportModpack({}, project)).rejects.toThrow()
+    expect((await service.getSettings(project)).version).toBe('0.1.1')
+  })
+
   it('uses one project and one settings snapshot across a pending preflight', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'release-identity-')); roots.push(root)
     const make = (name: string): ProjectInfo => ({ name, path: path.join(root, name), namespace: name, loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' })

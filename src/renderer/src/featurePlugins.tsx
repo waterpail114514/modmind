@@ -26,12 +26,13 @@ let refreshQueue = Promise.resolve()
 function publish(value: Snapshot): void { snapshot = value; listeners.forEach(listener => listener()) }
 function removeAssets(id: string): void { const entry = assets.get(id); entry?.script.remove(); entry?.style.remove(); assets.delete(id); delete registered[id] }
 async function load(record: FeaturePluginRecord): Promise<FeatureRendererModule> {
-  if (assets.get(record.id)?.version === record.version && registered[record.id]) return resolveModule(record)
+  const identity = record.contentHash ?? record.version
+  if (assets.get(record.id)?.version === identity && registered[record.id]) return resolveModule(record)
   removeAssets(record.id)
   const script = document.createElement('script'), style = document.createElement('link')
-  assets.set(record.id, { script, style, version: record.version })
-  script.src = `modmind-feature://${record.id}/renderer.js`
-  style.rel = 'stylesheet'; style.href = `modmind-feature://${record.id}/renderer.css`
+  assets.set(record.id, { script, style, version: identity })
+  script.src = `modmind-feature://${record.id}/renderer.js?v=${encodeURIComponent(identity)}`
+  style.rel = 'stylesheet'; style.href = `modmind-feature://${record.id}/renderer.css?v=${encodeURIComponent(identity)}`
   const append = (element: HTMLScriptElement | HTMLLinkElement): Promise<void> => new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => { element.remove(); reject(new Error('插件加载超时，请重试')) }, 15000)
     element.onload = () => { clearTimeout(timer); resolve() }

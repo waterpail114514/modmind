@@ -23,7 +23,9 @@ const gradleChecksums: Record<string, string> = {
   '8.14.5': '6f74b601422d6d6fc4e1f9a1ab6522f642c2fdcbc15ae33ebd30ba3d7198e854',
   '9.2.1': '72f44c9f8ebcb1af43838f45ee5c4aa9c5444898b3468ab3f4af7b6076c5bc3f',
   '9.5.0': '553c78f50dafcd54d65b9a444649057857469edf836431389695608536d6b746',
-  '9.5.1': 'bafc141b619ad6350fd975fc903156dd5c151998cc8b058e8c1044ab5f7b031f'
+  '9.5.1': 'bafc141b619ad6350fd975fc903156dd5c151998cc8b058e8c1044ab5f7b031f',
+  '9.6.0': 'bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
+  '9.7.1': 'acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a'
 }
 
 export function gradleChecksumForVersion(version: string): string | undefined {
@@ -48,10 +50,10 @@ function between(version: string, minimum: string, maximum: string): boolean {
 
 export function supportsProjectCreation(loader: LoaderKind, minecraftVersion: string): boolean {
   if (isServerPluginPlatform(loader)) return supportsPluginTarget(loader, minecraftVersion)
-  if (loader === 'fabric') return between(minecraftVersion, '1.14', '26.2')
+  if (loader === 'fabric') return between(minecraftVersion, '1.14', '26.3')
   if (loader === 'quilt') return ['1.18.2', '1.19.2', '1.19.4', '1.20.1', '1.20.2', '1.20.4', '1.20.6', '1.21'].includes(minecraftVersion)
-  if (loader === 'forge') return between(minecraftVersion, '1.6.4', '26.2')
-  if (loader === 'neoforge') return between(minecraftVersion, '1.20.2', '26.2')
+  if (loader === 'forge') return between(minecraftVersion, '1.6.4', '26.3')
+  if (loader === 'neoforge') return between(minecraftVersion, '1.20.2', '26.3')
   if (loader === 'bedrock') return ['1.20.80', '1.21.100', '1.26.30'].includes(minecraftVersion)
   return minecraftVersion === '3.8'
 }
@@ -106,8 +108,8 @@ export function loaderBuildCompatibility(loader: JavaLoaderKind, minecraftVersio
   let pluginVersion: string
 
   if (loader === 'fabric') {
-    gradleVersion = '9.5.1'
-    pluginVersion = '1.17.17'
+    gradleVersion = minecraftVersion === '26.3' ? '9.6.0' : '9.5.1'
+    pluginVersion = minecraftVersion === '26.3' ? '1.17.21' : '1.17.17'
   } else if (loader === 'quilt') {
     gradleVersion = '8.9'
     pluginVersion = '1.7.4'
@@ -135,13 +137,13 @@ export function loaderBuildCompatibility(loader: JavaLoaderKind, minecraftVersio
       pluginVersion = '5.1.+'
     } else {
       const modernPlugin = compareMinecraftVersions(minecraftVersion, '1.21.3') >= 0 || minecraftVersion.startsWith('26.')
-      gradleVersion = modernPlugin ? '9.5.0' : '8.12.1'
+      gradleVersion = minecraftVersion === '26.3' ? '9.7.1' : modernPlugin ? '9.5.0' : '8.12.1'
       pluginVersion = modernPlugin ? '7.0.31' : '6.0.54'
     }
   } else {
     const neoGradle = compareMinecraftVersions(minecraftVersion, '1.20.4') < 0
     gradleVersion = neoGradle ? '8.14.5' : '9.2.1'
-    pluginVersion = neoGradle ? '7.0.116' : '2.0.143'
+    pluginVersion = neoGradle ? '7.0.116' : minecraftVersion === '26.3' ? '2.0.148' : '2.0.143'
   }
 
   return {

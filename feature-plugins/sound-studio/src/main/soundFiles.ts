@@ -2,7 +2,9 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { mediaExecutable } from '../../../sdk/mediaRuntime'
-import { spawnManaged } from "../../../../src/main/processTree"
+import { spawnManaged } from '../../../../src/main/processTree'
+import { diagnosticJournal } from '../../../../src/main/diagnosticLog'
+import { diagnosticContext, diagnosticValue } from '../../../../src/main/diagnosticContext'
 
 export const AUDIO_LIMIT = 64 * 1024 * 1024
 export const audioExtension = /\.(ogg|mp3|wav|flac|m4a)$/i
@@ -48,17 +50,21 @@ export async function writeSoundAtomic(file: string, bytes: string | Buffer): Pr
   finally { await fs.rm(temporary, { force: true }) }
 }
 export async function runSoundFfmpeg(args: string[], signal?: AbortSignal): Promise<string> {
+  const requestId = randomUUID(), startedAt = Date.now()
   const binary = mediaExecutable()
+  if (!binary) throw new Error('当前安装缺少 FFmpeg，请修复安装后重试')
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawnManaged(binary.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1'), ['-nostdin', '-hide_banner', ...args], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+    const data = { requestId, projectPath: diagnosticContext.getStore()?.projectPath, pid: child.pid, executable: binary, arguments: args.slice(0,100).map(arg=>diagnosticValue(arg, 'path')), omittedArguments: Math.max(0,args.length-100) }
+    diagnosticJournal.record({subsystem:'audio',operation:'ffmpeg',phase:'start',message:'Audio conversion started',data})
     let output = ''
     const abort = (): void => { child.kill() }
     const timer = setTimeout(abort, 120_000)
     signal?.addEventListener('abort', abort, { once: true })
     const clean = (): void => { clearTimeout(timer); signal?.removeEventListener('abort', abort) }
-    child.stderr?.on('data', data => { output = (output + data.toString()).slice(-12000) })
-    child.once('error', error => { clean(); reject(error) })
-    child.once('close', code => { clean(); code === 0 && !signal?.aborted ? resolve(output) : reject(new Error(signal?.aborted ? '声音处理已取消' : '音频处理失败：' + output.slice(-1200))) })
+    child.stderr?.on('data', chunk => { output = (output + chunk.toString()).slice(-64000) })
+    child.once('error', error => { clean(); diagnosticJournal.record({subsystem:'audio',operation:'ffmpeg',phase:'error',level:'error',message:'FFmpeg process failed',data,error});reject(error) })
+    child.once('close', code => { clean(); diagnosticJournal.record({subsystem:'audio',operation:'ffmpeg',phase:code===0&&!signal?.aborted?'complete':'error',level:code===0&&!signal?.aborted?'info':'error',message:'Audio conversion exited',durationMs:Date.now()-startedAt,data:{...data,exitCode:code,cancelled:signal?.aborted,stderr:output}});code === 0 && !signal?.aborted ? resolve(output) : reject(Object.assign(new Error(signal?.aborted ? '声音处理已取消' : '音频处理失败：' + output.slice(-1200)),{exitCode:code,stderr:output,requestId})) })
   })
 }

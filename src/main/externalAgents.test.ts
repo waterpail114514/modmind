@@ -1,8 +1,11 @@
+import { MCP_TOOL_ROUTES, MCP_TOOL_HANDLERS } from './mcpToolRegistry'
+import { InspirationWorkflowStore } from './inspirationWorkflowStore'
 import { INSPIRATION_FEATURES, normalizeInspirationFeatures } from '../shared/inspirationFeatures'
 import ffmpeg from 'ffmpeg-static'
 import { configureNativeFeatureServices } from './nativeFeatureServices'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 import { diagnosticJournal } from './diagnosticLog'
+import { readDiagnosticState } from './diagnosticState'
 import { normalizeWorkbenchFeatures } from '../shared/workbenchFeatures'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { routingFixture } from './__fixtures__/quotaRouting'
@@ -25,13 +28,235 @@ import { newStudioDraft } from '../shared/soundStudio'
 import * as processTree from './processTree'
 import { setNetworkProxy } from './networkRequest'
 import { MCP_PROBE_MARKER, MCP_PROBE_TOOL } from './agentToolReadiness'
+import { ManagedBuildTasks } from './managedBuildTasks'
 
 
 const temporaryRoots: string[] = []
 const bridges: ModMindBridge[] = []
 const children: ChildProcessWithoutNullStreams[] = []
 
+describe('MCP session capability discovery', () => {
+  it.each([false, true])('queries bounded project diagnostics through real MCP (standalone=%s)', async standalone => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-diagnostic-mcp-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Diagnostic', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'diagnostic', createdAt: '' }
+    diagnosticJournal.record({ subsystem: 'files', operation: 'test-save', phase: 'error', level: 'error', message: 'MCP_DIAGNOSTIC_EACCES', data: { projectPath: root } })
+    diagnosticJournal.record({ subsystem: 'files', operation: 'test-save', phase: 'error', level: 'error', message: 'OTHER_PROJECT_PRIVATE', data: { projectPath: root + '-other' } })
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), diagnosticsRead: async input => readDiagnosticState(root, input) }, 'test', undefined, true); bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, standalone ? [path.resolve('modmind-mcp-open-source/src/mcp-server.mjs')] : config.args, {
+      env: { ...process.env, ...config.env, MODMIND_BRIDGE_CONFIG: path.join(path.dirname(mcpConfigPath), 'bridge.json') }, stdio: ['pipe', 'pipe', 'pipe']
+    }); children.push(child)
+    const listing = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    expect(JSON.stringify(listing)).toContain('modmind_diagnostics')
+    const result = await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'modmind_diagnostics', arguments: { limit: 5 } } })
+    expect(JSON.stringify(result)).toContain('MCP_DIAGNOSTIC_EACCES')
+    expect(JSON.stringify(result)).not.toContain('OTHER_PROJECT_PRIVATE')
+    const invalid = await rpc(child, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'modmind_diagnostics', arguments: { limit: 1000 } } })
+    expect(JSON.stringify(invalid)).toContain('limit')
+    expect(JSON.stringify(invalid)).not.toContain('OTHER_PROJECT_PRIVATE')
+  })
+  it.each([false, true])('submits inspiration artifacts through the real stdio bridge (standalone=%s)', async standalone => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-mcp-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Inspiration', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'idea', createdAt: '' }
+    const knowledge = new InspirationKnowledgeStore(path.join(root, 'knowledge'))
+    const workflows = new InspirationWorkflowStore(path.join(root, 'workflows'), knowledge)
+    const identity = { conversationId: 'idea', turnId: 'current', generation: 3 }
+    const features = normalizeInspirationFeatures({ suggestions: false })
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), inspirationSubmit: input =>
+      workflows.submit(root, identity, input, features, '特殊赐福强于普通卦效', []) }, 'test', undefined, true, undefined, undefined, undefined, features)
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, standalone ? [path.resolve('modmind-mcp-open-source/src/mcp-server.mjs')] : config.args, {
+      env: { ...process.env, ...config.env, MODMIND_BRIDGE_CONFIG: path.join(path.dirname(mcpConfigPath), 'bridge.json') }, stdio: ['pipe', 'pipe', 'pipe']
+    }); children.push(child)
+    const listing = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const names = (listing.result as { tools: Array<{ name: string }> }).tools.map(t => t.name)
+    expect(names).toContain('modmind_inspiration_submit'); expect(names).not.toContain('modmind_project_knowledge_save')
+    const call = (id: number, args: unknown) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'modmind_inspiration_submit', arguments: args } })
+    expect(JSON.stringify(await call(2, { knowledge: [{ title: '赐福', content: '强于普通卦效', sourceQuote: '不在用户消息中' }] }))).toContain('sourceQuote')
+    expect(JSON.stringify(await call(3, { suggestions: [{ text: '额外扩充' }] }))).toContain('USER_DISABLED_TOOL')
+    const schema = (listing.result as { tools: Array<{ name: string; inputSchema: any }> }).tools.find(t => t.name === 'modmind_inspiration_submit')!.inputSchema
+    expect(schema.properties.knowledge).not.toHaveProperty('maxItems')
+    const args = { knowledge: Array.from({ length: 14 }, (_, index) => ({ title: `赐福 ${index + 1}`, content: '强于普通卦效', sourceQuote: '特殊赐福强于普通卦效' })) }
+    expect((await call(4, args)).result).not.toHaveProperty('isError', true)
+    expect((await workflows.read(root, identity))?.status).toBe('staged')
+    expect(await knowledge.read(root)).toEqual([])
+    expect((await call(5, args)).result).not.toHaveProperty('isError', true)
+    expect((await workflows.finalize(root, identity))?.status).toBe('saved')
+    expect(await knowledge.read(root)).toHaveLength(14)
+    expect((await knowledge.read(root))[0].sourceMessageIds).toEqual(['current:user'])
+    expect(await knowledge.read(root + '-other')).toEqual([])
+    await workflows.commit(root, identity, [], true)
+    expect(await knowledge.read(root)).toEqual([])
+  })
+  it.each([false, true])('filters all missing handlers and retains implemented tools (standalone=%s)', async standalone => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-actual-tools-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Tools', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'tools', createdAt: '' }
+    const handlers = stubBridgeHandlers(project)
+    const bridge = new ModMindBridge(project, handlers, 'test'); bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, standalone ? [path.resolve('modmind-mcp-open-source/src/mcp-server.mjs')] : config.args, {
+      env: { ...process.env, ...config.env, ...(standalone ? { MODMIND_BRIDGE_CONFIG: path.join(path.dirname(mcpConfigPath), 'bridge.json') } : {}) }, stdio: ['pipe', 'pipe', 'pipe']
+    }); children.push(child)
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const names = (listed.result as { tools: Array<{ name: string }> }).tools.map(tool => tool.name)
+    for (const [name, key] of Object.entries(MCP_TOOL_HANDLERS)) expect(names.includes(name), name).toBe(typeof handlers[key] === 'function')
+    expect(names).toContain('modmind_web_read')
+    expect(names).not.toContain('modmind_plugins_scaffold')
+    const missing = await rpc(child, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'modmind_research', arguments: {} } })
+    expect(JSON.stringify(missing)).toContain('tools/list')
+    expect((missing.result as { isError: boolean }).isError).toBe(true)
+    const bridgeConfig = JSON.parse(await fs.readFile(path.join(path.dirname(mcpConfigPath), 'bridge.json'), 'utf8'))
+    const direct = await fetch(`http://127.0.0.1:${bridgeConfig.port}/tool`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-modmind-token': bridgeConfig.token }, body: JSON.stringify({ action: 'research', input: {} })
+    })
+    expect(await direct.text()).toContain('应用内工作台')
+  })
+
+  it('discovers and calls optional capabilities when the host implements them', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-enabled-tools-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Tools', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'tools', createdAt: '' }
+    const research = vi.fn(async () => ({ status: 'inspected' }))
+    const projectSetup = vi.fn(async () => ({ status: 'created' }))
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), research, projectSetup }, 'test'); bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+    const listed = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    expect(JSON.stringify(listed)).toContain('modmind_research')
+    expect(JSON.stringify(listed)).toContain('modmind_project_setup')
+    for (const [index, name] of ['modmind_research', 'modmind_project_setup'].entries()) {
+      const response = await rpc(child, { jsonrpc: '2.0', id: index + 2, method: 'tools/call', params: { name, arguments: {} } })
+      expect((response.result as { isError?: boolean }).isError).not.toBe(true)
+    }
+    expect(research).toHaveBeenCalledOnce(); expect(projectSetup).toHaveBeenCalledOnce()
+  })
+
+  it('keeps discovery requirements in sync with every handler route', async () => {
+    const source = await fs.readFile(path.resolve('src/main/externalAgents.ts'), 'utf8')
+    const dispatch = source.slice(source.indexOf('switch (body.action)'))
+    for (const [name, action] of Object.entries(MCP_TOOL_ROUTES)) {
+      const branch = new RegExp(`case '${action}':([\\s\\S]*?)(?=\\n        case |\\n        default:)`).exec(dispatch)?.[1] ?? ''
+      const handler = /this\.handlers\.(\w+)/.exec(branch)?.[1]
+      if (handler && handler !== 'projectInfo') expect(MCP_TOOL_HANDLERS[name as keyof typeof MCP_TOOL_HANDLERS], name).toBe(handler)
+    }
+  })
+
+  it('closes a detached bridge without changing any saved project bridge files', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-preserve-bridge-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Keep', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'keep', createdAt: '' }
+    const bridge = new ModMindBridge(project, stubBridgeHandlers(project), 'test'); bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const directory = path.dirname(mcpConfigPath)
+    const snapshot = async () => Object.fromEntries(await Promise.all((await fs.readdir(directory)).filter(file => file.endsWith('.json') || file.endsWith('.mjs') || file.endsWith('.md')).map(async file => [file, await fs.readFile(path.join(directory, file), 'utf8')])))
+    const before = await snapshot()
+    const config = JSON.parse(before['bridge.json'])
+    await bridge.stop(true)
+    expect(await snapshot()).toEqual(before)
+    await expect(fetch(`http://127.0.0.1:${config.port}/tool`, { method: 'POST', headers: { 'x-modmind-token': config.token }, body: JSON.stringify({ action: 'project_info' }) })).rejects.toThrow()
+  })
+})
+
 describe('MC百科 MCP boundary', () => {
+  it.each([false, true])('submits inspiration artifacts through the real stdio bridge (standalone=%s)', async standalone => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-mcp-')); temporaryRoots.push(root)
+    const project: ProjectInfo = { name: 'Inspiration', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'idea', createdAt: '' }
+    const knowledge = new InspirationKnowledgeStore(path.join(root, 'knowledge'))
+    const workflows = new InspirationWorkflowStore(path.join(root, 'workflows'), knowledge)
+    const identity = { conversationId: 'idea', turnId: 'current', generation: 3 }
+    const features = normalizeInspirationFeatures({ suggestions: false })
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), inspirationSubmit: input =>
+      workflows.submit(root, identity, input, features, '特殊赐福强于普通卦效', []) }, 'test', undefined, true, undefined, undefined, undefined, features)
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+    const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+    const child = spawn(config.command, standalone ? [path.resolve('modmind-mcp-open-source/src/mcp-server.mjs')] : config.args, {
+      env: { ...process.env, ...config.env, MODMIND_BRIDGE_CONFIG: path.join(path.dirname(mcpConfigPath), 'bridge.json') }, stdio: ['pipe', 'pipe', 'pipe']
+    }); children.push(child)
+    const listing = await rpc(child, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    const names = (listing.result as { tools: Array<{ name: string }> }).tools.map(t => t.name)
+    expect(names).toContain('modmind_inspiration_submit'); expect(names).not.toContain('modmind_project_knowledge_save')
+    const call = (id: number, args: unknown) => rpc(child, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'modmind_inspiration_submit', arguments: args } })
+    expect(JSON.stringify(await call(2, { knowledge: [{ title: '赐福', content: '强于普通卦效', sourceQuote: '不在用户消息中' }] }))).toContain('sourceQuote')
+    expect(JSON.stringify(await call(3, { suggestions: [{ text: '额外扩充' }] }))).toContain('USER_DISABLED_TOOL')
+    const schema = (listing.result as { tools: Array<{ name: string; inputSchema: any }> }).tools.find(t => t.name === 'modmind_inspiration_submit')!.inputSchema
+    expect(schema.properties.knowledge).not.toHaveProperty('maxItems')
+    const args = { knowledge: Array.from({ length: 14 }, (_, index) => ({ title: `赐福 ${index + 1}`, content: '强于普通卦效', sourceQuote: '特殊赐福强于普通卦效' })) }
+    expect((await call(4, args)).result).not.toHaveProperty('isError', true)
+    expect((await workflows.read(root, identity))?.status).toBe('staged')
+    expect(await knowledge.read(root)).toEqual([])
+    expect((await call(5, args)).result).not.toHaveProperty('isError', true)
+    expect((await workflows.finalize(root, identity))?.status).toBe('saved')
+    expect(await knowledge.read(root)).toHaveLength(14)
+    expect((await knowledge.read(root))[0].sourceMessageIds).toEqual(['current:user'])
+    expect(await knowledge.read(root + '-other')).toEqual([])
+    await workflows.commit(root, identity, [], true)
+    expect(await knowledge.read(root)).toEqual([])
+  })
+  it('records disconnected test calls and their eventual result with the same request id', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-test-call-receipt-')); temporaryRoots.push(root)
+    const project = { name: 'Receipts', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'receipts', createdAt: '' } as ProjectInfo
+    let release!: () => void, entered!: () => void
+    const ready = new Promise<void>(resolve => { entered = resolve })
+    const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), playerTest: async () => {
+      entered(); await new Promise<void>(resolve => { release = resolve })
+      return { sessionId: 'owned-session', status: 'ready' }
+    } }, 'test')
+    bridges.push(bridge)
+    const { mcpConfigPath } = await bridge.start()
+    const config = JSON.parse(await fs.readFile(path.join(path.dirname(mcpConfigPath), 'bridge.json'), 'utf8'))
+    const abort = new AbortController()
+    const calling = fetch(`http://127.0.0.1:${config.port}/tool`, { method: 'POST', headers: { 'x-modmind-token': config.token },
+      body: JSON.stringify({ action: 'test_session', input: { operation: 'start', mode: 'rendered', command: 'private unrecorded input' } }), signal: abort.signal }).catch(() => undefined)
+    const events = () => diagnosticJournal.snapshot().filter(event => event.operation === 'managed-tool' && (event.data as { projectPath?: string })?.projectPath === root)
+    try {
+      await ready; abort.abort(); await calling
+      await vi.waitFor(() => expect(events().some(event => event.phase === 'disconnected')).toBe(true))
+      release()
+      await vi.waitFor(() => expect(events().some(event => event.phase === 'finished')).toBe(true))
+      const phases = events()
+      expect(new Set(phases.map(event => (event.data as { requestId: string }).requestId)).size).toBe(1)
+      expect(phases.find(event => event.phase === 'result')?.data).toMatchObject({ sessionId: 'owned-session', status: 'ready' })
+      expect(phases.find(event => event.phase === 'finished')?.data).toMatchObject({ callerDisconnected: true, responseClosed: true })
+      expect(JSON.stringify(phases)).not.toContain('private unrecorded input')
+    } finally { release?.() }
+  })
+
+  it('starts, polls and cancels long builds through actual MCP with read-only and owner boundaries', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-build-task-mcp-')); temporaryRoots.push(root)
+    const project = { name: 'Build tasks', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'build_tasks', createdAt: '' } as ProjectInfo
+    const owner = new AbortController()
+    const tasks = new ManagedBuildTasks(owner.signal, signal => new Promise<{ success: true }>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(Object.assign(new Error('owned build cancelled'), { name: 'AbortError' })), { once: true })
+    }), () => ({ message: 'ForgeGradle download pending' }))
+    const review = vi.fn(async () => ({ approved: true, complete: true, risk: 'low' as const, dangerousOperations: [], feedback: '' }))
+    let sequence = 0
+    const connect = async (readOnly: boolean) => {
+      const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), build: input => tasks.invoke(input), reviewAction: review }, 'test', undefined, readOnly, readOnly ? 'readonly' : 'write')
+      bridges.push(bridge)
+      const { mcpConfigPath } = await bridge.start(); await bridge.writeMcpConfig(mcpConfigPath)
+      const config = JSON.parse(await fs.readFile(mcpConfigPath, 'utf8')).mcpServers.modmind
+      const child = spawn(config.command, config.args, { env: { ...process.env, ...config.env }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child)
+      return (args: Record<string, unknown>) => rpc(child, { jsonrpc: '2.0', id: ++sequence, method: 'tools/call', params: { name: 'modmind_build_project', arguments: args } })
+    }
+    const parse = (reply: any) => { expect(reply.result.isError).not.toBe(true); return JSON.parse(reply.result.content[0].text) }
+    try {
+      const writer = await connect(false), reader = await connect(true)
+      const started = parse(await writer({ waitSeconds: 0 }))
+      expect(started).toMatchObject({ status: 'running' })
+      expect(review).toHaveBeenCalledOnce()
+      expect(parse(await reader({ operation: 'state', taskId: started.taskId }))).toMatchObject({ status: 'running', state: { message: 'ForgeGradle download pending' } })
+      expect(JSON.stringify(await reader({ operation: 'cancel', taskId: started.taskId }))).toContain('只读')
+      expect(JSON.stringify(await reader({ operation: 'start', waitSeconds: 0 }))).toContain('只读')
+      expect(JSON.stringify(await writer({ operation: 'state', taskId: 'foreign-owner' }))).toContain('当前项目')
+      expect(JSON.stringify(await writer({ operation: 'state', waitSeconds: 21 }))).toContain('0–20')
+      expect(parse(await writer({ operation: 'cancel', taskId: started.taskId, waitSeconds: 1 }))).toMatchObject({ status: 'cancelled', success: false })
+      expect(review).toHaveBeenCalledOnce()
+    } finally { await tasks.close() }
+  }, 15000)
   it('allows studio recognition but rejects adoption in read-only inspiration through actual MCP', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-studio-readonly-')); temporaryRoots.push(root)
     const project: ProjectInfo = { name: 'Studio', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'studio', createdAt: '' }
@@ -113,7 +338,7 @@ describe('MC百科 MCP boundary', () => {
       Object.assign(project, ready); delete project.draft
       return { project }
     })
-    const handlers = { ...stubBridgeHandlers(project), projectSetup, get projectInfo() { return { ...project } } }
+    const handlers = { ...stubBridgeHandlers(project), projectSetup, research: async () => ({}), projectKnowledgeRead: async () => ({}), playerTest: async () => ({}), get projectInfo() { return { ...project } } }
     for (const readOnly of [true, false]) {
       const bridge = new ModMindBridge(project, handlers, 'test', undefined, readOnly, readOnly ? 'discussion' : 'beginner')
       bridges.push(bridge)
@@ -211,7 +436,7 @@ afterEach(async () => {
   clearExternalAgentFailureCircuits()
   for (const child of children.splice(0)) child.kill()
   await Promise.all(bridges.splice(0).map((bridge) => bridge.stop()))
-  await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, {recursive: true, force: true})))
+  await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, {recursive: true, force: true, maxRetries: 5, retryDelay: 150})))
 })
 
 async function rpc(child: ChildProcessWithoutNullStreams, request: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -315,7 +540,7 @@ describe('user Skills MCP workflow', () => {
 })
 
 describe('quota model MCP workflow', () => {
-  it('discovers both paid suppliers and synchronized free models through stdio, restores the route and enforces review, input and project boundaries', async () => {
+  it('refreshes website catalogs through stdio without switching routes and enforces review, input and project boundaries', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-route-discovery-mcp-')); temporaryRoots.push(root)
     const project = { name: 'Discovery', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'discovery', createdAt: '' } as ProjectInfo
     const f = providerFixture('secondary')
@@ -331,7 +556,7 @@ describe('quota model MCP workflow', () => {
       return f.service.discoverModels()
     })
     const start = async (readOnly: boolean) => {
-      const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), quotaModelsDiscover: scan,
+      const bridge = new ModMindBridge(project, { ...stubBridgeHandlers(project), quotaModelsDiscover: scan, quotaModelsRead: force => f.restart().catalog(force),
         reviewAction: async () => ({ approved, complete: true, dangerousOperations: [], risk: 'low', feedback: approved ? '' : 'user denied' })
       }, 'test', undefined, readOnly, `discovery-${readOnly}`)
       bridges.push(bridge)
@@ -360,11 +585,15 @@ describe('quota model MCP workflow', () => {
     expect(f.owner().sync.connections.find(c => c.kind === 'paid')).toMatchObject({ account: 'secondary', group: original })
     expect(f.preferences()).toEqual(preferences)
     const posts = f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')
-    expect(posts.length).toBeGreaterThan(0)
-    const crossed = posts.find(r => JSON.parse(String(r.init?.body)).account === 'ls')!
-    expect(crossed).toBeDefined()
-    expect(new Headers(crossed.init?.headers).get('Authorization')).toBe('Bearer session-secret')
-    expect(JSON.parse(String(posts.at(-1)!.init?.body))).toMatchObject({ account: 'secondary', group: original })
+    expect(posts).toHaveLength(0)
+    const crossRead = f.network.find(r => r.url.includes('/api/device/models?account=ls'))!
+    expect(new Headers(crossRead.init?.headers).get('Authorization')).toBe('Bearer session-secret')
+    f.modelsByGroup[original!] = [{ id: 'gpt-6.1-sol' }, { id: 'key-supplement-model' }]
+    const retained = await rpc(child, { jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'modmind_list_quota_models', arguments: { refresh: true } } })
+    const retainedCatalog = JSON.parse((retained.result as { content: { text: string }[] }).content[0].text)
+    expect(retainedCatalog.models.map((model: { id: string }) => model.id)).toEqual(expect.arrayContaining(['gpt-6.1-sol', 'kimi-k3', 'glm-5.3', 'key-supplement-model']))
+    expect(f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toHaveLength(posts.length)
+    expect(JSON.stringify(retained)).not.toMatch(/paid-secret|free-secret|session-secret/)
     approved = false
     expect(JSON.stringify(await call(4))).toMatch(/error|denied|拒绝/)
     expect(scan).toHaveBeenCalledTimes(1)
@@ -429,6 +658,18 @@ describe('quota model MCP workflow', () => {
     const tool = (inventory.result as { tools: Array<{ name: string; inputSchema: { properties: Record<string, { pattern?: string }> } }> }).tools.find(tool => tool.name === 'modmind_select_quota_model')!
     expect(tool.inputSchema.properties.group).toBeDefined()
     expect(new RegExp(tool.inputSchema.properties.account.pattern!).test('ls')).toBe(true)
+    const retained = structuredClone(f.owner().sync)
+    f.flags.next = { ...retained, selectionRevision: retained.selectionRevision + 1,
+      connections: retained.connections.filter(connection => connection.account !== 'trial:one') }
+    const imports = f.network.filter(request => request.url.includes('credentials=1')).length
+    f.tick(120_000)
+    const localCatalog = await call(13, 'modmind_list_quota_models', {})
+    expect(JSON.stringify(localCatalog)).toContain('trial:one')
+    expect(f.owner().sync).toEqual(retained)
+    expect(f.network.filter(request => request.url.includes('credentials=1'))).toHaveLength(imports)
+    await call(14, 'modmind_list_quota_models', { refresh: true })
+    expect(f.owner().sync.connections.some(connection => connection.account === 'trial:one')).toBe(false)
+    expect(f.owner().sync.bindings).toEqual(retained.bindings)
   },20000)
   it('discovers, selects and reads back through stdio and the real routing service, respecting read-only and review', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-quota-mcp-')); temporaryRoots.push(root)
@@ -825,6 +1066,7 @@ describe('ModMind external agent MCP bridge', () => {
       "    if (request.method === 'thread/start' && process.env.FAKE_START_ERROR) { send({id:request.id,error:{code:-32600,message:process.env.FAKE_START_ERROR}}); continue }",
       "    if (request.method === 'initialize') send({id:request.id,result:{userAgent:'fake'}})",
       "    else if (request.method === 'initialized') {}",
+      "    else if (request.method === 'turn/steer') send({id:request.id,result:{turnId:request.params.expectedTurnId}})",
       "    else if (request.method === 'mcpServerStatus/list') send({id:request.id,result:{data:[{name:'modmind',runtimeStatus:'connected',tools:Object.fromEntries(['modmind_mcp_probe','modmind_project_info','modmind_project_files','modmind_read_project_file'].map(name=>[name,{name}]))}],nextCursor:null}})",
       `    else if (request.method === 'mcpServer/tool/call') send({id:request.id,result:{content:[{type:'text',text:JSON.stringify({ok:true,marker:${JSON.stringify(MCP_PROBE_MARKER)}})}]}})`,
       "    else if (request.method === 'thread/start') send({id:request.id,result:{thread:{id:'thread-new'}}})",
@@ -855,6 +1097,106 @@ describe('ModMind external agent MCP bridge', () => {
     else await fs.chmod(executable, 0o755)
     return { executable, log }
   }
+
+  it('publishes owned process snapshots with live output, file links, MCP progress and failed approval', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-native-activity-')); temporaryRoots.push(root)
+    const project = { name: 'Activity', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'activity', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
+    const command = { id: 'command', type: 'commandExecution', command: 'npm run check' }
+    const build = { id: 'build', type: 'mcpToolCall', server: 'modmind', tool: 'modmind_build_project' }
+    const events = [
+      { method: 'item/started', params: { ...owner, item: command } },
+      { method: 'item/commandExecution/outputDelta', params: { ...owner, itemId: command.id, delta: 'checking sources\n' } },
+      { method: 'item/started', params: { ...owner, threadId: 'foreign', item: { ...command, id: 'foreign' } } },
+      { method: 'item/completed', params: { ...owner, item: { ...command, status: 'completed', exitCode: 0 } } },
+      { method: 'item/completed', params: { ...owner, item: { id: 'file', type: 'fileChange', status: 'completed', changes: [{ path: path.join(root, 'src', 'main.ts'), kind: { type: 'update' }, diff: '+new\n-old' }] } } },
+      { method: 'item/started', params: { ...owner, item: build } },
+      { method: 'item/mcpToolCall/progress', params: { ...owner, itemId: build.id, message: 'Compiling 5364 source files' } },
+      { method: 'item/completed', params: { ...owner, item: { ...build, status: 'completed', result: { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'Dependency timeout' }) }] } } } },
+      { method: 'item/autoApprovalReview/started', params: { ...owner, reviewId: 'review' } },
+      { method: 'item/autoApprovalReview/completed', params: { ...owner, reviewId: 'review', review: { status: 'denied', rationale: 'Risk too high' } } },
+      { method: 'item/completed', params: { ...owner, item: { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '验证结束' } } },
+      { method: 'turn/completed', params: { threadId: owner.threadId, turn: { id: owner.turnId, status: 'completed' } } }
+    ]
+    const onActivity = vi.fn(), onOutput = vi.fn()
+    await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, bridge: stubBridgeHandlers(project), prompt: 'check', approvalMode: 'auto-review', env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) }, signal: AbortSignal.timeout(10000), onActivity, onOutput, onProgress: vi.fn() })
+    const snapshots = onActivity.mock.calls.map(([activity, identity]) => ({ activity, identity }))
+    expect(snapshots.some(value => value.identity.itemId === 'foreign')).toBe(false)
+    expect(snapshots.filter(value => value.identity.itemId === 'command').at(-1)?.activity).toMatchObject({ status: 'completed', output: 'checking sources\n' })
+    expect(snapshots.find(value => value.identity.itemId === 'file')?.activity.files).toEqual([{ path: 'src/main.ts', operation: 'edit', added: 1, removed: 1 }])
+    expect(snapshots.filter(value => value.identity.itemId === 'build').at(-1)).toMatchObject({ activity: { status: 'failed', detail: 'Dependency timeout', output: 'Compiling 5364 source files\n' }, identity: { streamId: 'thread-new:native-turn-new:build' } })
+    expect(snapshots.filter(value => value.identity.itemId === 'approval:review').map(value => value.activity.status)).toEqual(['running', 'failed'])
+    expect(onOutput.mock.calls.some(([kind]) => kind === 'tool')).toBe(false)
+  })
+
+  it.each([false, true])('keeps native questions pending, preserves late steering, and forwards reasoning (readOnly=%s)', async readOnly => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-native-questions-')); temporaryRoots.push(root)
+    const project = { name: 'Questions', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'questions', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
+    const thought = { id: 'thought', type: 'reasoning', summary: ['概要'], content: ['过程'] }
+    const questions = [{ id: 'style', header: '风格', question: '哪种风格？', isSecret: false, isOther: true, options: [{ label: '简洁', description: '' }] }]
+    const events = [
+      { method: 'item/started', params: { ...owner, item: thought } },
+      { method: 'item/reasoning/summaryTextDelta', params: { ...owner, itemId: 'thought', delta: '概要', summaryIndex: 0 } },
+      { method: 'item/reasoning/textDelta', params: { ...owner, itemId: 'thought', delta: '过程', contentIndex: 0 } },
+      { method: 'item/reasoning/textDelta', params: { ...owner, threadId: 'foreign', itemId: 'foreign', delta: 'foreign', contentIndex: 0 } },
+      { method: 'item/completed', params: { ...owner, item: thought } },
+      { id: 'question', method: 'item/tool/requestUserInput', params: { ...owner, itemId: 'question', questions, isBlocking: true } },
+      { delayMs: 600, method: 'item/completed', params: { ...owner, item: { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '完成' } } },
+      { delayMs: 650, method: 'turn/completed', params: { threadId: owner.threadId, turn: { id: owner.turnId, status: 'completed' } } }
+    ]
+    const reasoning: unknown[] = []
+    let interaction!: import('../shared/agentQuestion').AgentQuestionInteraction
+    let signal!: AbortSignal
+    let offered!: () => void
+    const ready = new Promise<void>(resolve => { offered = resolve })
+    const running = runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: '测试',
+      readOnly, ...(readOnly ? { inspirationFeatures: normalizeInspirationFeatures() } : {}),
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) }, signal: new AbortController().signal,
+      onUserInput: (_questions, lifetime, controls) => { interaction = controls; signal = lifetime; offered(); return true },
+      onReasoning: (update, content, identity) => reasoning.push({ update, content, identity }),
+      onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project) })
+    await ready
+    const readRequests = async () => (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect((await readRequests()).filter(request => request.id === 'question')).toEqual([])
+    expect(interaction.reply!({ style: '简洁' })).toBe(true)
+    expect(interaction.reply!({})).toBe(false)
+    await interaction.steer('稍后补充的信息')
+    expect((await running).summary).toBe('完成')
+    const requests = await readRequests()
+    expect(requests.filter(request => request.id === 'question')).toEqual([{ id: 'question', result: { answers: { style: { answers: ['简洁'] } } } }])
+    expect(requests.filter(request => request.method === 'turn/steer')).toMatchObject([{ params: { threadId: owner.threadId, expectedTurnId: owner.turnId, input: [{ type: 'text', text: '稍后补充的信息' }] } }])
+    expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1)
+    expect(reasoning).toHaveLength(4)
+    expect(reasoning.at(-1)).toMatchObject({ update: { phase: 'completed', summary: ['概要'], text: ['过程'] } })
+    expect(signal.aborted).toBe(true)
+    await expect(interaction.steer('已结束')).rejects.toThrow('已结束')
+  })
+
+  it.each([true, false])('rejects foreign questions and disabled inspiration questions while forwarding owned reasoning (readOnly=%s)', async readOnly => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-question-isolation-')); temporaryRoots.push(root)
+    const project = { name: 'Questions', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'questions', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    const owner = { threadId: readOnly ? 'thread-new' : 'foreign', turnId: 'native-turn-new' }
+    const events = [
+      { id: 'question', method: 'item/tool/requestUserInput', params: { ...owner, itemId: 'question', questions: [{ id: 'q', question: 'Question?' }] } },
+      { method: 'item/completed', params: { ...owner, item: { id: 'thought', type: 'reasoning', summary: ['概要'], content: ['过程'] } } },
+      { method: 'item/completed', params: { threadId: 'thread-new', turnId: owner.turnId, item: { id: 'answer', type: 'agentMessage', text: '完成' } } },
+      { delayMs: 60, method: 'turn/completed', params: { threadId: 'thread-new', turn: { id: owner.turnId, status: 'completed' } } }
+    ]
+    const onUserInput = vi.fn(() => true)
+    const onReasoning = vi.fn()
+    await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: '测试', readOnly,
+      ...(readOnly ? { inspirationFeatures: normalizeInspirationFeatures({ autoQuestions: false }) } : {}),
+      env: { FAKE_APP_SERVER_LOG: fake.log, FAKE_TURN_EVENTS: JSON.stringify(events) }, signal: new AbortController().signal,
+      onUserInput, onReasoning, onOutput: () => undefined, onProgress: () => undefined, bridge: stubBridgeHandlers(project) })
+    expect(onUserInput).not.toHaveBeenCalled()
+    expect(onReasoning).toHaveBeenCalledTimes(readOnly ? 1 : 0)
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(requests.find(request => request.id === 'question')?.result).toEqual({ answers: { q: { answers: [] } } })
+  })
 
   function cappedTurnEvents(explicit = false, suffix = '', pendingTool = false) {
     const owner = { threadId: 'thread-new', turnId: 'native-turn-new' }
@@ -888,6 +1230,23 @@ describe('ModMind external agent MCP bridge', () => {
     expect(requests.filter(item => item.method === 'turn/start')).toHaveLength(confirmed ? 2 : 1)
     expect(requests.some(item => item.method === 'thread/read')).toBe(true)
   }, 15_000)
+
+  it('refreshes inspiration instructions and its bundled skill on native resume', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-inspiration-resume-')); temporaryRoots.push(root)
+    const project = { name: 'Resume', path: root, loader: 'forge', minecraftVersion: '1.20.1', namespace: 'resume', createdAt: '' } as ProjectInfo
+    const fake = await fakeAppServer(root)
+    await runExternalAgent({ kind: 'codex', executable: fake.executable, forceCodexAppServer: true, project, prompt: '继续讨论',
+      sessionId: 'existing-inspiration', resumeSession: true, readOnly: true, inspirationFeatures: normalizeInspirationFeatures(),
+      workflowSourceDirectory: path.resolve('resources/codex-skills'), systemPrompt: 'CURRENT_INSPIRATION_WORKFLOW_SENTINEL', maxAttempts: 1,
+      env: { FAKE_APP_SERVER_LOG: fake.log }, signal: AbortSignal.timeout(8000), onOutput: vi.fn(), onProgress: vi.fn(), bridge: stubBridgeHandlers(project) })
+    const requests = (await fs.readFile(fake.log, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    const resumed = requests.find(r => r.method === 'thread/resume')
+    expect(resumed.params.developerInstructions).toContain('CURRENT_INSPIRATION_WORKFLOW_SENTINEL')
+    expect(resumed.params.developerInstructions).toContain('modmind_inspiration_submit')
+    expect(resumed.params.developerInstructions).toContain('host supplies project')
+    const turn = requests.find(r => r.method === 'turn/start')
+    expect(turn.params.input[0].text).toContain('CURRENT_INSPIRATION_WORKFLOW_SENTINEL')
+  })
 
   it('preserves UTF-8 characters split between real app-server pipe chunks', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-native-utf8-')); temporaryRoots.push(root)
@@ -2886,13 +3245,19 @@ describe('ModMind external agent MCP bridge', () => {
       const result = await call(name, args)
       expect(JSON.stringify(result).includes('[USER_DISABLED_TOOL]')).toBe(!enabled)
       expect(handler).toHaveBeenCalledTimes(enabled ? 1 : 0)
+      if (enabled && ['modmind_test_minecraft', 'modmind_test_rendered'].includes(name)) {
+        const task = JSON.parse((result.result as { content: Array<{ text: string }> }).content[0].text)
+        await call(name, { operation: 'state', taskId: task.taskId, waitSeconds: 1 })
+      }
     }
     if (features.headlessTesting || features.renderedTesting) {
       const capabilities = await call('modmind_test_session', { operation: 'capabilities' })
       const content = (capabilities.result as { content: Array<{ text: string }> }).content
       expect(JSON.parse(content[0].text).modes).toEqual(features.renderedTesting ? ['rendered'] : [])
     }
-    await call('modmind_test_matrix', { targets: ['build'] })
+    const matrixStart = await call('modmind_test_matrix', { targets: ['build'] })
+    const matrixTask = JSON.parse((matrixStart.result as { content: Array<{ text: string }> }).content[0].text)
+    await call('modmind_test_matrix', { operation: 'state', taskId: matrixTask.taskId, waitSeconds: 1 })
     await call('modmind_test_matrix', { targets: ['client'] })
     expect(matrix).toHaveBeenCalledTimes(features.headlessTesting ? 2 : 1)
     for (const [sessionId, enabled] of [['old-rendered', features.renderedTesting], ['old-headless', features.headlessTesting]] as const) {

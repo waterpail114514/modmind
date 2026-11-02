@@ -145,6 +145,7 @@ export class HeadlessMcService {
     // The launcher downloads missing vanilla libraries/assets itself; surface
     // that fallback traffic in the global download indicator.
     let launcherDownloadActivityId: string | null = null
+    let lastDownloadProgressAt = 0
 
     const append = (text: string, level: MinecraftRuntimeEvent['level']): void => {
       if (transcriptSize < MAX_TRANSCRIPT_BYTES) {
@@ -173,6 +174,7 @@ export class HeadlessMcService {
 
         const libraryProgress = /Downloading Libraries\s+(\d+)%/.exec(line)
         if (libraryProgress) {
+          lastDownloadProgressAt = Date.now()
           const percent = Math.max(0, Math.min(100, Number(libraryProgress[1])))
           if (!launcherDownloadActivityId) {
             launcherDownloadActivityId = downloadActivities.start({ label: 'HeadlessMC 补全游戏库', detail: 'HeadlessMC 内置下载' })
@@ -184,6 +186,7 @@ export class HeadlessMcService {
           }
         } else {
           const assetMatch = /Downloading assets from (\S+)/.exec(line)
+          if (assetMatch) lastDownloadProgressAt = Date.now()
           if (assetMatch && launcherDownloadActivityId !== null) {
             downloadActivities.update(launcherDownloadActivityId, { detail: `正在下载资产：${assetMatch[1]}` })
           }
@@ -225,7 +228,7 @@ export class HeadlessMcService {
         if (authenticationFailure) throw new Error(`HeadlessMC 需要先登录正版 Minecraft 账号：${authenticationFailure}`)
         if (processError) throw new Error(`HeadlessMC 无法启动：${processError}`)
         if (child.exitCode !== null) throw new Error(this.exitError(child.exitCode, lines))
-        if (!gameStartedAt && Date.now() >= launchDeadline) throw new Error(`HeadlessMC 启动超时；下载与启动日志：${transcriptPath}`)
+        if (!gameStartedAt && Date.now() >= Math.max(launchDeadline, lastDownloadProgressAt + 10 * 60_000)) throw new Error(`HeadlessMC 启动长时间没有进展；下载与启动日志：${transcriptPath}`)
         await delay(250)
       }
       if (input.serverAddress) {
@@ -296,7 +299,7 @@ export class HeadlessMcService {
       destination: target,
       expectedHash: { algorithm: 'sha256', value: HEADLESS_MC_LAUNCHER_SHA256 },
       maxBytes: 64 * 1024 * 1024,
-      timeoutMs: 5 * 60_000,
+      stallTimeoutMs: 180_000, resume: true,
       retriesPerSource: 2,
       signal,
       onProgress: ({ source, downloaded, total }) => onDownloadProgress?.({ message: `正在从 ${source.label} 下载 HeadlessMC`, downloaded, total })

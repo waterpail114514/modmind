@@ -44,6 +44,7 @@ function readVarInts(buf, count) {
   for (let i = 0; i < count; i++) {
     let v = 0, shift = 0;
     for (;;) {
+      if(p>=buf.length || shift>=35)throw new Error('Schem 方块数据不完整或 VarInt 无效');
       const b = buf[p++];
       v |= (b & 0x7f) << shift;
       if ((b & 0x80) === 0) break;
@@ -55,6 +56,9 @@ function readVarInts(buf, count) {
 }
 
 const num = (v) => (typeof v === 'bigint' ? Number(v) : v);
+function checkSize(sx,sy,sz) {
+  if([sx,sy,sz].some(n=>!Number.isInteger(n)||n<1||n>2048)||sx*sy*sz>8000000)throw new Error('建筑尺寸无效或超过 800 万格');
+}
 
 // ---------------------------------------------------------------- .nbt structure
 
@@ -108,9 +112,14 @@ function readLitematic(root, name) {
     const pos = r.Position || { x: 0, y: 0, z: 0 };
     const sz = r.Size || { x: 1, y: 1, z: 1 };
     const sx = Math.abs(num(sz.x)), sy = Math.abs(num(sz.y)), szz = Math.abs(num(sz.z));
-    const ox = num(pos.x), oy = num(pos.y), oz = num(pos.z);
+    checkSize(sx,sy,szz);
+    if(blocks.length+sx*sy*szz>8000000)throw new Error('Litematic 区域总量超过 800 万格');
+    // Litematica stores containers from the minimum corner, even when the
+    // selection's primary corner and signed Size point in the negative direction.
+    const ox = num(pos.x) + Math.min(0,num(sz.x)+1), oy = num(pos.y) + Math.min(0,num(sz.y)+1), oz = num(pos.z) + Math.min(0,num(sz.z)+1);
     const pal = (r.BlockStatePalette || []).map((e) => ({ id: e.Name, props: e.Properties || {} }));
     const bits = num(r.Bits) || Math.max(2, Math.ceil(Math.log2(Math.max(2, pal.length))));
+    if(!Number.isInteger(bits)||bits<2||bits>32 || (r.BlockStates?.length||0)*64 < sx*sy*szz*bits)throw new Error('Litematic 方块位数据不完整');
     const flat = unpackLongsSpanning(r.BlockStates || [], bits, sx * sy * szz);
     // 调色板可能每个 region 不同，做一次局部到全局的映射
     const remap = pal.map((e) => {
@@ -122,7 +131,7 @@ function readLitematic(root, name) {
       for (let z = 0; z < szz; z++) {
         for (let x = 0; x < sx; x++) {
           const idx = (y * szz + z) * sx + x;
-          const gp = remap[flat[idx]] ?? 0;
+          const gp = remap[flat[idx]] ?? -1;
           const gx = ox + x, gy = oy + y, gz = oz + z;
           if (gx < minX) minX = gx; if (gy < minY) minY = gy; if (gz < minZ) minZ = gz;
           if (gx > maxX) maxX = gx; if (gy > maxY) maxY = gy; if (gz > maxZ) maxZ = gz;
@@ -141,6 +150,7 @@ function readLitematic(root, name) {
 
 function readSchem(root, name) {
   const sx = num(root.Width), sy = num(root.Height), sz = num(root.Length);
+  checkSize(sx,sy,sz);
   if (!sx || !sy || !sz) throw new Error('.schem 缺少 Width/Height/Length（不是 WorldEdit 投影？）');
 
   let palette, data;
@@ -151,10 +161,11 @@ function readSchem(root, name) {
     data = readVarInts(root.BlockData, sx * sy * sz);
     // 变长整数的下标即调色板值；若顺序不是 0..n-1，重排
     const remap = entries.map(([, v]) => num(v));
+    if(remap.length>20000 || remap.some(n=>!Number.isInteger(n)||n<0||n>20000))throw new Error('Schem 调色板索引无效');
     const maxV = Math.max(...remap);
-    const byVal = new Array(maxV + 1).fill(0);
+    const byVal = new Array(maxV + 1).fill(-1);
     remap.forEach((v, i) => { byVal[v] = i; });
-    data = data.map((v) => byVal[v] ?? 0);
+    data = data.map((v) => byVal[v] ?? -1);
   } else if (root.Blocks) {
     // v1：Blocks 是逐格数字 id 字节；v3（real.schem）也是 Blocks 形态（内含 Palette + Data）。
     // ★ 直接拒绝，不要先算一遍 data 再 throw（那是死代码，白算一次）。

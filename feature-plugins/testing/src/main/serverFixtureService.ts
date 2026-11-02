@@ -19,25 +19,42 @@ export async function fixtureJarHash(file: string, signal?: AbortSignal): Promis
   return { sha256: hash.digest('hex'), size: stat.size }
 }
 
-/** Numeric Maven intervals are translated; unsupported versions fail closed. */
+/** Compare numeric Maven components without truncating them to SemVer's three fields. */
+function compareNumericMavenVersions(left: string, right: string): number {
+  const components = (value: string): bigint[] => {
+    if (!/^\d+(?:\.\d+)*$/.test(value) || value.length > 200) throw new Error(`无法校验模组版本：${value}`)
+    return value.split('.').map(part => BigInt(part))
+  }
+  const a = components(left), b = components(right)
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const difference = (a[index] ?? 0n) - (b[index] ?? 0n)
+    if (difference) return difference < 0n ? -1 : 1
+  }
+  return 0
+}
+
+/** Numeric Maven intervals are compared directly; unsupported qualifiers fail closed. */
 export function fixtureVersionMatches(version: string, range: unknown, maven = false): boolean {
   if (Array.isArray(range)) return range.some(entry => fixtureVersionMatches(version, entry, maven))
   if (typeof range !== 'string' || range.length > 500) throw new Error('无法校验依赖版本声明')
   if (range === '*' || range === '') return true
-  const parsed = valid(version) ?? coerce(version)?.version
-  if (!parsed || !/^\d+(?:\.\d+){0,2}(?:[-+][\w.-]+)?$/.test(version)) throw new Error(`无法校验模组版本：${version}`)
-  let expression = range
   if (maven && /^[[(]/.test(range)) {
     const exact = range.match(/^\[([\d.]+)\]$/)
-    if (exact) expression = `=${coerce(exact[1])?.version ?? 'invalid'}`
-    else {
-      const interval = range.match(/^([[(])([\d.]*),([\d.]*)([)\]])$/)
-      if (!interval) throw new Error(`暂不支持该 Maven 版本范围：${range}`)
-      expression = [interval[2] ? `${interval[1] === '[' ? '>=' : '>'}${coerce(interval[2])?.version ?? 'invalid'}` : '', interval[3] ? `${interval[4] === ']' ? '<=' : '<'}${coerce(interval[3])?.version ?? 'invalid'}` : ''].filter(Boolean).join(' ') || '*'
-    }
+    if (exact) return compareNumericMavenVersions(version, exact[1]) === 0
+    const interval = range.match(/^([[(])([\d.]*),([\d.]*)([)\]])$/)
+    if (!interval || (!interval[2] && interval[1] === '[') || (!interval[3] && interval[4] === ']')) throw new Error(`暂不支持该 Maven 版本范围：${range}`)
+    // Validate both bounds before checking either one; a bad upper bound must not
+    // silently pass because the lower bound already rejected the candidate.
+    const lower = compareNumericMavenVersions(version, interval[2] || '0')
+    const upper = interval[3] ? compareNumericMavenVersions(version, interval[3]) : undefined
+    return (!interval[2] || lower > 0 || lower === 0 && interval[1] === '[')
+      && (upper === undefined || upper < 0 || upper === 0 && interval[4] === ']')
   }
-  if (!validRange(expression)) throw new Error(`无法校验依赖版本范围：${range}`)
-  return satisfies(parsed, expression, { includePrerelease: true })
+  if (maven && /^\d+(?:\.\d+)*$/.test(range)) return compareNumericMavenVersions(version, range) === 0
+  const parsed = valid(version) ?? coerce(version)?.version
+  if (!parsed || !/^\d+(?:\.\d+){0,2}(?:[-+][\w.-]+)?$/.test(version)) throw new Error(`无法校验模组版本：${version}`)
+  if (!validRange(range)) throw new Error(`无法校验依赖版本范围：${range}`)
+  return satisfies(parsed, range, { includePrerelease: true })
 }
 
 function text(value: unknown): string {

@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "modpack-automation",
   "name": "依赖与优化",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -13,7 +13,7 @@
       "id": "modpack-automation",
       "label": "依赖与优化",
       "component": "modpack-automation",
-      "icon": "Gauge",
+      "icon": "Network",
       "group": "运行",
       "order": 50
     }
@@ -33,5 +33,8 @@
     "quilt",
     "forge",
     "neoforge"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

@@ -15,7 +15,10 @@ import {
   LoaderCircle,
   Plus,
   RefreshCw,
-  MonitorCog,
+  LayoutTemplate,
+  Globe2,
+  ListTree,
+  Package,
   PackageOpen,
   Save,
   ServerCog,
@@ -32,6 +35,7 @@ import ContentTextEditor, { type ContentEditorHandle } from '../../../src/render
 import { contentDraftKey, setContentDraft } from '../../../src/renderer/src/lib/contentDrafts'
 import ResourceImagePreview from '../../../src/renderer/src/components/ResourceImagePreview'
 import { configModAssociation, type ModConfigIdentity } from '../../../src/shared/contentFileFilters'
+import { dataPackStarterMetadata, dataPackStarterPath } from '../../../src/shared/dataPackStarter'
 import '../../../src/renderer/src/resource-packs.css'
 import '../../../src/renderer/src/content-workspace.css'
 
@@ -57,24 +61,18 @@ type SectionInfo = {
   supportsExtract?: boolean
 }
 
-function dataPackFormat(minecraftVersion: string): number {
-  if (minecraftVersion === '1.20.1') return 15
-  if (minecraftVersion === '1.20.6') return 41
-  return 48
-}
-
 function dataPackMetadata(project: ProjectInfo): string {
-  return `${JSON.stringify({ pack: { pack_format: dataPackFormat(project.minecraftVersion), description: `${project.name} data pack` } }, null, 2)}\n`
+  return dataPackStarterMetadata(project.minecraftVersion, project.name)
 }
 
 const sectionInfo: Record<ModpackContentSection, SectionInfo> = {
   config: { label: '配置与默认项', description: 'config · defaultconfigs · serverconfig', icon: FileCog, path: 'config/', targets: [{ label: '通用配置', path: 'config' }, { label: '默认配置', path: 'defaultconfigs' }, { label: '服务端配置', path: 'serverconfig', scope: 'server' }], starters: [{ label: '通用配置', path: 'config/pack.toml' }, { label: '默认配置', path: 'defaultconfigs/pack.toml' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加配置', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
   scripts: { label: '脚本与 KubeJS', description: 'KubeJS 与启动脚本', icon: Braces, path: 'kubejs/', targets: [{ label: '全部 KubeJS', path: 'kubejs' }, { label: '服务端脚本', path: 'kubejs/server_scripts', scope: 'server' }, { label: '客户端脚本', path: 'kubejs/client_scripts', scope: 'client' }, { label: '启动脚本', path: 'kubejs/startup_scripts' }, { label: '资源 assets', path: 'kubejs/assets', scope: 'client' }, { label: '数据 data', path: 'kubejs/data' }, { label: '其他脚本 / CraftTweaker', path: 'scripts' }], starters: [{ label: '服务端脚本', path: 'kubejs/server_scripts/pack.js' }, { label: '客户端脚本', path: 'kubejs/client_scripts/pack.js' }, { label: '启动脚本', path: 'kubejs/startup_scripts/pack.js' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加脚本', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
   datapacks: { label: '数据包', description: 'datapacks · OpenLoader · Paxi', icon: FileJson, path: 'datapacks/', targets: [{ label: '数据包', path: 'datapacks' }, { label: 'OpenLoader', path: 'openloader/data', requirement: { label: 'OpenLoader', matches: ['openloader'] } }, { label: 'Paxi', path: 'paxi/datapacks', requirement: { label: 'Paxi', matches: ['paxi'] } }], starters: [{ label: '数据包描述', path: 'datapacks/pack.mcmeta', content: dataPackMetadata }, { label: '函数文件', path: 'datapacks/data/example/functions/start.mcfunction', content: () => '# Runs from your data pack.\n' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加数据包', emptyTitle: '暂无数据包内容', emptyDescription: '从描述文件或函数入口开始，完成后可在代码编辑器中继续编辑' },
-  resourcepacks: { label: '资源包', description: '客户端视觉资源', icon: Image, path: 'resourcepacks/', targets: [{ label: '资源包', path: 'resourcepacks', scope: 'client' }], starters: [], mode: 'assets', scopeOptions: ['client'], tone: 'utility', addLabel: '添加资源包', emptyTitle: '暂无资源包', emptyDescription: '导入或下载 ZIP 资源包后，它会以客户端内容随整合包分发' },
+  resourcepacks: { label: '资源包', description: '客户端视觉资源', icon: Package, path: 'resourcepacks/', targets: [{ label: '资源包', path: 'resourcepacks', scope: 'client' }], starters: [], mode: 'assets', scopeOptions: ['client'], tone: 'utility', addLabel: '添加资源包', emptyTitle: '暂无资源包', emptyDescription: '导入或下载 ZIP 资源包后，它会以客户端内容随整合包分发' },
   shaderpacks: { label: '光影包', description: 'shaderpacks · 客户端内容', icon: Sparkles, path: 'shaderpacks/', targets: [{ label: '光影包', path: 'shaderpacks', scope: 'client' }], starters: [], mode: 'assets', scopeOptions: ['client'], tone: 'utility', addLabel: '添加光影包', emptyTitle: '暂无光影包', emptyDescription: '导入或下载 ZIP 光影包后，它会以客户端内容随整合包分发' },
-  ui: { label: '界面资源', description: 'FancyMenu 与默认界面资源', icon: MonitorCog, path: 'fancymenu_data/', targets: [{ label: 'FancyMenu', path: 'fancymenu_data', scope: 'client' }, { label: '资源包', path: 'resourcepacks', scope: 'client' }], starters: [{ label: '界面布局', path: 'fancymenu_data/layouts/pack.txt' }, { label: '默认选项', path: 'defaultoptions/options.txt' }], mode: 'editor', scopeOptions: ['client'], tone: 'utility', addLabel: '添加界面资源', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
-  worlds: { label: '存档与世界', description: '初始世界与可导入存档', icon: Save, path: 'saves/', targets: [{ label: '初始世界', path: 'saves' }], starters: [], mode: 'assets', scopeOptions: ['common'], tone: 'utility', addLabel: '添加世界', emptyTitle: '暂无初始世界', emptyDescription: '导入包含 level.dat 的世界目录，或下载并解压 ZIP 世界', supportsExtract: true },
+  ui: { label: '界面资源', description: 'FancyMenu 与默认界面资源', icon: LayoutTemplate, path: 'fancymenu_data/', targets: [{ label: 'FancyMenu', path: 'fancymenu_data', scope: 'client' }, { label: '资源包', path: 'resourcepacks', scope: 'client' }], starters: [{ label: '界面布局', path: 'fancymenu_data/layouts/pack.txt' }, { label: '默认选项', path: 'defaultoptions/options.txt' }], mode: 'editor', scopeOptions: ['client'], tone: 'utility', addLabel: '添加界面资源', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
+  worlds: { label: '存档与世界', description: '初始世界与可导入存档', icon: Globe2, path: 'saves/', targets: [{ label: '初始世界', path: 'saves' }], starters: [], mode: 'assets', scopeOptions: ['common'], tone: 'utility', addLabel: '添加世界', emptyTitle: '暂无初始世界', emptyDescription: '导入包含 level.dat 的世界目录，或下载并解压 ZIP 世界', supportsExtract: true },
   client: { label: '玩家预设', description: '键位、选项与客户端默认项', icon: SlidersHorizontal, path: 'options.txt', targets: [{ label: '游戏选项', path: 'options.txt', scope: 'client', file: true }, { label: '按键预设', path: 'options.txt', scope: 'client', file: true }, { label: '光影选项', path: 'optionsshaders.txt', scope: 'client', file: true }], starters: [{ label: '游戏选项', path: 'options.txt' }], mode: 'editor', scopeOptions: ['client'], tone: 'utility', addLabel: '添加玩家预设', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
   server: { label: '服务端配置', description: 'serverconfig 与服务端默认项', icon: ServerCog, path: 'serverconfig/', targets: [{ label: '服务端配置', path: 'serverconfig', scope: 'server' }, { label: '默认配置', path: 'defaultconfigs', scope: 'server' }], starters: [{ label: '服务端配置', path: 'serverconfig/pack.toml' }, { label: '默认配置', path: 'defaultconfigs/pack.toml' }], mode: 'editor', scopeOptions: ['server'], tone: 'utility', addLabel: '添加服务端配置', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' },
   other: { label: '文件工作台', description: '未归类的 MRPack 覆盖文件', icon: Boxes, path: '', targets: [{ label: '自定义位置', path: '' }, { label: '全局资源', path: 'global_packs' }], starters: [{ label: '说明文件', path: 'README.txt' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加内容', emptyTitle: '暂无工作文件', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' }
@@ -112,7 +110,7 @@ function isEditableContent(item: ModpackContentItem): boolean {
 }
 
 export default function ModpackContentWorkspace({ project, section, onOpenEditor, onCreateFile, inventoryMode = false, darkMode = false }: { project: ProjectInfo; section: ModpackContentSection; onOpenEditor: (contentPath?: string) => void; onCreateFile: (contentPath: string, content?: string) => void; inventoryMode?: boolean; darkMode?: boolean }): React.JSX.Element {
-  const info = inventoryMode ? { label: '文件清单', description: 'MRPack 远程来源与本地覆盖内容', icon: PackageOpen, path: '', targets: [{ label: '自定义位置', path: '' }, { label: '全局资源', path: 'global_packs' }], starters: [{ label: '说明文件', path: 'README.txt' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加内容', emptyTitle: '暂无内容', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' } satisfies SectionInfo : sectionInfo[section]
+  const info = inventoryMode ? { label: '文件清单', description: 'MRPack 远程来源与本地覆盖内容', icon: ListTree, path: '', targets: [{ label: '自定义位置', path: '' }, { label: '全局资源', path: 'global_packs' }], starters: [{ label: '说明文件', path: 'README.txt' }], mode: 'editor', scopeOptions: ['common', 'client', 'server'], tone: 'utility', addLabel: '添加内容', emptyTitle: '暂无内容', emptyDescription: '新建或导入文件后，可直接在代码编辑器中继续编辑' } satisfies SectionInfo : sectionInfo[section]
   const Icon = info.icon
   const editorRef = useRef<ContentEditorHandle | null>(null)
   const openCodeEditor = async (contentPath?: string): Promise<void> => {
@@ -378,7 +376,7 @@ export default function ModpackContentWorkspace({ project, section, onOpenEditor
       <span className="resource-pack-origin">{remote ? `${remote} 个远程来源 · ` : ''}{items.length ? formatBytes(total) : info.description}</span>
       <div className="resource-pack-actions">
         <button className="icon-button" title="刷新内容列表" disabled={Boolean(busy) || initialLoading} onClick={() => run('refresh', async () => { await load(() => true, true); setPreviewRevision(value => value + 1) })}><RefreshCw size={16} /></button>
-        {info.starters.length ? <label className="pack-content-create"><Plus size={15} /><select aria-label="新建文件" value="" disabled={Boolean(busy)} onChange={event => { const starter = info.starters.find(item => item.path === event.target.value); if (starter) onCreateFile(starter.path, starter.content?.(project)) }}><option value="" disabled>新建文件</option>{info.starters.map(starter => <option key={starter.path} value={starter.path}>{starter.label}</option>)}</select></label> : null}
+        {info.starters.length ? <label className="pack-content-create"><Plus size={15} /><select aria-label="新建文件" value="" disabled={Boolean(busy)} onChange={event => { const starter = info.starters.find(item => item.path === event.target.value); if (starter) onCreateFile(dataPackStarterPath(project.minecraftVersion, starter.path), starter.content?.(project)) }}><option value="" disabled>新建文件</option>{info.starters.map(starter => <option key={starter.path} value={starter.path}>{starter.label}</option>)}</select></label> : null}
         <button className="secondary-button" disabled={Boolean(busy)} onClick={importLocal}><Upload size={15} />{section === 'worlds' ? '导入世界目录' : '导入文件'}</button>
         <button className="secondary-button" aria-expanded={downloadOpen} aria-controls="pack-content-download" onClick={() => setDownloadOpen(value => !value)}><CloudDownload size={15} />从链接添加</button>
       <button className="secondary-button" onClick={() => void openCodeEditor(selectedItem && isEditableContent(selectedItem) ? selectedItem.path : undefined)}><FileCode2 size={15} />代码编辑器</button></div>

@@ -152,7 +152,7 @@ describe('modpack manifests', () => {
     expect(await auditModpackLock(info)).toEqual({ success: true, checked: 1, errors: [] })
     expect((await readManagedModpackContent(info)).items).toEqual(expect.arrayContaining([expect.objectContaining({ path: files[2].path, delivery: 'remote', scope: 'common', sha1: hashes.sha1 })]))
     const archive = path.join(root, 'roundtrip.mrpack')
-    await fs.writeFile(archive, await createModrinthPackArchive(info))
+    await fs.writeFile(archive, await createModrinthPackArchive(info, { mode: 'download' }))
     const extracted = path.join(root, 'roundtrip')
     await extractZip(archive, { dir: extracted })
     const exported = JSON.parse(await fs.readFile(path.join(extracted, 'modrinth.index.json'), 'utf8'))
@@ -239,7 +239,7 @@ describe('modpack manifests', () => {
       mods: [{ provider: 'modrinth', projectId: 'remote', versionId: '1', versionName: '1.0.0', fileName: 'remote.jar', sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, side: 'both', sources: ['https://cdn.example.test/remote.jar'], installedAt: '2026-08-16T00:00:00.000Z' }]
     })
 
-    const archive = await createModrinthPackArchive(info, { version: '1.2.3', summary: 'Remote delivery test' })
+    const archive = await createModrinthPackArchive(info, { version: '1.2.3', summary: 'Remote delivery test', mode: 'download' })
     const archivePath = path.join(root, 'pack.mrpack')
     const extracted = path.join(root, 'extracted')
     await fs.writeFile(archivePath, archive)

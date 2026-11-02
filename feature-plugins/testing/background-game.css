@@ -1,0 +1,20 @@
+.background-game-panel { display: flex; flex-direction: column; gap: 12px; padding: 16px; height: 100%; min-height: 0; overflow: auto; }
+.background-game-toolbar, .background-game-toolbar > div, .background-game-toolbar > span, .background-game-framebar { display: flex; align-items: center; gap: 8px; }
+.background-game-toolbar { justify-content: space-between; min-height: 34px; flex-wrap: wrap; }
+.background-game-toolbar > span { color: var(--theme-muted); font-size: 13px; }
+.background-game-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 16px; align-items: start; }
+.background-game-view { min-width: 0; }
+.background-game-image { aspect-ratio: 16 / 9; width: 100%; overflow: hidden; background: var(--theme-inset); border: 1px solid var(--theme-line); border-radius: 6px; display: grid; place-items: center; }
+.background-game-image img { width: 100%; height: 100%; object-fit: contain; display: block; touch-action: none; user-select: none; }
+.background-game-placeholder { display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; color: var(--theme-muted); font-size: 13px; padding: 20px; text-align: center; }
+.background-game-framebar { justify-content: space-between; color: var(--theme-muted); font-size: 12px; min-height: 32px; }
+.background-game-controls { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.background-game-controls label { display: flex; flex-direction: column; gap: 6px; color: var(--theme-muted); font-size: 13px; }
+.background-game-controls label:has(input[type="checkbox"]) { flex-direction: row; align-items: center; }
+.background-game-controls textarea { width: 100%; resize: vertical; min-height: 72px; padding: 8px; color: var(--theme-text); background: var(--theme-inset); border: 1px solid var(--theme-line); border-radius: 5px; }
+.background-game-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+.background-game-keys button { min-width: 0; padding: 7px 4px; justify-content: center; }
+.background-game-feedback { min-height: 36px; font-size: 13px; color: var(--theme-muted); }
+.background-game-feedback p { margin: 0; line-height: 1.5; }
+.background-game-feedback [role="alert"] { color: var(--theme-danger); overflow-wrap: anywhere; }
+@media (max-width: 1120px) { .background-game-workspace { grid-template-columns: minmax(0, 1fr) 176px; gap: 12px; } .background-game-panel { padding: 12px; } }

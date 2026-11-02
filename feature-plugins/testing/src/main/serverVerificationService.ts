@@ -162,6 +162,7 @@ export class ServerProcess {
     let spawnError = ''
     let batchPausePrompt = false
     let writtenBytes = 0
+    let logTruncated = false
     const line = (text: string, level: MinecraftRuntimeEvent['level']): void => {
       if (!text.trim()) return
       const display = isWindowsBatchPausePrompt(text) ? '服务端启动失败，请检查您的服务端包' : text
@@ -179,12 +180,12 @@ export class ServerProcess {
       const capture = (text: string): void => {
         const bytes = Buffer.byteLength(text)
         writtenBytes += bytes
-        if (options.maxLogBytes && writtenBytes > options.maxLogBytes) {
-          spawnError = '隔离服务端日志超过容量限制'
-          void this.stop(1000).catch(() => undefined)
-          return
+        if (options.maxLogBytes && writtenBytes > options.maxLogBytes && !logTruncated) {
+          logTruncated = true
+          log.write('\n[ModMind: transcript limit reached; live scenario parsing continues]\n')
+          event(options.onEvent, '服务端日志已达到保存上限；测试继续，后续日志仅用于实时检查', 'warning')
         }
-        if (!log.writableEnded && !log.destroyed && !log.write(text)) {
+        if (!logTruncated && !log.writableEnded && !log.destroyed && !log.write(text)) {
           const stream = level === 'info' ? child.stdout : child.stderr
           stream.pause()
           log.once('drain', () => { if (!stream.destroyed) stream.resume() })

@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "shader-testing",
   "name": "游戏验证",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -56,13 +56,31 @@
               "observe"
             ]
           },
-          "sessionId": { "type": "string", "pattern": "^[a-f0-9-]{36}$" },
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[a-f0-9-]{36}$"
+          },
           "projectPath": {
             "type": "string",
             "maxLength": 1024
           }
         },
-        "allOf": [{ "if": { "properties": { "operation": { "const": "observe" } } }, "then": { "required": ["sessionId"] } }]
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "observe"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "sessionId"
+              ]
+            }
+          }
+        ]
       },
       "studioIds": [
         "minecraft-shader"
@@ -106,21 +124,71 @@
       "handler": "session",
       "permission": "process",
       "projectRequired": true,
-      "surfaces": ["workbench"],
-      "studioIds": ["minecraft-shader"],
+      "surfaces": [
+        "workbench"
+      ],
+      "studioIds": [
+        "minecraft-shader"
+      ],
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["operation"],
+        "required": [
+          "operation"
+        ],
         "properties": {
-          "operation": { "enum": ["start", "reload", "stop"] },
-          "versionId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]{0,150}$" },
-          "sessionId": { "type": "string", "pattern": "^[a-f0-9-]{36}$" },
-          "projectPath": { "type": "string", "maxLength": 1024 }
+          "operation": {
+            "enum": [
+              "start",
+              "reload",
+              "stop"
+            ]
+          },
+          "versionId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]{0,150}$"
+          },
+          "sessionId": {
+            "type": "string",
+            "pattern": "^[a-f0-9-]{36}$"
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
         },
         "allOf": [
-          { "if": { "properties": { "operation": { "const": "start" } } }, "then": { "required": ["versionId"] } },
-          { "if": { "properties": { "operation": { "enum": ["reload", "stop"] } } }, "then": { "required": ["sessionId"] } }
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "start"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "versionId"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "enum": [
+                    "reload",
+                    "stop"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "sessionId"
+              ]
+            }
+          }
         ]
       }
     }
@@ -142,11 +210,17 @@
       "description": "Manage an owned, isolated Iris game test: start with a versionId returned by capabilities; reload the current source by exporting/hash-checking a new ZIP and invoking Iris; stop only the exact sessionId. Start returns an accepted preparing task, not a running-game success: poll modmind_shader_test_query session-state, then observe. Reuses user-selected installed Fabric libraries and Iris dependencies, copies no player saves/configs/accounts, and installs no downloads. Adapter currently targets Minecraft 26.2 / Iris 1.11.2 / local Java 25. Visible game window, manual world entry; no hidden rendering or scene automation. Normal shutdown is attempted before recovering an unresponsive owned child; shutdown reports graceful/forced/not-started. Cancellation, project change, plugin shutdown and a 20-minute lease clean up owned processes. Game and visual verification remain false."
     }
   ],
-  "assets": { "licenses": "feature-plugins/shader-testing/licenses", "agent-source": "resources/shader-runtime" },
+  "assets": {
+    "licenses": "feature-plugins/shader-testing/licenses",
+    "agent-source": "resources/shader-runtime"
+  },
   "studioIds": [
     "minecraft-shader"
   ],
   "loaders": [
     "iris"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

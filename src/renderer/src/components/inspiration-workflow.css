@@ -13,14 +13,6 @@
 .inspiration-prompt-artifact .primary-button:disabled, .inspiration-workflow-knowledge-dialog .primary-button:disabled { background: var(--theme-inset); }
 .inspiration-workflow-error { margin: 10px 0; color: var(--theme-danger) !important; font-size: 14px !important; }
 .inspiration-prompt-artifact > .inspiration-workflow-error { padding: 0 16px; }
-.inspiration-workflow-questions { margin: 18px 0; display: grid; gap: 12px; font-size: 14px; }
-.inspiration-workflow-questions fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.inspiration-workflow-questions legend { margin-bottom: 10px; }
-.inspiration-question-options { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
-.inspiration-question-options button { padding: 7px 12px; font: inherit; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); color: var(--theme-text); cursor: pointer; }
-.inspiration-question-options button[aria-pressed='true'] { background: var(--theme-selected); }
-.inspiration-workflow-questions input { width: 100%; box-sizing: border-box; padding: 9px; font: inherit; }
-.inspiration-workflow-questions > button { justify-self: start; font: inherit; }
 .inspiration-workflow-suggestions { margin-top: 16px; font-size: 14px; }
 .inspiration-workflow-suggestions > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--theme-line); }
 .inspiration-workflow-suggestions button { font: inherit; white-space: nowrap; }

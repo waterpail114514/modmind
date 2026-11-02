@@ -3,33 +3,161 @@ import { parseProviderSnapshot, providerOwnerKey, reconcileProviderSync } from '
 import { providerFixture } from './__fixtures__/providerSync'
 
 describe('provider sync v2', () => {
-  it('preserves implicit original route pins and free bindings when a website sync replaces the paid supplier', () => {
+  it('replaces server inventories including removals and persists route labels', async () => {
+    const f = providerFixture('ls'), group = f.owner().sync.connections[0].group!
+    f.groups.splice(0, f.groups.length, { id: group, label: '完整主线路' }, { id: '74', label: '另一条线路' })
+    f.modelsByGroup[group] = [{ id: 'main-model', name: '主模型' }, { id: 'hidden-model', description: '完整刷新发现的模型' }]
+    f.modelsByGroup['74'] = [{ id: 'other-route-model' }]
+    await f.service.discoverModels()
+    f.modelsByGroup[group] = [{ id: 'main-model', name: 'Key 扫描不应覆盖原名称' }, { id: 'new-key-model' }]
+    const catalog = await f.service.catalog(true)
+    expect(catalog.models.map(m => m.id)).toEqual(expect.arrayContaining(['main-model', 'new-key-model', 'other-route-model']))
+    expect(catalog.models.some(m => m.id === 'hidden-model')).toBe(false)
+    expect(f.discovery()!.entries.find(e => e.group === group)!.models.map(m => m.id)).toEqual(['main-model', 'new-key-model'])
+    const calls = f.listModels.mock.calls.length, requests = f.network.length
+    const saved = await f.restart().catalog(false, true)
+    expect(saved.models.find(m => m.id === 'other-route-model')).toMatchObject({ group: '74', groupLabel: '另一条线路' })
+    expect(saved.models.some(m => m.id === 'new-key-model')).toBe(true)
+    expect(f.listModels).toHaveBeenCalledTimes(calls)
+    expect(f.network).toHaveLength(requests)
+  })
+
+  it('replaces the saved inventory only after a complete refresh, including removals', async () => {
+    const f = providerFixture('ls'), group = f.owner().sync.connections[0].group!
+    f.groups.splice(0, f.groups.length, { id: group }, { id: '74' })
+    f.modelsByGroup[group] = [{ id: 'previous-model' }]; f.modelsByGroup['74'] = [{ id: 'previous-route-model' }]
+    await f.service.discoverModels()
+    f.tick(16_000)
+    f.groups.splice(0, f.groups.length, { id: group })
+    f.modelsByGroup[group] = [{ id: 'replacement-model' }]
+    const refreshed = await f.service.discoverModels()
+    expect(refreshed.models.map(m => m.id)).toContain('replacement-model')
+    expect(refreshed.models.some(m => m.id.startsWith('previous-'))).toBe(false)
+    expect((await f.restart().catalog(false, true)).models.some(m => m.id.startsWith('previous-'))).toBe(false)
+  })
+
+  it("retains the last successful catalog when a server group is not ready and reopens offline", async () => {
+    const f = providerFixture('ls'), group = f.owner().sync.connections[0].group!
+    f.groups.splice(0, f.groups.length, { id: group }, { id: '74' })
+    f.modelsByGroup[group] = [{ id: 'complete-model' }]; f.modelsByGroup['74'] = [{ id: 'complete-route-model' }]
+    await f.service.discoverModels()
+    f.catalog.unavailable.add('ls:74')
+    const result = await f.service.discoverModels()
+    expect(result.stale).toBe(true)
+    expect(result.models.map(m => m.id)).toEqual(expect.arrayContaining(['complete-model', 'complete-route-model']))
+    f.flags.offline = true
+    expect((await f.restart().catalog(false, true)).models.map(m => m.id)).toEqual(expect.arrayContaining(['complete-model', 'complete-route-model']))
+    expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
+  })
+
+  it('never shows another account inventory', async () => {
+    const f = providerFixture('ls')
+    await f.service.discoverModels()
+    f.setOwner({ ...f.owner(), username: 'another-user' })
+    const catalog = await f.restart().catalog(false, true)
+    expect(catalog.models.some(m => m.billing === 'quota')).toBe(false)
+    expect(catalog.providers?.some(p => p.account === 'ls')).toBe(true)
+  })
+
+  it('reads the complete inventory from older cache files without needing network directory labels', async () => {
+    const f = providerFixture('ls')
+    await f.service.discoverModels()
+    const { directory: _directory, ...legacy } = f.discovery()!
+    f.setDiscovery(legacy)
+    const calls = f.listModels.mock.calls.length, requests = f.network.length
+    const cached = await f.restart().catalog(false, true)
+    expect(cached.models.find(m => m.id === 'gemini-3.8-flash')).toMatchObject({ group: 'Gemini' })
+    expect(f.listModels).toHaveBeenCalledTimes(calls)
+    expect(f.network).toHaveLength(requests)
+  })
+
+  it('does not let a delayed catalog response cross an account change', async () => {
+    const f = providerFixture('ls')
+    f.listModels.mockImplementationOnce(async () => { f.setOwner({ ...f.owner(), username: 'another-user' }); return [{ id: 'previous-user-model' }] })
+    await expect(f.service.catalog()).rejects.toThrow('账号已切换')
+    expect(f.discovery()).toBeNull()
+    expect((await f.service.catalog(false, true)).models.some(m => m.id === 'previous-user-model')).toBe(false)
+  })
+
+  it('persists models scanned from a free Key when its connection has no embedded model list', async () => {
+    const f = providerFixture('ls'), owner = f.owner(), free = owner.sync.connections[1]
+    const { models: _models, ...connection } = free
+    f.setOwner({ ...owner, sync: { ...owner.sync, connections: [owner.sync.connections[0], connection] } })
+    f.listModels.mockImplementation(async c => [{ id: c.kind === 'free' ? 'free-key-model' : 'paid-key-model' }])
+    await f.service.catalog()
+    f.listModels.mockClear()
+    expect((await f.restart().catalog(false, true)).models.find(m => m.id === 'free-key-model')).toMatchObject({ account: free.account, billing: 'free' })
+    expect(f.listModels).not.toHaveBeenCalled()
+  })
+
+  it('ignores website route replacements during same-user reauthorization', () => {
     const f = providerFixture('ls'), old = structuredClone(f.owner().sync)
     const implicit = { model: 'gpt-6-astra', reasoningLevel: 'high' as const }
     old.defaults = implicit
     old.bindings = { workspace: implicit, inspiration: { model: 'qwen3.8-flash', account: 'trial:one', billing: 'free', reasoningLevel: 'auto' } }
     const next = { ...old, selectionRevision: old.selectionRevision + 1, defaultAccount: 'secondary', connections: old.connections.map(c => c.kind === 'paid' ? { ...c, account: 'secondary', group: 'new-group', apiKey: 'new-key' } : c) }
     const merged = reconcileProviderSync(old, next, f.preferences())
-    expect(merged.defaults).toMatchObject({ account: 'ls', group: 'gpt-pro（混池）', model: 'gpt-6-astra' })
+    expect(merged).toBe(old)
+    expect(merged.defaults).toEqual(implicit)
     expect(merged.bindings?.workspace).toEqual(merged.defaults)
     expect(merged.bindings?.inspiration).toEqual(old.bindings.inspiration)
-    expect(merged.connections).toEqual(next.connections)
+    expect(merged.connections).toEqual(old.connections)
     expect(old.defaults).toEqual(implicit)
   })
 
-  it('pins an implicit free default instead of changing it to the website new default', () => {
+  it('keeps the local free default independent of the website default', () => {
     const f = providerFixture(), old = { ...f.owner().sync, defaultAccount: 'trial:one' }
     const next = { ...old, defaultAccount: 'trial:two', selectionRevision: old.selectionRevision + 1 }
-    expect(reconcileProviderSync(old, next, { model: 'qwen3.8-flash', reasoningLevel: 'auto', fastMode: false }).defaults).toEqual({ model: 'qwen3.8-flash', reasoningLevel: 'auto', fastMode: false, account: 'trial:one', billing: 'free' })
+    expect(reconcileProviderSync(old, next, { model: 'qwen3.8-flash', reasoningLevel: 'auto', fastMode: false })).toBe(old)
   })
 
-  it('rejects older website sync snapshots and retains removed free bindings for explicit reselection', () => {
+  it('does not import older or reduced website route sets into the local catalog', () => {
     const f = providerFixture(), old = structuredClone(f.owner().sync)
     old.bindings = { inspiration: { model: 'qwen3.8-flash', account: 'trial:one', billing: 'free', reasoningLevel: 'auto' } }
-    expect(() => reconcileProviderSync(old, { ...old, selectionRevision: old.selectionRevision - 1 }, f.preferences())).toThrow('已过期')
+    expect(reconcileProviderSync(old, { ...old, selectionRevision: old.selectionRevision - 1 }, f.preferences())).toBe(old)
     const merged = reconcileProviderSync(old, { ...old, selectionRevision: old.selectionRevision + 1, connections: old.connections.filter(c => c.account !== 'trial:one') }, f.preferences())
     expect(merged.bindings?.inspiration).toEqual(old.bindings.inspiration)
-    expect(merged.connections.some(c => c.account === 'trial:one')).toBe(false)
+    expect(merged.connections.some(c => c.account === 'trial:one')).toBe(true)
+  })
+
+  it('never imports website selections during ordinary catalog reads, even after cache expiry or restart', async () => {
+    const f = providerFixture('ls')
+    await f.service.discoverModels()
+    const original = structuredClone(f.owner().sync)
+    await f.service.catalog()
+    f.flags.next = { ...original, selectionRevision: original.selectionRevision + 1, defaultAccount: 'trial:two', connections: original.connections.filter(c => c.account !== 'trial:one').map(c => c.kind === 'paid' ? { ...c, group: 'changed-on-website' } : c) }
+    const writes = f.writes.mock.calls.length, imports = f.network.filter(request => request.url.includes('credentials=1')).length
+    f.tick(120_000)
+    expect((await f.service.catalog()).stale).toBe(true)
+    await f.restart().catalog()
+    expect(f.owner().sync).toEqual(original)
+    expect(f.writes).toHaveBeenCalledTimes(writes)
+    expect(f.network.filter(request => request.url.includes('credentials=1'))).toHaveLength(imports)
+    await f.service.refresh()
+    expect(f.owner().sync.selectionRevision).toBe(f.flags.next.selectionRevision)
+    expect(f.owner().sync.connections.some(c => c.account === 'trial:one')).toBe(false)
+  })
+
+  it('uses a new authorization Key to renew a session without importing or rescanning the client routes', async () => {
+    const f = providerFixture('ls'), original = f.owner()
+    f.setOwner({ ...original, authorizationKey: 'new-auth-key', refreshBeforeSelection: true })
+    await f.service.initializeSession()
+    expect(new Headers(f.network.find(request => request.url.endsWith('/session'))?.init?.headers).get('Authorization')).toBe('Bearer new-auth-key')
+    expect(f.owner().sync).toEqual(original.sync)
+    expect(f.network.some(request => request.url.includes('/providers') || request.url.endsWith('/group'))).toBe(false)
+  })
+
+  it('repairs a rotated free Key only when the user explicitly activates that model', async () => {
+    const f = providerFixture('ls')
+    f.setOwner({ ...f.owner(), authorizationKey: 'new-auth-key', refreshBeforeSelection: true })
+    f.flags.next = { ...f.owner().sync, selectionRevision: f.owner().sync.selectionRevision + 1,
+      connections: f.owner().sync.connections.map(c => c.account === 'trial:one' ? { ...c, apiKey: 'rotated-free-key' } : c) }
+    await f.service.catalog()
+    expect(f.owner().sync.connections.find(c => c.account === 'trial:one')?.apiKey).toBe('free-secret-one')
+    await expect(f.service.select('qwen3.8-flash', { account: 'trial:one', billing: 'free', scope: 'inspiration' })).resolves.toMatchObject({ status: 'ok' })
+    expect(f.owner().sync.connections.find(c => c.account === 'trial:one')?.apiKey).toBe('rotated-free-key')
+    expect(f.listModels).toHaveBeenCalledWith(expect.objectContaining({ account: 'trial:one', apiKey: 'rotated-free-key' }))
+    expect(f.owner().sync.bindings?.inspiration).toMatchObject({ model: 'qwen3.8-flash', account: 'trial:one', billing: 'free' })
   })
 
   it('keeps catalog reads local and blocks new mutations while website authorization is pending', async () => {
@@ -54,7 +182,7 @@ describe('provider sync v2', () => {
     expect(f.owner().sync.connections[0]).toMatchObject({ account: 'ls', group: 'gpt-pro（混池）' })
     expect(f.session()?.pending).toBeUndefined()
   })
-  it('discovers exact same-provider group memberships and restores credentials without changing selections', async () => {
+  it('reads exact same-provider group memberships without changing credentials or selections', async () => {
     const f = providerFixture('ls')
     f.groups.splice(0, f.groups.length, { id: '74', label: 'GPT 标准' }, { id: '75', label: '共享模型 无缓存' })
     f.modelsByGroup['74'] = [{ id: 'group-only-model', name: '真实模型' }, { id: 'same-model' }]
@@ -68,31 +196,26 @@ describe('provider sync v2', () => {
     expect(catalog.models.filter(m => m.id === 'same-model')).toHaveLength(2)
     expect(catalog.models.find(m => m.id === 'group-only-model')).toMatchObject({ group: '74', modelEvidence: 'verified', available: true })
     const posts = f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')
-    expect(posts.map(r => JSON.parse(String(r.init?.body)).group)).toEqual(['74', '75', 'gpt-pro（混池）'])
+    expect(posts).toHaveLength(0)
     expect(posts.every(r => !('account' in JSON.parse(String(r.init?.body))))).toBe(true)
     const persisted = f.discovery()!
-    expect(persisted.entries.every(e => e.account === 'ls')).toBe(true)
+    expect(persisted.entries.filter(e => e.group !== null).every(e => e.account === 'ls')).toBe(true)
     expect(JSON.stringify(persisted)).not.toMatch(/paid-secret|free-secret|session-secret|alice/)
     const resumed = await f.restart().catalog()
     expect(resumed.models.find(m => m.id === 'group-only-model')).toMatchObject({ group: '74', modelEvidence: 'verified' })
     await f.service.select('group-only-model', { account: 'ls', group: '74', billing: 'quota', scope: 'workspace' })
     expect(f.owner().sync.bindings?.workspace?.model).toBe('group-only-model')
   })
-  it('retains durable original-route recovery when scan readback fails and restores it on retry', async () => {
-    const f = providerFixture('ls')
-    f.groups.splice(0, f.groups.length, { id: '74' }, { id: '75' })
-    f.modelsByGroup['74'] = [{ id: 'model-74' }]; f.modelsByGroup['75'] = [{ id: 'model-75' }]
-    f.flags.onGroupPost = () => { f.flags.failRecovery = true }
-    await expect(f.service.discoverModels()).rejects.toThrow('原线路尚未确认恢复')
-    expect(f.session()?.pending).toMatchObject({ scan: true, route: { account: 'ls', group: 'gpt-pro（混池）' } })
-    await expect(f.service.resolve()).rejects.toThrow('尚未确认')
-    await f.service.catalog(true)
-    expect(f.session()?.pending?.scan).toBe(true)
-    f.flags.failRecovery = false; f.flags.onGroupPost = undefined
-    await f.service.discoverModels()
-    expect(f.owner().sync.connections[0].group).toBe('gpt-pro（混池）')
+  it("never creates a recovery marker while reading unavailable server catalogs", async () => {
+    const f = providerFixture('ls'), before = structuredClone(f.owner().sync), preferences = structuredClone(f.preferences())
+    f.catalog.status = 503
+    const result = await f.service.discoverModels()
+    expect(result).toMatchObject({ stale: true, recoveryRequired: false })
+    expect(result.message).toContain('尚未就绪')
+    expect(f.owner().sync).toEqual(before)
+    expect(f.preferences()).toEqual(preferences)
     expect(f.session()?.pending).toBeUndefined()
-    expect(f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST').every(r => !('account' in JSON.parse(String(r.init?.body))))).toBe(true)
+    expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
   })
   it('keeps discovered memberships across verified same-provider Key rotations and restarts', async () => {
     const f = providerFixture('ls'); f.flags.rotatePaidKeys = true
@@ -106,44 +229,44 @@ describe('provider sync v2', () => {
     await restarted.select('gpt-6-astra', { account: 'ls', billing: 'quota', group: 'gpt-pro（混池）', scope: 'workspace' })
     expect(f.owner().sync.connections[0].group).toBe('gpt-pro（混池）')
   })
-  it('ends an unsupported old model intent without substituting a model before discovering groups', async () => {
+  it('preserves an unresolved old model intent while refreshing server catalogs', async () => {
     const f = providerFixture('ls')
     await f.service.routingToken()
     f.setSession({ ...f.session()!, pending: { model: 'removed-model', route: { account: 'ls', group: 'gpt-pro（混池）' } } })
     const preferences = structuredClone(f.preferences())
     await f.service.discoverModels()
-    expect(f.session()?.pending).toBeUndefined()
+    expect(f.session()?.pending?.model).toBe('removed-model')
     expect(f.preferences()).toEqual(preferences)
   })
-  it('restores the paid route even if a queued run becomes busy and reports only cache storage failure', async () => {
+  it("reports disk cache failure without losing the fetched server catalog", async () => {
     const f = providerFixture('ls')
-    f.flags.onGroupPost = () => { f.flags.busy = true }
-    f.flags.discoveryWriteFail = true
-    await expect(f.service.discoverModels()).rejects.toThrow('模型目录未保存')
+    f.flags.busy = true; f.flags.discoveryWriteFail = true
+    const result = await f.service.discoverModels()
+    expect(result.models.length).toBeGreaterThan(0)
+    expect(result.message).toContain('未能保存')
     expect(f.owner().sync.connections[0].group).toBe('gpt-pro（混池）')
     expect(f.session()?.pending).toBeUndefined()
   })
-  it('blocks scans while paid work is running and never makes ordinary catalog reads scan', async () => {
+  it("allows server catalog refresh during paid work without switching any route", async () => {
     const f = providerFixture('ls')
     f.flags.busy = true
-    await expect(f.service.discoverModels()).rejects.toThrow('正在运行')
-    expect(f.network).toHaveLength(0)
-    f.flags.busy = false
+    await expect(f.service.discoverModels()).resolves.toMatchObject({ recoveryRequired: false })
     await f.service.catalog(true)
-    expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
-    await f.service.discoverModels()
-    await expect(f.service.discoverModels()).rejects.toThrow('刚刚')
+    expect(f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toHaveLength(0)
+    expect(f.network.filter(r => new URL(r.url).pathname === '/api/device/models').length).toBeGreaterThan(0)
   })
-  it('expires persisted memberships and rejects a different credential revision after restart', async () => {
+  it('retains the saved inventory beyond a day without granting a replacement Key routing authority', async () => {
     const f = providerFixture('ls')
     await f.service.discoverModels()
     expect((await f.restart().catalog()).models.find(m => m.group === 'Gemini')).toBeDefined()
     f.groups.splice(0, f.groups.length, { id: 'Gemini' })
     f.tick(24 * 3600_000)
-    expect((await f.restart().catalog()).models.some(m => m.group === 'Gemini')).toBe(false)
+    expect((await f.restart().catalog()).models.some(m => m.group === 'Gemini')).toBe(true)
     f.tick(-24 * 3600_000)
     const owner = f.owner(); f.setOwner({ ...owner, sync: { ...owner.sync, connections: owner.sync.connections.map(c => c.kind === 'paid' ? { ...c, apiKey: 'different-key' } : c) } })
-    expect((await f.restart().catalog()).models.some(m => m.group === 'Gemini')).toBe(false)
+    const restarted = f.restart()
+    expect((await restarted.catalog()).models.some(m => m.group === 'Gemini')).toBe(true)
+    await expect(restarted.select('gemini-3.8-flash', { account: 'ls', group: 'Gemini', billing: 'quota' })).resolves.toMatchObject({ status: 'ok' })
   })
   it('retains every connected free supplier including empty lists and rejects over-cap snapshots', async () => {
     const f = providerFixture('ls'), original = f.owner(), template = original.sync.connections[1]
@@ -160,6 +283,7 @@ describe('provider sync v2', () => {
     const implicit = { model: 'gpt-6-astra', reasoningLevel: 'auto' as const }
     f.setOwner({ ...original, sync: { ...original.sync, defaults: implicit, bindings: { workspace: implicit }, connections: original.sync.connections.map(c => c.kind === 'paid' ? { ...c, group: null } : c) } })
     f.flags.next = { ...f.owner().sync, defaultAccount: 'secondary', selectionRevision: 5, connections: f.owner().sync.connections.map(c => c.kind === 'paid' ? { ...c, account: 'secondary', group: 'Kimi' } : c) }
+    await f.service.refresh()
     const catalog = await f.service.catalog()
     expect(catalog.providers?.filter(p => p.kind === 'paid')).toEqual(expect.arrayContaining([{ account: 'secondary', label: '付费', kind: 'paid' }]))
     expect(f.owner().sync.defaults).toEqual({ ...implicit, account: 'ls', billing: 'quota' })
@@ -170,6 +294,7 @@ describe('provider sync v2', () => {
   it('never reuses a connected free supplier model as a paid group candidate', async () => {
     const f = providerFixture('ls')
     f.groups.splice(0, f.groups.length, { id: '74', label: '未知组' })
+    f.modelsByGroup['74'] = []
     const catalog = await f.service.catalog()
     expect(catalog.models.some(m => m.id === 'qwen3.8-flash' && m.billing === 'free')).toBe(true)
     expect(catalog.models.some(m => m.account === 'ls' && m.group === '74')).toBe(false)
@@ -182,7 +307,7 @@ describe('provider sync v2', () => {
     f.modelsByGroup['74'] = [{ id: 'gpt-6-astra' }, { id: 'new-provider-model' }]
     return f
   }
-  it('scans both paid suppliers with overlapping group IDs, preserves free bindings, and survives Key rotation and restart', async () => {
+  it('reads both paid suppliers with overlapping group IDs and preserves bindings across explicit selections and restart', async () => {
     const f = crossProviderFixture()
     f.flags.rotatePaidKeys = true
     f.groups.splice(0, f.groups.length, { id: 'gpt-pro（混池）' }, { id: '74', label: 'LS 线路' })
@@ -211,26 +336,27 @@ describe('provider sync v2', () => {
     await restarted.select('ls-only-model', { account: 'ls', group: '74', billing: 'quota', scope: 'workspace' })
     expect(f.owner().sync.bindings?.inspiration).toEqual(bindings?.inspiration)
     const crossPosts = f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST' && JSON.parse(String(r.init.body)).account)
-    expect(crossPosts.length).toBeGreaterThanOrEqual(4)
+    expect(crossPosts).toHaveLength(2)
     expect(crossPosts.every(r => new Headers(r.init?.headers).get('Authorization') === 'Bearer session-secret')).toBe(true)
   })
-  it('restores the original supplier after cross-supplier scan recovery fails, without keeping a second paid Key', async () => {
-    const f = crossProviderFixture()
-    f.flags.onGroupPost = () => { if (f.flags.next.connections[0].account === 'secondary') f.flags.failRecovery = true }
-    await expect(f.service.discoverModels()).rejects.toThrow('原线路尚未确认恢复')
-    expect(f.session()?.pending).toMatchObject({ scan: true, route: { account: 'ls', group: 'gpt-pro（混池）' } })
-    f.flags.onGroupPost = undefined; f.flags.failRecovery = false
-    await f.restart().discoverModels()
-    expect(f.owner().sync.connections.filter(c => c.kind === 'paid')).toEqual([expect.objectContaining({ account: 'ls', group: 'gpt-pro（混池）' })])
-    expect(f.session()?.pending).toBeUndefined()
+  it("reads another paid supplier catalog without replacing or acquiring its inference key", async () => {
+    const f = crossProviderFixture(), before = structuredClone(f.owner().sync)
+    const result = await f.service.discoverModels()
+    expect(result.models.some(m => m.account === 'secondary' && m.group === '74')).toBe(true)
+    expect(f.owner().sync).toEqual(before)
+    expect(f.owner().sync.connections.filter(c => c.kind === 'paid')).toHaveLength(1)
+    expect(f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toHaveLength(0)
+    const read = f.network.find(r => r.url.includes('/api/device/models?account=secondary'))!
+    expect(new Headers(read.init?.headers).get('Authorization')).toBe('Bearer session-secret')
   })
-  it('confirms restored account and group even when the model endpoint fails during another supplier scan', async () => {
-    const f = crossProviderFixture()
-    f.flags.onGroupPost = () => { if (f.flags.next.connections[0].account === 'secondary') f.flags.listFail = true }
-    await expect(f.service.discoverModels()).rejects.toThrow('offline')
-    expect(f.owner().sync.connections[0]).toMatchObject({ account: 'ls', group: 'gpt-pro（混池）' })
+  it("keeps the selected supplier and preferences when another server catalog fails", async () => {
+    const f = crossProviderFixture(), before = structuredClone(f.owner().sync), preferences = structuredClone(f.preferences())
+    f.catalog.unavailable.add('secondary:74')
+    expect((await f.service.discoverModels()).stale).toBe(true)
+    expect(f.owner().sync).toEqual(before)
+    expect(f.preferences()).toEqual(preferences)
     expect(f.session()?.pending).toBeUndefined()
-    expect(f.preferences().account).toBe('ls')
+    expect(f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toHaveLength(0)
   })
   it('does not switch an unverified other supplier or an unsynchronized free supplier', async () => {
     const f = crossProviderFixture()
@@ -245,7 +371,7 @@ describe('provider sync v2', () => {
     expect((await f.service.catalog()).models.find(m => m.account === 'secondary')).toMatchObject({ available: false })
     await expect(f.service.select('gpt-6-astra', { account: 'secondary', billing: 'quota', group: '74' })).rejects.toThrow('不能切换')
     f.flags.canSwitchProvider = true; f.flags.busyAccounts = ['secondary']
-    await expect(f.service.discoverModels()).rejects.toThrow('正在运行')
+    await expect(f.service.discoverModels()).resolves.toMatchObject({ recoveryRequired: false })
     await expect(f.service.select('gpt-6-astra', { account: 'secondary', billing: 'quota', group: '74' })).rejects.toThrow('正在运行')
     await expect(f.service.select('qwen3.8-flash', { account: 'trial:one', billing: 'free', scope: 'inspiration' })).resolves.toMatchObject({ status: 'ok' })
     expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
@@ -262,10 +388,10 @@ describe('provider sync v2', () => {
     const f = crossProviderFixture()
     const owner = f.owner(); f.setOwner({ ...owner, sync: { ...owner.sync, connections: owner.sync.connections.filter(c => c.kind === 'paid') } })
     const catalog = await f.service.catalog(true)
-    expect(catalog.models.some(m => m.account === 'secondary')).toBe(false)
+    expect(catalog.models.some(m => m.account === 'secondary')).toBe(true)
     expect(catalog.routes?.find(r => r.account === 'secondary')).toMatchObject({ group: '74', available: true })
     expect(catalog.models.some(m => m.billing === 'free')).toBe(false)
-    expect(catalog.models.some(m => m.id === 'new-provider-model')).toBe(false)
+    expect(catalog.models.some(m => m.id === 'new-provider-model')).toBe(true)
     expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
   })
   it('switches an advertised paid supplier with the routing token and verifies the exact live target', async () => {
@@ -327,7 +453,8 @@ describe('provider sync v2', () => {
     await expect(f.service.resolve({ model: 'gpt-6-astra', reasoningLevel: 'auto' })).rejects.toThrow('分组已变化')
     f.flags.next = { ...f.owner().sync, connections: f.owner().sync.connections.map(c => c.kind === 'paid' ? { ...c, apiKey: 'rotated-secret' } : c) }
     await f.service.refresh()
-    expect((await f.service.catalog()).models.some(m => m.group === 'gpt-pro（混池）' && m.id === 'gpt-6-astra')).toBe(false)
+    expect((await f.service.catalog()).models.some(m => m.group === 'gpt-pro（混池）' && m.id === 'gpt-6-astra')).toBe(true)
+    await expect(f.service.select('gpt-6-astra', { account: 'ls', billing: 'quota', group: 'gpt-pro（混池）' })).resolves.toMatchObject({ status: 'ok' })
   })
   it('rejects a model lookup that finishes after the account has changed', async () => {
     const f = providerFixture('ls')
@@ -477,24 +604,26 @@ describe('provider sync v2', () => {
     expect(result.linkedSelections).toBeUndefined()
     const post = f.network.find(r => r.init?.method === 'POST' && r.url.endsWith('/group'))!
     expect(JSON.parse(String(post.init?.body))).toEqual({ group: '25', expectedAccount: 'ls', expectedGroup: 'gpt-pro（混池）' })
-    expect(result.catalog.models.find(m => m.id === 'upstream-new-model')).toMatchObject({ name: '上游新模型', family: 'New' })
+    expect(result.catalog.models.find(m => m.id === 'upstream-new-model')).toMatchObject({ id: 'upstream-new-model', group: '25' })
     expect(f.owner().sync.connections[0].account).toBe('ls')
   })
-  it('does not let an unverified LS group mutate the account before discovery', async () => {
+  it("reads exact LS group membership from the server before an explicit selection", async () => {
     const f = providerFixture('ls')
     f.groups.splice(0, f.groups.length, { id: '74', label: '新线路' })
     f.modelsByGroup['74'] = [{ id: 'actual-only-model' }]
-    expect((await f.service.catalog()).routes?.find(r => r.group === '74')).toMatchObject({ group: '74', label: '新线路' })
-    await expect(f.service.select('actual-only-model', { account: 'ls', billing: 'quota' })).rejects.toThrow('具体线路')
-    await expect(f.service.select('actual-only-model', { account: 'ls', billing: 'quota', group: '74', scope: 'settings' })).rejects.toThrow('尚未验证')
-    expect((await f.service.catalog()).models.some(m => m.group === '74')).toBe(false)
+    const result = await f.service.catalog()
+    expect(result.models.find(m => m.id === 'actual-only-model')).toMatchObject({ group: '74', modelEvidence: 'verified' })
     expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
+    await expect(f.service.select('actual-only-model', { account: 'ls', billing: 'quota', group: '74' })).resolves.toMatchObject({ status: 'ok' })
+    expect(f.network.filter(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toHaveLength(1)
   })
-  it('does not infer supplier-two models for an LS group with a matching ID', async () => {
+  it("uses the LS server directory for a group with the same ID as another supplier", async () => {
     const f = providerFixture('ls')
     f.groups.splice(0, f.groups.length, { id: 'Gemini' })
-    expect((await f.service.catalog()).models.some(m => m.id === 'gemini-3.8-flash')).toBe(false)
-    await expect(f.service.select('gemini-3.8-flash', { account: 'ls', billing: 'quota' })).rejects.toThrow('具体线路')
+    f.modelsByRoute['ls:Gemini'] = [{ id: 'ls-only-model' }]
+    const result = await f.service.catalog()
+    expect(result.models.find(m => m.id === 'ls-only-model')).toMatchObject({ account: 'ls', group: 'Gemini' })
+    expect(result.models.some(m => m.id === 'gemini-3.8-flash')).toBe(false)
     expect(f.network.some(r => r.url.endsWith('/group') && r.init?.method === 'POST')).toBe(false)
   })
   it('preserves another paid surface when actual models support both families', async () => {

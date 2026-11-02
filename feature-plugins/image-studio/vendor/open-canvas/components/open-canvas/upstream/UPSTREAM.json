@@ -1,0 +1,139 @@
+{
+  "repository": "https://github.com/ZeroLu/open-canvas",
+  "commit": "cf3a906bb8c35bb940d3267497e7f394b8f42582",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "shared/blocks/canvas/canvas-media-control.tsx",
+      "sha256": "a03350bd3058c8036d183f6baf1172b010f3974ba72b6813856569e391355eba"
+    },
+    {
+      "path": "shared/blocks/canvas/canvas-studio-shell.tsx",
+      "sha256": "8c2dad2b89860369ad857a1c0ab3647ed8d624eefa31c809a8c96afc35cf709d"
+    },
+    {
+      "path": "shared/blocks/common/asset-picker-dialog.tsx",
+      "sha256": "3f66cb74a62a8c5694c0742f8f685eecc5a0b93a8229eba1918004890372049b"
+    },
+    {
+      "path": "shared/blocks/common/lazy-video.tsx",
+      "sha256": "e38b4c1772fca3ba49c7edbf59b47407069dd7e649973fff7d2e187c0af2604a"
+    },
+    {
+      "path": "shared/blocks/generator/model-select-option.tsx",
+      "sha256": "68133a9f14766d7ae782c6df77bf65a5ada41129be91e3c21c348cc48967815d"
+    },
+    {
+      "path": "shared/components/ui/badge.tsx",
+      "sha256": "60989194a0535908462fac927f4a85b3848ceab3e0557c7c3f64666d37cf5e3e"
+    },
+    {
+      "path": "shared/components/ui/button.tsx",
+      "sha256": "d462cf3581323336b9a019ae408c92440ea1f0c82caedb304a2b17debfa8ee04"
+    },
+    {
+      "path": "shared/components/ui/dialog.tsx",
+      "sha256": "5b269be250040bdec2f7337f9b5bca62d0b6cf1adeef25b471a806337e4aec60"
+    },
+    {
+      "path": "shared/components/ui/dropdown-menu.tsx",
+      "sha256": "a50286b2ab8dceb0c86feb6deecdadbc75a503cbeca68f6ffcc7c6f900558180"
+    },
+    {
+      "path": "shared/components/ui/hover-card.tsx",
+      "sha256": "e39137c6437e7e4aad07d4c8885ce445e906db335b92863cc65754bda46ecb9b"
+    },
+    {
+      "path": "shared/components/ui/input.tsx",
+      "sha256": "74918e7a28371629dadcf48a12c71563453c582945f7bda83a30c41136337366"
+    },
+    {
+      "path": "shared/components/ui/label.tsx",
+      "sha256": "755e4646657fa7dcd33a459b441ff8f653e5c17988a8c2b078cf570f3ebe76ae"
+    },
+    {
+      "path": "shared/components/ui/progress.tsx",
+      "sha256": "2cf97c8e848081869ddddcb6b1012f85ef302418fa80015431caf590cbc7b0de"
+    },
+    {
+      "path": "shared/components/ui/select.tsx",
+      "sha256": "9bdf92487467ccb23474860834a3bec50be3ae4269b01d9061eafdfdc304c464"
+    },
+    {
+      "path": "shared/components/ui/tabs.tsx",
+      "sha256": "2a943280187e067118dfe09b7c0ed8fe28a3d46c266176a9cf5578035848c4d7"
+    },
+    {
+      "path": "shared/components/ui/textarea.tsx",
+      "sha256": "fe61e55d565c9a1d0765a76354fa175d0d1542f583c84db44609e9f05355ff17"
+    },
+    {
+      "path": "shared/lib/ai-credit-rules.ts",
+      "sha256": "50cf07255a85ff8cdba3954c0ba9d8fa3bc6df1f2b0196367289e3d80567b379"
+    },
+    {
+      "path": "shared/lib/canvas/copy.ts",
+      "sha256": "81d2fe16e4737e43838a083c233053892914f1a56cdc5678e448f843d8b2e8f5"
+    },
+    {
+      "path": "shared/lib/canvas/execution.ts",
+      "sha256": "e92128a0b6849cdc0e40f44da9f7c25cc4ed66a126a6b52c311f8c25f9c46722"
+    },
+    {
+      "path": "shared/lib/canvas/i18n.ts",
+      "sha256": "5c795141d3eaca163528250df045f19cb0bc8f173f1409b6ca63eaef66b1a9d3"
+    },
+    {
+      "path": "shared/lib/canvas/messages.en.json",
+      "sha256": "bcae364cbb5e2e360bcd6950008eeeef39cce586e9550247e4473cc83d46bce6"
+    },
+    {
+      "path": "shared/lib/canvas/model-options.ts",
+      "sha256": "cef72cf243cb35a50a4a0c66faffa6aa2fc75154c1eb7bb3c76cce9e3d0460df"
+    },
+    {
+      "path": "shared/lib/canvas/serialization.ts",
+      "sha256": "317f4de4ff4294552eb29a0b4eac467678caa020254f83cfb03682d28a29d079"
+    },
+    {
+      "path": "shared/lib/canvas/types.ts",
+      "sha256": "c6505c9d14cf90a1951521802c6bcc16a45b09a3b2293b4420d704ad48d5f916"
+    },
+    {
+      "path": "shared/lib/canvas/use-canvas-translations.ts",
+      "sha256": "f52d793c806209c1ebc2fa3a854aba0e20b4b36405de93613fa6d4268f42a966"
+    },
+    {
+      "path": "shared/lib/canvas/validation.ts",
+      "sha256": "c67800ba055b95aefee7fce113f5cdb1a65e989e63b40cf6aaff707f4873bd7b"
+    },
+    {
+      "path": "shared/lib/media-url.ts",
+      "sha256": "b050fa4d30a60ad8c8df18d72aef0c68142e8526f91c82a575087c6c1f98450a"
+    },
+    {
+      "path": "shared/lib/model-preferences.ts",
+      "sha256": "c0024b9c22b2c7e341547503dda2871db0ff1f9d6b6311d2bfb8426a36c41bb7"
+    },
+    {
+      "path": "shared/lib/resp.ts",
+      "sha256": "3456009a01d9c46f5c8581db484c0a7b0cff0ff33c001ed8397dadb5b4b15b8a"
+    },
+    {
+      "path": "shared/lib/utils.ts",
+      "sha256": "9304a861c8673bee09e0f12de31773abbde503b02e59dfd74763ddec2e37cf05"
+    },
+    {
+      "path": "shared/stores/canvas-store.ts",
+      "sha256": "b642189f92fa57fd16b3d37b19337465c0ba57a9a4061e2c43db09b690c1d22a"
+    },
+    {
+      "path": "shared/contexts/app.tsx",
+      "sha256": "daf034212df8bc1e87e28665a1de31d79167dc4c2c64dea1e6c7f4cc03d7304b"
+    },
+    {
+      "path": "extensions/ai/types.ts",
+      "sha256": "d0a3cbe25b221013025ccf4e9aad29aba4c39a7e80e201662adf2c45891910ee"
+    }
+  ]
+}

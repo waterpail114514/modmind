@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "studio-shader",
   "name": "光影工作台",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",

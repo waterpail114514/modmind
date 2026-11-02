@@ -124,6 +124,8 @@ export interface MinecraftLaunchOptions {
   withoutProjectMod?: boolean
   disableNarrator?: boolean
   extraJVMArgs?: string[]
+  /** Opt-in core bridge; public testing/MCP routing is delivered in the integration phase. */
+  backgroundControl?: boolean
   server?: { ip: string; port: number }
 }
 
@@ -175,6 +177,7 @@ export interface GradleVerificationResult {
 }
 
 export interface MinecraftApi {
+  playerTest: (projectPath: string, category: 'session' | 'observe' | 'action' | 'capture' | 'scenario', input: Record<string, unknown>) => Promise<unknown>
   getState: () => Promise<MinecraftRuntimeState>
   prepare: () => Promise<MinecraftRuntimeState>
   cancelPreparation: () => Promise<MinecraftRuntimeState>

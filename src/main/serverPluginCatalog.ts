@@ -9,7 +9,7 @@ import { bundledPluginVersions, PLUGIN_REPOSITORIES, pluginVersionOption } from 
 import { fetchTextWithRetry } from './networkRequest'
 
 const TTL = 6 * 60 * 60_000
-const CATALOG_REVISION = 3
+const CATALOG_REVISION = 4
 type Entry = { revision: number; at: number; options: LoaderVersionOption[] }
 
 export function parsePluginMetadata(platform: ServerPluginPlatform, xml: string): LoaderVersionOption[] {

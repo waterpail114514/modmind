@@ -33,6 +33,7 @@ export function diffBlockbenchProjects(before: BlockbenchProjectState, after: Bl
 export function describeBlockbenchActions(actions: BlockbenchAction[]): Array<{type: string; target: string; detail: string}> {
   return actions.map((action) => {
     switch (action.type) {
+      case 'load-source-document': return {type: action.type, target: action.document.name, detail: `Import ${action.document.format} model with native codec`}
       case 'new-model': return {type: action.type, target: action.name, detail: `Create ${action.format} model`}
       case 'add-cube': return {type: action.type, target: action.name, detail: `Cube ${action.from.join(',')} to ${action.to.join(',')}`}
       case 'add-mesh': return {type: action.type, target: action.name, detail: `${Object.keys(action.vertices).length} vertices, ${action.faces.length} faces`}

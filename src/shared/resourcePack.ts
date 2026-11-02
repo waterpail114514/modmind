@@ -68,5 +68,28 @@ export interface ResourcePackApi {
 
 export function suggestedResourcePackFormat(version: string): number | null {
   const formats: Record<string, number> = { '1.17': 7, '1.17.1': 7, '1.18': 8, '1.18.1': 8, '1.18.2': 8, '1.19': 9, '1.19.1': 9, '1.19.2': 9, '1.19.3': 12, '1.19.4': 13, '1.20': 15, '1.20.1': 15, '1.20.2': 18, '1.20.3': 22, '1.20.4': 22, '1.20.5': 32, '1.20.6': 32, '1.21': 34, '1.21.1': 34, '1.21.2': 42, '1.21.3': 42, '1.21.4': 46, '1.21.5': 55, '1.21.6': 63, '1.21.7': 64, '1.21.8': 64 }
-  return formats[version] ?? null
+  return version === '26.3' ? 97 : formats[version] ?? null
+}
+
+/** 26.3 uses resource format 97.1; a decimal pack_format is not valid. */
+export function resourcePackMetadata(version: string, format: number, description: string): { pack: Record<string, unknown> } {
+  return { pack: version === '26.3' && format === 97
+    ? { description, min_format: [97, 1], max_format: [97, 1] }
+    : { description, pack_format: format } }
+}
+
+export function resourcePackFormatMajor(pack: Record<string, unknown> | undefined): number | null {
+  const value = pack?.min_format ?? pack?.pack_format
+  const major = Array.isArray(value) ? value[0] : value
+  return Number.isInteger(major) && Number(major) > 0 ? Number(major) : null
+}
+
+export function resourcePackSupports263(pack: Record<string, unknown>): boolean {
+  const tuple = (value: unknown, upper: boolean): number[] | null => {
+    const parts = Array.isArray(value) ? value : [value]
+    if (parts.length < 1 || parts.length > 2 || !parts.every(part => Number.isInteger(part) && part >= 0)) return null
+    return [parts[0], parts[1] ?? (upper ? Infinity : 0)]
+  }
+  const min = tuple(pack.min_format, false), max = tuple(pack.max_format, true)
+  return Boolean(min && max && (min[0] < 97 || min[0] === 97 && min[1] <= 1) && (max[0] > 97 || max[0] === 97 && max[1] >= 1))
 }

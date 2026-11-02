@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { requestAiTextResponse } from '../../src/main/aiTextRequest'
 
 import { ContentService } from "./src/main/contentService"
@@ -22,7 +24,7 @@ function parseReleaseSummary(content: string, fallback: ReleaseSummaryDraft): Re
     return fallback;
 }
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "publishing" }, () => handler(host.event(), ...(input.args as any[]))) }
 let contentService: ContentService | null = null;
 let releaseService: ReleaseService | null = null;
 function requireContentService(): ContentService {
@@ -80,5 +82,10 @@ releasePreflight: () => requireReleaseService().preflight() }
 }
 actions["content_validate"] = (input, context) => createMcpHandlers(host.requireProject(), context.signal).contentValidate!()
 actions["release_preflight"] = (input, context) => createMcpHandlers(host.requireProject(), context.signal).releasePreflight!()
+actions["modpack_export"] = (input, context) => {
+  context.signal?.throwIfAborted()
+  const project = host.requireProject()
+  return requireReleaseService().exportModpack(input, project)
+}
 return { actions, parseReleaseSummary, createMcpHandlers, requireContentService, requireReleaseService, generateAiReleaseSummary, ContentService, ReleaseService,  }
 }

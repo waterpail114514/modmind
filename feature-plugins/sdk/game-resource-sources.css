@@ -1,0 +1,8 @@
+.game-resource-dialog { color:var(--theme-text); background:var(--theme-surface); border:1px solid var(--theme-line); border-radius:10px; width:min(640px,calc(100vw - 80px)); max-height:calc(100vh - 80px); padding:20px; overflow:auto; }
+.game-resource-dialog::backdrop { background:var(--theme-dialog-backdrop,rgba(0,0,0,.35)); }
+.game-resource-heading,.game-resource-toolbar,.game-resource-actions,.game-resource-status { display:flex; align-items:center; gap:10px; }
+.game-resource-heading { justify-content:space-between; margin-bottom:18px; }.game-resource-heading h2 { margin:0; font-size:17px; }
+.game-resource-toolbar { flex-wrap:wrap; margin-bottom:16px; }.game-resource-list { min-height:90px; max-height:330px; overflow:auto; }
+.game-resource-row { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 0; border-bottom:1px solid var(--theme-line); }.game-resource-row>label { display:flex; align-items:center; gap:10px; flex:1; min-width:0; cursor:pointer; }.game-resource-row label>span { display:grid; gap:5px; min-width:0; }.game-resource-row strong { font-size:13px; overflow:hidden; text-overflow:ellipsis; }.game-resource-row label span span,.game-resource-empty { color:var(--theme-muted); font-size:13px; }
+.game-resource-confirm { flex-basis:100%; display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:13px; }.game-resource-confirm>span { flex:1; }
+.game-resource-status { min-height:32px; font-size:13px; overflow-wrap:anywhere; margin-top:8px; }.game-resource-error { color:var(--theme-danger); font-size:13px; overflow-wrap:anywhere; }.game-resource-error button { margin-left:10px; }

@@ -1,0 +1,21 @@
+.contribution-setting-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.contribution-toggle { display: inline-flex; align-items: center; gap: 18px; font-size: 14px; cursor: pointer; }
+.contribution-status { min-height: 22px; margin: 12px 0 0; color: var(--theme-muted); font-size: 13px; line-height: 1.7; }
+.contribution-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--theme-danger); font-size: 13px; }
+.contribution-overlay { position: fixed; inset: 0; z-index: 110; background: color-mix(in srgb, var(--theme-scrim) 48%, transparent); }
+.contribution-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 111; display: flex; flex-direction: column; width: min(610px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); color: var(--theme-text); background: var(--theme-surface); border: 1px solid var(--theme-line); border-radius: 12px; }
+.contribution-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px 10px; }
+.contribution-dialog-header h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.contribution-description { margin: 0; padding: 0 22px 14px; color: var(--theme-muted); font-size: 13px; line-height: 1.7; }
+.contribution-directory { flex: none; margin: 0; padding: 0 22px 14px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+.contribution-directory code { font-size: 12px; }
+.contribution-dialog-body { min-height: 0; overflow: auto; padding: 0 22px 18px; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; }
+.contribution-dialog-body ol { display: grid; gap: 12px; margin: 0; padding-left: 22px; }
+.contribution-dialog-body p { margin: 14px 0 0; }
+.contribution-dialog-body code { font-size: 12px; }
+.contribution-dialog-body pre { overflow: auto; max-height: 360px; padding: 12px; background: var(--theme-panel); border-radius: 6px; font-size: 12px; line-height: 1.6; }
+.contribution-terms-version { color: var(--theme-muted); font-size: 12px; }
+.contribution-dialog-footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--theme-line); }
+.contribution-confirm { min-width: 166px; }
+.contribution-dialog-error { margin: 0; padding: 0 22px 12px; }
+.contribution-dialog :focus-visible, .contribution-toggle button:focus-visible { outline: 2px solid var(--theme-accent); outline-offset: 3px; }

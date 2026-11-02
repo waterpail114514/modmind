@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { ensureManagedJdk } from './jdkDownload'
 import { buildJavaRangeForProject, javaVersionForMinecraft } from './loaderCompatibility'
 import { projectTemplateFiles } from './projectTemplates'
+import { managedJavaEnvironment } from './javaEnvironment'
 import type { JavaLoaderKind, ProjectInfo } from '../shared/types'
 
 interface MatrixCase {
@@ -16,6 +17,9 @@ interface MatrixCase {
 }
 
 const knownCases: Record<string, MatrixCase> = {
+  'fabric-26.3': { loader: 'fabric', minecraftVersion: '26.3', loaderVersion: '0.19.5', apiVersion: '0.164.0+26.3' },
+  'forge-26.3': { loader: 'forge', minecraftVersion: '26.3', loaderVersion: '26.3-66.0.13' },
+  'neoforge-26.3': { loader: 'neoforge', minecraftVersion: '26.3', loaderVersion: '26.3.0.94' },
   'forge-1.7.10': { loader: 'forge', minecraftVersion: '1.7.10', loaderVersion: '1.7.10-10.13.4.1614-1.7.10' },
   'forge-1.8.9': { loader: 'forge', minecraftVersion: '1.8.9', loaderVersion: '1.8.9-11.15.1.2318-1.8.9' },
   'forge-1.12.2': { loader: 'forge', minecraftVersion: '1.12.2', loaderVersion: '1.12.2-14.23.5.2860' },
@@ -52,7 +56,7 @@ async function gradleBuild(root: string, javaHome: string): Promise<string> {
       cwd: root,
       windowsHide: true,
       shell: false,
-      env: { ...process.env, JAVA_HOME: javaHome, GRADLE_USER_HOME: path.join(os.tmpdir(), 'modmind-real-gradle-cache') }
+      env: managedJavaEnvironment({ ...process.env, JAVA_HOME: javaHome, GRADLE_USER_HOME: path.join(os.tmpdir(), 'modmind-real-gradle-cache') })
     })
     const timer = setTimeout(() => {
       child.kill()

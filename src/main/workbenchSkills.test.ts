@@ -10,7 +10,7 @@ it('isolates pack and module skill catalogs and removes stale bundled skills wit
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'workbench-skills-'))
   try {
     const source = path.join(root, 'source'), target = path.join(root, 'target')
-    for (const name of ['minecraft-mod-development', 'minecraft-modpack-authoring', 'minecraft-build-repair', 'custom-workflow']) {
+    for (const name of ['minecraft-mod-development', 'minecraft-modpack-authoring', 'minecraft-build-repair', 'modmind-inspiration', 'custom-workflow']) {
       await fs.mkdir(path.join(source, name), { recursive: true })
       await fs.writeFile(path.join(source, name, 'SKILL.md'), name)
     }
@@ -27,6 +27,12 @@ it('isolates pack and module skill catalogs and removes stale bundled skills wit
     expect((await fs.readdir(target)).sort()).toEqual(['custom-workflow', 'minecraft-build-repair', 'minecraft-mod-development'])
     expect(workbenchSkillPrompt(target, module)).toContain('- minecraft-mod-development：')
     expect(workbenchSkillPrompt(target, module)).not.toContain('- minecraft-modpack-authoring：')
+    await syncWorkbenchSkills(source, target, workbenchSkillNames(module, true, 'inspiration'))
+    expect((await fs.readdir(target)).sort()).toEqual(['custom-workflow', 'modmind-inspiration'])
+    const draft = { ...module, draft: { target: {} } } as ProjectInfo
+    await syncWorkbenchSkills(source, target, workbenchSkillNames(draft))
+    expect(await fs.readdir(target)).not.toContain('modmind-inspiration')
+    expect(workbenchSkillPrompt(target, draft)).not.toContain('- modmind-inspiration：')
   } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
 

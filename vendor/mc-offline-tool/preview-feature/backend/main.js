@@ -13,6 +13,9 @@
 //   PREVIEW_DATA     拉取产物目录（items.json 与 icons/ 所在，默认 mc-offline-tool/app/data）
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { validateBuild } from '../../src/structure-store.mjs'
+import { readNbtFile } from '../../src/nbt.mjs'
 import { encodeRGBA } from '../../src/png.mjs'
 import { createSceneAssets, findInstanceDir } from '../../preview/scene-assets.mjs'
 import { readBuildFile } from '../../src/schem-reader.mjs'
@@ -107,9 +110,12 @@ export function activate() {
       const states = rawStates.slice(0, 20000)
       // 空建造世界（新建出来的那个）本来就没有方块 ⇒ states 为空是**正常**情况，给一份空场景而不是抛错
       if (!states.length) return emptyScene()
-      const out = getScene(input.projectPath).buildForStates(states)
+      const provider = getScene(input.projectPath)
+      const out = provider.buildForStates(states)
       const missingAll = out.missing || []
       return {
+        key: createHash('sha256').update(sceneKey).update(JSON.stringify(states)).update(out.png).digest('hex'),
+        dataVersion: provider.load().dataVersion,
         blockstates: out.blockstates, models: out.models, uv: out.uv,
         atlas: 'data:image/png;base64,' + Buffer.from(out.png).toString('base64'),
         defaults: out.defaults || {}, flags: out.flags || null,
@@ -125,11 +131,12 @@ export function activate() {
       const it = getItems(dir)
       // 只回前端真正需要的字段（icons 是文件名，图标本体走 preview:icons）
       const query = String(input.query || '').toLowerCase()
+      const namespaces = [...new Set(it.ids.map(id => id.split(':')[0]))].sort()
       const rows = it.ids.map((id, i) => ({ id, name: it.names[i] || id, icon: it.icons[i] || '', block: it.block[i] === true }))
-        .filter(row => !query || `${row.id} ${row.name}`.toLowerCase().includes(query))
+        .filter(row => (!query || `${row.id} ${row.name}`.toLowerCase().includes(query)) && (!input.blocksOnly || row.block) && (!input.namespace || row.id.split(':')[0] === input.namespace) && (!input.ids || input.ids.includes(row.id)))
       const offset = Number(input.offset || 0), limit = Math.min(500, Number(input.limit || 500))
       const items = rows.slice(offset, offset + limit)
-      return { items, count: rows.length, offset, nextOffset: offset + items.length < rows.length ? offset + items.length : null, dataDir: dir }
+      return { items, count: rows.length, offset, nextOffset: offset + items.length < rows.length ? offset + items.length : null, namespaces }
     },
 
     /** 图标：只回这一页要用的，转成 data URL（包内不能靠静态路径取 18k 张图） */
@@ -156,7 +163,27 @@ export function activate() {
     preview_import: (input) => {
       const buf = Buffer.from(String((input && input.dataBase64) || ''), 'base64')
       const name = String((input && input.name) || 'building.nbt')
-      return { build: toApiJson(readBuildFile(buf, name), path.basename(name)) }
+      if (buf.length > 24 * 1024 * 1024) throw new Error('导入文件超过 24 MiB，请拆分建筑后重试')
+      const build = toApiJson(readBuildFile(buf, name), path.basename(name))
+      const { value } = readNbtFile(buf)
+      build.dataVersion = Number(value.DataVersion || value.MinecraftDataVersion) || undefined
+      const losses = []
+      let entities = value.entities?.length || value.Entities?.length || 0
+      let blockEntities = value.BlockEntities?.length || value.TileEntities?.length || value.blocks?.filter(block => block.nbt).length || 0
+      let ticks = 0
+      for (const region of Object.values(value.Regions || {})) {
+        entities += region.Entities?.length || 0
+        blockEntities += region.TileEntities?.length || 0
+        ticks += (region.PendingBlockTicks?.length || 0) + (region.PendingFluidTicks?.length || 0)
+      }
+      if (entities) losses.push(`${entities} 个实体不会写入导出文件`)
+      if (blockEntities) losses.push(`${blockEntities} 个方块实体的数据不会写入导出文件（如容器内容、告示牌文字）`)
+      if (ticks) losses.push(`${ticks} 个计划刻不会写入导出文件`)
+      build.losses = losses
+      build.original = { name: path.basename(name), dataBase64: buf.toString('base64') }
+      validateBuild(build)
+      if (build.stats?.skippedBadRef) throw new Error('文件含无效调色板引用，未导入。请修复原文件后重试')
+      return { build, warnings: losses }
     },
 
     /** 导出 .schem / .litematic（返回 base64，前端落成 Blob 下载） */
@@ -164,6 +191,9 @@ export function activate() {
       const format = String((input && input.format) || 'schem').toLowerCase()
       if (format !== 'schem' && format !== 'litematic') throw new Error('未知导出格式：' + format)
       const build = (input && input.build) || {}
+      validateBuild(build)
+      if (build.losses?.length && !input.allowLossy) throw new Error('该建筑含不能导出的数据：' + build.losses.join('；') + '。保留原件并明确允许仅导出方块后，传 allowLossy=true')
+      if (!build.dataVersion) throw new Error('无法确定建筑的游戏数据版本。请从目标游戏导入结构文件，或在建筑数据中明确提供 dataVersion 后导出')
       const bytes = format === 'litematic' ? writeLitematic(build) : writeSchem(build)
       return {
         filename: safeName(build.name) + '.' + format,

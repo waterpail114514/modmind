@@ -21,6 +21,7 @@ export function applyAppearance(value: AppAppearance): void {
   const next = normalizeAppearance(value)
   document.documentElement.dataset.themePreset = next.themePreset
   document.documentElement.dataset.themeMode = next.darkMode ? 'dark' : 'light'
+  document.documentElement.style.zoom = String((next.fontScale ?? 100) / 100)
   if (next.background?.media?.file !== current.background?.media?.file) backgroundReady = false
   renderPalette(next)
   if (JSON.stringify(next) === JSON.stringify(current)) return

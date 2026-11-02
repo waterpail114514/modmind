@@ -55,11 +55,11 @@ export function inspirationFeaturePrompt(features: InspirationFeatures, imageStu
   return `本轮灵感台分析功能由用户勾选决定：\n${INSPIRATION_FEATURES.map(({ id, label }) => `- ${label}：${id === 'imageGeneration' && !imageStudioAvailable ? '图像工坊插件未安装或未启用 [FEATURE_PLUGIN_UNAVAILABLE]；安装并启用后可用。这不是用户取消勾选' : features[id] ? '已启用，按任务需要使用' : '用户禁止使用（未勾选）[USER_DISABLED_TOOL]，本轮不得使用或绕过'}`).join('\n')}
 被标记 USER_DISABLED_TOOL 的能力是用户主动禁止，不是工具掉线、未安装或审批故障；不要重试、自行修复或误称全部工具不可用。已启用工具的连接故障不得归因于用户禁用。
 未启用的工具不可通过命令、插件或其他工具绕过；需要时提示用户在「分析功能」中勾选后重新发送。勾选只开放能力，不要求每轮使用全部功能。
-项目知识的读取、整理与自动保存分别遵守对应开关。取消勾选后，即使用户提及记住或保存，也不得绕过；请用户启用后重发。知识整理通过结构化回答的 knowledgeCandidates 提交给宿主，灵感台不要额外调用知识 save 工具重复写入。已确定的内容必须附真实用户来源与原文引用；建议、猜测、未选择的数值不能作为确定知识。保存仅写当前项目的应用管理知识，不修改源码；不能在回复里宣称已保存，实际结果由宿主显示。
+项目知识的读取、整理与自动保存分别遵守对应开关。取消勾选后，即使用户提及记住或保存，也不得绕过；请用户启用后重发。知识整理通过 modmind_inspiration_submit 的 knowledge 提交给宿主，灵感台不要额外调用知识 save 工具重复写入。已确定的内容必须附本轮用户原文引用，消息来源编号由宿主绑定；建议、猜测、未选择的数值不能作为确定知识。保存仅写当前项目的应用管理知识，不修改源码；不能在回复里宣称已保存，实际结果由宿主显示。
 ${features.autoQuestions ? '自动提问：只追问会改变目标、范围或核心玩法的缺口。详尽且无冲突的需求默认零个问题，通常一个关键问题，最多三个；不重复已回答问题。' : '用户禁止自动提问：不要追问或输出 questions；缺信息时说明缺口，提示词保持草稿，不自行编造需求。'}
 ${features.suggestions ? '方案建议：按需给零到两条具体建议，未采用的建议不是已确认需求。' : '用户禁止方案建议：不要主动推荐、扩充功能或输出 suggestions。'}
-${features.promptOptimization ? '提示词优化：仅制作或修改任务产出 prompt，保持原需求语义、关键限制和验收标准；纯讨论/查询令 prompt 为 null。' : '用户禁止提示词优化：不要生成、改写 prompt，令 prompt 为 null。'}
-${features.knowledgeOrganization ? '整理项目知识：只提出有用户依据的确定知识，保留无关已有内容和任务作用范围；不要把临时设定升级为全局偏好。' : '用户禁止整理项目知识：knowledgeCandidates 必须为空，不保存知识。'}
+${features.promptOptimization ? '提示词优化：仅制作或修改任务产出 prompt，保持原需求语义、关键限制和验收标准；纯讨论/查询不提交 prompt。' : '用户禁止提示词优化：不要生成、改写 prompt，令 prompt 为 null。'}
+${features.knowledgeOrganization ? '整理项目知识：只提出有用户依据的确定知识，保留无关已有内容和任务作用范围；不要把临时设定升级为全局偏好。' : '用户禁止整理项目知识：不要提交 knowledge，不保存知识。'}
 ${features.autoSaveKnowledge ? '自动保存由宿主在完整校验与来源校验后执行，不意味着保存未确认建议。' : '用户禁止自动保存知识：只能展示知识候选，由用户手动确认，不能通过任何工具自动写入。'}
 ${features.deepAnalysis ? '深入分析：按问题逐步检索相关文件、追踪类和方法，读取充分证据后回答；避免无关全仓扫描。' : '快速回答：普通项目问题最多进行 3 次目录发现、搜索或文本读取；超出时说明需要启用「深入读项目」。'}
 JAR 分析使用 modmind_research：先 inspect，再按需 decompile、files、search、read。compare 对比两个 JAR；references 检查引用和声明；logs 提取日志证据，text 分页读取完整日志。专用工具可在独立缓存中解压、建立索引和反编译，不改变项目源码，也不运行上传的 JAR。不要把二进制交给文本读取工具。

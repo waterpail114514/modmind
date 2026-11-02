@@ -1,18 +1,21 @@
-# 分支与工作区
+# 版本线与发布位置
 
-2026 年 10 月 1 日，用户决定将功能插件版本合并到 main，并将旧版保留为 1.4.14。
+## 版本与仓库
 
-| 用途 | 分支 | 工作目录 |
+| 版本线 | 仓库 | 下载 |
 | --- | --- | --- |
-| 当前开发与功能发布 | main | `E:\waterpail\桌面\新建文件夹\modmind` |
-| 插件拆分前的正式版备份 | 1.4.14 | `D:\Codex\UserData\worktrees\modmind-1-4-14\modmind` |
+| 桌面 2.0 预览版 | [modmind](https://github.com/waterpail114514/modmind) | [2.0.0-preview.1](https://github.com/waterpail114514/modmind/releases/tag/2.0.0-preview.1) |
+| 桌面 1.4 维护版 | [modmind-1.4](https://github.com/waterpail114514/modmind-1.4) | [最新维护版](https://github.com/waterpail114514/modmind-1.4/releases/latest) |
+| Android 独立版 | [modmind-mobile](https://github.com/waterpail114514/modmind-mobile) | [1.0.0-preview.1](https://github.com/waterpail114514/modmind-mobile/releases/tag/1.0.0-preview.1) |
 
-1.4.14 备份分支以正式版提交 `f601385` 为基础，快照提交 `499eafab` 额外保存了两个原本未跟踪的验证脚本和内嵌 Blockbench 运行文件。
+三个仓库保留各自开发历史。Android 独立版源码位于 `android-mobile/`，与桌面仓库中的 `android-twa/` 网页壳不同。
 
-备份工作区还保留 1.4.14 安装包、blockmap、发布校验记录、文档和手工验收脚本。文件校验记录见备份工作区的 `docs/1.4.14-backup-manifest.json`。构建缓存和 node_modules 不属于源码备份，必要时可在备份工作区独立安装依赖并重新构建。
+## 本地工作区
 
-main 采用原生功能插件架构，同时保留正式版后续的项目命名、项目知识清理、更新日志和工具恢复改动。暂时继续使用 `1.5.0-plugintest` 版本及插件 API 2 合同，下一次正式发版再统一调整发布版本，不混用 1.4.14 安装包。
+原有本地分支与 worktree 保留，避免中断已有开发。
 
-双击发布官方功能的入口现在在 main 根目录。发布工具以自身所在项目目录解析 `feature-release/features`，不依赖旧的 plugintest 工作区路径；密钥仍保存在 Windows 用户加密配置中。
+- `main` → `origin/main`（modmind），桌面 2.0 预览系列。
+- `1.4` → `legacy/1.4`（modmind-1.4），维护系列。
+- `codex/mobile` → `mobile/main`（modmind-mobile），Android 独立版。
 
-合并和备份只修改本地 Git；没有推送远端、生成新安装包或上传存储桶文件。
+不同工作区应独立维护依赖和构建产物。发布附件放 GitHub Releases；不提交本地配置、凭据、密钥、依赖缓存、运行时私有数据或测试临时目录。旧桌面仓库的历史 Release 保留，新的 1.4 维护版从专用仓库下载。

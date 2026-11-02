@@ -7,6 +7,7 @@ function historyBytes(messages: InspirationChatMessage[]): number {
   if (cached !== undefined) return cached
   let bytes = 0
   for (const message of messages) bytes += 512 + message.content.length * 2 + (message.replay?.prompt.length ?? 0) * 2 + (message.replay?.attachments?.length ?? 0) * 2048
+    + (message.reasoning ? [...message.reasoning.summary, ...message.reasoning.text].reduce((size, part) => size + part.length * 2, 0) : 0)
   weights.set(messages, bytes)
   return bytes
 }

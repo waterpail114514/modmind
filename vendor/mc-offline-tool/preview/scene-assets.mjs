@@ -180,7 +180,8 @@ export function createSceneAssets({ instanceDir, mcDir = mcRoot(), pad = 2, log 
 
   function load() {
     if (DB) return DB
-    const clientJar = fs.readdirSync(instanceDir).find((f) => f.endsWith('.jar'))
+    const jarNames = fs.readdirSync(instanceDir).filter(f => f.endsWith('.jar'))
+    const clientJar = jarNames.includes(path.basename(instanceDir)+'.jar') ? path.basename(instanceDir)+'.jar' : jarNames[0]
     if (!clientJar) throw new Error('实例目录里找不到客户端 jar：' + instanceDir)
     const srcs = [[path.join(instanceDir, clientJar), 0]]
     ;(function walk(d) {
@@ -195,11 +196,15 @@ export function createSceneAssets({ instanceDir, mcDir = mcRoot(), pad = 2, log 
     if (fs.existsSync(modsDir)) for (const f of fs.readdirSync(modsDir).sort()) if (f.endsWith('.jar')) srcs.push([path.join(modsDir, f), 2])
 
     const blockstates = new Map(), models = new Map(), tex = new Map()
+    let sourceDataVersion
     for (const [p, prio] of srcs.sort((a, b) => a[1] - b[1])) {
       let buf; try { buf = fs.readFileSync(p) } catch { continue }
       let es; try { es = listEntries(buf) } catch { continue }
       for (const e of es) {
         const n = e.name
+        if (n === 'version.json' && prio === 0) {
+          try { const version = JSON.parse(readEntryFast(buf,e)); if(Number.isInteger(version.world_version)) sourceDataVersion = version.world_version; } catch {}
+        }
         if (!n.startsWith('assets/') || n.endsWith('/')) continue
         const q = n.split('/')
         if (q.length < 4) continue
@@ -212,7 +217,7 @@ export function createSceneAssets({ instanceDir, mcDir = mcRoot(), pad = 2, log 
       }
     }
     log(`实例读入：blockstates ${blockstates.size} / models ${models.size} / textures ${tex.size}（源自 ${srcs.length} 个 jar）`)
-    DB = { blockstates, models, tex }
+    DB = { blockstates, models, tex, dataVersion: sourceDataVersion }
     return DB
   }
 
@@ -242,7 +247,7 @@ export function createSceneAssets({ instanceDir, mcDir = mcRoot(), pad = 2, log 
       const m = models.get(cid)
       if (!m?.textures) continue
       const ns = nsOf(cid)
-      for (const [k, v] of Object.entries(m.textures)) if (typeof v === 'string' && !(k in out)) out[k] = v.startsWith('#') ? v : pickNs(v, ns, 'tex')
+      for (const [k, v] of Object.entries(m.textures)) if (typeof v === 'string') out[k] = v.startsWith('#') ? v : pickNs(v, ns, 'tex')
     }
     return out
   }

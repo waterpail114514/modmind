@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { promises as fs, readFileSync, createReadStream } from "node:fs"
 import { DependencyService } from "./src/main/dependencyService"
 import { AddonRelationshipService, readAddonRelationships } from "./src/main/addonRelationshipService"
@@ -102,7 +104,7 @@ async function linkAddonProject(project: ProjectInfo, projectPath: string, signa
     });
 }
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "relationships" }, () => handler(host.event(), ...(input.args as any[]))) }
 let dependencyService: DependencyService | null = null;
 let addonRelationshipService: AddonRelationshipService | null = null;
 function requireDependencyService(): DependencyService {

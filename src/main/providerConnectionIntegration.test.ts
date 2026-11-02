@@ -67,7 +67,7 @@ describe('provider discovery main integration', () => {
     const update = vi.fn(async value => value)
     const query = vi.fn(async () => { throw new DeviceApiError('unauthorized', 401) })
     const state = production(['refreshDeviceUsage', 'publicDeviceState', 'isFreeDeviceAccount', 'sameDeviceCredentials'], {
-      DeviceApiError, providerOwnerKey, quotaModelSwitchInProgress: false, quotaRouter: () => ({ recoveryRequired: async () => false }),
+      DeviceApiError, providerOwnerKey, providerCatalogRevision: 0, quotaModelSwitchInProgress: false, quotaRouter: () => ({ recoveryRequired: async () => false }),
       readDeviceCredentials: async () => current, QUOTA_USAGE_MAX_AGE_MS: 120_000,
       queryDeviceUsage: query, updateCurrentDeviceUsage: vi.fn(), removeCurrentDeviceCredentials: remove,
       providerSync: () => ({ refresh }), updateDeviceState: update, readDeviceState: readState,
@@ -76,15 +76,15 @@ describe('provider discovery main integration', () => {
     return { state, refresh, remove, query, update, readState, current: () => current, replace: (value: any) => { current = value } }
   }
 
-  it('refreshes connections on a v2 usage 401 and retains the original selection and last usage', async () => {
+  it('does not import website routes on a usage 401 and retains the catalog and last usage', async () => {
     const h = usage(), previous = h.current()
     h.refresh.mockImplementation(async () => h.replace({ ...previous, account: 'secondary', apiKey: 'new-paid-key', baseUrl: 'https://paid.invalid/v1', sync: { ...secondary, defaults: previous.sync.defaults } }))
     const result = await h.state.refreshDeviceUsage()
-    expect(result).toMatchObject({ status: 'connected', account: 'ls', balanceCents: '123', message: '连接已刷新，用量暂不可用' })
+    expect(result).toMatchObject({ status: 'connected', account: 'ls', balanceCents: '123', message: '用量暂不可用，已保留现有连接；请手动刷新连接' })
     expect(h.current().sync.defaults).toEqual(previous.sync.defaults)
     expect(h.current().sync.connections).toHaveLength(2)
     expect(h.current().usage).toEqual(previous.usage)
-    expect(h.refresh).toHaveBeenCalledOnce(); expect(h.query).toHaveBeenCalledOnce(); expect(h.remove).not.toHaveBeenCalled()
+    expect(h.refresh).not.toHaveBeenCalled(); expect(h.query).toHaveBeenCalledOnce(); expect(h.remove).not.toHaveBeenCalled()
   })
 
   it('retains every connection and usage snapshot when v2 discovery also fails', async () => {

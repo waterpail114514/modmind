@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from "../../src/main/modpackService"
 import { inspectFtbQuestIcon, refreshFtbQuestResources, resolveFtbQuestDependencyTexture, resolveFtbQuestIcon, resolveFtbQuestItemNames, resolveFtbQuestShapes } from "./src/main/ftbquesticonservice"
 import path from 'node:path'
@@ -14,7 +16,7 @@ const ftbProject = (expected: unknown): import('../../src/shared/types').Project
   return { ...project }
 }
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "ftb-quests" }, () => handler(host.event(), ...(input.args as any[]))) }
 diagnosticHandle('modpack:readFtbQuestBook', (_event, projectPath: unknown) => readFtbQuestBook(ftbProject(projectPath)));
 diagnosticHandle('modpack:listFtbQuestBackups', (_event, projectPath: unknown) => listFtbQuestBackups(ftbProject(projectPath)));
 diagnosticHandle('modpack:restoreFtbQuestBackup', (_event, projectPath: unknown, id: unknown, baseline: unknown) => {

@@ -4,6 +4,8 @@ import { LoaderCircle, RotateCcw, Search } from 'lucide-react'
 import type { AiModelInfo, BeginnerAiPreferences, DeviceConnectionState } from '../../../shared/types'
 import type { QuotaModelCatalog } from '../../../shared/quotaModels'
 import { quotaModelDisplayMetadata, quotaModelOptionKey } from '../../../shared/quotaModels'
+import { deviceModelCatalogKey } from '../../../shared/deviceModelCatalog'
+import { loadQuotaModelCatalog } from '../loadQuotaModelCatalog'
 import './quota-model-picker.css'
 import gptCharacter from '../assets/model-characters/gpt.webp'
 import geminiCharacter from '../assets/model-characters/gemini.webp'
@@ -45,14 +47,21 @@ export default function QuotaModelPicker({ preferences, device, disabled, onAppl
   const rows = useRef<HTMLDivElement>(null)
   const retryTimer = useRef<ReturnType<typeof setTimeout>>()
   const discovery = useRef(false)
+  const catalogIdentity = useRef<string>()
+  const catalogOwner = useRef<string>()
+  const ownerIdentity = device.status === 'disconnected' ? undefined : JSON.stringify([device.siteUrl, device.username, device.provider, device.providerId])
+  if (device.status === 'connected') catalogIdentity.current = deviceModelCatalogKey(device)
+  else if (device.status === 'disconnected') catalogIdentity.current = undefined
   const load = useCallback(async (force = false, discover = false) => {
     if (discovery.current) return
     if (discover) { discovery.current = true; setScanning(true) }
     const sequence = ++request.current
     setLoading(true)
     try {
-      const value = discover ? await window.modmind.device.discoverModels() : await window.modmind.device.getModelCatalog(force)
-      if (mounted.current && sequence === request.current) { setCatalog(value); setFeedback(''); setFailed(false) }
+      const value = await loadQuotaModelCatalog(saved => {
+        if (mounted.current && sequence === request.current) setCatalog(saved)
+      }, discover, force)
+      if (mounted.current && sequence === request.current) { setCatalog(value); setFeedback(value.stale ? value.message || '无法更新模型列表，请重试' : ''); setFailed(value.stale) }
     } catch {
       if (mounted.current && sequence === request.current) { setFeedback('无法读取模型列表，请重试'); setFailed(true) }
     } finally {
@@ -65,6 +74,10 @@ export default function QuotaModelPicker({ preferences, device, disabled, onAppl
     return () => { mounted.current = false; request.current++; clearTimeout(retryTimer.current) }
   }, [])
   useEffect(() => {
+    if (catalogOwner.current !== ownerIdentity) { request.current++; setCatalog(null); setSelectionError(undefined) }
+    catalogOwner.current = ownerIdentity
+  }, [ownerIdentity])
+  useEffect(() => {
     const element = root.current
     if (!element) return
     const observer = new ResizeObserver(([entry]) => {
@@ -75,14 +88,14 @@ export default function QuotaModelPicker({ preferences, device, disabled, onAppl
     return () => observer.disconnect()
   }, [device.provider])
   useEffect(() => {
-    if (device.provider === 'custom') return
+    if (device.provider === 'custom' || !catalogIdentity.current) return
     let started = false
     const observer = new IntersectionObserver(entries => {
       if (!started && entries.some(entry => entry.isIntersecting)) { started = true; void load(); observer.disconnect() }
     })
     if (root.current) observer.observe(root.current)
     return () => { observer.disconnect(); if (!discovery.current) request.current++ }
-  }, [device, preferences.model, preferences.account, preferences.group, load])
+  }, [catalogIdentity.current, preferences.model, preferences.account, preferences.group, load])
   useLayoutEffect(() => {
     const element = list.current, content = rows.current
     if (!element || !content || device.provider === 'custom' || query.trim()) return

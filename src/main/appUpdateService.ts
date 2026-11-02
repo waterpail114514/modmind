@@ -8,6 +8,8 @@ import { autoUpdater, type AppUpdater } from 'electron-updater'
 import type { AppUpdateState, AppVersionCheckResult } from '../shared/types'
 import { decideAppUpdate } from './appUpdatePolicy'
 import { downloadActivities } from './downloadActivityService'
+import { diagnosticJournal } from './diagnosticLog'
+import { diagnosticValue } from './diagnosticContext'
 
 const PENDING_UPDATE_SCHEMA = 1
 const MIN_INSTALLER_BYTES = 10 * 1024 * 1024
@@ -36,6 +38,7 @@ interface AppUpdateServiceOptions {
 }
 
 function describeError(error: unknown): string {
+  diagnosticJournal.record({ subsystem: 'update', operation: 'upstream-error', phase: 'error', level: 'error', message: 'Original updater error before presentation', error })
   return error instanceof Error ? error.message : String(error)
 }
 
@@ -573,6 +576,7 @@ export class AppUpdateService {
   }
 
   private setState(state: AppUpdateState): void {
+    if (state.phase !== this.state.phase) diagnosticJournal.recordCritical({ subsystem: 'update', operation: state.operation ?? 'update', phase: state.phase, level: state.phase === 'error' ? 'error' : 'info', message: state.message ?? `Update ${state.phase}`, data: { state, source: diagnosticValue(this.options.updateUrl, 'url'), candidate: diagnosticValue(this.candidate) } })
     this.state = { ...state, ...(this.installAfterDownload ? { installAfterDownload: true } : {}) }
     for (const listener of this.listeners) listener(this.snapshot())
   }

@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, promises as fs } from 'node:fs'
 import { createInterface } from 'node:readline'
 import path from 'node:path'
-import { gzip, gunzip } from 'node:zlib'
+import { gzip, gunzip, createGunzip, createGzip } from 'node:zlib'
+import { Readable } from 'node:stream'
 import * as lockfile from 'proper-lockfile'
 import type { ConversationEventRecord, WorkbenchDataReadResult, WorkbenchDataWriteResult } from '../shared/types'
 import { isMissingFileError, retryTransientFileLock } from './fileLockRetry'
@@ -443,6 +444,126 @@ export class WorkbenchDataStore {
     const key = normalizeWorkbenchKey(relativePath)
     await this.waitForLane(this.laneKey(projectPath, key))
     return this.readCached(path.resolve(projectPath), key)
+  }
+
+  /** Fingerprint for rebuildable, streamed projections; never a validity substitute. */
+  conversationProjectionCacheDirectory(): string { return path.join(this.userDataPath, 'conversation-page-cache', String(process.pid)) }
+
+  /** The caller holds the conversation lock; preserve redundant snapshots without a giant JSON string. */
+  async writeDocumentStream(projectPath: string, relativePath: string, chunks: AsyncIterable<string>): Promise<WorkbenchDataWriteResult> {
+    const key = normalizeWorkbenchKey(relativePath)
+    if (!key.startsWith('.modmind/conversations-v2/') || key.endsWith('/index.json')) throw new Error('Invalid streamed conversation key')
+    await this.waitForLane(this.laneKey(projectPath, key))
+    const directory = this.conversationProjectionCacheDirectory()
+    await fs.mkdir(directory, { recursive: true })
+    const temporary = path.join(directory, `${randomUUID()}.document.tmp`), handle = await fs.open(temporary, 'wx', 0o600)
+    const digest = createHash('sha256'); let bytes = 0
+    try {
+      try {
+        for await (const text of chunks) {
+          const chunk = Buffer.from(text, 'utf8'); bytes += chunk.length
+          if (bytes > MAX_CONTENT_BYTES) throw new Error('工作台对话数据超过 256 MB 安全上限')
+          digest.update(chunk); await handle.write(chunk)
+        }
+        await handle.sync()
+      } finally { await handle.close() }
+      const roots = this.roots(projectPath, key)
+      const revisions = await Promise.all(Object.entries(roots).map(([replica, root]) => this.discoverCandidates(replica as ReplicaName, root)))
+      const revision = Math.max(this.revisions.get(this.laneKey(projectPath, key)) ?? 0, ...revisions.map(r => r.maxRevision)) + 1
+      const metadata: SnapshotMetadata = { schemaVersion: STORE_SCHEMA_VERSION, key, revision, checksum: digest.digest('hex'), contentBytes: bytes, committedAt: new Date().toISOString() }
+      async function* payload(): AsyncGenerator<Buffer> { yield Buffer.from(JSON.stringify(metadata) + '\n'); yield* createReadStream(temporary) }
+      const source = Readable.from(payload()), zipper = createGzip({ level: 6 }), compressed: Buffer[] = []
+      source.on('error', error => zipper.destroy(error)); source.pipe(zipper)
+      try { for await (const chunk of zipper) compressed.push(chunk as Buffer) } finally { source.destroy(); zipper.destroy() }
+      const archive = Buffer.concat(compressed)
+      const results = await Promise.allSettled(Object.values(roots).map(root => this.writeReplica(root, metadata, archive)))
+      let compatibilityWritten = false
+      try {
+        const target = this.compatibilityPath(projectPath, key), copy = `${target}.${randomUUID()}.tmp`
+        await fs.mkdir(path.dirname(target), { recursive: true }); await fs.copyFile(temporary, copy)
+        const durable = await fs.open(copy, 'r+'); try { await durable.sync() } finally { await durable.close() }
+        try {
+          await retryTransientFileLock(async () => {
+            if (await pathExists(target)) { await fs.rm(`${target}.previous`, { force: true }); await fs.rename(target, `${target}.previous`) }
+            await fs.rename(copy, target)
+          })
+          await syncDirectory(path.dirname(target)); compatibilityWritten = true
+        } finally { await fs.rm(copy, { force: true }).catch(() => undefined) }
+      } catch (error) { if (results.every(r => r.status === 'rejected')) throw error }
+      if (!compatibilityWritten || results.some(r => r.status === 'rejected')) this.diagnostic({ level: 'warning', operation: 'commit-degraded', message: '对话已保存，部分冗余副本未同步', data: { key, revision, compatibilityWritten } })
+      this.revisions.set(this.laneKey(projectPath, key), revision)
+      this.snapshotNames.set(this.laneKey(projectPath, key), snapshotFileName(revision, metadata.checksum))
+      this.dropReadCache(this.laneKey(projectPath, key))
+      const copies = { project: results[0].status === 'fulfilled', mirror: results[1].status === 'fulfilled', compatibility: compatibilityWritten }
+      return { revision, bytes, copies, durability: copies.project && copies.mirror ? 'redundant' : 'degraded', ...(copies.project && copies.mirror ? {} : { warning: '对话已保存到至少一个位置，但冗余备份未全部完成' }) }
+    } finally { await fs.rm(temporary, { force: true }).catch(() => undefined) }
+  }
+
+  async documentSignature(projectPath: string, relativePath: string): Promise<string> {
+    const key = normalizeWorkbenchKey(relativePath)
+    await this.waitForLane(this.laneKey(projectPath, key))
+    return this.fingerprint(path.resolve(projectPath), key)
+  }
+
+  /** Read a verified snapshot incrementally without materializing/healing its entire JSON. */
+  async streamDocument<T>(projectPath: string, relativePath: string, consume: (chunks: AsyncIterable<Buffer>) => Promise<T>): Promise<T | null> {
+    const key = normalizeWorkbenchKey(relativePath)
+    await this.waitForLane(this.laneKey(projectPath, key))
+    const discovered = await Promise.all(Object.entries(this.roots(projectPath, key)).map(([replica, root]) => this.discoverCandidates(replica as ReplicaName, root)))
+    const candidates = discovered.flatMap(item => item.candidates).sort((a, b) => b.advertisedRevision - a.advertisedRevision || Number(b.fromHead) - Number(a.fromHead))
+    const failures: unknown[] = discovered.flatMap(item => item.errors)
+    for (const candidate of candidates) {
+      const source = createReadStream(path.join(candidate.root, 'revisions', candidate.file))
+      const unzip = createGunzip()
+      source.on('error', error => unzip.destroy(error))
+      source.pipe(unzip)
+      let metadata: SnapshotMetadata | undefined, bytes = 0
+      const digest = createHash('sha256')
+      async function* content(): AsyncGenerator<Buffer> {
+        let header = Buffer.alloc(0)
+        for await (const raw of unzip) {
+          let chunk = raw as Buffer
+          if (!metadata) {
+            const separator = chunk.indexOf(10)
+            if (separator < 0) { header = Buffer.concat([header, chunk]); if (header.length > 64 * 1024) throw new Error('Snapshot header too large'); continue }
+            header = Buffer.concat([header, chunk.subarray(0, separator)])
+            metadata = JSON.parse(header.toString('utf8')) as SnapshotMetadata
+            if (metadata.schemaVersion !== STORE_SCHEMA_VERSION || metadata.key !== key || metadata.revision !== candidate.advertisedRevision) throw new Error('Invalid snapshot metadata')
+            chunk = chunk.subarray(separator + 1)
+          }
+          bytes += chunk.length
+          if (bytes > MAX_CONTENT_BYTES) throw new Error('工作台对话数据超过 256 MB 安全上限')
+          digest.update(chunk)
+          if (chunk.length) yield chunk
+        }
+      }
+      try {
+        // The JSON consumer validates the whole document before its derived result is published.
+        const iterator = content(), first = await iterator.next()
+        if (!metadata) throw new Error('Snapshot metadata missing')
+        if (metadata.deleted) {
+          while (!(await iterator.next()).done) { /* Validate the entire deletion record too. */ }
+          if (metadata.contentBytes !== bytes || bytes !== 0 || metadata.checksum !== digest.digest('hex')) throw new Error('Invalid deletion snapshot')
+          return null
+        }
+        async function* chunks(): AsyncGenerator<Buffer> { if (!first.done) yield first.value; yield* iterator }
+        const result = await consume(chunks())
+        if (metadata.contentBytes !== bytes || metadata.checksum !== digest.digest('hex')) throw new Error('Snapshot checksum mismatch')
+        return result
+      } catch (error) { failures.push(error) }
+      finally { source.destroy(); unzip.destroy() }
+    }
+    const compatibility = this.compatibilityPath(projectPath, key)
+    try {
+      const stat = await fs.stat(compatibility)
+      if (!stat.isFile() || stat.size > MAX_CONTENT_BYTES) throw new Error('Invalid conversation document')
+      const source = createReadStream(compatibility)
+      try { return await consume(source) } finally { source.destroy() }
+    } catch (error) {
+      if (isMissingFileError(error) && !candidates.length && !failures.length) return null
+      failures.push(error)
+      throw new AggregateError(failures, '工作台对话数据当前无法通过完整性校验，已阻止覆盖')
+    }
   }
 
   withConversationLock<T>(projectPath: string, conversationId: string, operation: () => Promise<T>): Promise<T> {

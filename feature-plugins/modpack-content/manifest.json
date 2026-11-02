@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "modpack-content",
   "name": "文件清单",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -13,7 +13,7 @@
       "id": "modpack-manifest",
       "label": "文件清单",
       "component": "modpack-manifest",
-      "icon": "Archive",
+      "icon": "ListTree",
       "group": "内容",
       "order": 10
     },
@@ -34,14 +34,6 @@
       "order": 30
     },
     {
-      "id": "modpack-datapacks",
-      "label": "数据包",
-      "component": "modpack-datapacks",
-      "icon": "Archive",
-      "group": "内容",
-      "order": 40
-    },
-    {
       "id": "modpack-shaders",
       "label": "光影包",
       "component": "modpack-shaders",
@@ -53,7 +45,7 @@
       "id": "modpack-ui",
       "label": "界面资源",
       "component": "modpack-ui",
-      "icon": "WandSparkles",
+      "icon": "LayoutTemplate",
       "group": "内容",
       "order": 70
     },
@@ -61,7 +53,7 @@
       "id": "modpack-worlds",
       "label": "存档与世界",
       "component": "modpack-worlds",
-      "icon": "Save",
+      "icon": "Globe2",
       "group": "内容",
       "order": 80
     },
@@ -105,5 +97,8 @@
     "quilt",
     "forge",
     "neoforge"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

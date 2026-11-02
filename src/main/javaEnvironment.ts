@@ -6,7 +6,10 @@ import path from 'node:path'
 function windowsSocketDirectory(base: NodeJS.ProcessEnv): string {
   if (process.platform !== 'win32') return ''
   try {
-    const directory = path.join(base.LOCALAPPDATA || os.tmpdir(), 'ModMind', 'java-sockets')
+    // Roaming profiles may be redirected to a different volume. Use the
+    // application's writable data volume rather than the stale Local profile
+    // path, which Windows JDK 17 can reject for AF_UNIX self-connections.
+    const directory = path.join(base.APPDATA || base.LOCALAPPDATA || os.tmpdir(), 'ModMind', 'java-sockets')
     mkdirSync(directory, { recursive: true })
     return `-Djdk.net.unixdomain.tmpdir="${realpathSync.native(directory)}"`
   } catch { return '' }

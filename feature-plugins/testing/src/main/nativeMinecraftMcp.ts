@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import sharp from 'sharp'
 import { app } from 'electron'
-import catalog from "./nativeMinecraftMcpCatalog.json"
-import screenshotHelper from "./nativeMinecraftMcpHelper.json"
-import { verifiedDownload } from "../../../../src/main/downloadService"
-import { archiveFileInfo, archiveRead } from "../../../../src/main/archiveInspection"
-import { createStoredZip } from "../../../../src/main/bedrockAddon"
+import catalog from './nativeMinecraftMcpCatalog.json'
+import screenshotHelper from './nativeMinecraftMcpHelper.json'
+import helper263 from '../../../../src/main/nativeMinecraftMcp263Helper.json'
+import { verifiedDownload } from '../../../../src/main/downloadService'
+import { archiveFileInfo, archiveRead } from '../../../../src/main/archiveInspection'
+import { createStoredZip } from '../../../../src/main/bedrockAddon'
 
 export function nativeMcpFor(minecraft: string, loader: string) {
   return catalog.entries.find(entry => entry.minecraft === minecraft && entry.loader === loader)
@@ -15,6 +17,10 @@ export const nativeMcpRelease = catalog.release
 
 /** Change only an exact CONSTANT_Utf8 entry; never replace arbitrary class bytes. */
 export function restrictMcpServerAddress(bytes: Buffer): Buffer {
+  return replaceClassConstant(bytes, '0.0.0.0', '127.0.0.1', 'MCP 上游监听地址与已审核版本不一致')
+}
+
+function replaceClassConstant(bytes: Buffer, from: string, to: string, mismatch: string): Buffer {
   if (bytes.readUInt32BE(0) !== 0xcafebabe) throw new Error('MCP 控制插件 class 格式无效')
   const parts = [bytes.subarray(0, 10)]
   let offset = 10; let changed = 0
@@ -24,8 +30,8 @@ export function restrictMcpServerAddress(bytes: Buffer): Buffer {
       const length = bytes.readUInt16BE(offset); offset += 2
       if (offset + length > bytes.length) throw new Error('MCP 控制插件 class 已截断')
       const value = bytes.subarray(offset, offset + length).toString('utf8'); offset += length
-      if (value === '0.0.0.0') {
-        const replacement = Buffer.from('127.0.0.1'); const header = Buffer.alloc(3)
+      if (value === from) {
+        const replacement = Buffer.from(to); const header = Buffer.alloc(3)
         header[0] = 1; header.writeUInt16BE(replacement.length, 1)
         parts.push(header, replacement); changed++
         continue
@@ -39,11 +45,17 @@ export function restrictMcpServerAddress(bytes: Buffer): Buffer {
     if (offset > bytes.length) throw new Error('MCP 控制插件 class 已截断')
     parts.push(bytes.subarray(start, offset))
   }
-  if (changed !== 1) throw new Error('MCP 上游监听地址与已审核版本不一致')
+  if (changed !== 1) throw new Error(mismatch)
   return Buffer.concat([...parts, bytes.subarray(offset)])
 }
 
-export async function prepareLocalMcpJar(source: string): Promise<Buffer> {
+export async function prepareLocalMcpJar(source: string, selected?: NonNullable<ReturnType<typeof nativeMcpFor>>): Promise<Buffer> {
+  const modern = selected?.adapter === 'minecraft-26.3'
+  if (modern && (selected.minecraft !== helper263.minecraft || selected.release !== helper263.release
+    || createHash('sha256').update(await fs.readFile(source)).digest('hex') !== selected.sha256
+    || !catalog.entries.some(entry => entry.sha256 === selected.sha256 && entry.adapter === 'minecraft-26.3'))) {
+    throw new Error('MCP 26.3 发布包与已审核版本不一致')
+  }
   const entries = await archiveFileInfo(source)
   const serverClass = 'xyz/langyo/minecraft/mcp/common/McpHttpServer.class'
   if (!entries.some(entry => entry.path === serverClass) || entries.some(entry => /^META-INF\/.*\.(SF|RSA|DSA|EC)$/i.test(entry.path))) {
@@ -51,7 +63,9 @@ export async function prepareLocalMcpJar(source: string): Promise<Buffer> {
   }
   if (entries.reduce((sum, entry) => sum + entry.size, 0) > 32 * 1024 * 1024) throw new Error('MCP 发布包解压内容过大')
   const files = []
-  const replacements = new Map(screenshotHelper.classes.map(helper => {
+  const initializer = 'xyz/langyo/minecraft/mcp/mod/ModDevMcpMod.class'
+  if (modern && !entries.some(entry => entry.path === initializer)) throw new Error('MCP 26.3 初始化入口发生变化')
+  const replacements = new Map((modern ? helper263 : screenshotHelper).classes.map(helper => {
     const bytes = Buffer.from(helper.data, 'base64')
     if (createHash('sha256').update(bytes).digest('hex') !== helper.classSha256) throw new Error('MCP 截图适配器校验失败')
     return [helper.path, bytes]
@@ -59,11 +73,17 @@ export async function prepareLocalMcpJar(source: string): Promise<Buffer> {
   for (const entry of entries) {
     const data = await archiveRead(source, entry.path)
     files.push({ name: entry.path, data: entry.path === serverClass ? restrictMcpServerAddress(data)
-      : replacements.get(entry.path) ?? data })
+      : modern && entry.path === initializer ? replaceClassConstant(data, 'xyz/langyo/minecraft/mcp/common/ReflectedInputHandler',
+        'xyz/langyo/minecraft/mcp/common/ModMind263InputHandler', 'MCP 26.3 输入入口与已审核版本不一致')
+        : replacements.get(entry.path) ?? data })
+    replacements.delete(entry.path)
   }
-  files.push({ name: 'META-INF/modmind-integration.txt', data: Buffer.from(`ModMind integration of langyo/minecraft-mod-mcp ${catalog.release}.\nModified McpHttpServer.class: bind to 127.0.0.1 instead of 0.0.0.0.\nUpstream: ${catalog.source}\n`) })
+  for (const [name, data] of replacements) files.push({ name, data })
+  files.push({ name: 'META-INF/modmind-integration.txt', data: Buffer.from(`ModMind integration of langyo/minecraft-mod-mcp ${selected?.release ?? catalog.release}.\nModified McpHttpServer.class: bind to 127.0.0.1 instead of 0.0.0.0.\n${modern ? 'Modified ModDevMcpMod.class: instantiate ModMind263InputHandler for the 26.3 SDL and GPU APIs.\n' : ''}Upstream: ${catalog.source}\n`) })
   files.push({ name: 'META-INF/modmind-minecraft-mcp-LICENSE.txt', data: Buffer.from(catalog.license) })
-  files.push({ name: 'META-INF/modmind-screenshot-adapter.txt', data: Buffer.from('ScreenshotHelper.class is replaced by the ModMind native framebuffer adapter (AGPL-3.0-only). WindowHelper.class is adapted from upstream (MIT) to query actual framebuffer dimensions. Source: resources/minecraft-mcp/ in https://github.com/waterpail114514/modmind.\n') })
+  files.push({ name: 'META-INF/modmind-screenshot-adapter.txt', data: Buffer.from(modern
+    ? 'ModMind263InputHandler.class (AGPL-3.0-only) uses Minecraft 26.3 public GUI/input and asynchronous screenshot APIs. Source: resources/minecraft-mcp/ in https://github.com/waterpail114514/modmind.\n'
+    : 'ScreenshotHelper.class is replaced by the ModMind native framebuffer adapter (AGPL-3.0-only). WindowHelper.class is adapted from upstream (MIT) to query actual framebuffer dimensions. Source: resources/minecraft-mcp/ in https://github.com/waterpail114514/modmind.\n') })
   return createStoredZip(files, true)
 }
 
@@ -75,7 +95,7 @@ export async function installNativeMcp(entry: NonNullable<ReturnType<typeof nati
     destination: cache, expectedHash: { algorithm: 'sha256', value: entry.sha256 }, maxBytes: 16 * 1024 * 1024, signal
   })
   signal?.throwIfAborted()
-  const bytes = await prepareLocalMcpJar(cache)
+  const bytes = await prepareLocalMcpJar(cache, entry)
   signal?.throwIfAborted()
   await fs.mkdir(mods, { recursive: true })
   await fs.writeFile(path.join(mods, 'modmind-minecraft-mcp.jar'), bytes, { flag: 'wx' })
@@ -129,7 +149,6 @@ export class NativeMinecraftMcpClient {
     if (!match) throw new Error('MCP 没有返回原生 PNG 截图')
     const bytes = Buffer.from(match[1], 'base64')
     if (bytes.length > 8 * 1024 * 1024) throw new Error('截图过大')
-    const sharp = (await import('sharp')).default
     const picture = sharp(bytes, { limitInputPixels: 16_777_216 })
     const metadata = await picture.metadata()
     if (metadata.format !== 'png') throw new Error('截图不是 PNG')

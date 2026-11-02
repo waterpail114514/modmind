@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { modelCatalogFields, modelCatalogPath, parseDeviceModelCatalog, type DeviceModelCatalogFields } from './deviceModelCatalogApi'
 import { normalizeRelayBaseUrl, normalizeSiteUrl } from './deviceIntegration'
 import { isSelectableQuotaModel, quotaModelMetadata, quotaModelDisplayMetadata, quotaModelOptionKey, validateQuotaModelSelection } from '../shared/quotaModels'
 import type { QuotaModelCatalog, QuotaModelSelection, QuotaModelSwitchResult } from '../shared/quotaModels'
@@ -8,7 +9,7 @@ import type { RoutingSession } from './quotaModelRouting'
 import { validProviderAccount, validProviderKind, PROVIDER_SYNC_CAPABILITY_HEADERS, PAID_PROVIDER_ACCOUNTS } from '../shared/providerAccounts'
 import { parseProviderGroups, type ProviderGroup } from '../shared/providerRoutes'
 
-export interface ProviderConnection {
+export interface ProviderConnection extends DeviceModelCatalogFields {
   account: string; label: string; kind: 'free' | 'paid'; baseUrl: string; inferenceBaseUrl: string
   apiKey: string; model: string | null; models?: string[]; group: string | null; node: string | null
 }
@@ -19,7 +20,7 @@ export interface ProviderSnapshot {
 }
 export { validProviderAccount } from '../shared/providerAccounts'
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-class ProviderRequestError extends Error { constructor(message: string, readonly status: number, readonly requiresProviderSync = false) { super(message) } }
+class ProviderRequestError extends Error { constructor(message: string, readonly status: number, readonly requiresProviderSync = false, readonly code?: string) { super(message) } }
 interface DirectoryProvider { account: string; label: string; kind: 'free' | 'paid'; groups: ProviderGroup[] }
 interface DirectoryState { account: string; group: string | null; canSwitch: boolean; canSwitchProvider: boolean; providers: DirectoryProvider[] }
 export function parseProviderSnapshot(value: unknown): ProviderSnapshot {
@@ -31,13 +32,13 @@ export function parseProviderSnapshot(value: unknown): ProviderSnapshot {
     if (!validProviderAccount(c.account) || accounts.has(c.account) || !validProviderKind(c.account, c.kind)) throw new Error('供应商标识或计费类型无效')
     accounts.add(c.account)
     if (typeof c.apiKey !== 'string' || !c.apiKey.trim() || c.apiKey.length > 4096 || /[\r\n\0]/.test(c.apiKey)) throw new Error('供应商凭据无效')
-    if (c.models !== undefined && (!Array.isArray(c.models) || c.models.length > 512 || c.models.some(id => typeof id !== 'string' || !isSelectableQuotaModel(id)))) throw new Error('供应商模型列表无效')
+    if (c.models !== undefined && (!Array.isArray(c.models) || c.models.length > 16_384 || c.models.some(id => typeof id !== 'string'))) throw new Error('供应商模型列表无效')
     if (c.model !== null && c.model !== undefined && (typeof c.model !== 'string' || !isSelectableQuotaModel(c.model))) throw new Error('供应商默认模型无效')
     if ((c.group != null && typeof c.group !== 'string') || (c.node != null && typeof c.node !== 'string')) throw new Error('供应商线路无效')
     const baseUrl = normalizeRelayBaseUrl(typeof c.baseUrl === 'string' ? c.baseUrl : '')
     const inferenceBaseUrl = normalizeRelayBaseUrl(typeof c.inferenceBaseUrl === 'string' ? c.inferenceBaseUrl : `${baseUrl}${baseUrl.endsWith('/v1') ? '' : '/v1'}`)
     return { account: c.account, label: typeof c.label === 'string' ? c.label.slice(0, 256) : c.account, kind: c.kind, baseUrl, inferenceBaseUrl, apiKey: c.apiKey.trim(), model: typeof c.model === 'string' ? c.model : null,
-      ...(Array.isArray(c.models) ? { models: [...new Set(c.models as string[])] } : {}), group: typeof c.group === 'string' ? c.group : null, node: typeof c.node === 'string' ? c.node : null } as ProviderConnection
+      ...modelCatalogFields(c), ...(Array.isArray(c.models) ? { models: [...new Set((c.models as string[]).filter(isSelectableQuotaModel))].slice(0, 512) } : {}), group: typeof c.group === 'string' ? c.group : null, node: typeof c.node === 'string' ? c.node : null } as ProviderConnection
   })
   if (connections.filter(c => c.kind === 'paid').length > 1 || typeof data.defaultAccount !== 'string' || !accounts.has(data.defaultAccount)) throw new Error('供应商默认选择或付费组合无效')
   return { protocolVersion: 2, selectionRevision: Number(data.selectionRevision), defaultAccount: data.defaultAccount, connections }
@@ -59,19 +60,30 @@ export function pinProviderSelections(snapshot: ProviderSnapshot, preferences: B
   }
   return { ...snapshot, defaults: pin(snapshot.defaults ?? preferences), bindings: Object.fromEntries(Object.entries(snapshot.bindings ?? {}).map(([scope, value]) => [scope, pin(value!)])) }
 }
-/** Same-user website sync preserves local choices and never rolls back newer routes. */
-export function reconcileProviderSync(previous: ProviderSnapshot, next: ProviderSnapshot, preferences: BeginnerAiPreferences | AiModelSelection): ProviderSnapshot {
-  if (next.selectionRevision < previous.selectionRevision) throw new Error('同步信息已过期，已保留当前连接；请在官网重新同步')
-  return preserveProviderBindings(pinProviderSelections(previous, preferences), next)
+/** Reauthorization is not a client route refresh. Only explicit client actions import routes. */
+export function reconcileProviderSync(previous: ProviderSnapshot, next: ProviderSnapshot, _preferences: BeginnerAiPreferences | AiModelSelection): ProviderSnapshot {
+  if (next.selectionRevision < previous.selectionRevision) return previous
+  const connections = previous.connections.map(connection => {
+    const incoming = next.connections.find(c => c.account === connection.account && c.kind === connection.kind && c.group === connection.group)
+    if (!incoming || incoming.models === undefined) return connection
+    return { ...connection, ...modelCatalogFields(incoming as unknown as Record<string, unknown>),
+      ...(incoming.modelsReady !== false ? { models: incoming.models } : {}) }
+  })
+  return JSON.stringify(connections) === JSON.stringify(previous.connections) ? previous : { ...previous, connections }
 }
-export interface ProviderOwner { siteUrl: string; username: string; sync: ProviderSnapshot }
+export interface ProviderOwner { siteUrl: string; username: string; sync: ProviderSnapshot; authorizationKey?: string; refreshBeforeSelection?: boolean }
 export const providerOwnerKey = (c: Pick<ProviderOwner, 'siteUrl' | 'username'>): string => createHash('sha256').update(`${normalizeSiteUrl(c.siteUrl)}\0${c.username}`).digest('hex')
 export interface ProviderModelDiscovery {
   version: 1
   owner: string
   entries: Array<{ account: string; group: string | null; credential: string; at: number; models: AiModelInfo[] }>
+  directory?: DirectoryState
 }
-const DISCOVERY_TTL = 24 * 60 * 60_000
+const parseDirectoryProviders = (value: unknown): DirectoryProvider[] => (Array.isArray(value) ? value : []).slice(0, 32).flatMap(raw => {
+  const p = object(raw)
+  return validProviderAccount(p.account) && validProviderKind(p.account, p.kind)
+    ? [{ account: p.account, label: typeof p.label === 'string' ? p.label.slice(0, 256) : p.account, kind: p.kind as 'free' | 'paid', groups: parseProviderGroups(p.groups) }] : []
+})
 const cleanModel = (value: unknown): AiModelInfo | undefined => {
   const m = object(value)
   if (typeof m.id !== 'string' || !isSelectableQuotaModel(m.id)) return undefined
@@ -81,7 +93,6 @@ interface Dependencies {
   read: () => Promise<ProviderOwner | null>
   write: (previous: ProviderOwner, next: ProviderSnapshot) => Promise<void>
   readSession: () => Promise<RoutingSession | null>; writeSession: (value: RoutingSession) => Promise<void>
-  listModels: (connection: ProviderConnection) => Promise<AiModelInfo[]>
   readPreferences: () => Promise<BeginnerAiPreferences>
   applyDefaults: (selection: AiModelSelection, owner: ProviderOwner) => Promise<BeginnerAiPreferences>
   paidBusy: (account: string) => boolean
@@ -97,14 +108,14 @@ export class ProviderSyncService {
   private discoveryOwner?: string
   private discoveryTask?: Promise<void>
   private discoveryWrites: Promise<unknown> = Promise.resolve()
-  private scanCooldownUntil = 0
-  private scanPosts: number[] = []
+  private catalogDirectory?: DirectoryState
+  private savedDiscovery?: string
+  private modelWarnings = new Map<string, string>()
+  private catalogRetries = new Map<string, number>()
   private modelTasks = new Map<string, Promise<AiModelInfo[]>>()
   private directoryTasks = new Map<string, Promise<DirectoryState>>()
   private sessionTasks = new Map<string, Promise<RoutingSession>>()
   private sessionWrites: Promise<unknown> = Promise.resolve()
-  private checkedConnections?: { owner: string; at: number }
-  private connectionRetryAt = 0
   private refreshTask?: Promise<void>
   private mutation = false
   get busy(): boolean { return this.mutation || Boolean(this.refreshTask) }
@@ -112,21 +123,33 @@ export class ProviderSyncService {
   private readonly now: () => number
   constructor(private deps: Dependencies) { this.now = deps.now ?? Date.now }
   private paidBusy(): boolean { return PAID_PROVIDER_ACCOUNTS.some(account => this.deps.paidBusy(account)) }
-  invalidate(): void { this.cache.clear(); this.routes.clear(); this.checkedConnections = undefined }
+  invalidate(): void { this.cache.clear(); this.routes.clear(); this.modelWarnings.clear() }
   async initializeSession(): Promise<void> { const owner = await this.deps.read(); if (owner) await this.session(owner) }
   async routingToken(): Promise<string> {
     const owner = await this.deps.read(); if (!owner) throw new Error('请先同步供应商连接')
     return (await this.session(owner)).token
   }
   private async request(owner: ProviderOwner, path: string, bearer: string, body?: unknown): Promise<Record<string, unknown>> {
+    const retryKey = providerOwnerKey(owner) + path
+    if (path.startsWith('/api/device/models') && this.now() < (this.catalogRetries.get(retryKey) ?? 0)) throw new Error('官网模型列表暂不可用，请稍后刷新；已保留当前设置')
     let response: Response
-    try { response = await (this.deps.fetcher ?? fetch)(`${normalizeSiteUrl(owner.siteUrl)}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${bearer}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) }
+    try { response = await (this.deps.fetcher ?? fetch)(`${normalizeSiteUrl(owner.siteUrl)}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${bearer}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) }
     catch { throw new Error('无法连接模型服务，请稍后重试') }
     if (response.status === 429) { this.cooldownUntil = this.now() + Math.min(300, Math.max(1, Number(response.headers.get('Retry-After')) || 30)) * 1000 }
+    if (path.startsWith('/api/device/models') && [429, 503].includes(response.status)) {
+      const retry = response.headers.get('Retry-After')
+      const seconds = retry && Number.isFinite(Number(retry)) ? Number(retry) : retry ? (Date.parse(retry) - this.now()) / 1000 : response.status === 503 ? 60 : 30
+      if (this.catalogRetries.size >= 256) this.catalogRetries.delete(this.catalogRetries.keys().next().value!)
+      this.catalogRetries.set(retryKey, this.now() + Math.min(3600, Math.max(1, seconds || 60)) * 1000)
+    }
     const envelope = object(await response.json().catch(() => null))
     if (!response.ok) {
+      const code = envelope.code ?? object(envelope.error).code ?? object(envelope.data).code
+      if (path.startsWith('/api/device/models') && response.status === 400 && code === 'MODEL_GROUP_NOT_CONFIGURED') {
+        throw new ProviderRequestError('这个分组尚未配置模型目录，请在官网检查节点与分组', 400, false, code)
+      }
       const requiresSync = envelope.multiProviderSyncRequired === true || object(envelope.data).multiProviderSyncRequired === true || object(envelope.error).multiProviderSyncRequired === true
-      throw new ProviderRequestError(requiresSync ? '请在官网勾选所需供应商后重新同步；原线路未切换' : response.status === 400 ? '所选线路已变化或不再开放，请刷新后重新选择' : response.status === 402 ? '付费额度不足，请充值后重试；已连接的免费模型仍可选择' : response.status === 409 ? '供应商选择已变化或凭据未就绪，请刷新连接' : response.status === 401 || response.status === 403 ? '供应商授权已失效，请刷新连接或重新授权' : response.status === 429 ? '操作过于频繁，请稍后重试' : response.status === 503 ? '上游线路暂不可用，请稍后刷新重试' : `模型服务暂不可用（${response.status}）`, response.status, requiresSync)
+      throw new ProviderRequestError(requiresSync ? '请在官网勾选所需供应商后重新同步；原线路未切换' : response.status === 400 ? '所选线路已变化或不再开放，请刷新后重新选择' : response.status === 402 ? '付费额度不足，请充值后重试；已连接的免费模型仍可选择' : response.status === 409 ? '供应商选择已变化或凭据未就绪，请刷新连接' : response.status === 401 || response.status === 403 ? '供应商授权已失效，请刷新连接或重新授权' : response.status === 429 ? '操作过于频繁，请稍后重试' : response.status === 503 ? (path.startsWith('/api/device/models') ? '官网模型列表尚未就绪，请稍后刷新；已保留当前模型设置' : '上游线路暂不可用，请稍后刷新重试') : `模型服务暂不可用（${response.status}）`, response.status, requiresSync)
     }
     if (envelope.success !== true || !envelope.data || typeof envelope.data !== 'object') throw new Error('模型服务返回无效数据')
     return object(envelope.data)
@@ -157,8 +180,9 @@ export class ProviderSyncService {
     const existing = await this.deps.readSession()
     if (!force && existing?.owner === providerOwnerKey(owner) && existing.expiresAt > this.now()) return existing
     let data: Record<string, unknown> | undefined
-    for (const c of [...owner.sync.connections].sort((a,b)=>Number(b.kind==='paid')-Number(a.kind==='paid'))) {
-      try { data = await this.request(owner, '/api/device/session', c.apiKey, {}); break }
+    const keys = [...new Set([owner.authorizationKey, ...[...owner.sync.connections].sort((a,b)=>Number(b.kind==='paid')-Number(a.kind==='paid')).map(c => c.apiKey)].filter((key): key is string => Boolean(key)))]
+    for (const key of keys) {
+      try { data = await this.request(owner, '/api/device/session', key, {}); break }
       catch (error) { if (!(error instanceof ProviderRequestError) || ![401,403].includes(error.status)) throw error }
     }
     if (!data) throw new Error('现有连接均已失效，请重新同步账号')
@@ -182,7 +206,7 @@ export class ProviderSyncService {
   private pinPreviousSelections(owner: ProviderOwner, preferences: BeginnerAiPreferences | AiModelSelection): ProviderSnapshot {
     return pinProviderSelections(owner.sync, preferences)
   }
-  private async syncConnections(owner: ProviderOwner, scanning = false): Promise<ProviderOwner> {
+  private async syncConnections(owner: ProviderOwner): Promise<ProviderOwner> {
     let session = await this.session(owner)
     let data: Record<string, unknown>
     try { data = await this.request(owner, '/api/device/providers?credentials=1', session.token) }
@@ -195,16 +219,13 @@ export class ProviderSyncService {
     const next = parseProviderSnapshot(data)
     if (next.selectionRevision < owner.sync.selectionRevision) throw new Error('收到旧的供应商选择，请重新刷新')
     const changedPaidRoute = owner.sync.connections.some(c => c.kind === 'paid' && next.connections.find(next => next.account === c.account)?.group !== c.group)
-    const previous = changedPaidRoute && !scanning ? this.pinPreviousSelections(owner, owner.sync.defaults ?? await this.deps.readPreferences()) : owner.sync
+    const previous = changedPaidRoute ? this.pinPreviousSelections(owner, owner.sync.defaults ?? await this.deps.readPreferences()) : owner.sync
     await this.deps.write(owner, preserveProviderBindings(previous, next))
     this.invalidate()
     const current = await this.deps.read()
     if (!current || providerOwnerKey(current) !== providerOwnerKey(owner)) throw new Error('账号已切换，请重新操作')
-    if (!this.mutation) for (const [key, value] of this.learned) {
-      const [savedOwner, account] = JSON.parse(key) as [string, string]
-      const connection = current.sync.connections.find(c => c.account === account && c.kind === 'paid')
-      if (savedOwner === providerOwnerKey(current) && connection && value.credential !== this.credentialKey(connection)) this.learned.delete(key)
-    }
+    // Keep the previous inventory for display after a Key refresh. Routing still
+    // requires learnedModels' matching credential and fresh membership checks.
     if (session.pending && !session.pending.scan) {
       const c = current.sync.connections.find(c => c.account === session.pending!.route.account)
       const actual = c ?? current.sync.connections.find(c => c.kind === 'paid')
@@ -213,17 +234,14 @@ export class ProviderSyncService {
         await this.storeSession({ ...session, pending: undefined })
       }
     }
-    this.checkedConnections = { owner: providerOwnerKey(current), at: this.now() }
     return current
   }
   private async ensureFreshConnections(force: boolean): Promise<boolean> {
-    const owner = await this.deps.read(); if (!owner) return true
     if (this.mutation || this.deps.authorizationBusy?.()) return false
-    const key = providerOwnerKey(owner)
-    if (!force && this.checkedConnections?.owner === key && this.now() - this.checkedConnections.at < 60_000) return true
-    if (!force && this.now() < this.connectionRetryAt) return false
-    try { await this.refresh(); this.connectionRetryAt = 0; return true }
-    catch { this.connectionRetryAt = this.now() + 5_000; return false }
+    // Opening a picker (or an account/usage notification) must never replace the
+    // client's connections with the website's currently checked subset.
+    if (!force) return true
+    try { await this.refresh(); return true } catch { return false }
   }
   private cacheKey(owner: ProviderOwner, c: ProviderConnection): string { return createHash('sha256').update(JSON.stringify([providerOwnerKey(owner), c.account, c.apiKey, c.inferenceBaseUrl, c.group, owner.sync.selectionRevision])).digest('hex') }
   private async loadDiscovery(owner: ProviderOwner): Promise<void> {
@@ -233,18 +251,38 @@ export class ProviderSyncService {
     this.discoveryTask = (async () => {
       const value = await this.deps.readDiscovery?.().catch(() => null)
       this.learned.clear()
+      this.modelWarnings.clear()
+      this.catalogDirectory = undefined
+      this.savedDiscovery = undefined
       if (value?.version === 1 && value.owner === key && Array.isArray(value.entries)) {
+        const directory = object(value.directory)
+        if (validProviderAccount(directory.account) && (directory.group === null || typeof directory.group === 'string')) this.catalogDirectory = {
+          account: directory.account, group: directory.group as string | null, canSwitch: directory.canSwitch === true, canSwitchProvider: directory.canSwitchProvider === true, providers: parseDirectoryProviders(directory.providers)
+        }
         let total = 0
         for (const entry of value.entries.slice(-256)) {
-          if (!entry || !validProviderAccount(entry.account) || !(entry.group === null || typeof entry.group === 'string' && entry.group.length > 0 && entry.group.length <= 512) || !/^[a-f0-9]{64}$/.test(entry.credential) || !Number.isFinite(entry.at) || entry.at > this.now() || this.now() - entry.at >= DISCOVERY_TTL || !Array.isArray(entry.models)) continue
+          if (!entry || !validProviderAccount(entry.account) || !(entry.group === null || typeof entry.group === 'string' && entry.group.length > 0 && entry.group.length <= 512) || !/^[a-f0-9]{64}$/.test(entry.credential) || !Number.isFinite(entry.at) || entry.at > this.now() || !Array.isArray(entry.models)) continue
           const c = owner.sync.connections.find(c => c.account === entry.account)
-          // A verified supplier remains discoverable while another paid supplier owns the
-          // single active Key. Connected suppliers still reject unrelated Key revisions.
-          if (!validProviderKind(entry.account, 'paid') || c && (c.kind !== 'paid' || this.credentialKey(c) !== entry.credential)) continue
+          // Keep old inventories visible; credential matching remains a routing check.
+          if (c ? !validProviderKind(entry.account, c.kind) || c.kind === 'free' && entry.group !== null : !validProviderKind(entry.account, 'paid')) continue
           const models = entry.models.slice(0, 512).flatMap(m => { const clean = cleanModel(m); return clean ? [clean] : [] })
           total += models.length; if (total > 51_200) break
           this.learned.set(this.learnedKey(owner, entry.account, entry.group), { at: entry.at, credential: entry.credential, models })
         }
+      }
+      // Older cache files stored exact route memberships without a directory.
+      // Rebuild their groups locally so upgrading does not hide those models.
+      if (!this.catalogDirectory && this.learned.size) {
+        const providers = new Map<string, DirectoryProvider>()
+        for (const [route, entry] of this.learned) {
+          const [, account, group] = JSON.parse(route) as [string, string, string | null]
+          if (!validProviderKind(account, 'paid') || group === null) continue
+          const provider = providers.get(account) ?? { account, label: owner.sync.connections.find(c => c.account === account)?.label ?? account, kind: 'paid' as const, groups: [] }
+          provider.groups.push({ id: group, label: group, models: entry.models.map(model => model.id) })
+          providers.set(account, provider)
+        }
+        const connection = owner.sync.connections.find(c => c.kind === 'paid')
+        if (providers.size && connection) this.catalogDirectory = { account: connection.account, group: connection.group, canSwitch: false, canSwitchProvider: false, providers: [...providers.values()] }
       }
       this.discoveryOwner = key
     })().finally(() => { this.discoveryTask = undefined })
@@ -259,31 +297,57 @@ export class ProviderSyncService {
       let total = 0
       for (const [key, value] of [...this.learned].reverse()) {
         const [savedOwner, account, group] = JSON.parse(key) as [string, string, string | null]
-        if (savedOwner !== providerOwnerKey(current) || this.now() - value.at >= DISCOVERY_TTL) continue
+        if (savedOwner !== providerOwnerKey(current)) continue
         const c = current.sync.connections.find(c => c.account === account)
-        if (!validProviderKind(account, 'paid') || c && (c.kind !== 'paid' || value.credential !== this.credentialKey(c))) continue
+        if (c ? !validProviderKind(account, c.kind) : !validProviderKind(account, 'paid')) continue
         const models = value.models.flatMap(m => { const clean = cleanModel(m); return clean ? [clean] : [] }).slice(0, 512)
-        if (entries.length >= 256 || total + models.length > 51_200) throw new Error('线路模型目录超过缓存容量，请减少扫描范围后重试')
+        if (entries.length >= 256 || total + models.length > 51_200) throw new Error('线路模型目录超过缓存容量，请减少目录范围后重试')
         total += models.length; entries.push({ account, group, credential: value.credential, at: value.at, models })
       }
-      await this.deps.writeDiscovery!({ version: 1, owner: providerOwnerKey(current), entries })
+      const discovery: ProviderModelDiscovery = { version: 1, owner: providerOwnerKey(current), entries, ...(this.catalogDirectory ? { directory: this.catalogDirectory } : {}) }
+      const serialized = JSON.stringify(discovery)
+      if (serialized === this.savedDiscovery) return
+      await this.deps.writeDiscovery!(discovery)
+      this.savedDiscovery = serialized
     }
     const task = this.discoveryWrites.then(write, write)
     this.discoveryWrites = task.then(() => undefined, () => undefined)
     await task
   }
-  private async models(owner: ProviderOwner, c: ProviderConnection, force = false): Promise<AiModelInfo[]> {
+  private async models(owner: ProviderOwner, c: ProviderConnection, force = false, remember = true, explicitGroup = false): Promise<AiModelInfo[]> {
     const key = this.cacheKey(owner, c), saved = this.cache.get(key)
     if (!force && saved && this.now() - saved.at < 60_000) return saved.models
     const running = this.modelTasks.get(key); if (running) return running
     const task = (async () => {
-      const models = await this.deps.listModels(c)
+      if (this.now() < this.cooldownUntil) throw new Error('操作过于频繁，请稍后刷新模型列表')
+      const embedded = !force && !saved && !this.learnedModels(owner, c.account, c.group) && c.models !== undefined && c.modelsReady !== false
+      let models: AiModelInfo[]
+      if (embedded) {
+        models = c.models!.map(id => ({ id }))
+        if (c.modelsStale) this.modelWarnings.set(key, '官网暂未更新模型列表，正在显示最近成功的列表')
+      } else {
+        const path = modelCatalogPath(owner.siteUrl, c.account, c.modelsUrl, explicitGroup && c.group !== null ? c.group : undefined)
+        const active = owner.sync.connections.find(connection => connection.account === c.account)
+        let bearer = active?.apiKey ?? (await this.session(owner)).token
+        let data: Record<string, unknown>
+        try { data = await this.request(owner, path, bearer) }
+        catch (error) {
+          if (!(error instanceof ProviderRequestError) || error.status !== 401) throw error
+          bearer = (await this.session(owner, true)).token
+          data = await this.request(owner, path, bearer)
+        }
+        const catalog = parseDeviceModelCatalog(data, c.account, explicitGroup && c.group !== null ? c.group : undefined)
+        if (catalog.group !== c.group) throw new Error('官网分组已变化，请刷新连接后重新选择模型；已保留当前设置')
+        models = catalog.models
+        if (catalog.stale) this.modelWarnings.set(key, '官网暂未更新模型列表，正在显示最近成功的列表')
+        else this.modelWarnings.delete(key)
+      }
       const filtered = [...new Map(models.filter(m => isSelectableQuotaModel(m.id)).map(m => [m.id, m])).values()].slice(0, 512)
       if (this.cache.size >= 256) this.cache.delete(this.cache.keys().next().value!)
       this.cache.set(key, { at: this.now(), models: filtered })
-      if (c.kind === 'paid') {
+      if (remember) {
         const route = this.learnedKey(owner, c.account, c.group)
-        if (this.learned.size >= 256) this.learned.delete(this.learned.keys().next().value!)
+        if (!this.learned.has(route) && this.learned.size >= 256) this.learned.delete(this.learned.keys().next().value!)
         this.learned.set(route, { at: this.now(), models: filtered, credential: this.credentialKey(c) })
       }
       return filtered
@@ -292,17 +356,17 @@ export class ProviderSyncService {
   }
   private learnedKey(owner: ProviderOwner, account: string, group: string | null): string { return JSON.stringify([providerOwnerKey(owner), account, group]) }
   private credentialKey(c: ProviderConnection): string { return createHash('sha256').update(JSON.stringify([c.apiKey, c.inferenceBaseUrl])).digest('hex') }
-  private learnedModels(owner: ProviderOwner, account: string, group: string | null): AiModelInfo[] | undefined {
+  private learnedModels(owner: ProviderOwner, account: string, group: string | null, display = false): AiModelInfo[] | undefined {
     const saved = this.learned.get(this.learnedKey(owner, account, group))
     const connection = owner.sync.connections.find(c => c.account === account)
-    return saved && (!connection || connection.kind === 'paid' && saved.credential === this.credentialKey(connection)) && this.now() - saved.at < DISCOVERY_TTL ? saved.models : undefined
+    return saved && (display || !connection || saved.credential === this.credentialKey(connection)) ? saved.models : undefined
   }
   private rebindDiscovery(owner: ProviderOwner, account: string, previousCredential?: string): void {
     const connection = owner.sync.connections.find(c => c.account === account && c.kind === 'paid')
     if (!connection) return
     for (const [key, value] of this.learned) {
       const [savedOwner, savedAccount] = JSON.parse(key) as [string, string]
-      if (savedOwner === providerOwnerKey(owner) && savedAccount === account && (previousCredential === undefined || value.credential === previousCredential) && this.now() - value.at < DISCOVERY_TTL) this.learned.set(key, { ...value, credential: this.credentialKey(connection) })
+      if (savedOwner === providerOwnerKey(owner) && savedAccount === account && (previousCredential === undefined || value.credential === previousCredential)) this.learned.set(key, { ...value, credential: this.credentialKey(connection) })
     }
   }
   private async directory(owner: ProviderOwner, force = false): Promise<DirectoryState> {
@@ -312,11 +376,7 @@ export class ProviderSyncService {
     const running = this.directoryTasks.get(key); if (running) return running
     const task = (async () => {
       const data = await this.request(owner, '/api/device/group', c.apiKey)
-      const providers: DirectoryProvider[] = (Array.isArray(data.providers) ? data.providers : []).slice(0, 32).flatMap(raw => {
-        const p = object(raw)
-        if (!validProviderAccount(p.account) || !validProviderKind(p.account, p.kind)) return []
-        return [{ account: p.account, label: typeof p.label === 'string' ? p.label.slice(0, 256) : p.account, kind: p.kind as 'free' | 'paid', groups: parseProviderGroups(p.groups) }]
-      })
+      const providers = parseDirectoryProviders(data.providers)
       if (c.kind === 'paid' && !providers.some(p => p.account === c.account)) providers.push({ account: c.account, label: c.label, kind: 'paid', groups: parseProviderGroups(data.groups) })
       const state: DirectoryState = { account: validProviderAccount(data.account ?? data.provider) ? String(data.account ?? data.provider) : c.account, group: typeof (data.current ?? data.group) === 'string' ? String(data.current ?? data.group) : null, canSwitch: data.canSwitch === true, canSwitchProvider: data.canSwitchProvider === true, providers }
       if (this.routes.size >= 32) this.routes.delete(this.routes.keys().next().value!)
@@ -324,135 +384,15 @@ export class ProviderSyncService {
     })().finally(() => this.directoryTasks.delete(key))
     this.directoryTasks.set(key, task); return task
   }
-  /** Serially visits advertised paid suppliers/groups and restores the original account and group. */
+  /** Compatibility entry point: refresh server catalogs without switching any route. */
   async discoverModels(): Promise<QuotaModelCatalog> {
-    if (this.deps.authorizationBusy?.()) throw new Error('账号正在同步，请完成后再发现模型')
-    if (this.busy) throw new Error('连接正在更新，请稍后发现模型')
-    if (this.now() < this.scanCooldownUntil) throw new Error('刚刚已发现模型，请稍后重试')
-    this.mutation = true
-    let owner: ProviderOwner | undefined
-    let marker: RoutingSession | undefined
-    let original: { account: string; group: string } | undefined
-    let failure: unknown
-    let restored = false
-    const discovered = new Map<string, { account: string; group: string; models: AiModelInfo[]; credential: string }>()
-    const waitSlot = async () => {
-      for (;;) {
-        const now = this.now()
-        this.scanPosts = this.scanPosts.filter(at => now - at < 60_000)
-        const wait = Math.max(this.cooldownUntil - now, this.scanPosts.length >= 19 ? this.scanPosts[0] + 60_050 - now : 0)
-        if (wait <= 0) return
-        await new Promise<void>(resolve => setTimeout(resolve, Math.min(wait, 5000)))
-      }
-    }
-    const move = async (account: string, group: string, restoring = false): Promise<void> => {
-      const current = await this.deps.read()
-      if (!owner || !current || providerOwnerKey(current) !== providerOwnerKey(owner)) throw new Error('账号已切换，已停止发现模型')
-      owner = current
-      let paid = owner.sync.connections.find(c => c.kind === 'paid')
-      if (!paid) throw new Error('付费供应商已移除，请重新同步')
-      if (!restoring && this.paidBusy()) throw new Error('付费任务正在运行，暂时不能发现模型')
-      let state: DirectoryState
-      try { state = await this.directory(owner, true) }
-      catch {
-        owner = await this.syncConnections(owner, true)
-        paid = owner.sync.connections.find(c => c.kind === 'paid')
-        if (!paid) throw new Error('付费供应商已移除，请重新同步')
-        state = await this.directory(owner, true)
-      }
-      if (state.account !== paid.account || state.group !== paid.group) {
-        owner = await this.syncConnections(owner, true)
-        paid = owner.sync.connections.find(c => c.kind === 'paid')
-        if (!paid) throw new Error('付费供应商已移除，请重新同步')
-        state = await this.directory(owner, true)
-      }
-      if (state.account !== paid.account || state.group !== paid.group) throw new Error('付费线路尚未稳定，请重新同步后发现模型')
-      const crossProvider = account !== paid.account
-      let postFailure: unknown
-      if (crossProvider || state.group !== group) {
-        if (crossProvider ? !state.canSwitchProvider : !state.canSwitch) throw new Error('当前账号暂时不能切换这条线路')
-        await waitSlot()
-        if (!restoring && this.paidBusy()) throw new Error('付费任务正在运行，暂时不能发现模型')
-        const session = await this.session(owner)
-        this.scanPosts.push(this.now())
-        try { await this.request(owner, '/api/device/group', crossProvider ? session.token : paid.apiKey, { ...(crossProvider ? { account } : {}), group, expectedAccount: state.account, expectedGroup: state.group }) }
-        catch (error) { postFailure = error }
-        owner = await this.syncConnections(owner, true)
-        paid = owner.sync.connections.find(c => c.account === account && c.kind === 'paid')
-        const actual = await this.directory(owner, true)
-        if (!paid || paid.group !== group || actual.account !== account || actual.group !== group) throw postFailure ?? new Error('线路切换尚未确认，请重试发现模型以恢复原线路')
-      }
-      const previous = discovered.get(JSON.stringify([account, group]))
-      // Restoration is confirmed by the credential snapshot and live route tuple.
-      // A model-directory outage must not turn a restored route into an unsafe one.
-      if (restoring && !previous) return
-      const models = restoring && previous ? previous.models : await this.models(owner, paid, true)
-      discovered.set(JSON.stringify([account, group]), { account, group, models, credential: this.credentialKey(paid) })
-      // A Key may rotate on every group change. All evidence for this supplier
-      // was obtained in this authenticated scan and follows its latest revision.
-      for (const entry of discovered.values()) if (entry.account === account) entry.credential = this.credentialKey(paid)
-    }
-    try {
-      const initial = await this.deps.read(); if (!initial) throw new Error('请先同步供应商连接')
-      if (this.paidBusy()) throw new Error('付费任务正在运行，完成后才能发现模型')
-      owner = await this.syncConnections(initial, true)
-      await this.loadDiscovery(owner)
-      let paid = owner.sync.connections.find(c => c.kind === 'paid')
-      if (!paid) { restored = true }
-      else {
-        let session = await this.session(owner)
-        if (session.pending?.scan) {
-          if (!validProviderKind(session.pending.route.account, 'paid') || !session.pending.route.group) throw new Error('待恢复的原供应商已变化，请在官网恢复后重新同步')
-          original = { account: session.pending.route.account, group: session.pending.route.group }
-          marker = session
-          await move(original.account, original.group, true)
-          session = await this.storeSession({ ...session, pending: undefined })
-          marker = undefined
-          paid = owner!.sync.connections.find(c => c.account === original!.account)!
-        }
-        const state = await this.directory(owner, true)
-        if (state.account !== paid.account || state.group !== paid.group || !paid.group) throw new Error('付费线路尚未稳定，请重新同步后发现模型')
-        // Explicit discovery can abandon an unfinished model choice once the actual route is readable.
-        // It never chooses a replacement model or changes the user's preferences/bindings.
-        const initialModels = await this.models(owner, paid, true)
-        discovered.set(JSON.stringify([paid.account, paid.group]), { account: paid.account, group: paid.group, models: initialModels, credential: this.credentialKey(paid) })
-        if (session.pending) session = await this.storeSession({ ...session, pending: undefined })
-        const providers = state.providers.filter(p => p.kind === 'paid' && (p.account === paid!.account || state.canSwitchProvider))
-        if (!state.canSwitch && providers.find(p => p.account === paid!.account)?.groups.some(g => g.id !== paid!.group)) throw new Error('当前账号暂时不能遍历线路，请稍后重试')
-        original = { account: paid.account, group: paid.group }
-        const preferences = owner.sync.defaults ?? await this.deps.readPreferences()
-        marker = await this.storeSession({ ...session, pending: { model: preferences.model, route: original, scan: true } })
-        for (const provider of providers) for (const group of provider.groups) await move(provider.account, group.id)
-        // Include the original route even when the directory omits it.
-        if (!discovered.has(JSON.stringify([original.account, original.group]))) await move(original.account, original.group)
-      }
-    } catch (error) { failure = error }
-    finally {
-      if (marker && original) {
-        try {
-          await move(original.account, original.group, true)
-          const current = await this.deps.read()
-          const paid = current?.sync.connections.find(c => c.account === original!.account && c.kind === 'paid')
-          if (!current || !paid || paid.group !== original.group) throw new Error('原线路尚未恢复')
-          // Keep detached suppliers' membership evidence, never their inference Keys.
-          for (const entry of discovered.values()) this.learned.set(this.learnedKey(current, entry.account, entry.group), { at: this.now(), models: entry.models, credential: entry.account === paid.account ? this.credentialKey(paid) : entry.credential })
-          await this.storeSession({ ...marker, pending: undefined })
-          restored = true
-          await this.saveDiscovery(current)
-        } catch {
-          failure = new Error(restored ? '原线路已恢复，但模型目录未保存，请稍后重试发现模型' : '发现模型未完成，原线路尚未确认恢复；已保留恢复记录，请重试发现模型，付费发送暂时停用')
-        }
-      }
-      this.mutation = false
-      if (restored) this.scanCooldownUntil = this.now() + 15_000
-    }
-    if (failure) throw failure
-    return this.catalog(false)
+    if (this.deps.authorizationBusy?.()) throw new Error('账号正在同步，请完成后再刷新模型')
+    return this.catalog(true)
   }
-  async catalog(force = false): Promise<QuotaModelCatalog> {
+  async catalog(force = false, cached = false): Promise<QuotaModelCatalog> {
     if (force && this.busy) return this.catalog(false)
     if (force) this.invalidate()
-    const fresh = await this.ensureFreshConnections(force)
+    const fresh = cached || await this.ensureFreshConnections(force)
     const owner = await this.deps.read(); if (!owner) throw new Error('请先同步供应商连接')
     await this.loadDiscovery(owner)
     const preferences = owner.sync.defaults ?? await this.deps.readPreferences()
@@ -460,17 +400,50 @@ export class ProviderSyncService {
     const c = owner.sync.connections.find(c => c.account === currentAccount)
     const billing = c?.kind === 'free' ? 'free' : 'quota'
     let stale = !fresh, directory: DirectoryState | undefined
+    let catalogWarning: string | undefined
     const current = new Map<string, { models: AiModelInfo[]; available: boolean }>()
     const loadConnection = async (connection: ProviderConnection) => {
-      if (connection.kind === 'free' && connection.models !== undefined) {
-        current.set(connection.account, { models: connection.models.map(id => ({ id })), available: true })
-        return
-      }
+      const previous = this.learnedModels(owner, connection.account, connection.group, true) ?? (connection.models ?? []).map(id => ({ id }))
+      if (cached) { current.set(connection.account, { models: previous, available: true }); return }
       try { current.set(connection.account, { models: await this.models(owner, connection, force), available: true }) }
-      catch { stale = true; current.set(connection.account, { models: (connection.models ?? []).map(id => ({ id })), available: false }) }
+      catch (error) { stale = true; catalogWarning = error instanceof Error ? error.message : '无法读取官网模型列表'; current.set(connection.account, { models: previous, available: false }) }
     }
     for (let offset = 0; offset < owner.sync.connections.length; offset += 8) await Promise.all(owner.sync.connections.slice(offset, offset + 8).map(loadConnection))
-    try { directory = await this.directory(owner, force) } catch { stale = true }
+    if (!cached) try { directory = await this.directory(owner, force) } catch { stale = true }
+    directory = directory ?? this.catalogDirectory
+    if (directory && !cached) {
+      // These are read-only website cache requests. They never change groups or contact inference providers.
+      let reads = 0
+      for (const provider of directory.providers) {
+        if (provider.kind !== 'paid') continue
+        const unconfigured = new Set<string>()
+        for (const group of provider.groups) {
+          const active = owner.sync.connections.find(c => c.account === provider.account)
+          if (active?.group === group.id) { group.models = current.get(active.account)?.models.map(m => m.id) ?? []; continue }
+          if (!force && group.models !== undefined) continue
+          if (++reads > 100) { stale = true; continue }
+          const connection: ProviderConnection = { ...(active ?? owner.sync.connections[0]), account: provider.account, label: provider.label, kind: 'paid', group: group.id, models: undefined, modelsReady: undefined, modelsUrl: undefined }
+          try { group.models = (await this.models(owner, connection, force, true, true)).map(m => m.id) }
+          catch (error) {
+            if (error instanceof ProviderRequestError && error.code === 'MODEL_GROUP_NOT_CONFIGURED') {
+              unconfigured.add(group.id)
+              this.learned.delete(this.learnedKey(owner, provider.account, group.id))
+            } else { stale = true; catalogWarning ??= error instanceof Error ? error.message : '部分官网模型列表暂不可用' }
+          }
+        }
+        provider.groups = provider.groups.filter(group => !unconfigured.has(group.id))
+      }
+      directory.providers = directory.providers.filter(p => p.groups.length || owner.sync.connections.some(c => c.account === p.account))
+    }
+    if (!cached && this.modelWarnings.size) { stale = true; catalogWarning ??= this.modelWarnings.values().next().value }
+    if (!cached && directory) {
+      const allowed = new Set(directory.providers.flatMap(p => p.groups.map(g => this.learnedKey(owner, p.account, g.id))))
+      for (const key of this.learned.keys()) {
+        const [, account, group] = JSON.parse(key)
+        if (group !== null && !allowed.has(key) && !owner.sync.connections.some(c => c.account === account && c.group === group)) this.learned.delete(key)
+      }
+    }
+    if (!cached && !this.mutation && directory) this.catalogDirectory = directory
     const actualPaid = owner.sync.connections.find(c => c.kind === 'paid')
     const known = actualPaid ? current.get(actualPaid.account)?.models ?? [] : []
     const routes: NonNullable<QuotaModelCatalog['routes']> = []
@@ -488,7 +461,7 @@ export class ProviderSyncService {
       const result = current.get(connection.account)!
       const provider = directory?.providers.find(p => p.account === connection.account)
       const groupLabel = provider?.groups.find(g => g.id === connection.group)?.label ?? connection.group ?? undefined
-      for (const model of result.models) add(model, connection.account, connection.group, connection.label, groupLabel, connection.kind, result.available, result.available, true)
+      for (const model of result.models) add(model, connection.account, connection.group, connection.label, groupLabel, connection.kind, result.available, true, true)
       if (connection.kind === 'free') routes.push({ account: connection.account, group: null, label: connection.label, providerLabel: connection.label, kind: 'free', current: true, available: result.available, models: result.models.map(m => m.id) })
     }
     for (const provider of [...(directory?.providers ?? [])].sort((a, b) => Number(b.account === actualPaid?.account) - Number(a.account === actualPaid?.account))) {
@@ -496,19 +469,27 @@ export class ProviderSyncService {
       for (const group of provider.groups) {
         const isCurrent = actualPaid?.account === provider.account && actualPaid.group === group.id
         const available = isCurrent || (this.now() >= this.cooldownUntil && !this.paidBusy() && (provider.account === actualPaid?.account ? directory!.canSwitch : directory!.canSwitchProvider))
-        const learned = this.learnedModels(owner, provider.account, group.id)
-        routes.push({ account: provider.account, group: group.id, label: group.label, providerLabel: provider.label, kind: 'paid', current: isCurrent, available, ...(group.models ? { models: group.models } : learned ? { models: learned.map(m => m.id) } : {}) })
-        if (isCurrent) continue
-        const candidates = group.models ? group.models.map(id => known.find(m => m.id === id) ?? learned?.find(m => m.id === id) ?? { id }) : learned ?? []
+        const learned = this.learnedModels(owner, provider.account, group.id, true)
+        const candidates = (group.models !== undefined ? group.models.map(id => known.find(m => m.id === id) ?? { id }) : learned ?? [])
+        routes.push({ account: provider.account, group: group.id, label: group.label, providerLabel: provider.label, kind: 'paid', current: isCurrent, available, ...(group.models || learned ? { models: candidates.map(m => m.id) } : {}) })
+        if (isCurrent) {
+          for (const model of candidates) add(model, provider.account, group.id, provider.label, group.label, 'paid', current.get(provider.account)?.available ?? false, true, true)
+          continue
+        }
         for (const model of candidates) add(model, provider.account, group.id, provider.label, group.label, 'paid', available, Boolean(group.models?.includes(model.id) || learned?.some(m => m.id === model.id)), false, '当前线路暂不可切换', true)
       }
     }
     const saved = await this.deps.readSession(), pending = saved?.owner === providerOwnerKey(owner) ? saved.pending : undefined
     const selectionRequired = !c || (preferences.group !== undefined && c.group !== preferences.group) || !current.get(currentAccount)?.models.some(m => m.id === preferences.model)
     const providers = [...new Map([...owner.sync.connections.map(c => ({ account: c.account, label: c.label, kind: c.kind })), ...(directory?.providers.filter(p => p.kind === 'paid').map(p => ({ account: p.account, label: p.label, kind: p.kind })) ?? [])].map(p => [p.account, p])).values()]
+    const activeOwner = await this.deps.read()
+    if (!activeOwner || providerOwnerKey(activeOwner) !== providerOwnerKey(owner)) throw new Error('账号已切换，请重新读取模型列表')
+    let cacheWarning: string | undefined
+    if (!cached && !this.mutation) try { await this.saveDiscovery(owner) } catch { cacheWarning = '模型列表已更新，但未能保存到本地；下次启动将使用上次保存的列表' }
     return { models, routes, providers, currentModel: preferences.model, currentOptionKey: quotaModelOptionKey(preferences.model, billing, currentAccount, billing === 'quota' ? preferences.group ?? c?.group : undefined), billing, connected: true, canSwitch: !this.busy && this.now() >= this.cooldownUntil, stale, checkedAt: this.now(), protocolVersion: 2, bindings: owner.sync.bindings, recoveryRequired: Boolean(pending), selectionRequired,
       ...(c ? { currentRoute: { account: c.account, group: c.group, label: c.label } } : {}),
-      ...(selectionRequired ? { message: '所选线路或模型已变化，请重新选择；消息已保留' } : {}),
+      ...(cacheWarning ? { message: cacheWarning } : stale ? { message: catalogWarning ?? '模型列表更新失败，已保留上次列表，请刷新重试' } : {}),
+      ...(selectionRequired && !stale ? { message: '所选线路或模型已变化，请重新选择；消息已保留' } : {}),
       ...(pending ? { pendingModel: pending.model, pendingSelection: { billing: 'quota' as const, account: pending.route.account, ...(pending.route.group !== null ? { group: pending.route.group } : {}) }, message: '付费线路结果尚未确认，请刷新连接后选择模型' } : {}) }
   }
   async resolve(selection?: AiModelSelection): Promise<{ owner: ProviderOwner; connection: ProviderConnection; model: string }> {
@@ -547,10 +528,13 @@ export class ProviderSyncService {
     this.mutation = true
     try {
       let owner = await this.deps.read(); if (!owner) throw new Error('请先同步供应商连接')
+      // An explicit activation may need new credentials after website authorization.
+      // The read-only catalog and local route preparation never take this path.
+      if (owner.refreshBeforeSelection) owner = await this.syncConnections(owner)
       await this.loadDiscovery(owner)
       if (option.billing === 'free' && option.account !== undefined && !owner.sync.connections.some(c => c.account === option.account && c.kind === 'free')) throw new Error('这个免费供应商尚未同步，请重新同步连接')
       const saved = await this.deps.readSession()
-      if (option.billing !== 'free' && saved?.owner === providerOwnerKey(owner) && saved.pending?.scan) throw new Error('原付费线路尚未恢复，请先重试发现模型')
+      if (option.billing !== 'free' && saved?.owner === providerOwnerKey(owner) && saved.pending?.scan) throw new Error('原付费线路尚未恢复，请在官网恢复原线路后刷新连接')
       if (option.billing !== 'free' && saved?.owner === providerOwnerKey(owner) && saved.pending) owner = await this.syncConnections(owner)
       const preferences = owner.sync.defaults ?? await this.deps.readPreferences()
       const kind = option.billing === 'free' ? 'free' : 'paid'
@@ -618,7 +602,7 @@ export class ProviderSyncService {
       if (option.scope === 'workspace' || option.scope === 'inspiration') await this.deps.write(owner, { ...owner.sync, bindings: { ...owner.sync.bindings, [option.scope]: selection } })
       else { applied = await this.deps.applyDefaults(selection, owner); await this.deps.write(owner, { ...owner.sync, defaults: selection, bindings: {} }) }
       let cacheWarning = ''
-      if (discoveryChanged) try { await this.saveDiscovery(owner) } catch { cacheWarning = '；线路目录未保存，下次启动请重新发现模型' }
+      if (discoveryChanged) try { await this.saveDiscovery(owner) } catch { cacheWarning = '；线路目录未保存，下次启动请刷新模型列表' }
       this.mutation = false
       return { status: 'ok', message: '已选择 ' + quotaModelMetadata(model).name + cacheWarning, selection, ...(applied ? { preferences: applied } : {}), catalog: await this.catalog() }
     } finally { this.mutation = false }

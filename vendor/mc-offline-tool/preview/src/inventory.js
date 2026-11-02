@@ -9,6 +9,7 @@
 // 所以复用它的**数据**与交互习惯（搜索/分页/最近/收藏），不用它的绘制。
 
 import { $, isFeature, hostIcons, hostItems } from './host.js';
+import { createPagedInventory } from './inventory-paged.js';
 const PAGE = 48;                      // 8 × 6
 
 // O4：图标懒加载 + 缓存。功能包模式下图标由后端按 id 返回 data URL（一页 48 张）。
@@ -28,6 +29,7 @@ const readLS = (k) => { try { return new Set(JSON.parse(localStorage.getItem(k) 
 const writeLS = (k, set) => { try { localStorage.setItem(k, JSON.stringify([...set].slice(0, 500))); } catch { /* 隐私模式下写不了，忽略 */ } };
 
 export async function createInventory({ onSelect }) {
+  if (isFeature()) return createPagedInventory({onSelect});
   ICON_CACHE.clear(); // A new mount may use a different project, game version or capture.
   // 数据源两条路：功能包由后端给（包内**没有**静态 items.json）；独立网页 fetch 静态文件。
   // ★ 以前这里无条件 fetch('../app/data/items.json') ⇒ 在功能包里 404，物品栏整块空白（实测就是这个）。

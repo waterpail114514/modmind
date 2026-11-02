@@ -28,6 +28,7 @@
     "feature-plugins/*/renderer.ts",
     "feature-plugins/sdk/renderer.ts",
     "feature-plugins/sdk/hostModals.ts",
-    "feature-plugins/*/src/renderer/**/*.ts"
+    "feature-plugins/*/src/renderer/**/*.ts",
+    "feature-plugins/image-studio/vendor/open-canvas/**/*.ts"
   ]
 }

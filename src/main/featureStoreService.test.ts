@@ -52,6 +52,34 @@ async function harness(bundles:Awaited<ReturnType<typeof bundle>>[]){
   return{root,manager,store,files,requests,setBusy:(value:boolean)=>{busy=value},setSlow:()=>{slow=true},setOffline:()=>{offline=true},setIndex:(value:OfficialFeatureIndex)=>{index=value},publish:async(next:Awaited<ReturnType<typeof bundle>>)=>{files.set('/'+next.release.path,next.bytes);index.features=index.features.filter(item=>item.id!==next.release.id).concat(next.release);now+=6000;await store.refresh(true)},refresh:()=>{now+=6000;return store.refresh(true)}}
 }
 describe('official feature downloads',()=>{
+  it('prompts on a withdrawn official installation without disabling or removing it, including after restart',async()=>{
+    const feature=await bundle(),h=await harness([feature]);await h.store.installOfficial('test-feature')
+    await fs.writeFile(path.join(h.root,'project-content.txt'),'keep project content')
+    h.setIndex({format:'modmind-feature-catalog',schemaVersion:1,generatedAt:'2026-11-01T00:00:00.000Z',features:[]});await h.refresh()
+    expect(h.store.snapshot().entries.find(entry=>entry.id==='test-feature')).toMatchObject({installationSource:'official',withdrawn:true,installed:true,available:true})
+    expect(await h.manager.invoke('test-feature','hello',{})).toEqual({version:'1.0.0'})
+    expect(await fs.readFile(path.join(h.root,'project-content.txt'),'utf8')).toBe('keep project content')
+    const restarted=new FeatureStoreService(path.join(h.root,'cache'),h.manager,()=>undefined);await restarted.initialize()
+    expect(restarted.snapshot().entries.find(entry=>entry.id==='test-feature')?.withdrawn).toBe(true)
+    await h.publish(feature)
+    expect(h.store.snapshot().entries.find(entry=>entry.id==='test-feature')?.withdrawn).toBe(false)
+    expect(h.manager.enabled('test-feature')).toBe(true)
+  })
+  it('keeps local imports out of withdrawal notices even when their ID also appears in the official directory',async()=>{
+    const feature=await bundle(),h=await harness([feature])
+    await h.manager.install({manifest:feature.manifest,files:feature.files});await h.refresh()
+    expect(h.store.snapshot().entries.find(entry=>entry.id==='test-feature')).toMatchObject({installationSource:'local',withdrawn:false})
+    h.setIndex({format:'modmind-feature-catalog',schemaVersion:1,generatedAt:'2026-11-01T00:00:00.000Z',features:[]});await h.refresh()
+    expect(h.store.snapshot().entries.find(entry=>entry.id==='test-feature')).toMatchObject({installationSource:'local',withdrawn:false,available:true})
+    const offline=await bundle('offline-feature');await h.manager.install({manifest:offline.manifest,files:offline.files});h.setOffline();await h.refresh()
+    expect(h.store.snapshot().entries.find(entry=>entry.id==='offline-feature')).toMatchObject({installationSource:'local',withdrawn:false,available:true})
+  })
+  it('does not call a changed local replacement an official or withdrawn package',async()=>{
+    const feature=await bundle(),h=await harness([feature]);await h.store.installOfficial('test-feature')
+    const local=await bundle('test-feature','1.1.0');await h.manager.update({manifest:local.manifest,files:local.files})
+    h.setIndex({format:'modmind-feature-catalog',schemaVersion:1,generatedAt:'2026-11-01T00:00:00.000Z',features:[]});await h.refresh()
+    expect(h.store.snapshot().entries.find(entry=>entry.id==='test-feature')).toMatchObject({installationSource:'local',withdrawn:false,version:'1.1.0',available:true})
+  })
   it('downloads verified dependencies with GET only and keeps existing functionality when the source is offline',async()=>{
     const base=await bundle('support-runtime'),feature=await bundle('test-feature','1.0.0',['support-runtime']),h=await harness([base,feature])
     await h.refresh();expect(h.store.snapshot().entries).toHaveLength(2)

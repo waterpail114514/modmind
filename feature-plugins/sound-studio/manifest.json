@@ -7,7 +7,7 @@
     "media-runtime"
   ],
   "name": "声音",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -39,5 +39,8 @@
     "quilt",
     "forge",
     "neoforge"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

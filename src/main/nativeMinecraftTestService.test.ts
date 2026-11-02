@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { NativeMinecraftTestService, copyNativeTestInstance, nativeAction } from "../../feature-plugins/testing/src/main/nativeMinecraftTestService"
+import { NativeMinecraftTestService, copyNativeTestInstance, nativeAction } from '../../feature-plugins/testing/src/main/nativeMinecraftTestService'
 import type { ProjectInfo } from '../shared/types'
 import type { MinecraftRuntimeState } from '../shared/minecraft'
 
@@ -35,6 +35,13 @@ it('validates native actions and translates coordinates, keys, view and build co
   expect(() => nativeAction({ operation: 'key', key: 'w', durationMs: 10000 })).toThrow('durationMs')
   expect(() => nativeAction({ operation: 'command', command: 'say hi\nstop' })).toThrow('文字')
   expect(() => nativeAction({ operation: 'operator' })).toThrow('不支持')
+})
+it.each(['fabric', 'forge', 'neoforge'])('reports the selected 26.3 release for %s without claiming runtime verification', async loader => {
+  const project = { path: '/capability-only', loader, minecraftVersion: '26.3' } as ProjectInfo
+  const service = new NativeMinecraftTestService({ currentProject: () => project, build: vi.fn(), createRuntime: vi.fn() })
+  expect(await service.execute(project, 'session', { operation: 'capabilities' })).toMatchObject({
+    supported: true, release: 'v0.4.8', supportTier: 'experimental', runtimeVerified: false, modes: ['rendered']
+  })
 })
 async function fixture(kind: 'mod' | 'modpack' = 'mod') {
   const directory = await root()
@@ -79,9 +86,10 @@ async function fixture(kind: 'mod' | 'modpack' = 'mod') {
 it('starts an isolated mod client, guards stale UI actions, observes results and cleans up on project switch', async () => {
   const f = await fixture()
   expect(await f.service.execute(f.project, 'session', { operation: 'capabilities' })).toMatchObject({ modes: ['rendered'], supported: true, runtimeVerified: false })
-  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }) as { sessionId: string; observation: { revision: string } }
+  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered', waitSeconds: 1 }) as { sessionId: string; observation: { revision: string } }
   expect(f.build).toHaveBeenCalledOnce(); expect(f.install).toHaveBeenCalledOnce()
-  await expect(f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' })).rejects.toThrow('已有')
+  expect(await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' })).toMatchObject({ sessionId: started.sessionId, ready: true })
+  expect(f.build).toHaveBeenCalledOnce()
   f.change()
   await expect(f.service.execute(f.project, 'action', { sessionId: started.sessionId, operation: 'click', slot: 0, revision: started.observation.revision })).rejects.toThrow('界面已改变')
   expect(f.commands).not.toContain('click_button_index')
@@ -93,7 +101,7 @@ it('starts an isolated mod client, guards stale UI actions, observes results and
 })
 it('copies the pack instance mods when the managed build returns its synchronization receipt', async () => {
   const f = await fixture('modpack')
-  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }) as { directory: string }
+  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered', waitSeconds: 1 }) as { directory: string }
   expect(await fs.readFile(path.join(started.directory, 'mods/target.jar'), 'utf8')).toBe('jar')
 })
 it('rejects unsupported versions and hidden/headless mode before building', async () => {
@@ -108,13 +116,19 @@ it('rejects unsupported versions and hidden/headless mode before building', asyn
 it('cancels build preparation and cleans up without launching or installing', async () => {
   const f = await fixture(); const controller = new AbortController()
   f.build.mockImplementationOnce(async () => { controller.abort(); throw new Error('cancelled') })
-  await expect(f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }, controller.signal)).rejects.toThrow('cancelled')
+  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered', waitSeconds: 1 }, controller.signal) as { sessionId: string }
   await f.service.stop()
+  expect(await f.service.execute(f.project, 'session', { operation: 'state', sessionId: started.sessionId })).toMatchObject({ status: 'cancelled', ready: false })
   expect(f.install).not.toHaveBeenCalled(); expect(f.stop).toHaveBeenCalledOnce()
+  const sessions = await fs.readdir(path.join(f.project.path, '.modmind/player-tests'))
+  const evidence = JSON.parse(await fs.readFile(path.join(f.project.path, '.modmind/player-tests', sessions[0], 'session.json'), 'utf8'))
+  expect(evidence).toMatchObject({ phase: 'stopped', cancelled: true, ownerAborted: true })
+  expect(evidence.history.map((entry: { phase: string }) => entry.phase)).toEqual(['building', 'cancelled', 'stopping', 'stopped'])
+  expect(evidence.history[1].error).toContain('cancelled')
 })
 it('stops only the native session owned by the finishing agent turn', async () => {
   const f = await fixture(); const owner = new AbortController(); const other = new AbortController()
-  await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }, owner.signal)
+  await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered', waitSeconds: 1 }, owner.signal)
   await f.service.stopForSignal(other.signal)
   expect(f.stop).not.toHaveBeenCalled()
   await f.service.stopForSignal(owner.signal)
@@ -122,11 +136,29 @@ it('stops only the native session owned by the finishing agent turn', async () =
 })
 it('does not count command acknowledgements as scenario assertions and stops at the failed step', async () => {
   const f = await fixture()
-  const start = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }) as { sessionId: string }
+  const start = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered', waitSeconds: 1 }) as { sessionId: string }
   const result = await f.service.execute(f.project, 'scenario', { sessionId: start.sessionId, steps: [
     { operation: 'command', command: 'setblock 0 64 0 stone', expect: ['ok'] },
     { operation: 'command', command: 'give @s diamond', expect: ['diamond'] }
   ] })
   expect(result).toMatchObject({ success: false, failedStep: 1, visualVerified: false })
   expect(f.commands.filter(command => command === 'execute_command')).toHaveLength(1)
+})
+
+it('returns an ID before a blocked build, reads state outside the lane, and cancels without a second build', async () => {
+  const f = await fixture()
+  f.build.mockImplementationOnce(async (_project?: unknown, signal?: AbortSignal) => await new Promise<never>((_resolve, reject) => {
+    if (signal?.aborted) reject(signal.reason)
+    else signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }))
+  const owner = new AbortController()
+  const started = await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }, owner.signal) as { sessionId: string }
+  await expect.poll(() => f.build.mock.calls.length).toBe(1)
+  expect(await f.service.execute(f.project, 'session', { operation: 'start', mode: 'rendered' }, owner.signal)).toMatchObject({ sessionId: started.sessionId, ready: false, status: 'running' })
+  expect(await f.service.execute(f.project, 'session', { operation: 'state', sessionId: started.sessionId }, owner.signal)).toMatchObject({ status: 'running', phase: 'building' })
+  await expect(f.service.execute(f.project, 'session', { operation: 'stop', sessionId: 'wrong' })).rejects.toThrow('不匹配')
+  await f.service.execute(f.project, 'session', { operation: 'stop', sessionId: started.sessionId })
+  await f.service.stop()
+  expect(await f.service.execute(f.project, 'session', { operation: 'state', sessionId: started.sessionId, waitSeconds: 1 })).toMatchObject({ status: 'cancelled', ready: false })
+  expect(f.build).toHaveBeenCalledOnce(); expect(f.install).not.toHaveBeenCalled()
 })

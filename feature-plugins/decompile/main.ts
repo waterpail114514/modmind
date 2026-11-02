@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import path from "node:path"
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, Tray } from "electron"
 import type { DecompileProvenance } from "../../src/shared/decompile"
@@ -95,7 +97,7 @@ actions.run = async (input, context) => {
   const javaPath = await host.requireMinecraftRuntime().ensureJavaRuntime(undefined, DECOMPILE_MIN_JAVA)
   return runDecompilation({ jarPath: source.realTarget, skipRemap: input.skipRemap === true, minecraftVersion: typeof input.minecraftVersion === 'string' ? input.minecraftVersion : host.requireProject().minecraftVersion }, { cacheRoot: decompileCacheRoot(), javaPath, signal: (context as { signal?: AbortSignal }).signal ?? new AbortController().signal })
 }
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "decompile" }, () => handler(host.event(), ...(input.args as any[]))) }
 // Controlled JAR decompilation (受控反编译): results live in the userData cache, never in project sources.
 const decompileCacheRoot = (): string => path.join(app.getPath('userData'), 'decompile');
 const activeDecompileRuns = new Map<string, AbortController>();

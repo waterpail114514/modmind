@@ -1,3 +1,8 @@
+import * as diagnosticOperations from './diagnosticOperations'
+import * as diagnosticContext from './diagnosticContext'
+import * as diagnosticArtifacts from './diagnosticArtifacts'
+import * as diagnosticFiles from './diagnosticFiles'
+import * as networkDiagnostics from './networkDiagnostics'
 import * as buildRuntime from './buildRuntime'
 import * as creationFeedbackService from './creationFeedbackService'
 import * as diagnosticLog from './diagnosticLog'
@@ -18,6 +23,7 @@ import * as projectTemplates from './projectTemplates'
 import * as projectMutation from './projectMutation'
 
 export const featureHostRuntime = Object.freeze({
+  diagnosticOperations, diagnosticContext, diagnosticArtifacts, diagnosticFiles, networkDiagnostics,
   buildRuntime, creationFeedbackService, diagnosticLog, downloadActivityService, downloadService, modpackService, modpackContentMetadata, curseForgePackMetadata,
   agentProtection, nativeFeatureServices, networkRequest, processTree, documentRead, projectTextRead, inspirationResearch, studioRegistry, projectTemplates, projectMutation
 })

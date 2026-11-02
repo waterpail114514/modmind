@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createWriteStream, promises as fs } from 'node:fs'
+import { createReadStream, createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -8,6 +8,8 @@ import { downloadActivities } from './downloadActivityService'
 import { retryTransientFileLock } from './fileLockRetry'
 import { disposeResponseBody, proxiedUndiciRequest, retryAfterDelay } from './networkRequest'
 import { setTimeout as delay } from 'node:timers/promises'
+import { withToolInstallLock } from './managedToolInstall'
+import { readDiagnosticNodeResponse } from './networkDiagnostics'
 
 export type DownloadHashAlgorithm = 'sha1' | 'sha256' | 'sha512' | 'md5'
 
@@ -25,6 +27,11 @@ export interface DownloadRequest {
   expectedHash?: { algorithm: DownloadHashAlgorithm; value: string }
   maxBytes?: number
   timeoutMs?: number
+  /** Time without response data; unlike timeoutMs, progressing transfers may continue. */
+  stallTimeoutMs?: number
+  headersTimeoutMs?: number
+  /** Persist resumable, hash-verified partial files. Serialized per destination. */
+  resume?: boolean
   retriesPerSource?: number
   trackActivity?: boolean
   signal?: AbortSignal
@@ -49,7 +56,7 @@ export interface DownloadResult {
 }
 
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024
-const DEFAULT_TIMEOUT_MS = 15 * 60_000
+const DEFAULT_STALL_TIMEOUT_MS = 180_000
 // Total attempts per source. Defaults: one retry for permanent responses,
 // two retries for transient network failures.
 const DEFAULT_RETRIES = 3
@@ -111,7 +118,8 @@ function isAllowedDownloadUrl(value: string): boolean {
   }
 }
 
-function abortSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+function abortSignal(signal: AbortSignal | undefined, timeoutMs?: number): AbortSignal | undefined {
+  if (timeoutMs === undefined) return signal
   const timeout = AbortSignal.timeout(timeoutMs)
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
@@ -150,14 +158,21 @@ async function streamDownload(
   partial: string,
   request: DownloadRequest,
   maxBytes: number,
-  timeoutMs: number
+  timeoutMs?: number
 ): Promise<{ bytes: number; hash?: string }> {
+  const resumable = Boolean(request.resume && request.expectedHash)
+  const stat = resumable ? await fs.lstat(partial).catch(() => null) : null
+  if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error('Invalid partial download file')
+  let offset = stat?.size ?? 0
+  const metadataFile = `${partial}.json`
+  const previous = offset ? await fs.readFile(metadataFile, 'utf8').then(text => JSON.parse(text) as { etag?: string; modified?: string; total?: number }).catch(() => ({} as { etag?: string; modified?: string; total?: number })) : undefined
+  if (offset > maxBytes) { await fs.unlink(partial); offset = 0 }
   const response = await proxiedUndiciRequest(source.url, {
     method: 'GET',
-    headers: { 'User-Agent': 'ModMind/1.3 (verified-download)', ...(source.headers ?? {}) },
+    headers: { 'User-Agent': 'ModMind/1.3 (verified-download)', ...(source.headers ?? {}), ...(resumable ? { 'Accept-Encoding': 'identity' } : {}), ...(offset ? { Range: `bytes=${offset}-`, ...((previous?.etag && !previous.etag.startsWith('W/') || previous?.modified) ? { 'If-Range': previous?.etag && !previous.etag.startsWith('W/') ? previous.etag : previous!.modified! } : {}) } : {}) },
     signal: abortSignal(request.signal, timeoutMs),
-    bodyTimeout: timeoutMs,
-    headersTimeout: Math.min(timeoutMs, 60_000),
+    bodyTimeout: request.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS,
+    headersTimeout: request.headersTimeoutMs ?? 60_000,
     requireHttpsRedirects: true
   })
   let bytes = 0
@@ -167,12 +182,39 @@ async function streamDownload(
       message: `Received download response for ${path.basename(request.destination)}`,
       data: { source: diagnosticSource(source), finalUrl: diagnosticSource({ ...source, url: response.finalUrl ?? source.url }).url, status: response.statusCode, contentType: response.headers.get('content-type'), contentLength: response.headers.get('content-length'), proxyMode: response.proxyMode }
     })
-    if (!response.ok) throw Object.assign(new Error(`HTTP ${response.statusCode}`), { retryAfterMs: retryAfterDelay(response.headers.get('retry-after'), 250) })
+    if (response.statusCode === 416 && offset) { await fs.unlink(partial); throw new Error('Range no longer available; restart download') }
+    if (!response.ok) {
+      const body = await readDiagnosticNodeResponse(response.body as unknown as Readable)
+      for (const [name, value] of Object.entries(source.headers ?? {})) {
+        if (!/authorization|cookie|token|api.?key|secret|credential/i.test(name)) continue
+        const credential = value.replace(/^(?:Bearer|Basic)\s+/i, '')
+        if (credential.length >= 4) body.text = body.text.replaceAll(credential, '[REDACTED]')
+      }
+      throw Object.assign(new Error(`HTTP ${response.statusCode}`), { status: response.statusCode,
+        responseBody: body.text, responseTruncated: body.truncated, responseBodyTimedOut: body.timedOut, responseBodyIncomplete: body.incomplete,
+        requestId: response.headers.get('x-request-id') ?? response.headers.get('request-id'),
+        retryAfterMs: retryAfterDelay(response.headers.get('retry-after'), 250) })
+    }
+    if (response.statusCode === 206) {
+      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
+      if (!range || Number(range[1]) !== offset || Number(range[2]) < offset || Number(range[3]) > maxBytes || Number(range[2]) + 1 !== Number(range[3]) || (previous?.total && Number(range[3]) !== previous.total) || (previous?.etag && response.headers.get('etag') && previous.etag !== response.headers.get('etag'))) {
+        await fs.rm(partial, { force: true }); throw new Error('invalid response content range')
+      }
+    } else offset = 0 // Server ignored Range or changed the resource: overwrite safely.
+    bytes = offset
     if (!isAllowedDownloadUrl(source.url)) throw new Error('redirected to a non-HTTPS URL')
     const declared = Number(response.headers.get('content-length') ?? 0)
     if (!Number.isSafeInteger(declared) || declared < 0) throw new Error('invalid response content length')
-    if (declared > maxBytes) throw new Error(`content length ${declared} exceeds ${maxBytes}`)
-    const total = declared || undefined
+    if (declared + offset > maxBytes) throw new Error(`content length ${declared + offset} exceeds ${maxBytes}`)
+    const total = declared ? declared + offset : undefined
+    if (resumable) {
+      await fs.mkdir(path.dirname(partial), { recursive: true })
+      const temporaryMetadata = `${metadataFile}.${randomUUID()}.tmp`
+      try {
+        await fs.writeFile(temporaryMetadata, JSON.stringify({ etag: response.headers.get('etag'), modified: response.headers.get('last-modified'), total }), { flag: 'wx', mode: 0o600 })
+        await fs.rename(temporaryMetadata, metadataFile)
+      } finally { await fs.rm(temporaryMetadata, { force: true }) }
+    }
     const meter = new Transform({
       transform(chunk, _encoding, callback) {
         bytes += chunk.length
@@ -184,16 +226,22 @@ async function streamDownload(
         callback(null, chunk)
       }
     })
-    const hasher = request.expectedHash ? hashStream(request.expectedHash.algorithm) : undefined
+    const hasher = request.expectedHash && !resumable ? hashStream(request.expectedHash.algorithm) : undefined
     await fs.mkdir(path.dirname(partial), { recursive: true })
     const input = response.body as unknown as NodeJS.ReadableStream
-    const output = createWriteStream(partial, { flags: 'w', mode: 0o600 })
+    const output = createWriteStream(partial, { flags: offset ? 'a' : 'w', mode: 0o600 })
     if (hasher) await pipeline(input, meter, hasher, output)
     else await pipeline(input, meter, output)
     if (!bytes) throw new Error('download returned an empty file')
-    if (declared && bytes !== declared) throw new Error('content length mismatch')
-    const hash = hasher ? (hasher as Transform & { digest?: string }).digest : undefined
+    if (declared && bytes !== declared + offset) throw new Error('content length mismatch')
+    let hash = hasher ? (hasher as Transform & { digest?: string }).digest : undefined
+    if (resumable && request.expectedHash) {
+      const digest = createHash(request.expectedHash.algorithm)
+      for await (const chunk of createReadStream(partial)) { request.signal?.throwIfAborted(); digest.update(chunk) }
+      hash = digest.digest('hex')
+    }
     if (request.expectedHash && hash?.toLowerCase() !== request.expectedHash.value.toLowerCase()) {
+      await fs.rm(partial, { force: true })
       throw new Error(`${request.expectedHash.algorithm} mismatch: expected ${request.expectedHash.value}, got ${hash ?? 'unknown'}`)
     }
     await request.validate?.(partial)
@@ -214,7 +262,10 @@ export class DownloadManager {
   }
 
   download(request: DownloadRequest): Promise<DownloadResult> {
-    const operation = this.performDownload(request)
+    request = { ...request, signal: AbortSignal.any([this.shutdownController.signal, ...(request.signal ? [request.signal] : [])]) }
+    const operation = request.resume && request.expectedHash
+      ? withToolInstallLock(`${path.resolve(request.destination)}.download`, request.signal, () => this.performDownload(request))
+      : this.performDownload(request)
     this.pending.add(operation)
     void operation.finally(() => this.pending.delete(operation)).catch(() => undefined)
     return operation
@@ -227,14 +278,31 @@ export class DownloadManager {
     const sources = normalizeSources(request.sources)
     if (!sources.length) throw new Error('no valid HTTPS download sources were provided')
     const maxBytes = request.maxBytes ?? DEFAULT_MAX_BYTES
-    const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const timeoutMs = request.timeoutMs
+    request.signal?.throwIfAborted()
+    for (const limit of [maxBytes, timeoutMs, request.stallTimeoutMs, request.headersTimeoutMs]) {
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) throw new Error('Invalid download size or timeout limit')
+    }
+    if (request.resume && request.expectedHash) {
+      const cached = await fs.lstat(request.destination).catch(() => null)
+      if (cached?.isFile() && !cached.isSymbolicLink() && cached.size > 0 && cached.size <= maxBytes) {
+        const digest = createHash(request.expectedHash.algorithm)
+        for await (const chunk of createReadStream(request.destination)) { request.signal?.throwIfAborted(); digest.update(chunk) }
+        const hash = digest.digest('hex')
+        if (hash.toLowerCase() === request.expectedHash.value.toLowerCase()) {
+          await request.validate?.(request.destination)
+          return { source: { ...sources[0], id: 'cache', label: '已校验的本地缓存' }, destination: path.resolve(request.destination), bytes: cached.size, hash, attempts: 0, failures: [] }
+        }
+      }
+    }
     const configuredRetries = request.retriesPerSource === undefined
       ? undefined
       : Math.min(Math.max(Math.floor(request.retriesPerSource), 1), 5)
     const retries = configuredRetries ?? DEFAULT_RETRIES
     const failures: DownloadAttemptFailure[] = []
     const destination = path.resolve(request.destination)
-    const partial = `${destination}.partial-${randomUUID()}`
+    let partial = `${destination}.partial-${randomUUID()}`
+    const resumable = Boolean(request.resume && request.expectedHash)
     const downloadId = randomUUID()
     const activityId = request.trackActivity === false
       ? ''
@@ -250,13 +318,14 @@ export class DownloadManager {
       operation: 'verified-download',
       phase: 'start',
       message: `Starting verified download to ${path.basename(destination)}`,
-      data: { downloadId, destination, sources: sources.map(diagnosticSource), maxBytes, timeoutMs, retriesPerSource: retries, expectedHash: request.expectedHash?.algorithm }
+    data: { downloadId, destination, sources: sources.map(diagnosticSource), maxBytes, timeoutMs, stallTimeoutMs: request.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS, headersTimeoutMs: request.headersTimeoutMs ?? 60_000, resumable, retriesPerSource: retries, expectedHash: request.expectedHash?.algorithm }
     })
     try {
       for (const source of sources) {
+        if (resumable) partial = `${destination}.partial-${createHash('sha256').update(JSON.stringify([source.url, request.expectedHash])).digest('hex').slice(0, 24)}`
         for (let attempt = 1; attempt <= retries; attempt += 1) {
           attempts += 1
-          await fs.rm(partial, { force: true }).catch(() => undefined)
+          if (!resumable) await fs.rm(partial, { force: true }).catch(() => undefined)
           const attemptStartedAt = Date.now()
           let lastReportedAt = 0
           let lastReportedPercent = -1
@@ -298,10 +367,17 @@ export class DownloadManager {
               }
             }, maxBytes, timeoutMs)
             await fs.mkdir(path.dirname(destination), { recursive: true })
-            await withDestinationQueue(destination, async () => {
+            const promote = async () => {
               request.signal?.throwIfAborted()
               await retryTransientFileLock(() => fs.rename(partial, destination))
-            })
+            }
+            if (resumable) await promote()
+            else await withDestinationQueue(destination, promote)
+            if (resumable) for (const candidate of sources) {
+              const completedPartial = `${destination}.partial-${createHash('sha256').update(JSON.stringify([candidate.url, request.expectedHash])).digest('hex').slice(0, 24)}`
+              await fs.rm(completedPartial, { force: true }).catch(() => undefined)
+              await fs.rm(`${completedPartial}.json`, { force: true }).catch(() => undefined)
+            }
             diagnosticJournal.record({
               subsystem: 'download',
               operation: 'verified-download',
@@ -349,7 +425,7 @@ export class DownloadManager {
       downloadActivities.fail(activityId, error)
       throw error
     } finally {
-      await fs.rm(partial, { force: true }).catch(() => undefined)
+      if (!resumable) await fs.rm(partial, { force: true }).catch(() => undefined)
     }
   }
 }

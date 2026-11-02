@@ -16,6 +16,10 @@ function statusIn(message: string, status: number): boolean {
 export function describeAiFailureForUser(error: unknown): string {
   const message = readMessage(error).replace(/\s+/g, ' ').trim()
 
+  // Model discovery already reports the failed operation and a safe reason.
+  // Generic timeout formatting would hide that the task has not started yet.
+  if (/^(?:任务未能开始：)?无法读取供应商模型列表（/.test(message)) return message
+
   // Tool preparation failures have their own recovery path. Preserve it through
   // repeated IPC/UI formatting instead of suggesting a model or network change.
   if (/工具尚未准备好，本轮对话未开始|ModMind 工具连接已中断|模型回复称本轮没有可用的项目工具/.test(message)) {

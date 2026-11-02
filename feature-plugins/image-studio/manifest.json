@@ -4,12 +4,13 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "image-studio",
   "name": "图像工坊",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
   "hostCapabilities": [
-    "downloadActivities"
+    "downloadActivities",
+    "diagnosticsV1"
   ],
   "capabilities": [
     {
@@ -23,7 +24,7 @@
       "id": "image-studio",
       "label": "图像工坊",
       "component": "Workspace",
-      "icon": "WandSparkles",
+      "icon": "Image",
       "group": "资源",
       "order": 20
     }
@@ -274,5 +275,16 @@
       "action": "remove-background",
       "description": "Remove a detected solid background from an image data URL. Use the returned image as a transparent draft and inspect edges before saving."
     }
-  ]
+  ],
+  "assets": {
+    "open-canvas-notices": "feature-plugins/image-studio/vendor/open-canvas"
+  },
+  "assetFiles": {
+    "open-canvas-notices": [
+      "LICENSE",
+      "NOTICE.md",
+      "SOURCE_SNAPSHOT.json",
+      "INTEGRATION.md"
+    ]
+  }
 }

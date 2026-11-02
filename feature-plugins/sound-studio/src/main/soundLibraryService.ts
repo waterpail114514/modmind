@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { recordDiagnosticArtifact } from '../../../../src/main/diagnosticArtifacts'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ProjectInfo } from '../../../../src/shared/types'
@@ -228,6 +229,7 @@ export class SoundLibraryService {
       history.files.push({ relative, before: old !== null, after: digestSound(change.bytes) })
     }
     await writeSoundAtomic(path.join(historyRoot, 'history.json'), JSON.stringify(history))
+    await recordDiagnosticArtifact(this.project,'sound-save-plan',{entries:changes.map(change=>({name:path.relative(this.project.path,change.file),data:Buffer.from(change.bytes)})),metadata:{historyPath:historyRoot}})
     try { for (const change of changes) await writeSoundAtomic(change.file, change.bytes) }
     catch (error) {
       for (const [index, entry] of history.files.entries()) {
@@ -237,6 +239,7 @@ export class SoundLibraryService {
       }
       await fs.rm(historyRoot, { recursive: true, force: true }); throw error
     }
+    await recordDiagnosticArtifact(this.project,'sound-files-saved',{entries:changes.map(change=>({name:path.relative(this.project.path,change.file),path:change.file})),metadata:{historyPath:historyRoot}})
     const root = await this.data('history')
     const names = (await fs.readdir(root)).filter(name => /^\d+-[a-f0-9-]+$/.test(name)).sort().reverse()
     for (const name of names.slice(10)) await fs.rm(await safeSoundPath(root, name), { recursive: true, force: true })
@@ -260,6 +263,7 @@ export class SoundLibraryService {
       const recovery = path.join(directory, 'undo-recovery')
       await fs.mkdir(recovery, { recursive: true })
       await fs.writeFile(path.join(recovery, 'current.json'), JSON.stringify([...current].map(([relative, bytes]) => ({ relative, base64: bytes.toString('base64') }))))
+      await recordDiagnosticArtifact(this.project,'sound-undo-plan',{entries:[...originals].filter((row):row is [string,Buffer]=>row[1]!==null).map(([name,data])=>({name,data})),metadata:{recoveryPath:recovery,deleted:history.files.filter(file=>!file.before).map(file=>file.relative)}})
       try {
         for (const file of history.files) {
           const target = await safeSoundPath(this.project.path, file.relative)
@@ -279,6 +283,7 @@ export class SoundLibraryService {
         }
         throw error
       }
+      await recordDiagnosticArtifact(this.project,'sound-undo-complete',{entries:history.files.filter(file=>file.before).map(file=>({name:file.relative,path:path.join(this.project.path,file.relative)})),metadata:{recoveryPath:recovery,deleted:history.files.filter(file=>!file.before).map(file=>file.relative)}})
       await fs.rm(directory, { recursive: true, force: true })
     })
   }

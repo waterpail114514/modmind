@@ -11,9 +11,11 @@ import { fetchTextWithRetry } from './networkRequest'
 export { javaVersionForMinecraft } from './loaderCompatibility'
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const CATALOG_REVISION = 1
 const xmlParser = new XMLParser({ ignoreAttributes: false })
 
 interface CatalogCache {
+  revision: number
   updatedAt: string
   options: LoaderVersionOption[]
 }
@@ -44,12 +46,13 @@ const addonOptions: LoaderVersionOption[] = [
 ]
 
 const fabricOfflineGames = [
-  '26.2', '26.1.2', '26.1.1', '26.1', '1.21.11', '1.21.10', '1.21.9', '1.21.8', '1.21.7', '1.21.6', '1.21.5', '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21',
+  '26.3', '26.2', '26.1.2', '26.1.1', '26.1', '1.21.11', '1.21.10', '1.21.9', '1.21.8', '1.21.7', '1.21.6', '1.21.5', '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21',
   '1.20.6', '1.20.5', '1.20.4', '1.20.3', '1.20.2', '1.20.1', '1.20', '1.19.4', '1.19.3', '1.19.2', '1.19.1', '1.19', '1.18.2', '1.18.1', '1.18',
   '1.17.1', '1.17', '1.16.5', '1.16.4', '1.16.3', '1.16.2', '1.16.1', '1.16', '1.15.2', '1.15.1', '1.15', '1.14.4', '1.14.3', '1.14.2', '1.14.1', '1.14'
 ] as const
 
 const fabricOfflineApi: Record<string, string> = {
+  '26.3': '0.164.0+26.3',
   '26.2': '0.156.0+26.2', '26.1.2': '0.155.2+26.1.2', '26.1.1': '0.145.4+26.1.1', '26.1': '0.145.1+26.1',
   '1.21.11': '0.141.6+1.21.11', '1.21.10': '0.138.4+1.21.10', '1.21.9': '0.134.1+1.21.9', '1.21.8': '0.136.1+1.21.8',
   '1.21.7': '0.129.0+1.21.7', '1.21.6': '0.128.2+1.21.6', '1.21.5': '0.128.2+1.21.5', '1.21.4': '0.119.4+1.21.4',
@@ -64,7 +67,7 @@ const fabricOfflineApi: Record<string, string> = {
 }
 
 const fabricFallbackOptions: LoaderVersionOption[] = fabricOfflineGames.map((minecraftVersion) => ({
-  loader: 'fabric', minecraftVersion, loaderVersion: '0.19.3', apiVersion: fabricOfflineApi[minecraftVersion],
+  loader: 'fabric', minecraftVersion, loaderVersion: minecraftVersion === '26.3' ? '0.19.5' : '0.19.3', apiVersion: fabricOfflineApi[minecraftVersion],
   javaVersion: javaVersionForMinecraft(minecraftVersion), channel: 'release',
   supportTier: compareVersions(minecraftVersion, '1.20.1') >= 0 ? 'stable' : 'experimental',
   notes: fabricOfflineApi[minecraftVersion] ? ['离线官方分支兼容档；联网后刷新 Fabric API'] : ['离线提供 Fabric Loader；联网后自动匹配 Fabric API']
@@ -72,6 +75,8 @@ const fabricFallbackOptions: LoaderVersionOption[] = fabricOfflineGames.map((min
 
 const fallbackOptions: LoaderVersionOption[] = [
   ...fabricFallbackOptions,
+  { loader: 'forge', minecraftVersion: '26.3', loaderVersion: '26.3-66.0.13', javaVersion: 25, channel: 'release', supportTier: 'experimental', notes: ['官方 26.3 MDK 兼容档；需要额外游戏运行验证'] },
+  { loader: 'neoforge', minecraftVersion: '26.3', loaderVersion: '26.3.0.94', javaVersion: 25, channel: 'release', supportTier: 'experimental', notes: ['官方 26.3 ModDevGradle 兼容档；需要额外游戏运行验证'] },
   { loader: 'quilt', minecraftVersion: '1.20.1', loaderVersion: '0.27.1', apiVersion: '7.7.0+0.92.2-1.20.1', qslVersion: '6.3.0+1.20.1', javaVersion: 17, channel: 'release', supportTier: 'experimental', notes: ['Quilt 与 Quilted Fabric API 支持处于兼容验证阶段'] },
   { loader: 'forge', minecraftVersion: '1.6.4', loaderVersion: '1.6.4-9.11.1.1345', javaVersion: 8, channel: 'release', supportTier: 'experimental', notes: ['遗留 ForgeGradle 1.x 工具链'] },
   { loader: 'forge', minecraftVersion: '1.7.10', loaderVersion: '1.7.10-10.13.4.1614-1.7.10', javaVersion: 8, channel: 'release', supportTier: 'experimental', notes: ['遗留 ForgeGradle 1.x 工具链'] },
@@ -283,7 +288,7 @@ export class LoaderCatalog {
       try {
         const cached = JSON.parse(await fs.readFile(this.cachePath, 'utf8')) as CatalogCache
         const options = supportedOptions(cached.options)
-        if (Date.now() - Date.parse(cached.updatedAt) < CACHE_TTL_MS && completeCatalog(options)) {
+        if (cached.revision === CATALOG_REVISION && Date.now() - Date.parse(cached.updatedAt) < CACHE_TTL_MS && completeCatalog(options)) {
           this.memory = options
           return structuredClone(options)
         }
@@ -295,12 +300,12 @@ export class LoaderCatalog {
       const options = await downloadLoaderCatalog(this.productVersion)
       this.memory = options
       await fs.mkdir(path.dirname(this.cachePath), { recursive: true })
-      await fs.writeFile(this.cachePath, JSON.stringify({ updatedAt: new Date().toISOString(), options }, null, 2), 'utf8')
+      await fs.writeFile(this.cachePath, JSON.stringify({ revision: CATALOG_REVISION, updatedAt: new Date().toISOString(), options }, null, 2), 'utf8')
       return structuredClone(options)
     } catch (error) {
       try {
         const cached = JSON.parse(await fs.readFile(this.cachePath, 'utf8')) as CatalogCache
-        const options = supportedOptions(cached.options)
+        const options = supportedOptions([...cached.options, ...bundledLoaderCatalog()]).sort(minecraftSort)
         if (completeCatalog(options)) {
           this.memory = options
           return structuredClone(options)

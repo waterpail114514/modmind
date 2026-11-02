@@ -4,14 +4,15 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "testing",
   "name": "游戏与服务端测试",
-  "version": "1.0.4",
+  "version": "1.0.8",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
   "hostCapabilities": [
     "runtime",
     "testingV1",
-    "testingV2"
+    "testingV2",
+    "diagnosticsV1"
   ],
   "dependencies": [
     "server-pack-runtime"
@@ -76,6 +77,35 @@
     }
   ],
   "actions": [
+    {
+      "id": "build_status",
+      "handler": "build_status",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench",
+        "inspiration"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "id": "cancel_build",
+      "handler": "cancel_build",
+      "permission": "process",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
     {
       "id": "local_server",
       "handler": "local_server",
@@ -154,12 +184,29 @@
       ],
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "operation": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "capabilities",
+              "start",
+              "state",
+              "stop",
+              "pause",
+              "resume",
+              "takeover"
+            ]
           },
           "sessionId": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "waitSeconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 20
           },
           "mode": {
             "type": "string",
@@ -168,11 +215,19 @@
               "rendered"
             ]
           },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "background",
+              "legacy"
+            ]
+          },
           "offline": {
             "type": "boolean"
           },
           "username": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 16
           },
           "acceptEula": {
             "type": "boolean"
@@ -180,149 +235,28 @@
           "hidden": {
             "type": "boolean"
           },
-          "after": {
-            "type": "integer"
-          },
-          "tooltip": {
-            "type": "integer"
-          },
-          "slot": {
-            "type": "integer"
-          },
-          "button": {
-            "type": "integer"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "durationMs": {
-            "type": "integer"
-          },
-          "x": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "y": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "yaw": {
-            "type": "number",
-            "minimum": -180,
-            "maximum": 180
-          },
-          "pitch": {
-            "type": "number",
-            "minimum": -90,
-            "maximum": 90
-          },
-          "clicks": {
-            "type": "integer",
-            "minimum": -20,
-            "maximum": 20
-          },
-          "pressEnter": {
+          "withoutProjectMod": {
             "type": "boolean"
           },
-          "enabled": {
-            "type": "boolean"
+          "maxMemoryMb": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 16384
           },
-          "steps": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "operation": {
-                  "type": "string",
-                  "enum": [
-                    "click",
-                    "text",
-                    "inventory",
-                    "close",
-                    "command",
-                    "key",
-                    "look",
-                    "scroll",
-                    "interact"
-                  ]
-                },
-                "slot": {
-                  "type": "integer"
-                },
-                "button": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "command": {
-                  "type": "string"
-                },
-                "key": {
-                  "type": "string"
-                },
-                "durationMs": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 2000
-                },
-                "x": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 16384
-                },
-                "y": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 16384
-                },
-                "yaw": {
-                  "type": "number",
-                  "minimum": -180,
-                  "maximum": 180
-                },
-                "pitch": {
-                  "type": "number",
-                  "minimum": -90,
-                  "maximum": 90
-                },
-                "clicks": {
-                  "type": "integer",
-                  "minimum": -20,
-                  "maximum": 20
-                },
-                "pressEnter": {
-                  "type": "boolean"
-                },
-                "expect": {
-                  "type": "array",
-                  "minItems": 1,
-                  "maxItems": 10,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
-                  }
-                }
-              },
-              "required": [
-                "operation",
-                "expect"
-              ]
-            }
+          "width": {
+            "type": "integer",
+            "minimum": 640,
+            "maximum": 3840
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 360,
+            "maximum": 2160
+          },
+          "readyTimeoutMs": {
+            "type": "integer",
+            "minimum": 30000,
+            "maximum": 900000
           }
         },
         "required": [
@@ -340,175 +274,31 @@
       ],
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "operation": {
-            "type": "string"
-          },
           "sessionId": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
           },
-          "mode": {
+          "operation": {
             "type": "string",
             "enum": [
-              "headless",
-              "rendered"
+              "state",
+              "gui",
+              "logs",
+              "result"
             ]
           },
-          "offline": {
-            "type": "boolean"
-          },
-          "username": {
-            "type": "string"
-          },
-          "acceptEula": {
-            "type": "boolean"
-          },
-          "hidden": {
-            "type": "boolean"
+          "requestId": {
+            "type": "string",
+            "pattern": "^[a-f0-9-]{36}$"
           },
           "after": {
             "type": "integer"
           },
           "tooltip": {
             "type": "integer"
-          },
-          "slot": {
-            "type": "integer"
-          },
-          "button": {
-            "type": "integer"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "durationMs": {
-            "type": "integer"
-          },
-          "x": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "y": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "yaw": {
-            "type": "number",
-            "minimum": -180,
-            "maximum": 180
-          },
-          "pitch": {
-            "type": "number",
-            "minimum": -90,
-            "maximum": 90
-          },
-          "clicks": {
-            "type": "integer",
-            "minimum": -20,
-            "maximum": 20
-          },
-          "pressEnter": {
-            "type": "boolean"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "steps": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "operation": {
-                  "type": "string",
-                  "enum": [
-                    "click",
-                    "text",
-                    "inventory",
-                    "close",
-                    "command",
-                    "key",
-                    "look",
-                    "scroll",
-                    "interact"
-                  ]
-                },
-                "slot": {
-                  "type": "integer"
-                },
-                "button": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "command": {
-                  "type": "string"
-                },
-                "key": {
-                  "type": "string"
-                },
-                "durationMs": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 2000
-                },
-                "x": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 16384
-                },
-                "y": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 16384
-                },
-                "yaw": {
-                  "type": "number",
-                  "minimum": -180,
-                  "maximum": 180
-                },
-                "pitch": {
-                  "type": "number",
-                  "minimum": -90,
-                  "maximum": 90
-                },
-                "clicks": {
-                  "type": "integer",
-                  "minimum": -20,
-                  "maximum": 20
-                },
-                "pressEnter": {
-                  "type": "boolean"
-                },
-                "expect": {
-                  "type": "array",
-                  "minItems": 1,
-                  "maxItems": 10,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
-                  }
-                }
-              },
-              "required": [
-                "operation",
-                "expect"
-              ]
-            }
           }
         },
         "required": [
@@ -526,173 +316,261 @@
       ],
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "operation": {
-            "type": "string"
-          },
-          "sessionId": {
-            "type": "string"
-          },
-          "mode": {
             "type": "string",
             "enum": [
-              "headless",
-              "rendered"
+              "click",
+              "double_click",
+              "move",
+              "look",
+              "drag",
+              "scroll",
+              "text",
+              "key",
+              "key_down",
+              "key_up",
+              "button_down",
+              "button_up",
+              "combo",
+              "wait",
+              "inventory",
+              "close",
+              "command",
+              "interact",
+              "release",
+              "cancel",
+              "batch",
+              "operator"
             ]
           },
-          "offline": {
-            "type": "boolean"
-          },
-          "username": {
-            "type": "string"
-          },
-          "acceptEula": {
-            "type": "boolean"
-          },
-          "hidden": {
-            "type": "boolean"
-          },
-          "after": {
-            "type": "integer"
-          },
-          "tooltip": {
-            "type": "integer"
-          },
-          "slot": {
-            "type": "integer"
-          },
-          "button": {
-            "type": "integer"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
           "key": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 80
+          },
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
           },
           "durationMs": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
           },
           "x": {
-            "type": "integer",
+            "type": "number",
             "minimum": 0,
             "maximum": 16384
           },
           "y": {
-            "type": "integer",
+            "type": "number",
             "minimum": 0,
             "maximum": 16384
           },
-          "yaw": {
+          "toX": {
             "type": "number",
-            "minimum": -180,
-            "maximum": 180
+            "minimum": 0,
+            "maximum": 16384
           },
-          "pitch": {
+          "toY": {
             "type": "number",
-            "minimum": -90,
-            "maximum": 90
+            "minimum": 0,
+            "maximum": 16384
+          },
+          "dx": {
+            "type": "number",
+            "minimum": -4096,
+            "maximum": 4096
+          },
+          "dy": {
+            "type": "number",
+            "minimum": -4096,
+            "maximum": 4096
+          },
+          "button": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
           },
           "clicks": {
-            "type": "integer",
-            "minimum": -20,
-            "maximum": 20
+            "type": "number",
+            "minimum": -100,
+            "maximum": 100
+          },
+          "horizontal": {
+            "type": "number",
+            "minimum": -100,
+            "maximum": 100
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 500
           },
           "pressEnter": {
             "type": "boolean"
           },
+          "slot": {
+            "type": "integer"
+          },
+          "yaw": {
+            "type": "number"
+          },
+          "pitch": {
+            "type": "number"
+          },
           "enabled": {
+            "type": "boolean"
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "requestId": {
+            "type": "string",
+            "pattern": "^[a-f0-9-]{36}$"
+          },
+          "capture": {
             "type": "boolean"
           },
           "steps": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 20,
+            "maxItems": 32,
             "items": {
               "type": "object",
+              "additionalProperties": false,
               "properties": {
                 "operation": {
                   "type": "string",
                   "enum": [
                     "click",
+                    "double_click",
+                    "move",
+                    "look",
+                    "drag",
+                    "scroll",
                     "text",
+                    "key",
+                    "key_down",
+                    "key_up",
+                    "button_down",
+                    "button_up",
+                    "combo",
+                    "wait",
                     "inventory",
                     "close",
                     "command",
-                    "key",
-                    "look",
-                    "scroll",
-                    "interact"
+                    "interact",
+                    "release",
+                    "cancel",
+                    "batch",
+                    "operator"
                   ]
                 },
-                "slot": {
-                  "type": "integer"
-                },
-                "button": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "command": {
-                  "type": "string"
-                },
                 "key": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "keys": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
                 },
                 "durationMs": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 2000
+                  "maximum": 5000
                 },
                 "x": {
-                  "type": "integer",
+                  "type": "number",
                   "minimum": 0,
                   "maximum": 16384
                 },
                 "y": {
-                  "type": "integer",
+                  "type": "number",
                   "minimum": 0,
                   "maximum": 16384
                 },
-                "yaw": {
+                "toX": {
                   "type": "number",
-                  "minimum": -180,
-                  "maximum": 180
+                  "minimum": 0,
+                  "maximum": 16384
                 },
-                "pitch": {
+                "toY": {
                   "type": "number",
-                  "minimum": -90,
-                  "maximum": 90
+                  "minimum": 0,
+                  "maximum": 16384
+                },
+                "dx": {
+                  "type": "number",
+                  "minimum": -4096,
+                  "maximum": 4096
+                },
+                "dy": {
+                  "type": "number",
+                  "minimum": -4096,
+                  "maximum": 4096
+                },
+                "button": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 7
                 },
                 "clicks": {
-                  "type": "integer",
-                  "minimum": -20,
-                  "maximum": 20
+                  "type": "number",
+                  "minimum": -100,
+                  "maximum": 100
+                },
+                "horizontal": {
+                  "type": "number",
+                  "minimum": -100,
+                  "maximum": 100
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                "command": {
+                  "type": "string",
+                  "maxLength": 500
                 },
                 "pressEnter": {
                   "type": "boolean"
                 },
-                "expect": {
-                  "type": "array",
-                  "minItems": 1,
-                  "maxItems": 10,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
-                  }
+                "slot": {
+                  "type": "integer"
+                },
+                "yaw": {
+                  "type": "number"
+                },
+                "pitch": {
+                  "type": "number"
+                },
+                "enabled": {
+                  "type": "boolean"
                 }
               },
               "required": [
-                "operation",
-                "expect"
+                "operation"
               ]
             }
           }
@@ -713,175 +591,12 @@
       ],
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "operation": {
-            "type": "string"
-          },
           "sessionId": {
-            "type": "string"
-          },
-          "mode": {
             "type": "string",
-            "enum": [
-              "headless",
-              "rendered"
-            ]
-          },
-          "offline": {
-            "type": "boolean"
-          },
-          "username": {
-            "type": "string"
-          },
-          "acceptEula": {
-            "type": "boolean"
-          },
-          "hidden": {
-            "type": "boolean"
-          },
-          "after": {
-            "type": "integer"
-          },
-          "tooltip": {
-            "type": "integer"
-          },
-          "slot": {
-            "type": "integer"
-          },
-          "button": {
-            "type": "integer"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "durationMs": {
-            "type": "integer"
-          },
-          "x": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "y": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "yaw": {
-            "type": "number",
-            "minimum": -180,
-            "maximum": 180
-          },
-          "pitch": {
-            "type": "number",
-            "minimum": -90,
-            "maximum": 90
-          },
-          "clicks": {
-            "type": "integer",
-            "minimum": -20,
-            "maximum": 20
-          },
-          "pressEnter": {
-            "type": "boolean"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "steps": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 20,
-            "items": {
-              "type": "object",
-              "properties": {
-                "operation": {
-                  "type": "string",
-                  "enum": [
-                    "click",
-                    "text",
-                    "inventory",
-                    "close",
-                    "command",
-                    "key",
-                    "look",
-                    "scroll",
-                    "interact"
-                  ]
-                },
-                "slot": {
-                  "type": "integer"
-                },
-                "button": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "command": {
-                  "type": "string"
-                },
-                "key": {
-                  "type": "string"
-                },
-                "durationMs": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 2000
-                },
-                "x": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 16384
-                },
-                "y": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 16384
-                },
-                "yaw": {
-                  "type": "number",
-                  "minimum": -180,
-                  "maximum": 180
-                },
-                "pitch": {
-                  "type": "number",
-                  "minimum": -90,
-                  "maximum": 90
-                },
-                "clicks": {
-                  "type": "integer",
-                  "minimum": -20,
-                  "maximum": 20
-                },
-                "pressEnter": {
-                  "type": "boolean"
-                },
-                "expect": {
-                  "type": "array",
-                  "minItems": 1,
-                  "maxItems": 10,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
-                  }
-                }
-              },
-              "required": [
-                "operation",
-                "expect"
-              ]
-            }
+            "minLength": 1,
+            "maxLength": 120
           }
         },
         "required": [
@@ -899,89 +614,12 @@
       ],
       "inputSchema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
-          "operation": {
-            "type": "string"
-          },
           "sessionId": {
-            "type": "string"
-          },
-          "mode": {
             "type": "string",
-            "enum": [
-              "headless",
-              "rendered"
-            ]
-          },
-          "offline": {
-            "type": "boolean"
-          },
-          "username": {
-            "type": "string"
-          },
-          "acceptEula": {
-            "type": "boolean"
-          },
-          "hidden": {
-            "type": "boolean"
-          },
-          "after": {
-            "type": "integer"
-          },
-          "tooltip": {
-            "type": "integer"
-          },
-          "slot": {
-            "type": "integer"
-          },
-          "button": {
-            "type": "integer"
-          },
-          "revision": {
-            "type": "string"
-          },
-          "command": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "durationMs": {
-            "type": "integer"
-          },
-          "x": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "y": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16384
-          },
-          "yaw": {
-            "type": "number",
-            "minimum": -180,
-            "maximum": 180
-          },
-          "pitch": {
-            "type": "number",
-            "minimum": -90,
-            "maximum": 90
-          },
-          "clicks": {
-            "type": "integer",
-            "minimum": -20,
-            "maximum": 20
-          },
-          "pressEnter": {
-            "type": "boolean"
-          },
-          "enabled": {
-            "type": "boolean"
+            "minLength": 1,
+            "maxLength": 120
           },
           "steps": {
             "type": "array",
@@ -989,67 +627,119 @@
             "maxItems": 20,
             "items": {
               "type": "object",
+              "additionalProperties": false,
               "properties": {
                 "operation": {
                   "type": "string",
                   "enum": [
                     "click",
+                    "double_click",
+                    "move",
+                    "look",
+                    "drag",
+                    "scroll",
                     "text",
+                    "key",
+                    "key_down",
+                    "key_up",
+                    "button_down",
+                    "button_up",
+                    "combo",
+                    "wait",
                     "inventory",
                     "close",
                     "command",
-                    "key",
-                    "look",
-                    "scroll",
-                    "interact"
+                    "interact",
+                    "release",
+                    "cancel",
+                    "batch",
+                    "operator"
                   ]
                 },
-                "slot": {
-                  "type": "integer"
-                },
-                "button": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "command": {
-                  "type": "string"
-                },
                 "key": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "keys": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
                 },
                 "durationMs": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 2000
+                  "maximum": 5000
                 },
                 "x": {
-                  "type": "integer",
+                  "type": "number",
                   "minimum": 0,
                   "maximum": 16384
                 },
                 "y": {
-                  "type": "integer",
+                  "type": "number",
                   "minimum": 0,
                   "maximum": 16384
                 },
-                "yaw": {
+                "toX": {
                   "type": "number",
-                  "minimum": -180,
-                  "maximum": 180
+                  "minimum": 0,
+                  "maximum": 16384
                 },
-                "pitch": {
+                "toY": {
                   "type": "number",
-                  "minimum": -90,
-                  "maximum": 90
+                  "minimum": 0,
+                  "maximum": 16384
+                },
+                "dx": {
+                  "type": "number",
+                  "minimum": -4096,
+                  "maximum": 4096
+                },
+                "dy": {
+                  "type": "number",
+                  "minimum": -4096,
+                  "maximum": 4096
+                },
+                "button": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 7
                 },
                 "clicks": {
-                  "type": "integer",
-                  "minimum": -20,
-                  "maximum": 20
+                  "type": "number",
+                  "minimum": -100,
+                  "maximum": 100
+                },
+                "horizontal": {
+                  "type": "number",
+                  "minimum": -100,
+                  "maximum": 100
+                },
+                "text": {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                "command": {
+                  "type": "string",
+                  "maxLength": 500
                 },
                 "pressEnter": {
+                  "type": "boolean"
+                },
+                "slot": {
+                  "type": "integer"
+                },
+                "yaw": {
+                  "type": "number"
+                },
+                "pitch": {
+                  "type": "number"
+                },
+                "enabled": {
                   "type": "boolean"
                 },
                 "expect": {
@@ -2250,6 +1940,16 @@
   ],
   "tools": [
     {
+      "name": "modmind_build_status",
+      "action": "build_status",
+      "description": "Read the active managed build state and whether it can be cancelled. Does not start a build or game. Network timeout protection applies to new build Java processes after this feature update."
+    },
+    {
+      "name": "modmind_cancel_build",
+      "action": "cancel_build",
+      "description": "Cancel only the current project managed build and await process cleanup. Does not stop an independently running game or delete project files/caches. If status is cancelling, query modmind_build_status again before retrying."
+    },
+    {
       "name": "modmind_local_server",
       "action": "local_server",
       "description": "Manage the current project local server: state, start, stop, command or scenario. Uses managed core downloads and isolated persistent instances. Start does not prove plugin behavior; scenario requires fresh expected evidence."
@@ -2257,32 +1957,32 @@
     {
       "name": "modmind_test_rendered",
       "action": "test_rendered",
-      "description": "Build/sync and test a visible owned Minecraft client. Supported Java mods use the pinned Minecraft Mod MCP integration and return an actual screenshot plus GUI/player/world observations, then stop. Other versions/modpacks use startup checks only. Inspect returned images before claiming visual verification. For continued interaction use modmind_test_session with mode rendered. Requires real-interface testing."
+      "description": "Build/sync and launch the current Java mod/modpack with the bundled background Agent. Returns an actual framebuffer image, then stops the owned client. Inspect images before claiming visual or gameplay correctness. Startup is asynchronous: poll the returned taskId until completed; cancel stops preparation."
     },
     {
       "name": "modmind_test_session",
       "action": "test_session",
-      "description": "Manage an owned player test: capabilities, start, state, stop. Java mod projects use Minecraft Mod MCP in rendered mode, with isolated game files and native screenshots; navigate the title screen to create or enter a test world. Plugin/modpack tests use their supported HeadlessMC path. Probe capabilities first. Keep sessionId and stop when done. Headless cannot prove visuals."
+      "description": "Manage an owned game session: capabilities/start/state/stop, pause/resume AI input or takeover for human input. Rendered Java mod/modpack/plugin sessions default to the bundled background Agent, independent of control Mod catalogs. Start returns sessionId immediately; poll state until ready. The game retains real rendering and independent virtual input; hidden/minimized/locked states are not guaranteed. Legacy backend remains explicit; headless cannot prove visuals. Stop only owned processes."
     },
     {
       "name": "modmind_test_observe",
       "action": "test_observe",
-      "description": "Read fresh GUI or client logs. Java mod MCP observations also include player/world state. GUI revision must accompany click/text/scroll. HeadlessMC logs support a cursor; tooltip only if advertised."
+      "description": "Read current background input/render state or bounded client logs. operation=result with requestId checks an earlier action without repeating it. Background observations do not invent GUI, inventory or world semantics. Use test_capture for visible evidence."
     },
     {
       "name": "modmind_test_action",
       "action": "test_action",
-      "description": "Operate the test player: inventory, close, click, text, command, key. Native mod MCP also supports look(yaw,pitch), scroll(clicks), interact, coordinate click(x,y,button), and text with pressEnter. Click/text/scroll need latest revision; slot means GUI button index, not inventory slot for native MCP. Commands require in-game permissions and can build with setblock/fill. Operator is only for plugin/modpack owned test servers. Action acknowledgement is not gameplay success; do not blindly retry."
+      "description": "Operate the game through virtual keyboard/mouse: click/double_click, move, look(dx,dy relative pixels), drag(x,y,toX,toY), scroll, text, key/key_down/key_up, button_down/button_up, combo(keys), wait or batch(steps). Screenshot pixel coordinates require revision from latest test_capture; resizing/recreating invalidates it. Hold leases <=5000ms; batch <=32 steps and 10s. requestId deduplicates retries; query observe result after uncertainty. capture=true returns a later real image. release/cancel clear owned input. inventory/close use E/Escape; command types chat and needs in-game permissions. Completion means input and later render processed, never gameplay success."
     },
     {
       "name": "modmind_test_capture",
       "action": "test_capture",
-      "description": "Capture a new actual rendered-client screenshot if supported. Never accepts headless or blank frames as visual evidence."
+      "description": "Capture a fresh real framebuffer image, returned as MCP image content with frameId, timestamp, dimensions and revision. Click/drag/move use pixels of this returned image, not desktop coordinates. Paused/human sessions remain observable. No stale frames or headless images are presented as current visuals."
     },
     {
       "name": "modmind_test_scenario",
       "action": "test_scenario",
-      "description": "Run up to 20 player actions with expected output text per step. Records versioned evidence; stops on failed assertions. Does not prove visual correctness."
+      "description": "Legacy backend text-assertion scenarios. For background sessions use test_action batch followed by capture and inspect the actual image; no semantic game-state assertions are fabricated."
     },
     {
       "name": "modmind_test_matrix",

@@ -44,8 +44,11 @@ export function pendingOnboardingFeatures(required: string[], entries: FeatureSt
     return !entry?.available || Boolean(entry.updateAvailable) || !renderer?.available || renderer.version !== entry.version || !modules[id]
   })
 }
-export const onboardingPhases = ['experience', 'goal', 'task', 'features', 'locate', 'install', 'create', 'studio', 'field', 'submit', 'tool', 'complete'] as const
+export const onboardingPhases = ['experience', 'goal', 'task', 'features', 'locate', 'install', 'create', 'studio', 'field', 'submit', 'tool', 'complete', 'import', 'handoff', 'inspiration'] as const
 export type OnboardingPhase = typeof onboardingPhases[number]
+export const onboardingIntroSteps = ['hello', 'experience', 'new', 'returning', 'checking', 'account', 'helper', 'helpers', 'model', 'modelReply', 'invitation'] as const
+export type OnboardingIntroStep = typeof onboardingIntroSteps[number]
+export type OnboardingModelChoice = 'sol' | 'deepseek'
 export interface OnboardingSession {
   version: 1
   status: 'running' | 'paused' | 'skipped' | 'done'
@@ -54,6 +57,13 @@ export interface OnboardingSession {
   task?: string
   fieldIndex: number
   projectPath?: string
+  introStep?: OnboardingIntroStep
+  experience?: 'new' | 'returning'
+  modelChoice?: OnboardingModelChoice
+  inspirationConversationId?: string
+  projectMode?: 'new' | 'existing'
+  importSourcePath?: string
+  projectDraft?: Record<string, string>
 }
 export const freshOnboarding = (): OnboardingSession => ({ version: 1, status: 'running', phase: 'experience', fieldIndex: 0 })
 
@@ -62,16 +72,35 @@ export function parseOnboarding(raw: string | null): OnboardingSession {
     const value = JSON.parse(raw ?? 'null') as OnboardingSession | null
     if (!value || value.version !== 1 || !['running', 'paused', 'skipped', 'done'].includes(value.status) || !onboardingPhases.includes(value.phase)) return freshOnboarding()
     if (value.goal && !onboardingGoals.some(goal => goal.id === value.goal)) return freshOnboarding()
-    if (onboardingPhases.indexOf(value.phase) >= 2 && !value.goal) return freshOnboarding()
+    if (value.phase !== 'import' && onboardingPhases.indexOf(value.phase) >= 2 && !value.goal) return freshOnboarding()
     if (value.task && (!value.goal || !onboardingTasks[value.goal].some(task => task.id === value.task))) return freshOnboarding()
-    if (onboardingPhases.indexOf(value.phase) >= 3 && (!value.goal || !value.task)) return freshOnboarding()
-    return { ...value, fieldIndex: Number.isSafeInteger(value.fieldIndex) && value.fieldIndex >= 0 ? Math.min(value.fieldIndex, 32) : 0, projectPath: typeof value.projectPath === 'string' ? value.projectPath : undefined }
+    if (value.phase !== 'import' && onboardingPhases.indexOf(value.phase) >= 3 && (!value.goal || !value.task)) return freshOnboarding()
+    return { ...value, fieldIndex: Number.isSafeInteger(value.fieldIndex) && value.fieldIndex >= 0 ? Math.min(value.fieldIndex, 32) : 0, projectPath: typeof value.projectPath === 'string' ? value.projectPath : undefined,
+      introStep: value.introStep === 'modelReply' && !['sol', 'deepseek'].includes(value.modelChoice!) ? 'model' : onboardingIntroSteps.includes(value.introStep!) ? value.introStep : undefined,
+      experience: value.experience === 'new' || value.experience === 'returning' ? value.experience : undefined,
+      modelChoice: value.modelChoice === 'sol' || value.modelChoice === 'deepseek' ? value.modelChoice : undefined,
+      inspirationConversationId: typeof value.inspirationConversationId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value.inspirationConversationId) ? value.inspirationConversationId : undefined,
+      projectMode: value.phase === 'import' || value.projectMode === 'existing' ? 'existing' : value.projectMode === 'new' ? 'new' : undefined,
+      importSourcePath: typeof value.importSourcePath === 'string' ? value.importSourcePath : undefined,
+      projectDraft: value.projectDraft && typeof value.projectDraft === 'object' && !Array.isArray(value.projectDraft) ? Object.fromEntries(Object.entries(value.projectDraft).filter(([key, field]) => key.length <= 80 && typeof field === 'string' && field.length <= 1024).slice(0, 32)) : undefined }
   } catch { return freshOnboarding() }
 }
 
 export function resumeOnboarding(session: OnboardingSession, currentPath?: string): OnboardingSession {
   // Always revisit the complete recommendation; preserve a matching created project.
-  return { ...session, status: 'running', phase: session.goal && session.task ? 'features' : session.goal ? 'task' : 'goal', fieldIndex: 0, projectPath: session.projectPath === currentPath ? session.projectPath : undefined }
+  const reselectExisting = session.projectMode === 'existing' && (!session.projectPath || session.projectPath !== currentPath)
+  return { ...session, status: 'running', phase: ['handoff', 'inspiration'].includes(session.phase) && session.projectPath === currentPath ? 'handoff' : session.phase === 'experience' ? 'experience' : reselectExisting || session.phase === 'import' ? 'import' : session.goal && session.task ? 'features' : session.goal ? 'task' : 'goal', fieldIndex: 0, projectPath: session.projectPath === currentPath ? session.projectPath : undefined }
+}
+
+export function onboardingGoalForProject(project: { studioId?: string; kind?: string }): OnboardingGoal | undefined {
+  if (project.studioId) return onboardingGoals.find(goal => goal.studioId === project.studioId)?.id
+  switch (project.kind ?? 'mod') {
+    case 'mod': return 'mod'
+    case 'modpack': return 'modpack'
+    case 'server-plugin': return 'server'
+    case 'shader': return 'shader'
+    default: return undefined
+  }
 }
 
 export function useOnboardingSession() {

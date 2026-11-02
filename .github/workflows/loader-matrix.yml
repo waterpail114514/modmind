@@ -2,26 +2,6 @@ name: ModMind Loader Matrix
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "src/main/projectTemplates.ts"
-      - "src/main/loaderCompatibility.ts"
-      - "src/main/loaderCatalog.ts"
-      - "src/main/buildRuntime.ts"
-      - "feature-plugins/testing/**"
-      - "src/shared/types.ts"
-      - "scripts/generate-loader-fixture.ts"
-      - ".github/workflows/loader-matrix.yml"
-  pull_request:
-    paths:
-      - "src/main/projectTemplates.ts"
-      - "src/main/loaderCompatibility.ts"
-      - "src/main/loaderCatalog.ts"
-      - "src/main/buildRuntime.ts"
-      - "feature-plugins/testing/**"
-      - "src/shared/types.ts"
-      - "scripts/generate-loader-fixture.ts"
-      - ".github/workflows/loader-matrix.yml"
 
 permissions:
   contents: read
@@ -44,6 +24,22 @@ jobs:
             apiVersion: "0.156.0+26.2"
             java: 25
             gradle: "9.5.1"
+          - loader: fabric
+            minecraft: "26.3"
+            loaderVersion: "0.19.5"
+            apiVersion: "0.164.0+26.3"
+            java: 25
+            gradle: "9.6.0"
+          - loader: forge
+            minecraft: "26.3"
+            loaderVersion: "26.3-66.0.13"
+            java: 25
+            gradle: "9.7.1"
+          - loader: neoforge
+            minecraft: "26.3"
+            loaderVersion: "26.3.0.94"
+            java: 25
+            gradle: "9.2.1"
           - loader: quilt
             minecraft: "1.21"
             loaderVersion: "0.30.0"

@@ -341,6 +341,32 @@ describe('ConversationStore', () => {
     expect(document?.events.map((event) => event.sequence)).toEqual([1, 2])
   })
 
+  it('preserves inspiration reasoning projections and journal events after reopening storage', async () => {
+    const { project, userData, store } = await fixture()
+    const id = 'idea-reasoning'
+    await store.create(project, { id, surface: 'inspiration' })
+    const base = { kind: 'reasoning' as const, time: 'T1', conversationId: id, generation: 0, turnId: 'turn-a', itemId: 'thought-a' }
+    await store.appendOutput(project, { ...base, content: '核对约束', reasoning: { phase: 'delta', channel: 'summary', index: 0 } })
+    const reasoning = { summary: ['核对约束'], text: ['先检查已有方案'] }
+    const completed = await store.appendOutput(project, { ...base, content: '', reasoning: { phase: 'completed', ...reasoning } })
+    const saved = await store.saveProjection(project, id, 0, { messages: [{
+      id: 'thought-a', role: 'assistant', kind: 'reasoning', content: '核对约束\n先检查已有方案',
+      reasoning, reasoningCompleted: true, isFinal: false, status: 'completed',
+      turnId: 'turn-a', sequence: completed.sequence
+    }] })
+    await store.flush()
+
+    const reopened = new ConversationStore(new WorkbenchDataStore(userData)); stores.push(reopened)
+    const document = await reopened.read(project, id)
+    expect(document?.view).toEqual(saved.view)
+    expect(document?.view.messages?.[0]).toMatchObject({ kind: 'reasoning', reasoning, reasoningCompleted: true, isFinal: false })
+    expect(document?.events).toHaveLength(2)
+    expect(document?.events.map(event => event.payload)).toEqual([
+      expect.objectContaining({ kind: 'reasoning', content: '核对约束', reasoning: { phase: 'delta', channel: 'summary', index: 0 } }),
+      expect.objectContaining({ kind: 'reasoning', reasoning: { phase: 'completed', ...reasoning } })
+    ])
+  })
+
   it('migrates v2 events to the journal once and ignores a torn replica', async () => {
     const { project, userData, data, store } = await fixture()
     const created = await store.create(project, { id: 'ws-a', surface: 'workspace' })

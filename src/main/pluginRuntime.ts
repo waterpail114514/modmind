@@ -2,6 +2,9 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { UtilityProcess, utilityProcess } from 'electron'
+import { diagnosticJournal } from './diagnosticLog'
+import { DiagnosticOperations } from './diagnosticOperations'
+import { diagnosticValue } from './diagnosticContext'
 import {
   isReadOnlySafeTool,
   pluginMcpToolName,
@@ -97,7 +100,8 @@ export class PluginRuntime {
       message: String(message).slice(0, MAX_LOG_MESSAGE_LENGTH)
     })
     if (diagnostics.logs.length > MAX_DIAGNOSTIC_LOGS) diagnostics.logs.splice(0, diagnostics.logs.length - MAX_DIAGNOSTIC_LOGS)
-    this.options.log?.(level, `[${pluginId}] ${message}`)
+    const record = this.records.get(pluginId)
+    this.options.log?.(level, `[${pluginId}] ${message}`, { pluginId, source, version: record?.manifest.version, scope: record?.scope, revision: record?.revision, project: this.options.projectInfo() })
     this.emitDiagnostics(pluginId)
   }
 
@@ -355,6 +359,12 @@ export class PluginRuntime {
   // -------------------------------------------------------------------------
 
   async handleContextOp(pluginId: string, op: string, args: Record<string, unknown>): Promise<unknown> {
+    const record = this.records.get(pluginId)
+    return new DiagnosticOperations(diagnosticJournal).run('plugin', op, { pluginId, version: record?.manifest.version, revision: record?.revision, scope: record?.scope, projectPath: this.options.projectInfo()?.path,
+      ...(op.startsWith('storage') ? { path: this.storageFile(pluginId) } : {}), input: diagnosticValue(args) }, () => this.executeContextOp(pluginId, op, args))
+  }
+
+  private async executeContextOp(pluginId: string, op: string, args: Record<string, unknown>): Promise<unknown> {
     const record = this.records.get(pluginId)
     if (!record || !record.enabled || record.error || record.runtimeError) throw new Error(`插件不可用：${pluginId}`)
 

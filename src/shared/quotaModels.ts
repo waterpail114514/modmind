@@ -98,7 +98,7 @@ export const QUOTA_MODEL_METADATA = [
     "id": "gpt-5.6-terra",
     "name": "GPT-5.6 Terra",
     "family": "GPT",
-    "description": "均衡型编程模型，适合日常开发、代码修改和任务讨论。",
+    "description": "上一代均衡型编程模型，建议优先使用 GPT-6.1 Terra。",
     "recommended": false
   },
   {
@@ -128,6 +128,13 @@ export const QUOTA_MODEL_METADATA = [
     "family": "GPT",
     "description": "接近旗舰能力的全能主力，适合日常开发、写代码和排错。",
     "recommended": true
+  },
+  {
+    "id": "gpt-6.1-terra",
+    "name": "GPT-6.1 Terra",
+    "family": "GPT",
+    "description": "均衡型编程模型，适合日常开发、代码修改和任务讨论。",
+    "recommended": false
   },
   {
     "id": "grok-4.5",

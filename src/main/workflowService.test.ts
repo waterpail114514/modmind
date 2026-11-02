@@ -27,6 +27,8 @@ describe('generated mod CI workflow', () => {
     expect(result).toContain('loader: neoforge')
     expect(result).toContain('actions/setup-java@v4')
     expect(result).toContain("minecraft: '26.2'")
+    expect(result).toContain("minecraft: '26.3'")
+    expect(result).toContain("apiVersion: '0.164.0+26.3'")
     expect(result).toContain('java: 25')
     expect(result).toContain("qslVersion: '10.0.0-alpha.1+1.21'")
     expect(result).toContain('pull_request:')

@@ -91,6 +91,22 @@ jobs:
             apiVersion: '0.156.0+26.2'
             java: 25
             gradle: '9.5.1'
+          - loader: fabric
+            minecraft: '26.3'
+            loaderVersion: '0.19.5'
+            apiVersion: '0.164.0+26.3'
+            java: 25
+            gradle: '9.6.0'
+          - loader: forge
+            minecraft: '26.3'
+            loaderVersion: '26.3-66.0.13'
+            java: 25
+            gradle: '9.7.1'
+          - loader: neoforge
+            minecraft: '26.3'
+            loaderVersion: '26.3.0.94'
+            java: 25
+            gradle: '9.2.1'
           - loader: quilt
             minecraft: '1.21'
             loaderVersion: '0.30.0'

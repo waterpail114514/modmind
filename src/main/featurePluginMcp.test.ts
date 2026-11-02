@@ -29,7 +29,7 @@ it('calls the installed plugin through real workbench MCP, preserving discovery,
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const port = (server.address() as { port: number }).port
   const service = new FeaturePluginService(path.join(root, 'features'), {
-    requireFrom: path.resolve('package.json'), capabilities: { downloadActivities, runtime: featureHostRuntime }, busy: () => false, changed: () => undefined, projectRoot: () => project.path,
+    requireFrom: path.resolve('package.json'), capabilities: { downloadActivities, runtime: featureHostRuntime, diagnosticsV1: true }, busy: () => false, changed: () => undefined, projectRoot: () => project.path,
     options: () => ({ host: { event: () => ({}), requireProject: () => project }, userDataDir: root, projectRoot: () => root, getSyncedImageApi: async () => ({ customMode: true, imageApi: { baseUrl: `http://127.0.0.1:${port}`, apiKey: 'fixture-key', model: 'fixture-model' } }) })
   })
   const backend = (): ImageStudioBackend => service.service<ImageStudioBackend>('image-studio')

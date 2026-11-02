@@ -8,7 +8,8 @@ import ts from 'typescript'
 const require = createRequire(import.meta.url)
 const archiver = require('archiver')
 const root = path.resolve(import.meta.dirname, '..')
-const outputRoot = path.join(root, 'feature-plugin-dist')
+const development = process.argv.includes('--dev')
+const outputRoot = path.join(root, development ? 'node_modules/.cache/modmind-feature-dev/build' : 'feature-plugin-dist')
 await mkdir(outputRoot, { recursive: true })
 const host = (filter, contents) => ({ name: 'host-' + filter.source.replace(/\W/g, ''), setup(b) {
   b.onResolve({ filter }, a => ({ path: a.path, namespace: 'host-' + filter.source.replace(/\W/g, '') }))
@@ -17,8 +18,9 @@ const host = (filter, contents) => ({ name: 'host-' + filter.source.replace(/\W/
 const exportsOf = (name, value) => `const value = window.__modmindFeatureHost.${value}; export default value;\n` + Object.keys(require(name)).filter(k => k !== 'default' && /^[A-Za-z_$][\w$]*$/.test(k)).map(k => `export const ${k} = value.${k};`).join('\n')
 const definitions = []
 const only = process.argv.find(argument => argument.startsWith('--only='))?.slice(7)
+if (!only || only === 'image-studio') await import('./build-image-canvas-css.mjs')
 const exists = file => access(file).then(() => true, () => false)
-const sharedModules = ['buildRuntime', 'creationFeedbackService', 'diagnosticLog', 'downloadActivityService', 'downloadService', 'modpackService', 'modpackContentMetadata', 'curseForgePackMetadata', 'agentProtection', 'nativeFeatureServices', 'networkRequest', 'processTree', 'documentRead', 'projectTextRead', 'inspirationResearch', 'studioRegistry', 'projectTemplates', 'projectMutation']
+const sharedModules = ["diagnosticOperations", "diagnosticContext", "diagnosticArtifacts", "diagnosticFiles", "networkDiagnostics", 'buildRuntime', 'creationFeedbackService', 'diagnosticLog', 'downloadActivityService', 'downloadService', 'modpackService', 'modpackContentMetadata', 'curseForgePackMetadata', 'agentProtection', 'nativeFeatureServices', 'networkRequest', 'processTree', 'documentRead', 'projectTextRead', 'inspirationResearch', 'studioRegistry', 'projectTemplates', 'projectMutation']
 const sharedShims = []
 for (const name of sharedModules) {
   const source = ts.createSourceFile(name, await readFile(path.join(root, 'src/main', name + '.ts'), 'utf8'), ts.ScriptTarget.Latest, true)
@@ -61,14 +63,22 @@ for (const entry of await readdir(path.join(root, 'feature-plugins'), { withFile
     const sourceHash = createHash('sha256').update((await readFile(path.join(root, 'resources/shader-runtime/ShaderSessionAgent.java'), 'utf8')).replaceAll('\r\n', '\n')).digest('hex')
     if (agent.sourceSha256 !== sourceHash) throw new Error('Shader session adapter is stale; run node scripts/compile-shader-session-agent.mjs')
   }
+  if (manifest.id === 'testing') {
+    const agent = JSON.parse(await readFile(path.join(source, 'src/main/gameControlAgent.json'), 'utf8'))
+    for (const name of (await readdir(path.join(root, 'resources/game-control'))).filter(name => name.endsWith('.java'))) {
+      const hash = createHash('sha256').update((await readFile(path.join(root, 'resources/game-control', name), 'utf8')).replaceAll('\r\n', '\n')).digest('hex')
+      if (agent.sourceHashes[name] !== hash) throw new Error('Game control agent is stale; run node scripts/compile-game-control-agent.mjs')
+    }
+  }
   const output = path.join(outputRoot, manifest.id)
   const relativeOutput = path.relative(outputRoot, path.resolve(output))
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(relativeOutput)) throw new Error(`Invalid feature output: ${manifest.id}`)
   await rm(output, { recursive: true, force: true })
   await mkdir(output, { recursive: true })
   const mainBuild = await build({ entryPoints: [path.join(source, 'main.ts')], outfile: path.join(output, 'main.cjs'), bundle: true, metafile: true, platform: 'node', format: 'cjs', external: ['electron', 'sharp', 'ffmpeg-static', '@modmind/host', '7zip-bin', 'pdfjs-dist'], plugins: sharedShims })
+  if (Object.keys(mainBuild.metafile.inputs).some(file => ['diagnosticOperations', 'diagnosticContext', 'diagnosticArtifacts', 'diagnosticFiles', 'networkDiagnostics'].some(name => file.includes(name)))) definition.hostCapabilities = manifest.hostCapabilities = [...new Set([...manifest.hostCapabilities, 'diagnosticsV1'])]
   const rendererEntry = path.join(source, await exists(path.join(source, 'renderer.tsx')) ? 'renderer.tsx' : 'renderer.ts')
-  const rendererBuild = await build({ entryPoints: [rendererEntry], outfile: path.join(output, 'renderer.js'), bundle: true, metafile: true, minify: true, platform: 'browser', format: 'iife', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"', 'import.meta.hot': 'undefined', 'import.meta.env.DEV': 'false', 'import.meta.env.VITE_IMAGE_TRACE': '"0"', 'import.meta.env.VITE_IMAGE_LOG_ENDPOINT': '""' }, plugins: [
+  const rendererBuild = await build({ entryPoints: [rendererEntry], outfile: path.join(output, 'renderer.js'), bundle: true, metafile: true, minify: !development, platform: 'browser', format: 'iife', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"', 'import.meta.hot': 'undefined', 'import.meta.env.DEV': 'false', 'import.meta.env.VITE_IMAGE_TRACE': '"0"', 'import.meta.env.VITE_IMAGE_LOG_ENDPOINT': '""' }, plugins: [
     host(/^react$/, exportsOf('react', 'React')),
     host(/^react-dom$/, exportsOf('react-dom', 'ReactDOM')),
     host(/^react\/jsx-runtime$/, exportsOf('react/jsx-runtime', 'jsxRuntime')),
@@ -178,4 +188,4 @@ async function writeCatalog(file) {
   } finally { await rm(temporary, { force: true }).catch(() => undefined) }
 }
 await writeCatalog(path.join(outputRoot, 'catalog.json'))
-await writeCatalog(path.join(root, 'src/shared/featurePluginCatalog.json'))
+if (!development) await writeCatalog(path.join(root, 'src/shared/featurePluginCatalog.json'))

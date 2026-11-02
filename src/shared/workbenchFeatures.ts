@@ -22,12 +22,14 @@ export function normalizeWorkbenchFeatures(value: unknown): WorkbenchFeatures {
 }
 
 export function disabledWorkbenchFeature(features: WorkbenchFeatures | undefined, action: string, input: Record<string, unknown> = {}): WorkbenchFeature | undefined {
+  if (['test_matrix', 'test_minecraft', 'test_rendered'].includes(action) && ['state', 'cancel'].includes(String(input.operation))) return undefined
   if (!features) return undefined
   if (action === 'test_rendered' && !features.renderedTesting) return 'renderedTesting'
   if ((action.startsWith('blockbench_') || action.startsWith('asset_')) && !features.modeling) return 'modeling'
   if (['image_generate', 'image_perfect_pixel', 'image_remove_background'].includes(action) && !features.imageGeneration) return 'imageGeneration'
-  if (action === 'test_session' && ['stop', 'state', 'capabilities'].includes(String(input.operation))) return undefined
-  if (action === 'test_session' && input.operation === 'start') {
+  if (action === 'test_session' && ['stop', 'state', 'capabilities', 'pause', 'takeover'].includes(String(input.operation))) return undefined
+  if (action === 'test_action' && ['release', 'cancel'].includes(String(input.operation))) return undefined
+  if (action === 'test_session' && ['start', 'resume'].includes(String(input.operation))) {
     if (input.mode === 'rendered' && !features.renderedTesting) return 'renderedTesting'
     if (input.mode === 'headless' && !features.headlessTesting) return 'headlessTesting'
   }

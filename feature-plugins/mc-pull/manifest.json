@@ -3,9 +3,9 @@
   "apiVersion": 2,
   "hostVersion": "1.5.0-plugintest",
   "id": "mc-pull",
-  "name": "游戏数据采集",
-  "version": "1.14.2",
-  "description": "从用户选择的本地游戏实例采集名称、方块和基础图标，按项目和实例保存，供建筑预览使用。可导入已有探针产物；交接包未包含探针 jar。",
+  "name": "本地游戏资源",
+  "version": "1.15.0",
+  "description": "供建筑预览、数据包等功能按需读取本地实例资源，自动随依赖安装；在使用位置选择和管理来源。",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -13,21 +13,12 @@
     "runtime"
   ],
   "dependencies": [],
-  "views": [
-    {
-      "id": "pull",
-      "label": "游戏数据采集",
-      "component": "PullWorkspace",
-      "icon": "Download",
-      "group": "创作",
-      "order": 62
-    }
-  ],
+  "views": [],
   "capabilities": [
     {
       "id": "mc-pull",
-      "name": "游戏数据采集",
-      "description": "用游戏内探针采集方块/物品/图标/贴图，按数据包存进项目，供 3D 建筑预览使用。"
+      "name": "本地游戏资源",
+      "description": "按项目共用本地实例名称、方块与基础图标；可导入已有探针结果，未附带探针。"
     }
   ],
   "actions": [
@@ -284,8 +275,81 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {}
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
       }
+    },
+    {
+      "permission": "read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object",
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "handler": "pull_sources",
+      "surfaces": [
+        "workbench"
+      ],
+      "id": "pull:sources",
+      "projectRequired": true
+    },
+    {
+      "permission": "read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object",
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "handler": "pull_choose_probe",
+      "surfaces": [
+        "workbench"
+      ],
+      "id": "pull:chooseProbe",
+      "projectRequired": true
+    },
+    {
+      "handler": "pull_icons",
+      "id": "pull:icons",
+      "surfaces": [
+        "workbench"
+      ],
+      "permission": "read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "projectRequired": true
     }
   ],
   "assetFiles": {

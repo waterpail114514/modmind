@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { applyModpackPlan, planModpack } from "./src/main/modpackPlanner"
 import { curseForgePackResolver, installCurseForgePack, readCurseForgePackState } from "./src/main/curseForgePackService"
 import { promises as fs, readFileSync, createReadStream } from "node:fs"
@@ -77,7 +79,7 @@ export function activate(options: { host: NativeFeatureHost }) {
 const host = options.host
 const packImportControllers = new Map<string, AbortController>()
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "modpack-mods" }, () => handler(host.event(), ...(input.args as any[]))) }
 
 actions['modpack:refreshMods'] = () => refreshModpackMods(host.requireProject())
 diagnosticHandle('modpack:importStatus', () => readModpackImportStatus(host.requireProject()));

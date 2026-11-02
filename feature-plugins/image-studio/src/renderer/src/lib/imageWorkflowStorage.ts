@@ -1,4 +1,5 @@
 import { snapshotImageWorkflow, type ImageWorkflowGraph } from './imageWorkflow'
+import { uiDiagnosticValue } from '../../../../../../src/renderer/src/lib/diagnosticUi'
 
 export interface SavedImageWorkflow extends ImageWorkflowGraph { id: string; name: string; updatedAt: string }
 export interface ImageWorkflowLibrary { version: 2; revision: number; activeId: string; workflows: SavedImageWorkflow[] }
@@ -86,4 +87,18 @@ export async function loadImageWorkflows(): Promise<ImageWorkflowLibrary> {
   const graph = parseWorkflowGraph(JSON.parse(legacy))
   // Keep the original localStorage entry as a backup even after successful migration.
   return saveImageWorkflows({ version: 2, revision: 0, activeId: 'legacy', workflows: [{ id: 'legacy', name: '原有工作流', updatedAt: new Date().toISOString(), ...graph }] })
+}
+
+/** A read-only diagnostic projection; do not migrate or create an unused workflow database. */
+export async function imageWorkflowDiagnosticState(): Promise<unknown> {
+  if (!(await indexedDB.databases()).some(database => database.name === 'modmind-image-workflows')) return { status: 'unused' }
+  const db = await openDatabase()
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction('library', 'readonly')
+      const request = transaction.objectStore('library').get('current')
+      transaction.oncomplete = () => resolve(uiDiagnosticValue(request.result))
+      transaction.onabort = () => reject(transaction.error ?? new Error('无法读取工作流诊断'))
+    })
+  } finally { db.close() }
 }

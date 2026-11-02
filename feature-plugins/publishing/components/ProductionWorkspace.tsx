@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { Check, CircleAlert, CloudUpload, Download, LoaderCircle, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { Check, CircleAlert, CloudUpload, Download, LoaderCircle, Save, Settings2, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { ReleasePreflightResult, ReleasePublishResult, ReleaseSettings } from '../../../src/shared/production'
 import type { ProjectInfo } from '../../../src/shared/types'
 import { reportClientFailure as errorMessage } from '../../../src/renderer/src/lib/clientFailure'
@@ -121,7 +121,7 @@ function ReleasePane({ project, active, onOpenSettings }: { project: ProjectInfo
     </div>)}</div> : null}
     <div className="authoring-actions authoring-release-actions">
       <span id={statusId} className="authoring-status" role="status">{status}</span>
-      <MoreActions label="发布更多操作"><button type="button" disabled={loading || Boolean(error) || Boolean(busy)} onClick={() => void save()}><Check size={15} />保存草稿</button></MoreActions>
+      <MoreActions label="发布更多操作"><button type="button" disabled={loading || Boolean(error) || Boolean(busy)} onClick={() => void save()}><Save size={15} />保存草稿</button></MoreActions>
       <button className="secondary-button" disabled={loading || Boolean(error) || Boolean(busy)} onClick={() => void check()}>{busy === 'check' ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}保存并预检</button>
       <button className="primary-button" aria-describedby={statusId} disabled={loading || Boolean(error) || !targets.length || Boolean(busy) || !preflight?.ready} onClick={() => void publish()}>{busy === 'publish' ? <LoaderCircle className="spin" size={15} /> : <CloudUpload size={15} />}确认发布</button>
     </div>
@@ -160,14 +160,14 @@ function ModpackDeliveryPane({ project }: { project: ProjectInfo }): React.JSX.E
   const exportPack = async (): Promise<void> => {
     if (busy) return
     setBusy(true)
-    setNotice('')
+    setNotice(settings.modpackExportMode === 'download' ? '正在导出下载包…' : '正在打包模组、资源和配置…')
     try {
       await window.modmind.production.release.saveSettings(settings)
       const target = await window.modmind.project.exportArtifact()
       if (target) {
         setSettings(await window.modmind.production.release.getSettings())
         setNotice(`整合包已导出到 ${target}`)
-      }
+      } else setNotice('')
     } catch (error) {
       setNotice(`导出失败：${errorMessage(error)}`)
     } finally {
@@ -198,11 +198,13 @@ function ModpackDeliveryPane({ project }: { project: ProjectInfo }): React.JSX.E
         <label>显示名称<input value={settings.displayName} onChange={(event) => update('displayName', event.target.value)} /></label>
         <label>自动递增<select value={settings.bumpMode ?? 'patch'} onChange={(event) => update('bumpMode', event.target.value as NonNullable<ReleaseSettings['bumpMode']>)}><option value="patch">Patch</option><option value="minor">Minor</option><option value="major">Major</option></select></label>
         <label className="check-row"><input type="checkbox" checked={settings.autoBump !== false} onChange={(event) => update('autoBump', event.target.checked)} />导出成功后自动递增</label>
+        <label className="modpack-export-choice">导出方式<select aria-label="导出方式" disabled={busy} value={settings.modpackExportMode ?? 'bundled'} onChange={(event) => update('modpackExportMode', event.target.value as NonNullable<ReleaseSettings['modpackExportMode']>)}><option value="bundled">完整包（包含模组与资源）</option><option value="download">下载包（导入时下载模组与资源）</option></select></label>
+        <p className="modpack-export-hint">{settings.modpackExportMode === 'download' ? '保留配置、自制内容及没有可靠下载来源的文件；其余模组与资源在导入启动器时下载。' : '模组、资源和配置随包提供，无需再次下载这些内容。'}</p>
         <label className="release-changelog">摘要<textarea aria-label="摘要" value={settings.summary ?? ''} onChange={(event) => update('summary', event.target.value)} placeholder="用于 Modrinth 整合包摘要" /></label>
         <label className="release-changelog">更新日志<textarea aria-label="更新日志" value={settings.changelog} onChange={(event) => update('changelog', event.target.value)} placeholder="说明这次交付的变化" /></label>
       </div>
       <div className="modpack-delivery-actions"><button className="secondary-button" disabled={busy} onClick={() => void suggestSummary()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}AI 草拟摘要</button><button className="secondary-button" disabled={busy} onClick={() => void exportServerPack()}>{busy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}导出服务端包</button><button className="primary-button" disabled={busy} onClick={() => void exportPack()}>{busy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}导出 .mrpack</button></div>
-      {notice ? <div className="production-notice"><CircleAlert size={14} /><span>{notice}</span></div> : null}
+      {notice ? <div className="production-notice" role="status"><CircleAlert size={14} /><span>{notice}</span></div> : null}
     </section>
   </div>
 }

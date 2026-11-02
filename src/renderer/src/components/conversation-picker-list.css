@@ -8,11 +8,30 @@
 .conversation-picker-virtual-list .inspiration-conversation-option > .inspiration-conversation-select { min-width: 0; }
 .conversation-picker-virtual-list .inspiration-conversation-select > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .conversation-picker-search input:focus-visible { outline: 2px solid var(--focus-stroke); outline-offset: -1px; }
-.agent-history-state { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; width: min(800px, calc(100% - 40px)); margin: 12px auto; color: var(--agent-text-2); font-size: 12px; }
-.agent-history-state > svg { flex: 0 0 auto; }
-.agent-history-state > div { flex: 1 1 180px; min-width: 0; display: grid; gap: 4px; }
-.agent-history-state strong { font-size: 13px; font-weight: 500; }
-.agent-history-state span { overflow-wrap: anywhere; }
-.agent-history-state.error > svg { color: var(--theme-danger); }
-.agent-history-placeholder { flex: 1; min-height: 80px; }
-@container (max-width: 600px) { .agent-history-state { width: calc(100% - 28px); } }
+.agent-history-state { width: min(800px, calc(100% - 64px)); min-height: 0; flex: 1; margin: 0 auto; padding: clamp(16px, 4vh, 40px) 0 28px; display: flex; flex-direction: column; justify-content: center; gap: 32px; overflow: auto; }
+.agent-history-scroll-state { position: absolute; z-index: 3; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 48px); padding: 7px 12px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--agent-fill-3); border-radius: 8px; color: var(--agent-text-2); background: var(--theme-surface); font-size: 12px; }
+.agent-history-scroll-state > span { min-width: 0; overflow-wrap: anywhere; }
+.agent-history-scroll-state > button { flex: 0 0 auto; padding: 3px 6px; border: 0; color: var(--agent-text-1); background: transparent; cursor: pointer; font: inherit; }
+.agent-history-skeleton { width: 100%; max-height: 340px; min-height: 0; display: grid; align-content: center; gap: 28px; overflow: hidden; opacity: .65; mask-image: linear-gradient(to bottom, transparent, black 12%, black 90%, transparent); }
+.agent-history-skeleton > div { display: grid; gap: 9px; min-width: 0; }
+.agent-history-skeleton i { display: block; height: 10px; border-radius: 4px; background: var(--agent-fill-3); animation: agent-history-pulse 2s ease-in-out infinite; }
+.agent-history-skeleton-user { width: 44%; justify-self: end; padding: 15px 17px; border-radius: 12px 3px 12px 12px; background: var(--agent-fill-1); }
+.agent-history-skeleton-user i:last-child { width: 65%; }
+.agent-history-skeleton-user.short { width: 32%; }
+.agent-history-skeleton-answer { width: 76%; }
+.agent-history-skeleton-answer i:nth-child(2) { width: 94%; }
+.agent-history-skeleton-answer i:nth-child(3) { width: 87%; }
+.agent-history-skeleton-answer i:last-child { width: 52%; }
+.agent-history-skeleton-answer.short { width: 64%; }
+.agent-history-status { display: flex; align-items: center; gap: 12px; min-height: 52px; color: var(--agent-text-2); }
+.agent-history-status-icon { width: 24px; flex: 0 0 24px; display: grid; place-items: center; color: var(--agent-text-3); }
+.agent-history-status-copy { display: grid; gap: 5px; min-width: 0; flex: 1; }
+.agent-history-status-copy strong { font-size: 13px; font-weight: 500; }
+.agent-history-status-copy > span { color: var(--agent-text-3); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.agent-history-status-actions { display: flex; flex-wrap: wrap; gap: 14px; flex: 0 0 auto; }
+.agent-history-status-actions > button { min-height: 32px; color: var(--agent-text-2); font-size: 12px; white-space: nowrap; }
+.agent-history-status-actions > button:hover { color: var(--agent-text-1); text-decoration: underline; }
+.agent-history-state.error .agent-history-status { padding: 18px 0; border-top: 1px solid var(--agent-fill-2); border-bottom: 1px solid var(--agent-fill-2); }
+@keyframes agent-history-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (max-width: 620px) { .agent-history-state { width: calc(100% - 32px); gap: 24px; } .agent-history-status { flex-wrap: wrap; } .agent-history-status-actions { margin-left: 36px; } .agent-history-skeleton-user { width: 60%; } }
+@media (prefers-reduced-motion: reduce) { .agent-history-skeleton i, .agent-history-status-icon .spin { animation: none; } }

@@ -1,8 +1,39 @@
-import { describe, expect, it } from 'vitest'
+import { BlockbenchBridge } from '../../feature-plugins/model-studio/src/main/blockbenchBridge'
+import { describe, expect, it, vi } from 'vitest'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { BlockbenchAction, BlockbenchProjectState } from '../shared/blockbench'
 import { validateAction, validateCaptureRequest, validateProjectState } from "../../feature-plugins/model-studio/src/main/blockbenchBridge"
 
 describe('Blockbench production actions', () => {
+  const sourceAction = { type: 'load-source-document', document: { name: 'Model', format: 'bedrock', model: {}, textures: [], animations: [] } } as const
+  it('accepts bounded native imports and rejects internal page commands and external texture sources', () => {
+    expect(validateAction(JSON.parse(JSON.stringify(sourceAction)))).toMatchObject({ type: 'load-source-document' })
+    for (const type of ['serialize-project', 'serialize-export', 'snapshot-project', 'restore-project-snapshot', 'active-project', 'clone-project', 'capture-views', 'inspect-project']) {
+      expect(() => validateAction({ type } as BlockbenchAction)).toThrow('Unsupported')
+    }
+    expect(() => validateAction({ ...sourceAction, document: { ...sourceAction.document, format: 'project' } } as unknown as BlockbenchAction)).toThrow('codecs')
+    expect(() => validateAction({ ...sourceAction, document: { ...sourceAction.document, format: 'java_block', model: { textures: { all: 'file:///C:/secret.png' } }, textures: [], animations: [] } })).toThrow('resource identifiers')
+    expect(() => validateAction({ ...sourceAction, document: { ...sourceAction.document, textures: [{ id: '0', name: 'x', dataUrl: 'https://example.org/x.png' }], animations: [] } })).toThrow('embedded PNG')
+  })
+
+  it('rolls back an imported document on later action failure and rejects a second document before execution', async () => {
+    const discard = vi.fn(async () => {})
+    const invoke = vi.fn(async () => ({ data: { projectUuid: 'imported' }, message: 'loaded' }))
+    const bridge = Object.assign(Object.create(BlockbenchBridge.prototype), {
+      actionQueue: Promise.resolve(), operationProject: new AsyncLocalStorage(), getProjectRoot: () => '/project',
+      status: { phase: 'ready' }, assertAlive: () => {}, invokePage: invoke,
+      activeProjectUuid: async () => 'original', readProjectState: async () => ({ revision: `sha256:${'a'.repeat(64)}` }),
+      discardCandidateProjects: discard
+    }) as BlockbenchBridge
+    const fail = vi.spyOn(bridge as unknown as { executeValidatedAction: (action: BlockbenchAction) => Promise<unknown> }, 'executeValidatedAction')
+    fail.mockImplementationOnce(async () => ({ data: { projectUuid: 'imported' } })).mockRejectedValueOnce(new Error('later action failed'))
+    const action = JSON.parse(JSON.stringify(sourceAction)) as BlockbenchAction
+    await expect(bridge.executeActions([action, { type: 'run-command', command: 'frame-all' }])).rejects.toThrow('was discarded')
+    expect(discard).toHaveBeenCalledWith(['imported'], 'original')
+    fail.mockRestore()
+    await expect(bridge.executeActions([action, { type: 'new-model', name: 'Second', format: 'bedrock' }])).rejects.toThrow('first and only')
+    expect(invoke).not.toHaveBeenCalled()
+  })
   it('accepts groups, animation keyframes, and model export', () => {
     expect(validateAction({ type: 'add-group', name: 'body', origin: [0, 12, 0] })).toMatchObject({ type: 'add-group', name: 'body' })
     expect(validateAction({ type: 'add-animation', name: 'idle', length: 2, loop: 'loop', snapping: 20 })).toMatchObject({ type: 'add-animation', loop: 'loop' })

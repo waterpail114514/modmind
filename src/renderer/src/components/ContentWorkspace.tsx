@@ -7,13 +7,6 @@ import './authoring-pages.css'
 
 const contentKinds: Array<{ id: ContentKind; label: string }> = [
   { id: 'language', label: '语言文本' },
-  { id: 'recipe-shaped', label: '有形配方' },
-  { id: 'recipe-shapeless', label: '无序配方' },
-  { id: 'item-tag', label: '物品标签' },
-  { id: 'block-tag', label: '方块标签' },
-  { id: 'loot-block', label: '方块掉落' },
-  { id: 'advancement', label: '进度' },
-  { id: 'data-json', label: '数据 JSON' },
   { id: 'asset-json', label: '资源 JSON' }
 ]
 
@@ -85,7 +78,7 @@ export default function ContentWorkspace({ onFilesChanged }: { onFilesChanged: (
   const rawJson = kind === 'data-json' || kind === 'asset-json'
 
   return <div className="production-page"><div className="production-pane content-pane authoring-workspace">
-    <h2 className="visually-hidden">内容与数据</h2>
+    <h2 className="visually-hidden">语言与资源定义</h2>
     <div className="authoring-toolbar">
       <label className="authoring-kind">内容类型<select aria-label="内容类型" value={kind} disabled={Boolean(busy)} onChange={event => setKind(event.target.value as ContentKind)}>
         <optgroup label="常用">{contentKinds.filter(item => !item.id.endsWith('-json')).map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>

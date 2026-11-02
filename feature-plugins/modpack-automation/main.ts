@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { applyOptimizationProfile, BUILTIN_OPTIMIZATION_PROFILES } from "./src/main/optimizationService"
 import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from "../../src/main/modpackService"
 import type { NativeFeatureHost } from '../../src/main/index'
@@ -6,7 +8,7 @@ import type { FeaturePluginInvocationContext } from '../../src/shared/featurePlu
 export function activate(options: { host: NativeFeatureHost }) {
 const host = options.host
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "modpack-automation" }, () => handler(host.event(), ...(input.args as any[]))) }
 diagnosticHandle('modpack:listOptimizationProfiles', () => BUILTIN_OPTIMIZATION_PROFILES);
 diagnosticHandle('modpack:applyOptimizationProfile', async (_event, input: unknown) => {
     const project = host.requireProject();

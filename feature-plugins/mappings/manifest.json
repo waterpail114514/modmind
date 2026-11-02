@@ -3,17 +3,17 @@
   "apiVersion": 2,
   "hostVersion": "1.5.0-plugintest",
   "id": "mappings",
-  "name": "Mappings",
-  "version": "1.5.0",
+  "name": "映射表",
+  "version": "1.5.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
   "views": [
     {
       "id": "mappings",
-      "label": "Mappings",
+      "label": "映射表",
       "component": "mappings",
-      "icon": "LibraryBig",
+      "icon": "GitCompareArrows",
       "group": "开发",
       "order": 50
     }
@@ -21,7 +21,7 @@
   "capabilities": [
     {
       "id": "mappings",
-      "name": "Mappings",
+      "name": "映射表",
       "description": "查询目标 Minecraft 版本的类、字段和方法命名映射，已缓存结果支持离线查看。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
     }
   ],
@@ -33,5 +33,8 @@
     "quilt",
     "forge",
     "neoforge"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

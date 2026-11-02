@@ -1,4 +1,5 @@
 import type { ModMindApi } from '../../../../../../src/shared/types'
+import { recordUiDiagnostic } from '../../../../../../src/renderer/src/lib/diagnosticUi'
 
 const enabled = import.meta.env?.DEV === true && import.meta.env?.VITE_IMAGE_TRACE === '1'
 const endpoint = import.meta.env?.VITE_IMAGE_LOG_ENDPOINT || 'http://127.0.0.1:43187'
@@ -71,6 +72,7 @@ async function drain(): Promise<void> {
 }
 
 export function traceImageStudio(type: string, data: unknown = {}): void {
+  if (/^(?:workflow\.(?:run|node|manage|apply)|graph\.connect|node\.(?:add|delete)|api\.)/.test(type)) recordUiDiagnostic(`image-${type}`, data)
   if (!enabled) return
   if (type === 'workflow.run.start') runId = (data as { runId: string }).runId
   if (type === 'workflow.node.start') nodeId = (data as { nodeId: string }).nodeId

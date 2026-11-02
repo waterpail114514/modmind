@@ -1,3 +1,13 @@
+import { recordUiContentDiagnostic, recordUiDiagnostic } from './lib/diagnosticUi'
+import { imageWorkflowDiagnosticState } from '../../../feature-plugins/image-studio/src/renderer/src/lib/imageWorkflowStorage'
+import DiagnosticOptions from './components/DiagnosticOptions'
+import type { DiagnosticExportOptions } from '../../shared/diagnostics'
+import { reduceInspirationText } from './inspirationText'
+import AgentMessage from './components/AgentMessage'
+import AgentActivityList from './components/AgentActivityList'
+import { inspirationActivityRows, upsertInspirationActivity, settleInspirationActivities } from './inspirationActivity'
+import AgentReasoning from './components/AgentReasoning'
+import WorkbenchQuestions from './components/WorkbenchQuestions'
 import ContextUsage from './components/ContextUsage'
 import { latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import { normalizeAgentApprovalMode } from '../../shared/agentApproval'
@@ -7,6 +17,8 @@ import InspirationEvidenceDialog from './components/InspirationEvidenceDialog'
 import './components/inspiration-research.css'
 import InspirationFeatureControls from './components/InspirationFeatureControls'
 import InspirationWorkflowReply from './components/InspirationWorkflowReply'
+import MokoInspirationIntro, { MokoInspirationMessage } from './components/MokoInspirationIntro'
+import { isMokoFirstExchange } from '../../shared/mokoInspiration'
 import { isInspirationProtocol } from '../../shared/inspirationWorkflow'
 import InspirationKnowledgeDialog from './components/InspirationKnowledgeDialog'
 import { readInspirationFeatures, type InspirationFeatures } from '../../shared/inspirationFeatures'
@@ -16,7 +28,8 @@ import { readWorkbenchFeatureSelection, type WorkbenchFeatures } from '../../sha
 import { reportClientFailure } from './lib/clientFailure'
 import { useAppLoading, waitForAppLoadingCover } from './useAppLoading'
 import { BudgetedCache, RebuildableStateCache } from './lib/budgetedCache'
-import { readConversationHistory } from './conversationHistory'
+import { readConversationHistory, readWorkbenchHistoryWindow } from './conversationHistory'
+import { joinHistorySegments, type HistorySegment } from './historyWindow'
 import { trimInspirationHistories } from './inspirationHistoryCache'
 import { editorLanguage } from './lib/editorLanguage'
 import { SecretInput } from './components/SecretInput'
@@ -38,6 +51,7 @@ import { useSidebarLayout } from './useSidebarLayout'
 import { resolveSidebarGroups, moveSidebarEntry, moveSidebarCategory } from './sidebarLayout'
 import { buildNavigationDefinitions } from './navigationDefinitions'
 import AppMaintenanceSettings from './components/AppMaintenanceSettings'
+import ContributionSettings from './components/ContributionSettings'
 import AppChangelogDialog from './components/AppChangelogDialog'
 import type { AppChangelogSnapshot } from '../../shared/appChangelog'
 import AboutAuthors from './components/AboutAuthors'
@@ -47,6 +61,8 @@ import ReasoningEffortSettings from './components/ReasoningEffortSettings'
 import QuotaModelPicker from './components/QuotaModelPicker'
 import { DEFAULT_CODEX_REASONING_EFFORTS, selectedReasoningEfforts } from '../../shared/modelReasoning'
 import ComposerAiControl from './components/ComposerAiControl'
+import { deviceModelCatalogKey } from '../../shared/deviceModelCatalog'
+import { loadQuotaModelCatalog } from './loadQuotaModelCatalog'
 import { modelCatalogCurrent, modelCatalogFailure, type CatalogProvider } from './components/ModelCatalogRows'
 import { useSurfaceAiSelection, resetSurfaceAiSelections } from './useSurfaceAiSelection'
 import type { QuotaModelSelection } from '../../shared/quotaModels'
@@ -70,6 +86,7 @@ import {
   CircleAlert,
   CircleHelp,
   Clock3,
+  CloudDownload,
   CloudUpload,
   Code2,
   Copy,
@@ -88,7 +105,7 @@ import {
   LoaderCircle,
   LayoutGrid,
   RefreshCw,
-  LibraryBig,
+  GitCompareArrows,
   ListChecks,
   Minus,
   MoreHorizontal,
@@ -184,7 +201,7 @@ import { PluginPanelHost } from './components/PluginPanelHost'
 import { PluginsManager } from './components/PluginsManager'
 import { PluginOverlayLayer } from './components/PluginOverlayLayer'
 import type { PluginSnapshot } from '../../shared/plugins'
-import { appendUserTurn, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEventsAsync, settleWorkbenchActivity, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
+import { appendUserTurn, appendWorkbenchFailure, isWorkbenchInternalPrompt, normalizeStoredWorkbenchTimeline, normalizeWorkbenchTimeline, reduceWorkbenchOutput, reduceWorkbenchProgress, replayWorkbenchEventsAsync, settleWorkbenchActivity, workbenchDeleteTimelineItem, workbenchDialogueToText, workbenchFinalDialogue, workbenchRewindTimelineTo, type WorkbenchTimelineItem } from './workbenchTimeline'
 import {
   createWorkbenchConversation,
   isLegacyWorkbenchConversation,
@@ -202,7 +219,8 @@ import {
 } from './workbenchConversations'
 import { inspirationConversationTitle, normalizeStoredInspirationMessages, persistInspirationHistory, sortInspirationConversations, type InspirationConversation } from './inspirationStorage'
 import { isAiOperationalStatusText } from '../../shared/aiOutput'
-import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, upsertInspirationNotice, replayInspirationEventsAsync, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
+import { applyInspirationArtifact, buildInspirationRows, upsertInspirationReasoning, settleInspirationReasoning, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, upsertInspirationNotice, upsertInspirationProgress, replayInspirationEventsAsync, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, settleInspirationReply, shouldResumeInspirationSession } from './inspirationOutput'
+import { settleInspirationProgress } from './inspirationProgress'
 import appLogo from './assets/logo-wordmark.svg'
 import appLogoDark from './assets/logo-wordmark-dark.svg'
 
@@ -259,23 +277,7 @@ function readSidebarDragPayload(dataTransfer: DataTransfer): SidebarDragPayload 
   }
 }
 
-function InspirationStepGroup({ items }: { items: InspirationChatMessage[] }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  useEffect(() => { if (items.some((item) => item.status === 'streaming')) setExpanded(true) }, [items])
-  return <section className="agent-tool-group">
-    <button type="button" className="agent-disclosure-header" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-      <span className="agent-disclosure-icon">{items.some((item) => item.status === 'streaming') ? <LoaderCircle className="spin" size={12} /> : <ListChecks size={14} />}</span>
-      <span>查看步骤{items.length ? ` · ${items.length}` : ''}</span>
-      <ChevronRight className={expanded ? 'expanded' : ''} size={12} />
-    </button>
-    {expanded ? <PagedSteps items={items} renderItem={(item) => (
-      <div className={`agent-tool-row${item.notice ? ' ai-notice-row' : ''}`} key={item.id || `${item.time || ''}-${item.content}`}>
-        <span className={`agent-tool-dot ${item.status === 'error' ? 'error' : item.status === 'warning' || item.status === 'cancelled' ? 'warning' : 'done'}`} />
-        <div><strong>{item.content.split('\n')[0] || '工具调用'}</strong>{item.content.includes('\n') ? <span>{item.content.split('\n').slice(1).join(' ')}</span> : null}<AiNoticeDetails notice={item.notice} /></div>
-      </div>
-    )} /> : null}
-  </section>
-}
+
 
 type AiTimelineItem = WorkbenchTimelineItem
 
@@ -675,7 +677,8 @@ function ProjectLauncher({
   onDeveloper,
   featureActions,
   onSelect,
-  onRemove,
+  onUnlink,
+  onDelete,
   onRename
 }: {
   projects: ProjectInfo[]
@@ -686,7 +689,8 @@ function ProjectLauncher({
   onDeveloper: () => void
   featureActions: ReactNode
   onSelect: (project: ProjectInfo) => void
-  onRemove: (project: ProjectInfo) => void
+  onUnlink: (project: ProjectInfo) => void
+  onDelete: (project: ProjectInfo) => void
   onRename: (project: ProjectInfo) => void
 }): React.JSX.Element {
   const [menu, setMenu] = useState<{ project: ProjectInfo; x: number; y: number } | null>(null)
@@ -700,9 +704,12 @@ function ProjectLauncher({
     const close = (): void => setMenu(null)
     window.addEventListener('pointerdown', close)
     window.addEventListener('blur', close)
+    const escape = (event: KeyboardEvent): void => { if (event.key === 'Escape') setMenu(null) }
+    window.addEventListener('keydown', escape)
     return () => {
       window.removeEventListener('pointerdown', close)
       window.removeEventListener('blur', close)
+      window.removeEventListener('keydown', escape)
     }
   }, [menu])
 
@@ -745,15 +752,16 @@ function ProjectLauncher({
                   <span className="recent-project-meta">{platformLabel(recent.loader)} · {recent.minecraftVersion}</span>
                 </button>
                 {features.ready && !required.available ? <button className="recent-project-remove" type="button" title={`下载或启用${required.name}`} aria-label={`下载或启用${required.name}`} onClick={onManageStudios}><Download size={15} /></button> : null}
-                <button className="recent-project-remove" type="button" title="删除项目" aria-label={`删除项目 ${recent.name}`} onClick={() => onRemove(recent)}><X size={15} /></button>
+                <button className="recent-project-remove recent-project-more" type="button" title="更多项目操作" aria-label={`更多项目操作 ${recent.name}`} aria-haspopup="menu" aria-expanded={menu?.project.path === recent.path} onPointerDown={event => event.stopPropagation()} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setMenu(menu?.project.path === recent.path ? null : { project: recent, x: Math.max(8, Math.min(rect.right - 184, window.innerWidth - 192)), y: Math.min(rect.bottom + 4, window.innerHeight - 92) }) }}><MoreHorizontal size={16} /></button>
+                <button className="recent-project-remove recent-project-unlink" type="button" title="解除关联，保留本地文件" aria-label={`解除关联 ${recent.name}`} onClick={() => onUnlink(recent)}><X size={15} /></button>
               </div>
             })}
             {!filteredProjects.length ? <div className="recent-project-empty"><FolderOpen size={24} strokeWidth={1.4} aria-hidden="true" /><strong>{projects.length ? '没有找到匹配的项目' : '你的项目会出现在这里'}</strong><p>{projects.length ? '试试其他名称、路径或目标版本。' : '新建一个项目，或打开已有作品，继续你的创作。'}</p></div> : null}
           </div>
         </section>
       {menu ? <div className="project-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(event) => event.stopPropagation()}>
-        <button type="button" role="menuitem" onClick={() => { onRename(menu.project); setMenu(null) }}><Pencil size={14} />重命名项目</button>
-        <button type="button" role="menuitem" onClick={() => { onRemove(menu.project); setMenu(null) }}><X size={14} />删除项目</button>
+        <button autoFocus type="button" role="menuitem" onClick={() => { onRename(menu.project); setMenu(null) }}><Pencil size={14} />重命名项目</button>
+        <button className="project-menu-delete" type="button" role="menuitem" onClick={() => { onDelete(menu.project); setMenu(null) }}><Trash2 size={14} />删除项目</button>
       </div> : null}
     </main>
   )
@@ -919,12 +927,13 @@ function ProjectInspectionDialog({ kind, progress, error, onClose, onRetry }: {
 
 /** 回退/编辑重发时只保留「用户提问 + AI 最终回答」，清掉工具步骤、进行中/中断残留等半处理中间态。 */
 function isFinalInspirationMessage(message: InspirationChatMessage): boolean {
-  return message.role === 'user' || (message.role === 'assistant' && message.kind !== 'tool' && message.status === 'completed')
+  if (message.onboarding) return true
+  return message.role === 'user' || (message.role === 'assistant' && !message.kind && message.phase !== 'commentary' && message.isFinal !== false && message.status === 'completed')
 }
 
 function dedupeInspirationMessages(messages: InspirationChatMessage[]): InspirationChatMessage[] {
   return messages.reduce<InspirationChatMessage[]>((result, message) => {
-    if (message.role !== 'assistant' || message.kind === 'tool') {
+    if (message.onboarding || message.phase === 'commentary' || message.itemId || message.streamId || message.role !== 'assistant' || message.kind) {
       result.push(message)
       return result
     }
@@ -933,7 +942,7 @@ function dedupeInspirationMessages(messages: InspirationChatMessage[]): Inspirat
     for (let index = result.length - 1; index >= 0; index -= 1) {
       const candidate = result[index]
       if (candidate.role === 'user') break
-      if (candidate.role === 'assistant' && candidate.kind !== 'tool') {
+      if (candidate.role === 'assistant' && !candidate.kind) {
         targetIndex = index
         break
       }
@@ -970,7 +979,7 @@ function saveConversationProjection(...args: Parameters<ModMindApi['conversation
 
 const EMPTY_INSPIRATION_MODELS: AiModelInfo[] = []
 
-export function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBackend, aiDefaults, externalAgents, defaultModels = EMPTY_INSPIRATION_MODELS, defaultProviders, onBusyChange, onConnectionRequired, onSendToCoding }: {
+export function InspirationWorkspace({ project, visible, uiMode, deviceState, codingBackend, aiDefaults, externalAgents, defaultModels = EMPTY_INSPIRATION_MODELS, defaultProviders, onBusyChange, onConnectionRequired, onSendToCoding, mokoIntro }: {
   project: ProjectInfo
   visible: boolean
   uiMode: UiMode
@@ -983,6 +992,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   onBusyChange: (busy: boolean) => void
   onConnectionRequired: () => void
   onSendToCoding: (prompt: string) => void
+  mokoIntro?: { conversationId: string; active: boolean; onPrepared: () => void; onComplete: () => void }
 }): React.JSX.Element {
   const { confirm: confirmMessageAction, dialog: messageActionDialog } = useConfirmDialog()
   const { prompt: promptConversationName, dialog: conversationNameDialog } = usePromptDialog()
@@ -990,6 +1000,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const [historyBusy, setHistoryBusy] = useState(false)
   const historyMutationRef = useRef(false)
   const [activeConversationId, setActiveConversationId] = useState('')
+  const [mokoInputConversation, setMokoInputConversation] = useState('')
   const [hydrated, setHydrated] = useState(false)
   const [historyLoadError, setHistoryLoadError] = useState('')
   const [historyLoadRetry, setHistoryLoadRetry] = useState(0)
@@ -1035,7 +1046,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         if (result.status !== 'ok') throw new Error(result.message)
         setIndependentModels({ backend: 'quota', models: result.catalog.models, providers: result.catalog.providers })
         const next = { backend: aiSelection.backend, ...(result.selection ?? { model, reasoningLevel: 'auto' as const, account: option?.account, billing: option?.billing, group: option?.group }) }
-        inspirationSelectionRef.current = next; setAiOverride(next); setAiScanMessage(busy ? '下条消息使用 ' + model : '')
+        inspirationSelectionRef.current = next; setAiOverride(next); setAiScanMessage('')
         return true
       } catch (error) {
         setAiScanMessage(modelCatalogFailure(aiFailureMessage(error)))
@@ -1049,10 +1060,12 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   }
   const scanInspirationAi = async (refresh = false): Promise<void> => {
     if (!window.modmind.inspiration?.listModels || inspirationDiscoveryRef.current) return
-    if (refresh) { inspirationDiscoveryRef.current = true; setAiModelScanning(true); setAiScanMessage('正在读取线路…') }
+    if (refresh) { inspirationDiscoveryRef.current = true; setAiModelScanning(true); setAiScanMessage('正在读取模型列表…') }
     const backend = aiSelection.backend
     try {
-      const catalog = backend === 'quota' && deviceState.provider !== 'custom' ? await (refresh ? window.modmind.device.discoverModels() : window.modmind.device.getModelCatalog()) : undefined
+      const catalog = backend === 'quota' && deviceState.provider !== 'custom' ? await loadQuotaModelCatalog(saved => {
+        setIndependentModels({ backend, models: saved.models, providers: saved.providers })
+      }, refresh) : undefined
       const models = catalog?.models ?? await window.modmind.inspiration.listModels(backend)
       setIndependentModels({ backend, models, providers: catalog?.providers }); setAiScanMessage('')
     }
@@ -1110,7 +1123,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   const inspirationUsage = useMemo(() => latestContextUsage(messages, aiSelection), [messages, aiSelection.model, aiSelection.backend])
   const inspirationRows = useMemo(() => buildInspirationRows(messages), [messages])
   const visibleInspirationRows = inspirationRows
-  const latestInspirationMessageIndex = useMemo(() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user' || messages[i].kind !== 'tool') return i; return -1 }, [messages])
+  const latestInspirationMessageIndex = useMemo(() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user' || !messages[i].kind) return i; return -1 }, [messages])
 
   useEffect(() => {
     activeInspirationConversationIdRef.current = activeConversationId
@@ -1273,19 +1286,41 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   }
 
   useEffect(() => {
+    return window.modmind.ai.onProgress((event) => {
+      if (event.projectPath && normalizeProjectPath(event.projectPath) !== normalizeProjectPath(project.path)) return
+      if (event.sessionId !== inspirationSessionRef.current || event.sessionId === ignoredInspirationSessionRef.current) return
+      if (event.conversationId && event.conversationId !== activeInspirationConversationIdRef.current) return
+      const expectedGeneration = conversationGenerationRef.current.get(activeInspirationConversationIdRef.current)
+      if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
+      updateConversationMessages(inspirationConversationRef.current, current => upsertInspirationProgress(current, event))
+    })
+  }, [project.path])
+
+  useEffect(() => {
     return window.modmind.ai.onOutput((event) => {
       if (event.projectPath && normalizeProjectPath(event.projectPath) !== normalizeProjectPath(project.path)) return
-      if (event.sessionId !== inspirationSessionRef.current || (event.kind !== 'delta' && event.kind !== 'usage' && !event.content.trim())) return
+      if (event.sessionId !== inspirationSessionRef.current || (event.kind !== 'delta' && event.kind !== 'usage' && event.kind !== 'reasoning' && !event.inspirationArtifact && !event.content.trim())) return
       const expectedGeneration = conversationGenerationRef.current.get(activeInspirationConversationIdRef.current)
       if (event.generation !== undefined && expectedGeneration !== undefined && event.generation !== expectedGeneration) return
       if (event.sessionId === ignoredInspirationSessionRef.current) return
       const conversationId = inspirationConversationRef.current
       const sessionId = event.sessionId
+      if (event.kind !== 'usage' && event.kind !== 'reasoning') updateConversationMessages(conversationId, current => settleInspirationProgress(current, sessionId))
       if (event.usage) updateConversationMessages(conversationId, current => {
-        const reverseIndex = [...current].reverse().findIndex(message => message.sessionId === sessionId && message.role === 'assistant')
+        const reverseIndex = [...current].reverse().findIndex(message => message.sessionId === sessionId && message.role === 'assistant' && !message.kind)
         const index = reverseIndex < 0 ? -1 : current.length - 1 - reverseIndex
         return current.map((message, i) => i === index ? { ...message, usage: mergeContextUsage(latestContextUsage(current), event.usage) } : message)
       })
+      if (event.kind === 'reasoning') {
+        updateConversationMessages(conversationId, current => upsertInspirationReasoning(current, event))
+        return
+      }
+      if (event.inspirationArtifact) {
+        updateConversationMessages(conversationId, current => applyInspirationArtifact(current, event))
+        return
+      }
+      if (event.activity) { updateConversationMessages(conversationId, current => upsertInspirationActivity(current, event)); return }
+      if (event.kind === 'answer' || event.terminal) updateConversationMessages(conversationId, current => settleInspirationActivities(current, sessionId))
       if (event.kind === 'usage') return
       if (event.notice && event.terminal !== true && (event.kind === 'warning' || event.kind === 'retry')) {
         updateConversationMessages(conversationId, current => upsertInspirationNotice(current, event))
@@ -1306,69 +1341,35 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         const previous = items.at(-1)
         return previous?.kind === 'tool' && previous.content.trim() === item.content.trim() ? items : [...items, item]
       }
-      const demoteResponseAndAppendStep = (content: string, status: 'completed' | 'warning' | 'error' = 'completed'): void => {
+      const appendLifecycleStep = (content: string, status: 'completed' | 'warning' | 'error' = 'completed'): void => {
         updateConversationMessages(conversationId, (current) => {
-          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
+          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && !message.kind && message.status === 'streaming' && message.sessionId === sessionId)
           if (reverseIndex < 0) return appendUniqueStep(current, step(content, status))
           const target = current.length - 1 - reverseIndex
           const streaming = current[target]
           let before = current.slice(0, target)
-          if (streaming.content.trim() && !isInspirationProtocol(streaming.content)) before = appendUniqueStep(before, step(streaming.content))
+          if (streaming.content.trim() && !isInspirationProtocol(streaming.content)) before = [...before, { ...streaming, id: `${streaming.id}:progress:${event.eventId ?? event.sequence ?? current.length}`, phase: 'commentary', status: 'completed', isFinal: false, inspirationArtifact: undefined, promptEdit: undefined }]
           before = appendUniqueStep(before, step(content, status))
           return [...before, { ...streaming, content: '' }, ...current.slice(target + 1)]
         })
       }
-      if (event.kind === 'answer') {
-        if (!event.content.trim()) {
-          demoteResponseAndAppendStep(event.content, 'error')
+      if (event.kind === 'delta' || event.kind === 'response' || event.kind === 'answer') {
+        if (event.kind === 'answer' && !event.content.trim()) {
+          updateConversationMessages(conversationId, current => settleInspirationFailure(current, sessionId, '本轮未返回完整回答，请重试'))
           return
         }
-        finalAnswerSessionRef.current = sessionId
-        updateConversationMessages(conversationId, (current) => {
-          if (current.some((message) => message.role === 'assistant' && message.sessionId === sessionId && message.isFinal && message.content.trim() === event.content.trim())) return current
-          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
-          const completed: InspirationChatMessage = { role: 'assistant', inspirationFeatures: event.inspirationFeatures ?? current.find(m => m.sessionId === sessionId && m.role === 'assistant')?.inspirationFeatures, generation: event.generation, id: `turn-${sessionId}:assistant`, turnId: event.turnId ?? `turn-${sessionId}`, sequence: event.sequence, content: event.content, status: 'completed', isFinal: true, sessionId, time: event.time, usage: mergeContextUsage(latestContextUsage(current), event.usage) }
-          if (reverseIndex < 0) return [...current, completed]
-          const target = current.length - 1 - reverseIndex
-          return current.map((message, index) => index === target ? completed : message)
-        })
-        return
-      }
-      if (event.kind === 'response') {
-        if (isAiOperationalStatusText(event.content)) {
-          demoteResponseAndAppendStep(event.content)
-          return
-        }
-        updateConversationMessages(conversationId, (current) => {
-          const reverseIndex = [...current].reverse().findIndex((message) => message.role === 'assistant' && message.status === 'streaming' && message.sessionId === sessionId)
-          if (reverseIndex < 0) return current
-          const target = current.length - 1 - reverseIndex
-          const streaming = current[target]
-          if (streaming.content === event.content) return current
-          let before = current.slice(0, target)
-          if (streaming.content.trim() && !isInspirationProtocol(streaming.content)) before = appendUniqueStep(before, step(streaming.content))
-          return [...before, { ...streaming, content: event.content, sequence: event.sequence }, ...current.slice(target + 1)]
-        })
-        return
-      }
-      if (event.kind === 'delta') {
-        updateConversationMessages(conversationId, (current) => current.map((message) => {
-          if (message.role !== 'assistant' || message.status !== 'streaming' || message.sessionId !== sessionId) return message
-          const content = !message.content || event.content.startsWith(message.content)
-            ? event.content
-            : message.content.endsWith(event.content) ? message.content : `${message.content}${event.content}`
-          return { ...message, content, sequence: event.sequence }
-        }))
+        if (event.kind === 'answer') finalAnswerSessionRef.current = sessionId
+        updateConversationMessages(conversationId, current => reduceInspirationText(event.kind === 'answer' ? settleInspirationReasoning(current, sessionId) : current, event))
         return
       }
       if (event.kind === 'retry' || event.kind === 'tool' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'start') {
-        demoteResponseAndAppendStep(event.content, inspirationStepStatus(event))
+        appendLifecycleStep(event.content, inspirationStepStatus(event))
       }
     })
   }, [project.path])
 
   useEffect(() => {
-    const indexKey = `${storageKey}\n${historyLoadRetry}`
+    const indexKey = `${storageKey}\n${historyLoadRetry}\n${mokoIntro?.conversationId ?? ''}`
     if (!visible || loadedInspirationIndexRef.current === indexKey) return
     setPendingEditTarget(null)
     sessionResetConversationIdsRef.current.clear()
@@ -1384,11 +1385,12 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
       try {
         const summaries = await window.modmind.conversations.list(project.path, 'inspiration')
         if (cancelled) return
+        if (mokoIntro?.active && !summaries.some(summary => summary.id === mokoIntro.conversationId)) throw new Error('教程对话暂未找到，请重新读取。')
         if (summaries.length) {
           // The picker needs only metadata. Read and replay the selected history
           // separately instead of transferring every conversation over IPC.
           setConversations(summaries.map(summary => ({ id: summary.id, title: summary.title, updatedAt: summary.updatedAt, pinned: summary.pinned, titleSource: summary.titleSource, messages: [], messagesLoaded: false })))
-          setActiveConversationId(summaries[0].id)
+          setActiveConversationId(summaries.find(summary => summary.id === mokoIntro?.conversationId)?.id ?? summaries[0].id)
           loadedInspirationIndexRef.current = indexKey
           return
         }
@@ -1413,7 +1415,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     }
     void load()
     return () => { cancelled = true; if (historyCancelRef.current === cancel) historyCancelRef.current = () => {} }
-  }, [storageKey, historyLoadRetry, visible])
+  }, [storageKey, historyLoadRetry, visible, mokoIntro?.conversationId])
 
   useEffect(() => {
     if (!visible || !activeConversationId || activeInspirationConversation?.messagesLoaded !== false) return
@@ -1505,6 +1507,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
   }, [busy])
 
   const send = async (value = draft): Promise<void> => {
+    if (mokoIntro?.active && mokoInputConversation !== activeConversationId) return
     if (inspirationSwitchRef.current) {
       if (inspirationWaitingRef.current) return
       inspirationWaitingRef.current = true
@@ -1518,6 +1521,8 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     const requestAiSelection = inspirationSelectionRef.current
     const requestedContent = value.trim()
     if ((!requestedContent && !attachments.length) || busy || !hydrated || activeInspirationConversation?.messagesLoaded === false || historyMutationRef.current || attachmentInput.isBusy()) return
+    // The first explicit send ends the spotlight, including recoverable login errors.
+    if (mokoIntro?.active) mokoIntro.onComplete()
     if (features.projectKnowledge && !knowledgeReady) { setPersistenceWarning('项目知识尚未读取成功，请稍后重试或取消勾选「引用项目知识」'); return }
     const content = requestedContent || '请分析我上传的附件'
     setAttachmentReplayWarning('')
@@ -1602,7 +1607,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         sessionId,
         selectedBackend,
         usesQuota ? 'beginner-unlimited' : 'standard',
-        { surface: 'inspiration', modelSelection: requestAiSelection, inspirationFeatures: features, sessionScope: `inspiration/${conversationId}${conversationGeneration ? `/generation-${conversationGeneration}` : ''}`, resumeSession, inspirationQuestion: content, projectPath: project.path, fallbackPrompt: fallbackInspirationPrompt, conversationId, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
+        { surface: 'inspiration', ...(isMokoFirstExchange(baseMessages, content) ? { onboarding: 'moko-inspiration' as const } : {}), modelSelection: requestAiSelection, inspirationFeatures: features, sessionScope: `inspiration/${conversationId}${conversationGeneration ? `/generation-${conversationGeneration}` : ''}`, resumeSession, inspirationQuestion: content, projectPath: project.path, fallbackPrompt: fallbackInspirationPrompt, conversationId, ...(conversationGeneration !== undefined ? { generation: conversationGeneration } : {}), turnId: `turn-${sessionId}` }
       )
       if (sendToken !== sendTokenRef.current) return
       const reply = finalInspirationReply(result)
@@ -1639,14 +1644,14 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
     const sessionId = inspirationSessionRef.current
     sendTokenRef.current += 1
     ignoredInspirationSessionRef.current = sessionId
-    updateConversationMessages(conversationId, (current) => current.map((message) => message.status === 'streaming' && message.sessionId === sessionId
+    updateConversationMessages(conversationId, (current) => current.map((message) => !message.kind && message.status === 'streaming' && message.sessionId === sessionId
       ? { ...message, content: message.content || '正在停止任务…' }
       : message))
     cancellingInspirationRef.current = true
     void window.modmind.ai.cancelCode(sessionId || undefined, project.path)
       .then((result) => {
         if (result.status === 'timed_out') {
-          updateConversationMessages(conversationId, (current) => current.map((message) => message.status === 'streaming' && message.sessionId === sessionId
+          updateConversationMessages(conversationId, (current) => current.map((message) => !message.kind && message.status === 'streaming' && message.sessionId === sessionId
             ? { ...message, content: message.content || 'Agent 进程尚未完全退出，可再次停止' }
             : message))
           return
@@ -1657,7 +1662,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         onBusyChange(false)
       })
       .catch((error) => {
-        updateConversationMessages(conversationId, (current) => current.map((message) => message.status === 'streaming' && message.sessionId === sessionId
+        updateConversationMessages(conversationId, (current) => current.map((message) => !message.kind && message.status === 'streaming' && message.sessionId === sessionId
           ? { ...message, content: `停止失败：${errorMessage(error)}` }
           : message))
       })
@@ -1705,15 +1710,19 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         <section className="inspiration-chat">
           {historyLoadError ? <div className="inspiration-persistence-warning" style={{ marginTop: 12, flexShrink: 0, flexWrap: 'wrap' }} role="alert">{historyLoadError}<button type="button" onClick={() => setHistoryLoadRetry(value => value + 1)}>重新加载</button></div> : null}
           {!hydrated && !historyLoadError ? <div className="inspiration-persistence-warning" role="status">正在读取对话<button type="button" onClick={() => historyCancelRef.current()}>取消</button></div> : null}
-          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" projectPath={project.path} rows={visibleInspirationRows} isUserRow={row => row.kind === 'message' && row.message.role === 'user'} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台思考中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
-              if (row.kind === 'tool-group') return <InspirationStepGroup items={row.items} key={row.id} />
+          {visibleInspirationRows.length ? <ConversationTimeline key={`${project.path}:${activeConversationId}`} surface="inspiration" projectPath={project.path} rows={visibleInspirationRows} isUserRow={row => row.kind === 'message' && row.message.role === 'user'} footer={busy ? <div className="inspiration-thinking-status" role="status"><span>灵感台处理中</span><time>{thinkingSeconds}s</time></div> : null} renderRow={(row) => {
+              if (row.kind === 'tool-group') return <AgentActivityList items={inspirationActivityRows(row.items)} key={row.id} />
+              if (row.kind === 'reasoning') return <AgentReasoning reasoning={row.message.reasoning} running={busy && row.message.sessionId === inspirationSessionRef.current && row.message.status === 'streaming'}  expandWhileRunning />
               const { message } = row
+              if (message.onboarding) return <MokoInspirationMessage key={row.id} message={message} active={mokoIntro?.active && row.index === messages.length - 1} />
               const retryPrompt = message.role === 'assistant' && (message.status === 'error' || message.status === 'cancelled' || message.status === 'warning')
                 ? messages.slice(0, row.index).reverse().find((candidate) => candidate.role === 'user')?.content.replace(/\n\n已附 \d+ 个文件$/, '')
                 : undefined
-              return <div className={`inspiration-message ${message.role} ${message.status === 'error' ? 'error' : ''}`} key={row.id}>
-                <span>{message.role === 'assistant' ? <Bot size={16} /> : <UserRound size={16} />}</span>
-                <div><strong>{message.role === 'assistant' ? '灵感台' : '你'}</strong>{message.role === 'assistant' ? <><InspirationWorkflowReply
+              return <AgentMessage key={row.id} role={message.role} content={message.content} time={message.time}
+                onEdit={!busy && message.role === 'user' ? () => void editInspirationMessage(row.index, message.content) : undefined}
+                onDelete={!busy ? () => void deleteInspirationMessage(row.index) : undefined}
+                onRewind={!busy ? () => void rewindInspirationTo(row.index) : undefined}>
+                <InspirationWorkflowReply
                   message={message} features={features} projectPath={project.path} conversationId={activeConversationId}
                   generation={conversationGenerationRef.current.get(activeConversationId) ?? 0}
                   latest={row.index === latestInspirationMessageIndex} busy={busy}
@@ -1721,8 +1730,9 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
                   onSend={text => void send(text)} onHandoff={onSendToCoding} onSource={setEvidenceHref}
                   onCollect={content => setKnowledgeDialog({ content })}
                   onEdit={promptEdit => updateConversationMessages(activeConversationId, current => current.map((m, i) => i === row.index ? { ...m, promptEdit } : m))}
-                /><AiNoticeDetails notice={message.notice} />{message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}</> : <p>{message.content}</p>}{!busy ? <div className="inspiration-message-actions">{message.role === 'user' ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => void editInspirationMessage(row.index, message.content)}><Pencil size={12} /></button> : null}<button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => void deleteInspirationMessage(row.index)}><Trash2 size={12} /></button><button type="button" title={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} aria-label={message.role === 'user' ? '从这条提问重新开始' : '保留此回答并截断后续对话'} onClick={() => void rewindInspirationTo(row.index)}><Undo2 size={12} /></button></div> : null}</div>
-              </div>
+                /><AiNoticeDetails notice={message.notice} />
+                {message.isFinal && retryPrompt && !busy ? <button className="message-action" type="button" onClick={() => void send(retryPrompt)}><RotateCcw size={13} />重试</button> : null}
+              </AgentMessage>
             }} /> : hydrated ? <ChatWelcome key={`${project.path}:${activeConversationId}`} mode="inspiration" project={project} disabled={busy} onSelect={(prompt) => { setDraft(prompt); document.querySelector<HTMLTextAreaElement>('.inspiration-page:not([hidden]) textarea')?.focus() }} /> : <div className="inspiration-loading" role="status">正在载入对话…</div>}
           <div className="inspiration-compose-area">
           <div className="inspiration-research-shortcuts" aria-label="分析快捷入口">
@@ -1732,6 +1742,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
               { id: 'design', label: '设计玩法', prompt: '请帮我设计一个玩法，整理机制、资源需求、联机行为、开发步骤和验收条件。我的想法是：' }] as const).map(item =>
               <button key={item.id} type="button" disabled={busy || historyBusy} onClick={() => { changeFeatures({ ...features, [item.id]: true }); setDraft(item.prompt); document.querySelector<HTMLTextAreaElement>('.inspiration-page:not([hidden]) textarea')?.focus() }}>{item.label}</button>)}
           </div>
+          {features.autoQuestions ? <WorkbenchQuestions key={`${project.path}:${activeConversationId}:questions`} projectPath={project.path} conversationId={activeConversationId} surface="inspiration" onDraft={text => setDraft(current => [current, text].filter(Boolean).join('\n\n'))} /> : null}
           <div className={`inspiration-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...attachmentInput.handlers}>
             {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
             <textarea value={draft} disabled={busy || historyBusy || !hydrated} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !(event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); void send() } }} aria-label="灵感提问" placeholder="一个念头、一个问题，都可以从这里开始…" />
@@ -1753,6 +1764,7 @@ export function InspirationWorkspace({ project, visible, uiMode, deviceState, co
         </section>
       </div>
     </div>
+    {visible && mokoIntro?.active ? <MokoInspirationIntro ready={hydrated && activeConversationId === mokoIntro.conversationId} error={historyLoadError} model={aiSelection.model} messages={messages} onMessages={updater => updateConversationMessages(mokoIntro.conversationId, updater)} onPrepared={mokoIntro.onPrepared} onInputReady={() => setMokoInputConversation(mokoIntro.conversationId)} onComplete={mokoIntro.onComplete} onRetry={() => setHistoryLoadRetry(value => value + 1)} /> : null}
     {messageActionDialog}
     {conversationNameDialog}
     {evidenceHref ? <InspirationEvidenceDialog key={evidenceHref} projectPath={project.path} href={evidenceHref} onClose={() => setEvidenceHref('')} /> : null}
@@ -1898,9 +1910,16 @@ export default function App(): React.JSX.Element {
   bootstrappingRef.current = bootstrapping
   const [openingProject, setOpeningProject] = useState(false)
   const [projectTransitionPending, setProjectTransitionPending] = useState(false)
+  const [onboardingTransitionPending, setOnboardingTransitionPending] = useState(false)
   const projectTransitionRef = useRef(0)
-  const setProject = (next: ProjectInfo | null): void => {
+  const setProject = (next: ProjectInfo | null, options?: { cover?: boolean }): void => {
     const transition = ++projectTransitionRef.current
+    // The tutorial already covers the workspace and owns its creation feedback.
+    if (options?.cover === false) {
+      setProjectState(next)
+      setProjectTransitionPending(false)
+      return
+    }
     if (next && !projectPathRef.current && !bootstrappingRef.current) {
       setProjectState(next)
       setProjectTransitionPending(false)
@@ -1963,7 +1982,7 @@ export default function App(): React.JSX.Element {
   const [recentProjects, setRecentProjects] = useState<ProjectInfo[]>([])
   const [projectLauncherOpen, setProjectLauncherOpen] = useState(() => !isDetachedWindow)
   // The cover protects the project transition, not background history/file reads.
-  useAppLoading(!appDialogRequest && (bootstrapping || openingProject || projectTransitionPending || developerTransitionPending))
+  useAppLoading(!appDialogRequest && (bootstrapping || openingProject || projectTransitionPending || developerTransitionPending || onboardingTransitionPending))
   const [minimalProjectMenuOpen, setMinimalProjectMenuOpen] = useState(false)
   const minimalProjectMenuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -2027,14 +2046,14 @@ export default function App(): React.JSX.Element {
   const setAiTimeline = (value: SetStateAction<AiTimelineItem[]>): void => setWorkbenchValue('timeline', value)
   const setAiOutputStatus = (value: SetStateAction<WorkbenchUiState['outputStatus']>): void => setWorkbenchValue('outputStatus', value)
   const setAiRecovery = (value: SetStateAction<AiRecoveryInfo | null>): void => setWorkbenchValue('recovery', value)
-  const [pendingWorkbenchEdit, setPendingWorkbenchEdit] = useState<{ conversationId: string; itemId: string } | null>(null)
+  const [pendingWorkbenchEdit, setPendingWorkbenchEdit] = useState<{ conversationId: string; itemId: string; item?: AiTimelineItem } | null>(null)
   const sessionResetConversationIdsRef = useRef(new Set<string>())
   const workbenchAttachmentRestoreTokenRef = useRef(0)
   const handleEditTimelineItem = async (id: string, content: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
     const projectPath = project?.path
     const restoreToken = ++workbenchAttachmentRestoreTokenRef.current
-    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    const selected = workbenchHistoryBrowse?.timeline.find(item => item.id === id) ?? aiTimelineRef.current.find((item) => item.id === id)
     if (!conversationId || !projectPath || !await requestConfirm({
       title: '编辑并重新发送这条消息？',
       message: '只会重置对话上下文，不会撤销 Agent 已经写入项目的文件。需要恢复代码时，请使用“版本记录”中的快照。',
@@ -2045,7 +2064,7 @@ export default function App(): React.JSX.Element {
     const replay = selected?.replay
     setPrompt(replay?.prompt ?? content)
     setAiAttachments([])
-    setPendingWorkbenchEdit({ conversationId, itemId: id })
+    setPendingWorkbenchEdit({ conversationId, itemId: id, item: selected })
     const replayAttachments = replay?.attachments ?? []
     if (!replayAttachments.length) {
       setNotice('已回填到输入框；发送后将从这条消息重建对话上下文，项目文件保持当前状态')
@@ -2067,7 +2086,7 @@ export default function App(): React.JSX.Element {
   const handleDeleteTimelineItem = async (id: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
     const projectPath = projectPathRef.current
-    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    const selected = workbenchHistoryBrowse?.timeline.find(item => item.id === id) ?? aiTimelineRef.current.find((item) => item.id === id)
     const generation = conversationGenerationRef.current.get(conversationId)
     if (!conversationId || !projectPath || !selected) return
     if (generation === undefined) {
@@ -2084,6 +2103,16 @@ export default function App(): React.JSX.Element {
       actionIcon: 'delete'
     })) return
     try {
+      if (workbenchHistoryPageRef.current && window.modmind.conversations.deleteHistoryItem) {
+        await persistPagedWorkbenchWindow(projectPath, conversationId, aiTimelineRef.current)
+        const updated = await window.modmind.conversations.deleteHistoryItem(projectPath, conversationId, generation, id)
+        if (activeWorkbenchConversationIdRef.current !== conversationId || projectPathRef.current !== projectPath) return
+        conversationGenerationRef.current.set(conversationId, updated.generation)
+        sessionResetConversationIdsRef.current.add(conversationId)
+        setWorkbenchHistoryRetry(value => value + 1); setPendingWorkbenchEdit(null)
+        setNotice('这轮对话已删除；项目文件保持当前状态')
+        return
+      }
       const timeline = workbenchDeleteTimelineItem(aiTimelineRef.current, id)
       const updated = await window.modmind.conversations.replaceView(projectPath, conversationId, generation, { timeline })
       if (activeWorkbenchConversationIdRef.current !== conversationId || projectPathRef.current !== projectPath) return
@@ -2098,7 +2127,7 @@ export default function App(): React.JSX.Element {
   }
   const handleRewindTimelineTo = async (id: string): Promise<void> => {
     const conversationId = activeWorkbenchConversationIdRef.current
-    const selected = aiTimelineRef.current.find((item) => item.id === id)
+    const selected = workbenchHistoryBrowse?.timeline.find(item => item.id === id) ?? aiTimelineRef.current.find((item) => item.id === id)
     if (!conversationId || !selected || !await requestConfirm({
       title: '截断后续工作台对话？',
       message: `${selected.kind === 'user' ? '这条提问及其后的对话会被移除' : '这条回答会保留，其后的对话会被移除'}，项目文件不会回滚。`,
@@ -2109,14 +2138,16 @@ export default function App(): React.JSX.Element {
       actionIcon: 'restore'
     })) return
     try {
+      if (workbenchHistoryPageRef.current) await persistPagedWorkbenchWindow(projectPathRef.current, conversationId, aiTimelineRef.current)
       const view = workbenchRewindTimelineTo(aiTimelineRef.current, id)
-      const fork = await window.modmind.conversations.fork(projectPathRef.current, { sourceConversationId: conversationId, ...(selected.turnId ? selected.kind === 'user' ? { beforeTurnId: selected.turnId } : { throughTurnId: selected.turnId } : { throughSequence: aiTimelineRef.current.findIndex((item) => item.id === id) }), view: { timeline: view }, backend: settingsRef.current.codingBackend })
+      const fork = await window.modmind.conversations.fork(projectPathRef.current, { sourceConversationId: conversationId, ...(workbenchHistoryPageRef.current ? { historyItemId: id } : {}), ...(selected.turnId ? selected.kind === 'user' ? { beforeTurnId: selected.turnId } : { throughTurnId: selected.turnId } : { throughSequence: aiTimelineRef.current.findIndex((item) => item.id === id) }), view: { timeline: view }, backend: settingsRef.current.codingBackend })
       setWorkbenchConversations((current) => [...current, { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id) }])
       setActiveWorkbenchConversationId(fork.id)
       if (fork.parent?.nativeMode !== 'native') sessionResetConversationIdsRef.current.add(fork.id)
       setAiTimeline((fork.view.timeline as AiTimelineItem[] | undefined) ?? view)
       setNotice('已从此处创建新的对话分支；原对话仍保留')
     } catch (error) {
+      if (workbenchHistoryPageRef.current) { setNotice(`分支保存失败，原对话已保留：${errorMessage(error)}`); return }
       setAiTimeline((current) => workbenchRewindTimelineTo(current, id))
       sessionResetConversationIdsRef.current.add(conversationId)
       setNotice(`分支保存失败，已暂时截断当前视图：${errorMessage(error)}`)
@@ -2155,7 +2186,7 @@ export default function App(): React.JSX.Element {
     setWorkbenchFeatures(value)
     try { localStorage.setItem('modmind.workbenchFeatures', JSON.stringify(value)) } catch { /* Keep the current selection even when storage is unavailable. */ }
   }
-  useLayoutEffect(() => { applyAppearance(normalizeAppearance(settings)) }, [settings.darkMode, settings.themePreset, settings.customThemeColors, settings.background])
+  useLayoutEffect(() => { applyAppearance(normalizeAppearance(settings)) }, [settings.darkMode, settings.themePreset, settings.fontScale, settings.customThemeColors, settings.background])
   useEffect(() => window.modmind.settings.onAppearanceChanged(appearance => {
     if (settingsSavePendingRef.current > 0) return
     setSettings(previous => ({ ...previous, ...appearance }))
@@ -2302,7 +2333,12 @@ export default function App(): React.JSX.Element {
       title: document.title,
       url: window.location.href,
       capturedAt: new Date().toISOString(),
-      html: `<!doctype html>\n${root.outerHTML}`
+      html: `<!doctype html>\n${root.outerHTML}`,
+      state: { projectPath: project?.path, selectedFile, editorDirty, editorChars: editorContent.length, uiMode,
+        workbench: { conversationId: activeWorkbenchConversationId, generation: conversationGenerationRef.current.get(activeWorkbenchConversationId), timelineEntries: aiTimeline.length, planning, backend: runningBackend },
+        viewport: { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio },
+        appearance: { darkMode: settings.darkMode, themePreset: settings.themePreset },
+        media: Array.from(document.querySelectorAll<HTMLMediaElement>('audio,video')).slice(0, 20).map(element => ({ currentTime: element.currentTime, duration: Number.isFinite(element.duration) ? element.duration : null, paused: element.paused, readyState: element.readyState, error: element.error?.code })) }
     }
     pageSnapshotsRef.current.set(view, snapshot)
     return snapshot
@@ -2316,6 +2352,15 @@ export default function App(): React.JSX.Element {
     const timer = window.setTimeout(() => capturePageSnapshot(), 250)
     return () => window.clearTimeout(timer)
   }, [view, project?.path, uiMode])
+
+  useEffect(() => {
+    window.modmind.diagnostics.reportEvent?.({ operation: 'workspace-context', data: { view, projectPath: project?.path, selectedFile, editorDirty, uiMode } })
+  }, [view, project?.path, selectedFile, editorDirty, uiMode])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => recordUiContentDiagnostic('editor-state', { projectPath: project?.path, relativePath: selectedFile, dirty: editorDirty, revision: editorRequestRef.current, draftStorage: 'current-process memory until saved' }, editorContent), 500)
+    return () => window.clearTimeout(timer)
+  }, [project?.path, selectedFile, editorDirty, editorContent])
 
   useEffect(() => {
     if (!isDetachedWindow) return
@@ -2372,6 +2417,7 @@ export default function App(): React.JSX.Element {
   }, [project?.path, projectLauncherOpen, view])
 
   const navigateToView = (nextView: ViewId): void => {
+    if (document.body.hasAttribute('data-moko-intro-locked')) return
     const element = mainContentRef.current?.querySelector<HTMLElement>('.settings-scroll-area') ?? mainContentRef.current
     if (element) {
       const key = `${project?.path ?? 'launcher'}:${view}`
@@ -2637,10 +2683,11 @@ export default function App(): React.JSX.Element {
   const [beginnerAvailableModels, setBeginnerAvailableModels] = useState<AiModelInfo[]>([])
   const [beginnerModelProviders, setBeginnerModelProviders] = useState<CatalogProvider[]>()
   const [scanningBeginnerModels, setScanningBeginnerModels] = useState(false)
-  const [beginnerModelScanMessage, setBeginnerModelScanMessage] = useState('连接账号后扫描可用模型')
+  const [beginnerModelScanMessage, setBeginnerModelScanMessage] = useState('连接账号后查看可用模型')
   const [savingAiPreferences, setSavingAiPreferences] = useState(false)
   const [exportArtifactAvailable, setExportArtifactAvailable] = useState(false)
   const [diagnosticExporting, setDiagnosticExporting] = useState(false)
+  const [diagnosticOptions, setDiagnosticOptions] = useState<DiagnosticExportOptions>({})
   const [updateInfo, setUpdateInfo] = useState<AppVersionCheckResult | null>(null)
   const [changelog, setChangelog] = useState<AppChangelogSnapshot | null>(null)
   const [startupChangelogChecked, setStartupChangelogChecked] = useState(false)
@@ -2689,6 +2736,34 @@ export default function App(): React.JSX.Element {
   const [workbenchPersistenceMessage, setWorkbenchPersistenceMessage] = useState('正在读取对话')
   const [workbenchHistoryState, setWorkbenchHistoryState] = useState<'loading' | 'ready' | 'error'>('loading')
   const persistedProjectionTimelinesRef = useRef(new WeakSet<AiTimelineItem[]>())
+  const workbenchHistoryPageRef = useRef<import('../../shared/types').ConversationHistoryPage | null>(null)
+  const [workbenchHistoryBrowse, setWorkbenchHistoryBrowse] = useState<(HistorySegment<AiTimelineItem> & { segments: HistorySegment<AiTimelineItem>[] }) | null>(null)
+  const [workbenchHistoryPaging, setWorkbenchHistoryPaging] = useState(false)
+  const [workbenchHistoryPageError, setWorkbenchHistoryPageError] = useState('')
+  const workbenchHistoryPagingRef = useRef(false)
+  const workbenchHistoryDirectionRef = useRef<'older' | 'newer'>('older')
+  const workbenchHistoryPageRequestRef = useRef(0)
+  const workbenchHistorySavingRef = useRef(false)
+  const workbenchHistorySaveChainRef = useRef<Promise<unknown>>(Promise.resolve())
+  const persistPagedWorkbenchWindow = (projectPath: string, id: string, timeline: AiTimelineItem[]): Promise<import('../../shared/types').ConversationHistoryPage | null> => {
+    const saving = workbenchHistorySaveChainRef.current.catch(() => undefined).then(async () => {
+      const page = workbenchHistoryPageRef.current
+      if (!page || page.document.id !== id || !window.modmind.conversations.saveHistoryWindow) throw new Error('对话位置已变化，未覆盖旧历史')
+      if (persistedProjectionTimelinesRef.current.has(timeline) && page.document.checkpointSequence >= page.document.lastSequence) return page
+      workbenchHistorySavingRef.current = true
+      try {
+        const updated = await window.modmind.conversations.saveHistoryWindow(projectPath, id, page.document.generation, page.token, page.start, timeline)
+        if (!updated) throw new Error('对话保存后无法回读')
+        if (projectPathRef.current === projectPath && activeWorkbenchConversationIdRef.current === id && workbenchHistoryPageRef.current === page) workbenchHistoryPageRef.current = updated
+        // A degraded commit advances the token too; keep it retryable without claiming a dual save.
+        if (updated.writeResult?.durability === 'degraded') throw new Error(updated.writeResult.warning ?? '冗余备份尚未全部完成')
+        persistedProjectionTimelinesRef.current.add(timeline)
+        return updated
+      } finally { workbenchHistorySavingRef.current = false }
+    })
+    workbenchHistorySaveChainRef.current = saving
+    return saving
+  }
   const [workbenchHistoryRetry, setWorkbenchHistoryRetry] = useState(0)
   const [workbenchIndexRetry, setWorkbenchIndexRetry] = useState(0)
   const workbenchHistoryCancelRef = useRef<() => void>(() => {})
@@ -3018,6 +3093,22 @@ export default function App(): React.JSX.Element {
     })
   }
 
+  const storeProjectFailure = (projectPath: string, detail: string, sessionId: string): void => {
+    const event: PipelineEvent = { id: `failure-${sessionId}`, stage: 'error', title: '任务未完成', detail, status: 'error', time: new Date().toISOString(), projectPath }
+    if (isForegroundProject(projectPath)) {
+      setAiTimeline(current => appendWorkbenchFailure(current, detail, sessionId, event.time))
+      setEvents(current => [event, ...current])
+      setBeginnerTaskState('error')
+      setAiOutputStatus('error')
+      setPlanning(false)
+      setNotice(detail)
+    } else {
+      const key = normalizeProjectPath(projectPath)
+      const current = projectWorkbenchCacheRef.current.get(key) ?? emptyProjectWorkbenchState()
+      projectWorkbenchCacheRef.current.set(key, { ...current, aiTimeline: appendWorkbenchFailure(current.aiTimeline, detail, sessionId, event.time), events: [event, ...current.events].slice(0, 500), beginnerTaskState: 'error', aiOutputStatus: 'error', planning: false })
+    }
+  }
+
   const refreshFilesFor = async (projectPath: string): Promise<void> => {
     const nextFiles = await window.modmind.project.listFiles(projectPath)
     if (normalizeProjectPath(projectPathRef.current) === normalizeProjectPath(projectPath)) setFiles(nextFiles)
@@ -3058,6 +3149,34 @@ export default function App(): React.JSX.Element {
     setRecentProjects(await window.modmind.project.listRecent())
   }
 
+  const pageWorkbenchHistory = async (direction: 'older' | 'newer' | 'latest'): Promise<void> => {
+    if (direction === 'latest') {
+      ++workbenchHistoryPageRequestRef.current
+      workbenchHistoryPagingRef.current = false; setWorkbenchHistoryPaging(false)
+      setWorkbenchHistoryBrowse(null); setWorkbenchHistoryPageError('')
+      return
+    }
+    if (workbenchHistoryPagingRef.current) return
+    const projectPath = project?.path, id = activeWorkbenchConversationId
+    if (!projectPath || !id) return
+    const ticket = ++workbenchHistoryPageRequestRef.current
+    const cancelled = (): boolean => ticket !== workbenchHistoryPageRequestRef.current || projectPathRef.current !== projectPath || activeWorkbenchConversationIdRef.current !== id
+    workbenchHistoryPagingRef.current = true; workbenchHistoryDirectionRef.current = direction
+    setWorkbenchHistoryPaging(true); setWorkbenchHistoryPageError('')
+    try {
+      await workbenchHistorySaveChainRef.current.catch(() => undefined)
+      if (cancelled()) return
+      const latest = workbenchHistoryPageRef.current, current = workbenchHistoryBrowse?.page ?? latest
+      if (!latest || !current || (direction === 'older' ? current.start <= 0 : current.end >= latest.end)) return
+      const input = direction === 'older' ? { before: current.start } : { after: current.end }
+      const result = await readWorkbenchHistoryWindow(window.modmind.conversations, projectPath, id, { ...input, token: latest.token, generation: latest.document.generation }, cancelled, parseStoredWorkbenchTimeline, humanizeActivity, humanizeOutput)
+      if (!result || cancelled()) return
+      const segments = workbenchHistoryBrowse?.segments ?? [{ page: latest, timeline: aiTimelineRef.current }]
+      setWorkbenchHistoryBrowse(joinHistorySegments(segments, result, direction))
+    } catch (error) { if (!cancelled()) setWorkbenchHistoryPageError(`历史读取失败：${errorMessage(error)}`) }
+    finally { if (ticket === workbenchHistoryPageRequestRef.current) { workbenchHistoryPagingRef.current = false; setWorkbenchHistoryPaging(false) } }
+  }
+
   useEffect(() => {
     if (!aiOutputHistoryKey) {
       setAiTimeline([])
@@ -3069,6 +3188,9 @@ export default function App(): React.JSX.Element {
     let cancelled = false
     const historyProjectPath = project?.path ?? ''
     const historyConversationId = activeWorkbenchConversationId
+    ++workbenchHistoryPageRequestRef.current
+    workbenchHistoryPageRef.current = null; workbenchHistoryPagingRef.current = false
+    setWorkbenchHistoryBrowse(null); setWorkbenchHistoryPaging(false); setWorkbenchHistoryPageError('')
     setAiHistoryLoadedKey('')
     setWorkbenchHistoryState('loading')
     setWorkbenchPersistenceState('loading')
@@ -3083,6 +3205,19 @@ export default function App(): React.JSX.Element {
     workbenchHistoryCancelRef.current = cancelHistory
     const loadHistory = async (): Promise<void> => {
       try {
+        const result = await readWorkbenchHistoryWindow(window.modmind.conversations, historyProjectPath, historyConversationId, {}, () => cancelled, parseStoredWorkbenchTimeline, humanizeActivity, humanizeOutput)
+        if (cancelled) return
+        if (result) {
+          const { page, timeline } = result
+          conversationGenerationRef.current.set(historyConversationId, page.document.generation)
+          const live = aiTimelineRef.current.filter(item => item.sequence !== undefined && item.sequence > page.document.lastSequence)
+          const history = live.length ? [...timeline, ...live] : timeline
+          workbenchHistoryPageRef.current = page
+          setAiTimeline(history)
+          if (!live.length && page.document.checkpointSequence >= page.document.lastSequence) persistedProjectionTimelinesRef.current.add(history)
+          setAiHistoryLoadedKey(aiOutputHistoryKey); setWorkbenchHistoryState('ready'); setWorkbenchPersistenceState('ready'); setWorkbenchPersistenceMessage('对话历史已载入')
+          return
+        }
         const unified = await readConversationHistory(window.modmind.conversations, historyProjectPath, historyConversationId, () => cancelled, count => {
           if (!cancelled) setWorkbenchPersistenceMessage(`正在读取对话 · ${count.toLocaleString()} 条记录`)
         })
@@ -3184,8 +3319,15 @@ export default function App(): React.JSX.Element {
     const generation = conversationGenerationRef.current.get(activeWorkbenchConversationId)
     if (generation === undefined) return
     const timer = window.setTimeout(() => {
-      const save = window.modmind.conversations.saveProjection ?? window.modmind.conversations.saveView
-      void save(project.path, activeWorkbenchConversationId, generation, { timeline: aiTimeline }).then(() => persistedProjectionTimelinesRef.current.add(aiTimeline)).catch(() => undefined)
+      const page = workbenchHistoryPageRef.current
+      if (page && window.modmind.conversations.saveHistoryWindow) {
+        void persistPagedWorkbenchWindow(project.path, activeWorkbenchConversationId, aiTimeline).catch(error => {
+          if (projectPathRef.current === project.path && activeWorkbenchConversationIdRef.current === activeWorkbenchConversationId) setWorkbenchHistoryPageError(`历史暂未保存：${errorMessage(error)}`)
+        })
+      } else {
+        const save = window.modmind.conversations.saveProjection ?? window.modmind.conversations.saveView
+        void save(project.path, activeWorkbenchConversationId, generation, { timeline: aiTimeline }).then(() => persistedProjectionTimelinesRef.current.add(aiTimeline)).catch(() => undefined)
+      }
     }, 1000)
     return () => window.clearTimeout(timer)
   }, [aiTimeline, activeWorkbenchConversationId, aiHistoryLoadedKey, project?.path, aiOutputHistoryKey, workbenchHistoryState, planning])
@@ -3197,8 +3339,9 @@ export default function App(): React.JSX.Element {
   }, [settings.codingBackend, project?.path])
   useEffect(() => {
     let deviceStateGeneration = 0
+    let loadedCatalogKey: string | undefined
+    let loadedOwner: string | undefined
     const applyDeviceState = (state: DeviceConnectionState): void => {
-      const generation = ++deviceStateGeneration
       if (state.status === 'connected' || state.status === 'disconnected') {
         const owner = state.status === 'connected' ? `${state.siteUrl ?? ''}:${state.username ?? ''}` : ''
         try { if ((localStorage.getItem('modmind-ai-owner') ?? '') !== owner) { resetSurfaceAiSelections(); localStorage.setItem('modmind-ai-owner', owner) } } catch { /* Backend still validates the active account. */ }
@@ -3206,20 +3349,35 @@ export default function App(): React.JSX.Element {
       setDeviceState(state)
 
       if (state.status !== 'connected') {
-        setBeginnerAvailableModels([])
-        setBeginnerModelProviders([])
+        if (state.status === 'disconnected') {
+          loadedCatalogKey = undefined; loadedOwner = undefined; deviceStateGeneration++
+          setBeginnerAvailableModels([])
+          setBeginnerModelProviders([])
+        }
         return
+      }
+      const ownerKey = JSON.stringify([state.siteUrl, state.username, state.provider, state.providerId])
+      if (loadedOwner !== undefined && loadedOwner !== ownerKey) { setBeginnerAvailableModels([]); setBeginnerModelProviders([]) }
+      loadedOwner = ownerKey
+      const catalogKey = deviceModelCatalogKey(state)
+      if (loadedCatalogKey === catalogKey) return
+      loadedCatalogKey = catalogKey
+      const generation = ++deviceStateGeneration
+      const applyCatalog = (catalog: { models: AiModelInfo[]; providers?: CatalogProvider[] }): void => {
+        if (generation !== deviceStateGeneration) return
+        setBeginnerAvailableModels(catalog.models)
+        setBeginnerModelProviders(catalog.providers)
       }
       void Promise.all([
         window.modmind.device.getAiPreferences(),
-        (state.provider === 'custom' ? window.modmind.device.listModels().then(models => ({ models, providers: undefined as CatalogProvider[] | undefined })) : window.modmind.device.getModelCatalog().then(catalog => ({ models: catalog.models, providers: catalog.providers }))).catch(() => ({ models: [] as AiModelInfo[], providers: [] as CatalogProvider[] }))
+        state.provider === 'custom' ? window.modmind.device.listModels().then(models => ({ models, providers: undefined as CatalogProvider[] | undefined })) : loadQuotaModelCatalog(applyCatalog)
       ]).then(([preferences, catalog]) => {
         if (generation !== deviceStateGeneration) return
         const models = catalog.models
         setBeginnerAiPreferences(preferences)
         setBeginnerAvailableModels(models)
         setBeginnerModelProviders(catalog.providers)
-        setBeginnerModelScanMessage(models.length ? `发现 ${new Set(models.map(model => model.id)).size} 个可用模型` : state.provider === 'custom' ? '使用同步的模型' : '账号服务没有返回可用模型')
+        setBeginnerModelScanMessage(models.length ? `已读取 ${new Set(models.map(model => model.id)).size} 个模型` : state.provider === 'custom' ? '使用同步的模型' : '账号服务没有返回可用模型')
       }).catch(() => undefined)
     }
     void Promise.all([window.modmind.project.current(), window.modmind.project.listRecent().catch(() => [] as ProjectInfo[])]).then(([current, recent]) => {
@@ -3248,10 +3406,12 @@ export default function App(): React.JSX.Element {
     void window.modmind.production.remoteBuild.getGiteeSettings().then(setGiteeSettings).catch(() => undefined)
     void window.modmind.externalAgents.detect().then(setExternalAgents).catch(() => undefined).finally(() => setExternalAgentsReady(true))
     const removeOpenSettingsListener = window.modmind.app.onOpenSettings(() => {
+      if (document.body.hasAttribute('data-moko-intro-locked')) return
       setProjectLauncherOpen(false)
       setView('settings')
     })
     const removeOpenViewListener = window.modmind.app.onOpenView((nextView) => {
+      if (document.body.hasAttribute('data-moko-intro-locked')) return
       setProjectLauncherOpen(false)
       setView(nextView)
     })
@@ -3292,12 +3452,7 @@ export default function App(): React.JSX.Element {
       // Preparation progress has no runId. During a handoff, only quota setup
       // can belong to the selected target; all other setup events are stale.
       if (switchingBackendRef.current && switchingBackendRef.current !== 'quota') return
-      if (uiModeRef.current === 'advanced' && progress.status === 'error') return
-      const safeProgress = progress.status === 'error' && uiModeRef.current === 'beginner'
-        ? { ...progress, stage: 'planning' as const, status: 'warning' as const, title: '工具仍在处理中', detail: progress.detail }
-        : progress.status === 'error'
-        ? { ...progress, title: '制作状态已更新', detail: '详细信息已写入诊断日志' }
-        : progress
+      const safeProgress = progress
       const progressEvent: PipelineEvent = {
         id: `codex-prepare-${Date.now()}`,
         stage: safeProgress.stage === 'error' ? 'error' : 'planning',
@@ -3339,7 +3494,7 @@ export default function App(): React.JSX.Element {
         ...current,
         aiTimeline: timeline,
         aiOutputStatus: event.kind === 'error' && event.terminal === true ? 'error' : event.kind === 'answer' ? 'success' : current.aiOutputStatus,
-        planning: event.kind !== 'answer' && event.terminal !== true
+        planning: event.kind === 'reasoning' ? current.planning : event.kind !== 'answer' && event.terminal !== true
       })
     }
     const removeAiListener = window.modmind.ai.onProgress((event) => {
@@ -3388,6 +3543,7 @@ export default function App(): React.JSX.Element {
       setAiTimeline((current) => {
         return reduceWorkbenchOutput(current, event, humanizeOutput)
       })
+      if (event.kind === 'reasoning') return
       if (event.kind === 'error' && event.terminal === true) setAiOutputStatus('error')
       else if (event.kind === 'warning' && event.terminal === true) setAiOutputStatus('idle')
       else if (event.kind === 'answer') setAiOutputStatus('success')
@@ -3639,7 +3795,14 @@ export default function App(): React.JSX.Element {
     } catch { /* Browser compatibility history is optional. */ }
   }
 
-  const removeRecentProject = async (recent: ProjectInfo): Promise<void> => {
+  const unlinkRecentProject = async (recent: ProjectInfo): Promise<void> => {
+    try {
+      setRecentProjects(await window.modmind.project.removeRecent(recent.path))
+      setNotice(`已解除与项目“${recent.name}”的关联，本地文件已保留`)
+    } catch (error) { setErrorNotice(errorMessage(error)) }
+  }
+
+  const deleteRecentProject = async (recent: ProjectInfo): Promise<void> => {
     if (!await requestConfirm({ title: `删除项目“${recent.name}”？`, message: '这会将项目目录及其中的源代码、构建产物和快照移入系统回收站', confirmLabel: '删除项目', tone: 'danger' })) return
     try {
       const remaining = await window.modmind.project.deleteProject(recent.path)
@@ -3701,6 +3864,7 @@ export default function App(): React.JSX.Element {
     if (node.type !== 'file' || !editorProjectPath) return
     if (node.path === selectedFile && editorDirty) return
     const request = ++editorRequestRef.current
+    recordUiDiagnostic('editor-select', { projectPath: editorProjectPath, relativePath: node.path, requestId: String(request), previousPath: selectedFile, previousDirty: editorDirty })
     const snapshot = editorSnapshotRef.current
     const stillCurrent = (): boolean => request === editorRequestRef.current
       && editorSnapshotRef.current.projectPath === snapshot.projectPath
@@ -3719,7 +3883,8 @@ export default function App(): React.JSX.Element {
         return
       }
       const content = await window.modmind.project.readFile(node.path, editorProjectPath)
-      if (!stillCurrent()) return
+      if (!stillCurrent()) { recordUiContentDiagnostic('editor-read-discarded', { projectPath: editorProjectPath, relativePath: node.path, requestId: String(request) }, content); return }
+      recordUiContentDiagnostic('editor-read-applied', { projectPath: editorProjectPath, relativePath: node.path, requestId: String(request) }, content)
       setSelectedFile(node.path)
       setEditorContent(content)
       setEditorDirty(false)
@@ -4059,27 +4224,38 @@ export default function App(): React.JSX.Element {
     const editItemId = pendingWorkbenchEdit?.conversationId === activeConversation.id ? pendingWorkbenchEdit.itemId : ''
     const editIndex = editItemId ? aiTimelineRef.current.findIndex((item) => item.id === editItemId) : -1
     const resetSession = sessionResetConversationIdsRef.current.delete(activeConversation.id)
-    const needsReset = editIndex >= 0 || resetSession
-    const baseTimeline = editIndex >= 0 ? aiTimelineRef.current.slice(0, editIndex) : aiTimelineRef.current
+    const needsReset = Boolean(editItemId) || resetSession
+    let baseTimeline = editIndex >= 0 ? aiTimelineRef.current.slice(0, editIndex) : editItemId ? [] : aiTimelineRef.current
     const isRewind = needsReset
     const dialogueContext = isRewind ? workbenchDialogueToText(workbenchFinalDialogue(baseTimeline)) : ''
-    const fallbackDialogueContext = workbenchDialogueToText(workbenchFinalDialogue(baseTimeline).map(item => item.kind === 'answer' || item.kind === 'response' ? { ...item, content: splitDiscussionChoices(item.content).content } : item))
+    const fallbackDialogue = (timeline: AiTimelineItem[]): string => [workbenchHistoryPageRef.current?.dialoguePrefix ?? '', workbenchDialogueToText(workbenchFinalDialogue(timeline).map(item => item.kind === 'answer' || item.kind === 'response' ? { ...item, content: splitDiscussionChoices(item.content).content } : item))].filter(Boolean).join('\n').slice(-120_000)
+    let fallbackDialogueContext = fallbackDialogue(baseTimeline)
     const repeated = isRepeatedAiPrompt(requestPrompt, taskPromptHistory)
     let promptForAgent = isRewind
       ? `用户已重置对话上下文。项目文件保持当前状态，并且是判断现状的唯一依据。${dialogueContext ? `\n\n保留的最近对话：\n${dialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
       : requestPrompt
     let fallbackPromptForAgent = `以下为备用的可见对话记录。需要从文字历史接续时使用，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n完整可见对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
-    if (editIndex >= 0) {
+    if (editItemId) {
       const source = activeConversation
-      const selected = aiTimelineRef.current[editIndex]
+      const selected = pendingWorkbenchEdit?.item ?? aiTimelineRef.current[editIndex]
       try {
+        if (workbenchHistoryPageRef.current) await persistPagedWorkbenchWindow(taskProjectPath, source.id, aiTimelineRef.current)
         const fork = await window.modmind.conversations.fork(taskProjectPath, {
           sourceConversationId: source.id,
+          ...(workbenchHistoryPageRef.current ? { historyItemId: editItemId } : {}),
           ...(selected?.turnId ? { beforeTurnId: selected.turnId } : { throughSequence: Math.max(0, editIndex - 1) }),
           view: { timeline: baseTimeline },
           backend: selectedBackend
         })
         activeConversation = { id: fork.id, title: fork.title, createdAt: fork.createdAt, updatedAt: fork.updatedAt, sessionScope: workbenchSessionScope(fork.id), ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}) }
+        if (workbenchHistoryPageRef.current && window.modmind.conversations.historyPage) {
+          const branch = await readWorkbenchHistoryWindow(window.modmind.conversations, taskProjectPath, fork.id, {}, () => false, parseStoredWorkbenchTimeline, humanizeActivity, humanizeOutput)
+          if (!branch) throw new Error('分支历史无法读取')
+          baseTimeline = branch.timeline; workbenchHistoryPageRef.current = branch.page
+          fallbackDialogueContext = fallbackDialogue(baseTimeline)
+          fallbackPromptForAgent = `以下为备用的可见对话记录。需要从文字历史接续时使用，不要重复已经完成的工作。项目文件是当前实现状态的唯一依据。${fallbackDialogueContext ? `\n\n保留的最近对话：\n${fallbackDialogueContext}` : ''}\n\n最新请求：\n${requestPrompt}`
+          if (fork.parent?.nativeMode !== 'native') promptForAgent = fallbackPromptForAgent
+        }
         nextConversations = [...nextConversations, activeConversation]
         promptHistoryKey = workbenchPromptHistoryStorageKey(taskProjectPath, activeConversation)
         if (fork.parent?.nativeMode === 'native') promptForAgent = requestPrompt
@@ -4114,7 +4290,7 @@ export default function App(): React.JSX.Element {
     const nextHistoryKey = `${taskProjectPath}:${activeConversation.id}`
     let conversationGeneration: number | undefined
     try {
-      const conversationDocument = await ensureConversationProjection(taskProjectPath, {
+      const conversationDocument = (workbenchHistoryPageRef.current?.document.id === activeConversation.id ? workbenchHistoryPageRef.current.document : null) ?? await ensureConversationProjection(taskProjectPath, {
         id: activeConversation.id,
         surface: 'workspace',
         ...(beginnerAgent ? { agentMode: 'beginner' as const } : {}),
@@ -4123,14 +4299,17 @@ export default function App(): React.JSX.Element {
       })
       conversationGeneration = conversationDocument.generation
       conversationGenerationRef.current.set(activeConversation.id, conversationGeneration)
-      await saveConversationProjection(taskProjectPath, activeConversation.id, conversationGeneration, { timeline: nextTimeline }, nextConversations.find(item => item.id === activeConversation.id)?.title)
+      if (workbenchHistoryPageRef.current?.document.id === activeConversation.id && window.modmind.conversations.saveHistoryWindow) {
+        await persistPagedWorkbenchWindow(taskProjectPath, activeConversation.id, nextTimeline)
+      } else await saveConversationProjection(taskProjectPath, activeConversation.id, conversationGeneration, { timeline: nextTimeline }, nextConversations.find(item => item.id === activeConversation.id)?.title)
     } catch (error) {
+      if (workbenchHistoryPageRef.current) { setNotice(`消息未发送，旧历史已保留：${errorMessage(error)}`); return }
       setWorkbenchPersistenceMessage(`统一对话存储暂不可用，将保留兼容历史：${errorMessage(error)}`)
     }
     try {
       await Promise.all([
         requireRedundantWorkbenchWrite(() => persistWorkbenchIndexNow(taskProjectPath, nextConversations), '对话索引'),
-        requireRedundantWorkbenchWrite(() => persistWorkbenchTimelineNow(taskProjectPath, nextHistoryPath, nextHistoryKey, nextTimeline), '用户消息')
+        workbenchHistoryPageRef.current ? Promise.resolve() : requireRedundantWorkbenchWrite(() => persistWorkbenchTimelineNow(taskProjectPath, nextHistoryPath, nextHistoryKey, nextTimeline), '用户消息')
       ])
     } catch (error) {
       if (resetSession) sessionResetConversationIdsRef.current.add(activeConversation.id)
@@ -4169,7 +4348,7 @@ export default function App(): React.JSX.Element {
       ...current
     ])
     try {
-      if (usesQuota) await window.modmind.beginnerCodex.prepare(taskProjectPath)
+      if (usesQuota) await window.modmind.beginnerCodex.prepare(taskProjectPath, requestAiSelection)
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       if (!discussion && !beginnerAgent) await window.modmind.project.captureIdea(phase === 'engineering' ? promptForAgent : requestPrompt, taskProjectPath)
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
@@ -4178,23 +4357,11 @@ export default function App(): React.JSX.Element {
     } catch (error) {
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       if (await handleContextPause(error, taskProjectPath)) return
-      const detail = errorMessage(error)
-      if (uiModeRef.current === 'advanced') {
-        setBeginnerTaskState('idle')
-        setAiOutputStatus('idle')
-      } else {
-        setBeginnerTaskState('error')
-        setNotice(detail)
-        setEvents((current) => [{
-          id: `codex-prepare-error-${Date.now()}`,
-          stage: 'error',
-          title: '开始制作失败',
-          detail,
-          status: 'error',
-          time: new Date().toISOString()
-        }, ...current])
+      storeProjectFailure(taskProjectPath, `任务未能开始：${aiFailureMessage(error)}`, sessionId)
+      if (isForegroundProject(taskProjectPath)) {
+        setPrompt(current => current || submittedPrompt)
+        setAiAttachments(current => current.length ? current : aiAttachments)
       }
-      setPlanning(false)
       return
     }
     setAiOutputStatus('running')
@@ -4255,7 +4422,6 @@ export default function App(): React.JSX.Element {
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       if (await handleContextPause(error, taskProjectPath)) return
       const failureDetail = aiFailureMessage(error)
-      const inactivityTimeout = /没有返回任何内容|连接中断|线路繁忙|响应超时|上游模型服务异常/i.test(failureDetail)
       if (isWorkflowAuditRejection(error)) {
         if (isForegroundProject(taskProjectPath)) {
           setBeginnerTaskState('idle')
@@ -4273,33 +4439,7 @@ export default function App(): React.JSX.Element {
         }
         return
       }
-      if (inactivityTimeout && isForegroundProject(taskProjectPath)) {
-        setBeginnerTaskState('idle')
-        setAiOutputStatus('error')
-         setNoticeState(failureDetail)
-      } else if (!isForegroundProject(taskProjectPath)) {
-        const key = normalizeProjectPath(taskProjectPath)
-        const current = projectWorkbenchCacheRef.current.get(key) ?? emptyProjectWorkbenchState()
-        projectWorkbenchCacheRef.current.set(key, {...current, planning: false, aiOutputStatus: 'error', beginnerTaskState: 'error'})
-      } else if (uiModeRef.current === 'advanced') {
-        setBeginnerTaskState('idle')
-        setAiOutputStatus('idle')
-      } else {
-        setEvents((current) => [
-          {
-            id: `plan-error-${Date.now()}`,
-            stage: 'error',
-            title: 'AI 编程失败',
-            detail: failureDetail,
-            status: 'error',
-            time: new Date().toISOString()
-          },
-          ...current
-        ])
-        setNotice('制作没有完成，可导出诊断日志')
-        setBeginnerTaskState('error')
-        setAiOutputStatus('error')
-      }
+      storeProjectFailure(taskProjectPath, failureDetail, sessionId)
       if (shouldOfferAiRecovery(error)) {
         const recovery = await window.modmind.ai.getRecovery(taskProjectPath).catch(() => ({ pending: false, snapshot: null, sessionId: undefined }))
         if (recovery.pending && isForegroundProject(taskProjectPath)) setAiRecovery(recovery)
@@ -4450,11 +4590,12 @@ export default function App(): React.JSX.Element {
     const selectedBackend: AgentSettings['codingBackend'] = uiMode === 'beginner' ? 'quota' : settings.codingBackend
     setRunningBackend(selectedBackend)
     const usesQuota = selectedBackend === 'quota'
+    const requestAiSelection = workbenchSelectionRef.current
     const runToken = nextAiRunToken(taskProjectPath)
     setPlanning(true)
     setAiOutputStatus('running')
     try {
-      if (usesQuota) await window.modmind.beginnerCodex.prepare(taskProjectPath)
+      if (usesQuota) await window.modmind.beginnerCodex.prepare(taskProjectPath, requestAiSelection)
       for (let round = 1; round <= MAX_AUTO_REPAIR_ROUNDS; round += 1) {
         if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
         const repairEvent: PipelineEvent = {
@@ -4479,7 +4620,7 @@ export default function App(): React.JSX.Element {
           sessionId,
           selectedBackend,
           usesQuota ? 'beginner-unlimited' : 'standard',
-          { surface: 'workspace', ...(workbenchAiOverride?.backend === selectedBackend ? { modelSelection: workbenchAiOverride } : {}), projectPath: taskProjectPath, runId: `repair-${runToken}`, ...(uiMode === 'advanced' ? { workbenchFeatures } : {}) }
+          { surface: 'workspace', modelSelection: requestAiSelection, projectPath: taskProjectPath, runId: `repair-${runToken}`, ...(uiMode === 'advanced' ? { workbenchFeatures } : {}) }
         )
         if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
         storeProjectPlan(taskProjectPath, result)
@@ -4504,27 +4645,12 @@ export default function App(): React.JSX.Element {
     } catch (error) {
       if (!isCurrentAiRunToken(taskProjectPath, runToken)) return
       if (await handleContextPause(error, taskProjectPath)) return
-      const detail = errorMessage(error)
+      const detail = aiFailureMessage(error)
+      storeProjectFailure(taskProjectPath, detail, sessionId)
       if (!isForegroundProject(taskProjectPath)) {
         const key = normalizeProjectPath(taskProjectPath)
         const current = projectWorkbenchCacheRef.current.get(key) ?? emptyProjectWorkbenchState()
-        projectWorkbenchCacheRef.current.set(key, {...current, planning: false, aiOutputStatus: 'error', buildError: detail})
-      } else if (uiModeRef.current === 'advanced') {
-        setAiOutputStatus('idle')
-      } else {
-        setAiOutputStatus('error')
-        setEvents((current) => [
-          {
-            id: `repair-build-error-${Date.now()}`,
-            stage: 'error',
-            title: 'AI 修复未完成',
-            detail,
-            status: 'error',
-            time: new Date().toISOString()
-          },
-          ...current
-        ])
-        setNotice(detail)
+        projectWorkbenchCacheRef.current.set(key, {...current, buildError: detail})
       }
     } finally {
       if (isForegroundProject(taskProjectPath)) setPlanning(false)
@@ -4657,8 +4783,12 @@ export default function App(): React.JSX.Element {
     if (diagnosticExporting) return
     setDiagnosticExporting(true)
     try {
-      capturePageSnapshot()
-      const target = await window.modmind.diagnostics.exportLogs([...pageSnapshotsRef.current.values()])
+      const current = capturePageSnapshot()
+      if (current?.state) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        current.state.imageWorkflows = await Promise.race([imageWorkflowDiagnosticState().catch(error => ({ error: String(error) })), new Promise(resolve => { timer = setTimeout(() => resolve({ status: 'timeout' }), 3000) })]).finally(() => clearTimeout(timer))
+      }
+      const target = await window.modmind.diagnostics.exportLogs([...pageSnapshotsRef.current.values()], diagnosticOptions)
       if (target) setNotice(`诊断日志已导出：${target}`)
     } catch (error) {
       setNotice(`诊断日志导出失败：${errorMessage(error)}`)
@@ -4915,7 +5045,10 @@ export default function App(): React.JSX.Element {
     setScanningBeginnerModels(true)
     setBeginnerModelScanMessage('正在读取线路…')
     try {
-      const catalog = deviceState.provider === 'custom' ? undefined : await (refresh ? window.modmind.device.discoverModels() : window.modmind.device.getModelCatalog())
+      const catalog = deviceState.provider === 'custom' ? undefined : await loadQuotaModelCatalog(saved => {
+        setBeginnerAvailableModels(saved.models)
+        setBeginnerModelProviders(saved.providers)
+      }, refresh)
       const models = catalog?.models ?? await window.modmind.device.listModels(true)
       setBeginnerAvailableModels(models)
       setBeginnerModelProviders(catalog?.providers)
@@ -4938,7 +5071,7 @@ export default function App(): React.JSX.Element {
         setBeginnerAvailableModels(result.catalog.models)
         setBeginnerModelProviders(result.catalog.providers)
         const next = { backend: workbenchAiSelection.backend, ...(result.selection ?? { model, reasoningLevel: 'auto' as const, account: option?.account, billing: option?.billing, group: option?.group }) }
-        workbenchSelectionRef.current = next; setWorkbenchAiOverride(next); setWorkbenchModelSwitchMessage(planning ? '下条消息使用 ' + model : '')
+        workbenchSelectionRef.current = next; setWorkbenchAiOverride(next); setWorkbenchModelSwitchMessage('')
         return true
       } catch (error) {
         setWorkbenchModelSwitchMessage(modelCatalogFailure(aiFailureMessage(error)))
@@ -5231,6 +5364,21 @@ export default function App(): React.JSX.Element {
       void refreshFilesFor(restored.path)
     }
   }
+  const beginMokoInspiration = async (): Promise<void> => {
+    if (!project) throw new Error('项目还没有准备好，请先完成项目创建。')
+    const conversationId = onboarding.session.inspirationConversationId ?? `moko-${crypto.randomUUID()}`
+    onboarding.update({ inspirationConversationId: conversationId })
+    setOnboardingTransitionPending(true)
+    try {
+      await waitForAppLoadingCover()
+      if (onboarding.session.modelChoice && deviceState.status === 'connected' && deviceState.provider !== 'custom' && settings.codingBackend !== 'quota' && !await saveSettingsPatch({ codingBackend: 'quota' })) throw new Error('模型来源暂未保存，请重试进入灵感台。')
+      await ensureConversationProjection(project.path, { id: conversationId, surface: 'inspiration', title: '和茉可开始创作', view: { messages: [] } })
+      setProjectLauncherOpen(false)
+      setView('inspiration')
+      onboarding.update({ phase: 'inspiration', projectPath: project.path, inspirationConversationId: conversationId })
+      // The real inspiration history releases the cover once it has hydrated.
+    } catch (error) { setOnboardingTransitionPending(false); throw error }
+  }
   const projectIndependentView = view === 'settings' || view === 'plugins' || view === 'features' || installedPages.some(page => page.id === view && (!page.supports || page.supports(null, uiMode)))
     || view.startsWith('plugin:')
 
@@ -5408,7 +5556,8 @@ export default function App(): React.JSX.Element {
             onDeveloper={() => { if (planning || building) { setNotice('请先停止当前任务'); return }; void openDeveloperWorkbench() }}
             featureActions={Object.values(featurePlugins.modules).flatMap(module => module.launcherActions ?? []).map((Action, index) => <Action key={index} {...featureContext} visible />)}
             onSelect={(recent) => void openRecentProject(recent)}
-            onRemove={(recent) => void removeRecentProject(recent)}
+            onUnlink={(recent) => void unlinkRecentProject(recent)}
+            onDelete={(recent) => void deleteRecentProject(recent)}
             onRename={setRenamingProject}
           />
         ) : (
@@ -5431,7 +5580,19 @@ export default function App(): React.JSX.Element {
               taskState={beginnerTaskState}
               aiPlan={aiPlan}
               aiTodo={aiTodo}
-              aiTimeline={aiTimeline}
+              aiTimeline={workbenchHistoryBrowse?.timeline ?? aiTimeline}
+              historyPage={workbenchHistoryPageRef.current ? {
+                hasOlder: (workbenchHistoryBrowse?.page ?? workbenchHistoryPageRef.current).nextBefore !== null,
+                hasNewer: Boolean(workbenchHistoryBrowse && workbenchHistoryBrowse.page.end < workbenchHistoryPageRef.current.end),
+                browsing: workbenchHistoryBrowse !== null,
+                windowStart: (workbenchHistoryBrowse?.page ?? workbenchHistoryPageRef.current).start,
+                busy: workbenchHistoryPaging,
+                error: workbenchHistoryPageError,
+                onOlder: () => { void pageWorkbenchHistory('older') },
+                onNewer: () => { void pageWorkbenchHistory('newer') },
+                onLatest: () => { void pageWorkbenchHistory('latest') },
+                onRetry: () => { void pageWorkbenchHistory(workbenchHistoryDirectionRef.current) }
+              } : undefined}
               processingStartedAt={processingStartedAt}
               aiOutputStatus={aiOutputStatus}
               aiRecovery={aiRecovery}
@@ -5505,6 +5666,12 @@ export default function App(): React.JSX.Element {
                 externalAgents={settings.externalAgents}
                 defaultModels={beginnerAvailableModels}
                 defaultProviders={beginnerModelProviders}
+                mokoIntro={onboarding.session.inspirationConversationId && onboarding.session.projectPath === inspirationProject.path ? {
+                  conversationId: onboarding.session.inspirationConversationId,
+                  active: !developerOpen && uiMode === 'advanced' && onboarding.session.status === 'running' && onboarding.session.phase === 'inspiration',
+                  onPrepared: () => setOnboardingTransitionPending(false),
+                  onComplete: () => onboarding.update({ status: 'done' })
+                } : undefined}
                 onBusyChange={() => undefined}
                 onConnectionRequired={() => setDeviceAccountOpen(true)}
                 onSendToCoding={(codingPrompt) => {
@@ -5850,6 +6017,7 @@ export default function App(): React.JSX.Element {
                 <section id="settings-diagnostics" className="settings-section">
                   <div className="settings-heading"><h2>诊断日志</h2></div>
                   <div className="settings-actions"><button className="secondary-button" type="button" disabled={diagnosticExporting} onClick={() => void exportDiagnosticLogs()}>{diagnosticExporting ? <LoaderCircle className="spin" size={16} /> : <Archive size={16} />}导出诊断日志</button></div>
+                  <DiagnosticOptions options={diagnosticOptions} onChange={setDiagnosticOptions} />
                 </section>
                 <section id="settings-appearance" className="settings-section">
                   <AppearanceSettings settings={settings} onSave={saveSettingsPatch} />
@@ -5888,6 +6056,7 @@ export default function App(): React.JSX.Element {
                     </details>
                   </div>
                 </section>
+                <section id="settings-contributions" className="settings-section"><ContributionSettings /></section>
                 <section id="settings-updates" className="settings-section"><AppMaintenanceSettings /></section>
                 <section id="settings-legal" className="settings-section">
                   <div className="settings-heading"><h2>许可证与版权</h2></div>
@@ -5911,13 +6080,13 @@ export default function App(): React.JSX.Element {
       <FeaturePluginBackgrounds modules={featurePlugins.modules} context={{ ...featureContext, visible: false }} />
 
       {showCreate ? <CreateProjectDialog initialStudioId={uiMode === 'advanced' && onboarding.session.status === 'running' ? onboardingGoals.find(goal => goal.id === onboarding.session.goal)?.studioId : undefined} onClose={() => setShowCreate(false)} onCreated={(created) => { if (uiMode === 'advanced' && onboarding.session.status === 'running' && onboarding.session.goal && onboarding.session.task) onboarding.update({ projectPath: created.path, phase: 'tool' }); if (uiMode === 'beginner' && beginnerStartupDraft.trim()) pendingBeginnerStartRef.current = { projectPath: created.path, prompt: beginnerStartupDraft }; setProject(created); setShowCreate(false); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
-      {!developerOpen && !isDetachedWindow && uiMode === 'advanced' && !['done', 'skipped'].includes(onboarding.session.status) ? <Suspense fallback={null}><OnboardingGuide session={onboarding.session} update={onboarding.update} view={view} project={project} uiMode={uiMode} showCreate={showCreate} ready={!bootstrapping && !openingProject && !projectTransitionPending && startupChangelogChecked && !changelog && !updateInfo && !updateDownloadedOpen && !deviceAccountOpen} onCreate={() => setShowCreate(true)} onCloseCreate={() => setShowCreate(false)} onNavigate={id => { navigateToView(id as ViewId); if (project) setProjectLauncherOpen(false) }} onRevealNavigation={id => { if (compactToolNavigation) setNarrowSidebarExpanded(true); else setSidebarCollapsed(false); const group = orderedVisibleNavGroups.find(group => group.items.some(item => item.id === id)); if (group) setCollapsedSidebarGroups(current => current[sidebarGroupStorageKey(group.groupKey)] ? { ...current, [sidebarGroupStorageKey(group.groupKey)]: false } : current) }} /></Suspense> : null}
+      {!developerOpen && !isDetachedWindow && uiMode === 'advanced' && !['done', 'skipped'].includes(onboarding.session.status) ? <Suspense fallback={null}><OnboardingGuide session={onboarding.session} update={onboarding.update} account={deviceState} onAccountChange={setDeviceState} onModelApplied={preferences => { setBeginnerAiPreferences(preferences); resetSurfaceAiSelections(); void scanBeginnerModels() }} onBeginInspiration={beginMokoInspiration} project={project} ready={!bootstrapping && !openingProject && !projectTransitionPending && startupChangelogChecked && !changelog && !updateInfo && !updateDownloadedOpen && !deviceAccountOpen && !showCreate} onCreated={created => { setProject(created, { cover: false }); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} onNavigate={id => { navigateToView(id as ViewId); if (project) setProjectLauncherOpen(false) }} /></Suspense> : null}
       {renamingProject ? <RenameProjectDialog project={renamingProject} onClose={() => setRenamingProject(null)} onRenamed={projectRenamed} /> : null}
       {existingImportPicker ? <ExistingImportPicker onClose={() => setExistingImportPicker(false)} onSelect={(sourceType) => { setExistingImportPicker(false); void inspectExistingProject(sourceType) }} /> : null}
       {existingInspecting ? <ProjectInspectionDialog kind="project" progress={existingInspectionProgress} error={existingInspectionError} onClose={() => setExistingInspecting(false)} onRetry={() => void inspectExistingProject(existingInspectionSource)} /> : null}
       {existingAnalysis ? <AdoptProjectDialog analysis={existingAnalysis} onClose={() => setExistingAnalysis(null)} onAdopted={(adopted) => { setExistingAnalysis(null); setProject(adopted); setProjectLauncherOpen(false); setView('workspace'); void refreshRecentProjects() }} /> : null}
       {changelog && <AppChangelogDialog snapshot={changelog} onClose={() => setChangelog(null)} onPresented={() => { void window.modmind.app.markChangelogPresented().catch(error => console.warn('更新日志展示记录保存失败', error)) }} />}
-      {startupChangelogChecked && !changelog && updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudUpload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
+      {startupChangelogChecked && !changelog && updateInfo ? <div className="modal-backdrop"><div className="dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title"><div className="dialog-header"><div><h2 id="update-dialog-title">发现新版本</h2><p>ModMind {updateInfo.latestVersion} 已发布</p></div><CloudDownload size={21} /></div><p className="recovery-copy">当前版本为 {updateInfo.currentVersion}。安装包将在后台下载，期间可以收起下载悬浮窗继续工作。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateInfo(null)}>暂不下载</button><button className="primary-button" disabled={updateActionBusy} onClick={downloadAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}下载更新</button></div></div></div> : null}
       {startupChangelogChecked && !changelog && updateDownloadedOpen && appUpdateState.phase === 'downloaded' ? <div className="modal-backdrop"><div className="dialog update-dialog update-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="update-ready-dialog-title"><div className="dialog-header"><div><h2 id="update-ready-dialog-title">更新已下载</h2><p>ModMind {appUpdateState.latestVersion} 已准备好</p></div><PackageOpen size={21} /></div><p className="recovery-copy">安装包已经校验完成。可以立即重启安装；选择稍后时，下次启动 ModMind 会自动进入安装。</p><div className="dialog-footer"><button className="secondary-button" disabled={updateActionBusy} onClick={() => setUpdateDownloadedOpen(false)}>稍后</button><button className="primary-button" disabled={updateActionBusy} onClick={installAppUpdate}>{updateActionBusy ? <LoaderCircle className="spin" size={16} /> : <RotateCcw size={16} />}重启并安装</button></div></div></div> : null}
       {deviceAccountOpen ? <DeviceAccountDialog state={deviceState} remoteState={remoteState} busy={deviceBusy} remoteBusy={remoteBusy} onClose={() => setDeviceAccountOpen(false)} onAuthorize={() => void deviceAuthorize()} onCancel={() => void deviceCancel()} onDisconnect={() => void deviceDisconnect()} onRefresh={() => void deviceRefresh()} onOpenSite={deviceOpenSite} onRemoteToggle={() => void remoteToggle()} /> : null}
       {appDialogRequest ? <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && appDialogRequest.kind === 'info') resolveAppDialog(true) }}><div className="dialog interaction-dialog" role="dialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message" onMouseDown={event => event.stopPropagation()}><div className="dialog-header"><div><h2 id="app-dialog-title">{appDialogRequest.title}</h2><p id="app-dialog-message">{appDialogRequest.message}</p>{appDialogRequest.detail ? <p className="interaction-dialog-detail">{appDialogRequest.detail}</p> : null}</div><Info size={20} aria-hidden="true" /></div><div className="dialog-footer">{appDialogRequest.kind === 'confirm' ? <button className="secondary-button" type="button" onClick={() => resolveAppDialog(false)}>{appDialogRequest.cancelLabel ?? '取消'}</button> : null}<button className="primary-button" type="button" onClick={() => resolveAppDialog(true)}>{appDialogRequest.confirmLabel ?? '知道了'}</button></div></div></div> : null}

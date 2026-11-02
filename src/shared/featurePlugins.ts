@@ -47,6 +47,8 @@ export interface FeaturePluginManifest extends FeaturePluginContributions, Featu
 export type FeaturePluginDefinition = Omit<FeaturePluginManifest, 'files'>
 export interface FeaturePluginRecord {
   builtin?: boolean
+  /** Verified package identity; changes even when a local rebuild keeps its version. */
+  contentHash?: string
   id: string
   name: string
   version: string
@@ -55,6 +57,10 @@ export interface FeaturePluginRecord {
   manifest?: FeaturePluginDefinition
 }
 export interface FeaturePluginCatalogEntry extends FeaturePluginRecord {
+  /** Official means the installed fingerprint matches a verified download receipt. */
+  installationSource?: 'builtin' | 'official' | 'local'
+  /** Confirmed official installation absent from the last valid official catalog. Never an uninstall instruction. */
+  withdrawn?: boolean
   description?: string
   installed: boolean
   available: boolean
@@ -87,7 +93,7 @@ export interface FeaturePluginApi {
   catalog: () => Promise<FeaturePluginCatalogEntry[]>
   invoke: (id: string, action: string, input: Record<string, unknown>) => Promise<unknown>
   onEvent: (id: string, event: string, callback: (value: unknown) => void) => () => void
-  install: () => Promise<FeaturePluginRecord[] | null>
+  install: (expectedId?: string) => Promise<FeaturePluginRecord[] | null>
   onInstallPreview: (callback: (requestId: string, preview: FeaturePluginInstallPreview) => void) => () => void
   confirmInstall: (requestId: string, accepted: boolean) => void
   setEnabled: (id: string, enabled: boolean) => Promise<FeaturePluginRecord[]>

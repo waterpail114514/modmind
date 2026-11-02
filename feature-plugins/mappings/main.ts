@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { MappingService } from "./src/main/mappingService"
 import path from "node:path"
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, Tray } from "electron"
@@ -62,7 +64,7 @@ import type { FeaturePluginInvocationContext } from '../../src/shared/featurePlu
 export function activate(options: { host: NativeFeatureHost }) {
 const host = options.host
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "mappings" }, () => handler(host.event(), ...(input.args as any[]))) }
 let mappingService: MappingService | null = null;
 function requireMappings(): MappingService {
     if (!mappingService)

@@ -7,6 +7,7 @@ import path from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { request } from 'undici'
 import { installJavaRuntimeTask, type JavaRuntimeManifest } from '@xmcl/installer'
+import { download } from '@xmcl/file-transfer'
 import { minecraftDownloadDispatcher } from './minecraftDownloadNetwork'
 import { setNetworkProxy, fetchTextWithRetry, systemProxyTransport } from './networkRequest'
 import { runtimeDownloadError } from '../../feature-plugins/testing/src/main/minecraftRuntime'
@@ -22,7 +23,11 @@ async function fixture() {
   cleanup.push(() => fs.rm(root, { recursive: true, force: true }))
   let broken = false
   const bytes = Buffer.from('verified runtime DLL')
-  const origin = createServer((_req, res) => { res.end(broken ? Buffer.alloc(0) : bytes) })
+  const origin = createServer((req, res) => {
+    if (req.url === '/missing') { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Missing artifact'); return }
+    if (req.url === '/redirect') { res.writeHead(302, { Location: '/runtime.dll' }); res.end(); return }
+    res.end(broken ? Buffer.alloc(0) : bytes)
+  })
   await new Promise<void>(resolve => origin.listen(0, '127.0.0.1', resolve))
   cleanup.push(() => new Promise<void>(resolve => { origin.closeAllConnections(); origin.close(() => resolve()) }))
   const proxy = createServer()
@@ -57,6 +62,13 @@ it('uses the system proxy for real XMCL Runtime downloads and replaces a zero-by
   expect(await fs.readFile(path.join(f.root, 'bin/runtime.dll'))).toEqual(f.bytes)
   expect(f.tunnels).toContain('runtime.invalid:80')
   expect(system.resolveProxy).toHaveBeenCalledWith('http://runtime.invalid/runtime.dll')
+})
+it('propagates HTTP errors through real XMCL and falls back to a redirected healthy source', async () => {
+  const f = await fixture(); const destination = path.join(f.root, 'fallback.dll')
+  const options = { destination, dispatcher: f.dispatcher, validator: { algorithm: 'sha1', hash: createHash('sha1').update(f.bytes).digest('hex') } }
+  await expect(download({ ...options, url: 'http://runtime.invalid/missing' })).rejects.toThrow()
+  await download({ ...options, url: ['http://runtime.invalid/missing', 'http://runtime.invalid/redirect'] })
+  expect(await fs.readFile(destination)).toEqual(f.bytes)
 })
 it('uses the same system proxy for common metadata requests and XMCL downloads', async () => {
   const f = await fixture()

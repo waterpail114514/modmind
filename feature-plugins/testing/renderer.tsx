@@ -7,6 +7,7 @@ import MinecraftTestWorkspace from './components/MinecraftTestWorkspace'
 import ServerTestWorkspace from './components/ServerTestWorkspace'
 import AutomatedTestsPane from './components/AutomatedTestsPane'
 import QuickGameTestDialog from './components/QuickGameTestDialog'
+import BackgroundGamePanel from './components/BackgroundGamePanel'
 
 function TestingPage(context: FeaturePageContext): React.JSX.Element | null {
   const { project } = context
@@ -18,10 +19,14 @@ function TestingPage(context: FeaturePageContext): React.JSX.Element | null {
   const server = project.kind === 'server-plugin' || (context.routeData as { server?: boolean } | undefined)?.server
   const client = <MinecraftTestWorkspace projectPath={project.path} beginner={context.uiMode === 'beginner'} modpack={project.kind === 'modpack'} onManageRelationships={() => context.navigate(context.hasPage('relationships') ? 'relationships' : 'features')} />
   return <>
-    {server ? <ServerTestWorkspace project={project} /> : project.kind !== 'modpack' ? <WorkspaceTabs label="游戏测试" sections={[
+    {server ? project.kind === 'server-plugin' && ['paper', 'spigot', 'folia'].includes(project.loader) ? <WorkspaceTabs label="服务端测试" sections={[
+      { id: 'server', label: '服务端', render: () => <ServerTestWorkspace project={project} /> },
+      { id: 'background', label: '后台客户端', render: () => <BackgroundGamePanel project={project} /> }
+    ]} /> : <ServerTestWorkspace project={project} /> : <WorkspaceTabs label="游戏测试" sections={[
       { id: 'play', label: '游戏测试', render: () => client },
-      { id: 'checks', label: '自动检查', render: () => <AutomatedTestsPane /> }
-    ]} /> : client}
+      { id: 'background', label: '后台操控', render: () => <BackgroundGamePanel project={project} /> },
+      ...(project.kind !== 'modpack' ? [{ id: 'checks', label: '自动检查', render: () => <AutomatedTestsPane /> }] : [])
+    ]} />}
     {quick ? <QuickGameTestDialog project={project} onClose={() => setQuick(false)} onExport={() => context.exportArtifact()} /> : null}
   </>
 }

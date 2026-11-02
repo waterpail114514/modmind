@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
+import sharp from 'sharp'
 import { StringDecoder } from 'node:string_decoder'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawnManaged, stopProcessTree } from "../../../../src/main/processTree"
@@ -10,6 +11,7 @@ import { managedJavaEnvironment } from "../../../../src/main/javaEnvironment"
 export interface TestClientStart {
   javaPath: string; launcherPath: string; profile: string; minecraftRoot: string; gameDirectory: string
   mode: 'headless' | 'rendered'; username: string; offline: boolean; inventorySupported: boolean; keysSupported: boolean
+  readyTimeoutMs?: number
 }
 export interface ClientObservation { revision: string; cursor: number; text: string; acknowledged: boolean }
 const quote = (text: string): string => `"${text.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
@@ -38,6 +40,7 @@ export class TestClientSession {
   async start(input: TestClientStart, signal?: AbortSignal): Promise<void> {
     if (this.isRunning()) throw new Error('测试客户端已在运行')
     if (!/^[\w.+:-]+$/.test(input.profile) || !/^[A-Za-z0-9_]{3,16}$/.test(input.username)) throw new Error('测试 profile 或角色名称无效')
+    if (input.readyTimeoutMs !== undefined && (!Number.isInteger(input.readyTimeoutMs) || input.readyTimeoutMs < 30000 || input.readyTimeoutMs > 900000)) throw new Error('readyTimeoutMs 需要在 30000–900000 之间')
     this.inventorySupported = input.inventorySupported; this.keysSupported = input.keysSupported
     this.mode = input.mode; this.directory = input.gameDirectory; this.sequence = 0; this.entries = []; this.commands.clear()
     await fs.mkdir(path.join(input.gameDirectory, 'logs'), { recursive: true })
@@ -67,13 +70,17 @@ export class TestClientSession {
     try {
       await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
       child.stdin.write(`launch ${input.profile}${input.mode === 'headless' ? ' -lwjgl' : ''}${input.offline ? ' -offline' : ''}\n`)
-      const deadline = Date.now() + 120_000
+      let deadline = Date.now() + (input.readyTimeoutMs ?? 300_000)
+      let progressCursor = 0
       while (Date.now() < deadline) {
         signal?.throwIfAborted()
         if (processError) throw processError
         if (this.processError) throw new Error(`客户端输入通道已关闭：${this.processError}`)
         if (!this.isRunning()) throw new Error('测试客户端提前退出；请读取客户端日志')
         const output = this.logs().lines.join('\n')
+        const newEntries = this.entries.filter(entry => entry.sequence > progressCursor)
+        progressCursor = this.sequence
+        if (newEntries.some(entry => /Downloading (?:Libraries|assets)|\bdownload.*\b\d+%/i.test(entry.text))) deadline = Date.now() + (input.readyTimeoutMs ?? 300_000)
         if (/Couldn't launch|Could not find Java|LaunchException/.test(output)) throw new Error('客户端启动失败；请读取测试日志')
         if (/authentication failed|not logged in|no account|login required/i.test(output)) throw new Error('客户端需要登录测试账号；请使用现有 HeadlessMC 登录入口')
         if (/HeadlessMc|headlessmc/i.test(output) && /Minecraft|fabric/i.test(output)) {
@@ -158,7 +165,6 @@ export class TestClientSession {
       if (fresh) {
         const file = path.join(directory, fresh); const bytes = await fs.readFile(file)
         if (bytes.length > 8 * 1024 * 1024) throw new Error('截图过大')
-        const sharp = (await import('sharp')).default
         const stats = await sharp(bytes).stats()
         if (stats.channels.slice(0, 3).every(channel => channel.stdev < 1)) throw new Error('截图为空白或单色，不能作为视觉验收')
         return { path: file, dataUrl: `data:image/png;base64,${bytes.toString('base64')}`, createdAt: new Date().toISOString() }

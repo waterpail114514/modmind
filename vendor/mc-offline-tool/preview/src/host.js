@@ -17,6 +17,10 @@ export const rootNode = () => ROOT || document;
 
 /** 是不是功能包模式 */
 export const isFeature = () => !!(HOST && HOST.kind === 'feature');
+export const hostDocuments = input => HOST.documents(input);
+export const hostSaveDocument = input => HOST.saveDocument(input);
+export const hostPrompt = (title,value) => isFeature() ? HOST.prompt(title,value) : Promise.resolve(window.prompt(title,value));
+export const hostConfirm = message => isFeature() ? HOST.confirm(message) : Promise.resolve(window.confirm(message));
 
 /** 图标：功能包模式由后端按 id 返回 data URL（包内取不到 1.8 万张静态图）；独立网页返回 null（直接用文件路径） */
 export async function hostIcons(ids) {
@@ -29,8 +33,8 @@ export async function hostIcons(ids) {
  * 独立网页返回 null，调用方自己去 fetch 那个静态文件。
  * ★ 这条和场景资源一样是"包内没有静态文件"的硬约束 —— 漏了就会静默失败（物品栏空白）。
  */
-export async function hostItems() {
-  if (isFeature()) return HOST.items();
+export async function hostItems(input) {
+  if (isFeature()) return HOST.items(input);
   return null;
 }
 

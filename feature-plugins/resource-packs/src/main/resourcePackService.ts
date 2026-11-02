@@ -1,4 +1,6 @@
+import { resourcePackFormatMajor, resourcePackMetadata, resourcePackSupports263 } from '../../../../src/shared/resourcePack'
 import { createHash, randomUUID } from 'node:crypto'
+import { recordDiagnosticArtifact } from '../../../../src/main/diagnosticArtifacts'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -165,7 +167,7 @@ export async function inspectResourcePack(project: ProjectInfo, id: string): Pro
     }).sort((a, b) => a.path.localeCompare(b.path))
   } else files = await scan(root, Boolean(source))
   const metadata = await readPackBytes(project, id, 'pack.mcmeta').then(bytes => JSON.parse(bytes.toString('utf8'))).catch(() => null)
-  return { id, path: source ?? installed ?? `resource-packs/${id}`, ...(source ? { origin: 'project' as const } : installed ? { origin: 'installed' as const } : {}), readOnly: archive, name: source ? `项目资源 · ${source}` : installed ? `整合包 · ${id.slice('installed:'.length)}` : id, description: typeof metadata?.pack?.description === 'string' ? metadata.pack.description : metadata?.pack?.description ? JSON.stringify(metadata.pack.description) : '', packFormat: Number.isInteger(metadata?.pack?.pack_format) ? metadata.pack.pack_format : null, files }
+  return { id, path: source ?? installed ?? `resource-packs/${id}`, ...(source ? { origin: 'project' as const } : installed ? { origin: 'installed' as const } : {}), readOnly: archive, name: source ? `项目资源 · ${source}` : installed ? `整合包 · ${id.slice('installed:'.length)}` : id, description: typeof metadata?.pack?.description === 'string' ? metadata.pack.description : metadata?.pack?.description ? JSON.stringify(metadata.pack.description) : '', packFormat: resourcePackFormatMajor(metadata?.pack), files }
 }
 
 export async function listResourcePacks(project: ProjectInfo): Promise<ResourcePackInfo[]> {
@@ -214,7 +216,7 @@ export async function createResourcePack(project: ProjectInfo, input: ResourcePa
     await fs.mkdir(root)
     try {
       await fs.mkdir(path.join(root, 'assets'))
-      await fs.writeFile(path.join(root, 'pack.mcmeta'), JSON.stringify({ pack: { pack_format: input.packFormat, description: input.description } }, null, 2))
+      await fs.writeFile(path.join(root, 'pack.mcmeta'), JSON.stringify(resourcePackMetadata(project.minecraftVersion, input.packFormat, input.description), null, 2))
       return await inspectResourcePack(project, id)
     } catch (error) { await fs.rm(root, { recursive: true, force: true }); throw error }
   })
@@ -312,6 +314,7 @@ export async function writeResourcePackFile(project: ProjectInfo, id: string, fi
     const temporary = `${target}.${randomUUID()}.tmp`
     await fs.mkdir(path.dirname(target), { recursive: true })
     try { await fs.writeFile(temporary, bytes); await fs.rename(temporary, target) } finally { await fs.rm(temporary, { force: true }) }
+    await recordDiagnosticArtifact(project,'resource-file-saved',{outputPath:target,output:bytes,metadata:{id,file,baseline}})
     if (installedPackPath(project, id)) invalidateModpackContentCache(project)
     return inspectResourcePack(project, id)
   })
@@ -357,7 +360,7 @@ export async function validateResourcePack(project: ProjectInfo, id: string): Pr
   const names = new Set(info.files.map(file => file.path))
   if (!names.has('pack.mcmeta') && info.origin !== 'project') issues.push({ severity: 'error', path: 'pack.mcmeta', message: '缺少资源包描述文件' })
   const expected = suggestedResourcePackFormat(project.minecraftVersion)
-  if (expected && info.packFormat !== expected && (info.origin !== 'project' || names.has('pack.mcmeta'))) issues.push({ severity: 'warning', path: 'pack.mcmeta', message: `目标 ${project.minecraftVersion} 推荐资源格式 ${expected}，当前为 ${info.packFormat ?? '新版范围格式'}` })
+  if (project.minecraftVersion !== '26.3' && expected && info.packFormat !== expected && (info.origin !== 'project' || names.has('pack.mcmeta'))) issues.push({ severity: 'warning', path: 'pack.mcmeta', message: `目标 ${project.minecraftVersion} 推荐资源格式 ${expected}，当前为 ${info.packFormat ?? '新版范围格式'}` })
   if (!expected && info.origin !== 'project') issues.push({ severity: 'warning', path: 'pack.mcmeta', message: '目标版本格式未收录，请核对官方格式并在游戏中验证' })
   const reference = (owner: string, id: unknown, folder: string, suffix: string): void => {
     if (typeof id !== 'string' || id.startsWith('#') || id.startsWith('builtin/')) return
@@ -376,6 +379,7 @@ export async function validateResourcePack(project: ProjectInfo, id: string): Pr
       if (file.path.endsWith('.json') || file.path.endsWith('.mcmeta')) {
         const value = JSON.parse(bytes.toString('utf8'))
         if (file.path === 'pack.mcmeta' && (!value.pack || value.pack.description === undefined || (!Number.isInteger(value.pack.pack_format) && value.pack.min_format === undefined))) throw new Error('pack 元信息缺少描述或格式版本')
+        if (file.path === 'pack.mcmeta' && project.minecraftVersion === '26.3' && !resourcePackSupports263(value.pack)) throw new Error('Minecraft 26.3 需要 min_format 与 max_format 覆盖资源格式 [97, 1]')
         if (/\/models\/.+\.json$/.test(file.path)) {
           reference(file.path, value.parent, 'models', '.json')
           for (const texture of Object.values(value.textures ?? {})) reference(file.path, texture, 'textures', '.png')
@@ -397,7 +401,10 @@ export async function resourcePackArchive(project: ProjectInfo, id: string): Pro
     const validation = await validateResourcePack(project, id)
     if (!validation.success) throw new Error(`资源包校验失败：${validation.issues.filter(issue => issue.severity === 'error').map(issue => `${issue.path}: ${issue.message}`).join('\n')}`)
     const info = await inspectResourcePack(project, id)
-    return createStoredZip(await Promise.all(info.files.map(async file => ({ name: relativeFile(file.path), data: await readPackBytes(project, id, file.path) }))))
+    const entries = await Promise.all(info.files.map(async file => ({ name: relativeFile(file.path), data: await readPackBytes(project, id, file.path) })))
+    const output = createStoredZip(entries)
+    await recordDiagnosticArtifact(project,'resource-archive-created',{output,entries,metadata:{id,minecraftVersion:project.minecraftVersion}})
+    return output
   })
 }
 
@@ -413,6 +420,7 @@ export async function deployResourcePack(project: ProjectInfo, id: string): Prom
   await fs.mkdir(path.dirname(target), { recursive: true })
   const temporary = `${target}.${randomUUID()}.tmp`
   try { await fs.writeFile(temporary, bytes); await fs.rename(temporary, target) } finally { await fs.rm(temporary, { force: true }) }
+  await recordDiagnosticArtifact(project,'resource-archive-deployed',{outputPath:target,output:bytes,metadata:{id,relativePath:relative,previousSha256:existing?digest(existing):null,expectedSha256:digest(bytes)}})
   deployments[relative] = digest(bytes)
   await fs.mkdir(path.dirname(manifestPath), { recursive: true })
   await fs.writeFile(manifestPath, JSON.stringify(deployments, null, 2))

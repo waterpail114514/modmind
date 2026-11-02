@@ -40,7 +40,7 @@ export class InspirationKnowledgeStore {
     const key = this.key(projectPath)
     const task = (this.queues.get(key) ?? Promise.resolve()).catch(() => undefined).then(async () => {
       const items = await this.read(projectPath)
-      if (!changes.length || changes.length > 8 || new Set(changes.map(c => c.id)).size !== changes.length
+      if (!changes.length || new Set(changes.map(c => c.id)).size !== changes.length
         || new Set(changes.map(c => `${c.scope}:${c.title}`)).size !== changes.length) throw new Error('知识变更数量或条目无效')
       if (!undo && changes.every(change => {
         const note = items.find(item => item.id === change.id)

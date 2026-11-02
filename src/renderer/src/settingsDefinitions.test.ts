@@ -24,8 +24,8 @@ describe('settings definition compatibility', () => {
   it('preserves category and section IDs, order, labels, descriptions and search keywords', () => {
     expect(settingsCategories).toEqual(baseline.settings.categories)
     const externalIds = new Set(['settings-image', 'settings-release'])
-    expect(settingsSections.filter(section => section.id !== 'settings-authors' && section.id !== 'settings-feature-plugins').map(section => section.id === 'settings-ai'
-      ? { ...section, keywords: section.keywords.replace(' 更长上下文 超长上下文 256K 272K 消费', '') } : section)).toEqual(baseline.settings.sections.filter(section => !externalIds.has(section.id)))
+    expect(settingsSections.filter(section => section.id !== 'settings-authors' && section.id !== 'settings-feature-plugins' && section.id !== 'settings-contributions').map(section => section.id === 'settings-ai'
+      ? { ...section, keywords: section.keywords.replace(' 更长上下文 超长上下文 256K 272K 消费', '') } : section.id === 'settings-appearance' ? { ...section, keywords: section.keywords.replace(' 字体大小 字号 缩放 font size zoom', '') } : section)).toEqual(baseline.settings.sections.filter(section => !externalIds.has(section.id)))
   })
 
   it.each(['更长上下文', '超长上下文', '272K'])('finds the long-context option from %s', query => {

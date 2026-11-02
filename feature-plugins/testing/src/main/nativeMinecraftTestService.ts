@@ -1,15 +1,17 @@
+import { diagnosticJournal, redactDiagnosticText } from '../../../../src/main/diagnosticLog'
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
+import os from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { ProjectInfo } from "../../../../src/shared/types"
-import type { MinecraftManagedMod, MinecraftRuntimeState } from "../../../../src/shared/minecraft"
-import type { MinecraftRuntimeManager } from "./minecraftRuntime"
-import { SerialState } from "../../../../src/main/liveConfiguration"
-import { sameProjectPath } from "../../../../src/main/projectPath"
-import { CreationFeedbackService } from "../../../../src/main/creationFeedbackService"
-import { installNativeMcp, nativeMcpFor, nativeMcpRelease, NativeMinecraftMcpClient } from "./nativeMinecraftMcp"
+import type { ProjectInfo } from '../../../../src/shared/types'
+import type { MinecraftManagedMod, MinecraftRuntimeState } from '../../../../src/shared/minecraft'
+import type { MinecraftRuntimeManager } from './minecraftRuntime'
+import { SerialState } from '../../../../src/main/liveConfiguration'
+import { sameProjectPath } from '../../../../src/main/projectPath'
+import { CreationFeedbackService } from '../../../../src/main/creationFeedbackService'
+import { installNativeMcp, nativeMcpFor, nativeMcpRelease, NativeMinecraftMcpClient } from './nativeMinecraftMcp'
 
 type Runtime = Pick<MinecraftRuntimeManager, 'getState' | 'launch' | 'stop'>
 interface Dependencies {
@@ -23,49 +25,83 @@ interface Session {
   client?: NativeMinecraftMcpClient; revision: string; controller: AbortController
   ownerSignal?: AbortSignal
   releaseAbort?: () => void
+  diagnosticHistory?: Array<{ phase: string; time: string; error?: string }>
 }
 
 export class NativeMinecraftTestService {
-  isBusy(): boolean { return Boolean(this.session || this.starting || this.stopping) }
+  isBusy(): boolean { return Boolean(this.startup?.status === 'running' || this.session || this.stopping) }
+  private startup?: { id: string; project: ProjectInfo; owner?: AbortSignal; fingerprint: string; controller: AbortController; status: 'running' | 'ready' | 'failed' | 'cancelled'; error?: string; result?: unknown; finished: Promise<void> }
   private session?: Session
   private lane = new SerialState()
   private stopping?: Promise<void>
   private starting?: AbortController
   constructor(private readonly dependencies: Dependencies) {}
+  assertReadyForSignal(signal: AbortSignal): void {
+    if (this.startup?.owner === signal && this.startup.status === 'running') throw new Error('玩家测试仍在准备；请用 modmind_test_session operation=state 等待 ready=true 后再结束任务')
+  }
   async stopForSignal(signal: AbortSignal): Promise<void> {
-    if (this.session?.ownerSignal === signal) await this.stop()
+    if (this.session?.ownerSignal === signal || this.startup?.owner === signal) await this.stop()
   }
 
   async projectChanged(projectPath?: string): Promise<void> {
-    if (this.session && (!projectPath || !sameProjectPath(projectPath, this.session.project.path))) await this.stop()
+    if ((this.session || this.startup) && (!projectPath || !sameProjectPath(projectPath, (this.session?.project ?? this.startup!.project).path))) await this.stop()
   }
   stop(): Promise<void> {
     if (this.stopping) return this.stopping
-    this.starting?.abort()
-    this.session?.controller.abort()
-    const pending = this.lane.run(() => this.cleanup())
+    let resolve!: () => void; let reject!: (error: unknown) => void
+    const pending = new Promise<void>((done, failed) => { resolve = done; reject = failed })
     this.stopping = pending
-    void pending.finally(() => { this.stopping = undefined }).catch(() => undefined)
+    this.starting?.abort()
+    this.startup?.controller.abort()
+    this.session?.controller.abort()
+    void this.lane.run(() => this.cleanup()).then(resolve, reject)
+    void pending.finally(() => { if (this.stopping === pending) this.stopping = undefined }).catch(() => undefined)
     return pending
+  }
+  private async recordSession(session: Session, phase: string, error?: unknown): Promise<void> {
+    const history = session.diagnosticHistory ??= []
+    history.push({ phase, time: new Date().toISOString(), ...(error === undefined ? {} : { error: String(error).slice(0, 4_000) }) })
+    if (history.length > 16) history.splice(0, history.length - 16)
+    const data = { sessionId: session.id, projectPath: session.project.path, directory: session.directory, port: session.port,
+      phase, time: new Date().toISOString(), cancelled: session.controller.signal.aborted, ownerAborted: session.ownerSignal?.aborted,
+      runtime: session.runtime.getState(), history, error: error === undefined ? undefined : String(error).slice(0, 4_000) }
+    diagnosticJournal.record({ subsystem: 'minecraft', operation: 'native-test-session', phase, message: 'Native test session: ' + phase, data, error })
+    try {
+      const parent = path.dirname(session.directory)
+      await fs.mkdir(parent, { recursive: true })
+      const temporary = path.join(parent, 'session-' + randomUUID() + '.tmp')
+      await fs.writeFile(temporary, redactDiagnosticText(JSON.stringify(data, null, 2)), { flag: 'wx' })
+      await fs.rename(temporary, path.join(parent, 'session.json'))
+    } catch (failure) {
+      diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'native-session-evidence', phase: 'error', level: 'warning', message: 'Unable to save native test session evidence', error: failure })
+    }
   }
   private async cleanup(): Promise<void> {
     const session = this.session
     if (!session) return
     // Retain ownership if stop fails, so cleanup can be retried.
+    await this.recordSession(session, 'stopping')
     await session.runtime.stop()
+    await this.recordSession(session, 'stopped')
     session.releaseAbort?.()
     this.session = undefined
   }
   execute(project: ProjectInfo, category: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (!sameProjectPath(this.dependencies.currentProject()?.path ?? '', project.path)) return Promise.reject(new Error('玩家测试仅操作当前项目'))
+    if (category === 'session' && input.operation === 'capabilities') return this.capabilities(project)
+    if (category === 'session' && ['start', 'state'].includes(String(input.operation))) return this.startupRequest(project, input, signal)
     if (category === 'session' && input.operation === 'stop') {
-      if (this.session && (!sameProjectPath(project.path, this.session.project.path) || input.sessionId !== this.session.id)) return Promise.reject(new Error('测试会话不匹配'))
-      return this.stop().then(() => ({ stopped: true }))
+      const current = this.session?.id ?? this.startup?.id
+      if (input.sessionId && input.sessionId !== current) return Promise.reject(new Error('测试会话不匹配'))
+      const stopping = this.stop()
+      if (this.startup?.status === 'running') { void stopping.catch(() => undefined); return Promise.resolve({ sessionId: current, status: 'cancelling', stopped: false }) }
+      return stopping.then(() => ({ sessionId: current, status: 'stopped', stopped: true }))
     }
     return this.lane.run(async () => {
       signal?.throwIfAborted()
       if (category === 'session' && input.operation === 'capabilities') {
         const entry = nativeMcpFor(project.minecraftVersion, project.loader)
-        return { supported: Boolean(entry), supportTier: entry ? 'experimental' : 'unavailable', backend: 'minecraft-mod-mcp', release: nativeMcpRelease, modes: entry ? ['rendered'] : [], hiddenRendering: false, runtimeVerified: false,
+        return { supported: Boolean(entry), supportTier: entry ? 'experimental' : 'unavailable', backend: 'minecraft-mod-mcp', release: entry?.release ?? nativeMcpRelease, modes: entry ? ['rendered'] : [], hiddenRendering: false, runtimeVerified: false,
           catalog: entry ? { minecraft: entry.minecraft, loader: entry.loader, sha256: entry.sha256 } : null,
           detail: '模组真实交互测试：启动独立客户端，读取原生截图、GUI、玩家及世界状态，执行点击/按键/视角/命令。启动后仍需验证具体操作；不支持的版本不替换为相近版本。' }
       }
@@ -117,6 +153,53 @@ export class NativeMinecraftTestService {
       throw new Error('不支持的测试操作')
     })
   }
+  private async capabilities(project: ProjectInfo) {
+    const entry = nativeMcpFor(project.minecraftVersion, project.loader)
+    return { supported: Boolean(entry), supportTier: entry ? 'experimental' : 'unavailable', backend: 'minecraft-mod-mcp', release: entry?.release ?? nativeMcpRelease, modes: entry ? ['rendered'] : [], hiddenRendering: false, runtimeVerified: false,
+      catalog: entry ? { minecraft: entry.minecraft, loader: entry.loader, sha256: entry.sha256 } : null,
+      detail: '启动返回 sessionId；查询 state，ready 后再操作。下载和构建在后台继续；stop 可取消准备阶段。' }
+  }
+  private async startupRequest(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const wait = input.waitSeconds ?? 0
+    if (typeof wait !== 'number' || !Number.isFinite(wait) || wait < 0 || wait > 20) throw new Error('waitSeconds 需要在 0–20 之间')
+    if (input.operation === 'start') {
+      if (this.stopping) throw new Error('测试正在停止，请等待停止完成')
+      if (input.mode !== 'rendered' || input.hidden === true) throw new Error('模组 MCP 交互测试需要 rendered 可见客户端')
+      if (!nativeMcpFor(project.minecraftVersion, project.loader)) throw new Error(`尚无匹配 ${project.minecraftVersion} / ${project.loader} 的 MCP 正式发布包`)
+      if (input.maxMemoryMb !== undefined) number(input.maxMemoryMb, 'maxMemoryMb', 1024, 16384, true)
+      if (input.readyTimeoutMs !== undefined) number(input.readyTimeoutMs, 'readyTimeoutMs', 30000, 900000, true)
+      const { operation: _operation, waitSeconds: _wait, sessionId: _sessionId, ...parameters } = input
+      const fingerprint = JSON.stringify([project.path, project.minecraftVersion, project.loader, parameters])
+      if (this.startup && !this.startup.controller.signal.aborted && ['running', 'ready'].includes(this.startup.status)) {
+        if (this.startup.owner !== signal || this.startup.fingerprint !== fingerprint) throw new Error('已有不同参数或其他会话拥有的测试任务，请查询或停止')
+      } else {
+        const task: NonNullable<NativeMinecraftTestService['startup']> = { id: randomUUID(), project: { ...project }, owner: signal, fingerprint, controller: new AbortController(), status: 'running', finished: Promise.resolve() }
+        this.startup = task
+        const combined = signal ? AbortSignal.any([signal, task.controller.signal]) : task.controller.signal
+        // Register ownership and ID before any queued or network work.
+        task.finished = this.lane.run(async () => {
+          combined.throwIfAborted()
+          task.result = await this.start(project, input, combined, task.id, signal)
+          task.status = 'ready'
+        }).catch(error => { task.status = combined.aborted ? 'cancelled' : 'failed'; task.error = String(error) })
+      }
+    }
+    const task = this.startup
+    if (!task || !sameProjectPath(task.project.path, project.path) || (input.sessionId && input.sessionId !== task.id)) throw new Error('测试会话已过期，请先启动当前会话')
+    if (task.status === 'running' && wait) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try { await Promise.race([task.finished, new Promise<void>(resolve => { timer = setTimeout(resolve, wait * 1000) })]) }
+      finally { clearTimeout(timer) }
+    }
+    const exited = task.status === 'ready' && !task.controller.signal.aborted && !this.session?.runtime.getState().running
+    return { ...(task.status === 'ready' ? task.result as object : {}), ...(this.session ? this.state(this.session) : {}), sessionId: task.id, taskId: task.id,
+      status: task.controller.signal.aborted ? (this.stopping ? 'cancelling' : 'cancelled') : task.status,
+      ...(exited ? { status: 'failed' } : {}),
+      ready: task.status === 'ready' && !task.controller.signal.aborted && !exited && Boolean(this.session?.client),
+      phase: this.session?.diagnosticHistory?.at(-1)?.phase ?? task.status, error: exited ? '测试客户端已退出，请停止会话后检查日志' : task.error,
+      instruction: task.status === 'running' ? 'Poll modmind_test_session operation=state with this sessionId and waitSeconds<=20. Do not start again. Only ready=true permits interactions.' : undefined }
+  }
   private state(session: Session) {
     return { sessionId: session.id, id: session.id, mode: 'rendered', backend: 'minecraft-mod-mcp', directory: session.directory,
       running: session.runtime.getState().running, ready: Boolean(session.client), hiddenRendering: false,
@@ -124,12 +207,12 @@ export class NativeMinecraftTestService {
       capabilities: { screenshot: true, gui: true, key: true, inventory: true, command: true, look: true, click: true, text: true, scroll: true, interact: true, tooltip: false },
       visualVerified: false, gameplayVerified: false }
   }
-  private async start(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal) {
+  private async start(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal, taskId?: string, ownerSignal = signal) {
     if (this.session) throw new Error('已有测试会话，请先停止；不会重复启动')
     if (input.mode !== 'rendered' || input.hidden === true) throw new Error('模组 MCP 交互测试需要 rendered 可见客户端；无头检查请使用原有测试入口')
     const entry = nativeMcpFor(project.minecraftVersion, project.loader)
     if (!entry) throw new Error(`尚无匹配 ${project.minecraftVersion} / ${project.loader} 的 MCP 正式发布包；可继续使用启动检查和 GameTest`)
-    const id = randomUUID()
+    const id = taskId ?? randomUUID()
     const directory = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'player-tests', id, 'game')
     const controller = new AbortController()
     this.starting = controller
@@ -137,7 +220,7 @@ export class NativeMinecraftTestService {
     try { port = await unusedLocalPort(); controller.signal.throwIfAborted(); signal?.throwIfAborted() }
     catch (error) { this.starting = undefined; throw error }
     const runtime = this.dependencies.createRuntime(project, directory, port)
-    const session: Session = { id, project, directory, runtime, port, revision: '', controller, ownerSignal: signal }
+    const session: Session = { id, project, directory, runtime, port, revision: '', controller, ownerSignal }
     this.session = session
     this.starting = undefined
     const onAbort = (): void => { controller.abort(); void this.stop().catch(() => undefined) }
@@ -146,17 +229,23 @@ export class NativeMinecraftTestService {
     const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
     try {
       combined.throwIfAborted()
+      await this.recordSession(session, 'building')
       const artifact = await this.dependencies.build(project, combined)
+      await this.recordSession(session, 'copying-instance')
       combined.throwIfAborted()
       const sourceInstance = project.kind === 'modpack' ? path.dirname(artifact.path) : path.dirname(path.dirname(artifact.path))
       await copyNativeTestInstance(sourceInstance, directory)
+      await this.recordSession(session, 'installing-mcp')
       await (this.dependencies.install ?? installNativeMcp)(entry, path.join(directory, 'mods'), combined)
       // No user saves/options copied. Keep the owned instance responsive when focus moves to ModMind.
       await fs.writeFile(path.join(directory, 'options.txt'), 'pauseOnLostFocus:false\n')
       combined.throwIfAborted()
-      const launched = await runtime.launch({ username: 'ModMindTest', maxMemoryMb: 2048, width: 1280, height: 720 }, combined)
+      await this.recordSession(session, 'launching')
+      const defaultMemory = Math.max(1024, Math.min(4096, Math.floor(Math.min(os.totalmem() * 0.5, os.freemem() * 0.75) / (256 * 1024 ** 2)) * 256))
+      const launched = await runtime.launch({ username: 'ModMindTest', maxMemoryMb: Number(input.maxMemoryMb ?? defaultMemory), width: 1280, height: 720 }, combined)
       if (launched.stage === 'error') throw new Error(launched.message)
-      const deadline = Date.now() + 120_000
+      await this.recordSession(session, 'connecting-mcp')
+      const deadline = Date.now() + Number(input.readyTimeoutMs ?? 300_000)
       let lastError = '尚未连接'
       while (Date.now() < deadline) {
         combined.throwIfAborted()
@@ -169,6 +258,7 @@ export class NativeMinecraftTestService {
             const control = await client.command('enter_control_mode', {}, combined)
             if (control.control_mode !== true) throw new Error('MCP 控制模式未就绪')
             session.client = client
+            await this.recordSession(session, 'ready')
             return { ...this.state(session), observation: await this.observe(session, combined) }
           } catch (error) {
             lastError = String(error)
@@ -179,6 +269,7 @@ export class NativeMinecraftTestService {
       }
       throw new Error(`Minecraft MCP 未就绪：${lastError}`)
     } catch (error) {
+      await this.recordSession(session, combined.aborted ? 'cancelled' : 'failed', error)
       await new CreationFeedbackService(project).evidence(String(error), 'native-client-failure').catch(() => undefined)
       await this.cleanup()
       throw error

@@ -1,0 +1,7 @@
+.diagnostic-options { width: 100%; margin-top: 12px; }
+.diagnostic-options summary { cursor: pointer; }
+.diagnostic-options-fields { display: grid; gap: 12px; padding-top: 12px; max-width: 680px; }
+.diagnostic-options-fields textarea, .diagnostic-options-fields input[type="datetime-local"] { width: 100%; min-width: 0; box-sizing: border-box; }
+.diagnostic-options-fields .settings-actions { flex-wrap: wrap; }
+.diagnostic-options-fields p { margin: 0; overflow-wrap: anywhere; }
+.diagnostic-options-fields ul { margin: 0; padding-left: 20px; overflow-wrap: anywhere; }

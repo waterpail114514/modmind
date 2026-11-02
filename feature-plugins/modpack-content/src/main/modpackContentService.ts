@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { recordDiagnosticArtifact } from '../../../../src/main/diagnosticArtifacts'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { ModpackKeybindConflict, ModpackKeybindState, ProjectInfo } from '../../../../src/shared/types'
@@ -139,6 +140,7 @@ export async function writeFtbQuestChapter(project: ProjectInfo, input: FtbQuest
   const built = buildFtbQuestSnbt(project, input, await contentPrefix(project))
   await assertContentTarget(project.path, resourcePath(project, built.relativePath))
   await atomicWrite(resourcePath(project, built.relativePath), `${built.content}\n`)
+  await recordDiagnosticArtifact(project,'ftb-chapter-saved',{output:Buffer.from(`${built.content}\n`),outputPath:resourcePath(project,built.relativePath)})
   return built.relativePath
 }
 
@@ -197,6 +199,7 @@ export async function writePatchouliBook(project: ProjectInfo, input: PatchouliB
         entries.push({ source, destination: resourcePath(project, relative) })
       }
       await installContentTransaction(project.path, entries, async () => undefined)
+      await recordDiagnosticArtifact(project,'patchouli-book-saved',{entries:files.flatMap(file=>[{name:`expected/${file.relativePath}`,data:Buffer.from(file.content)},{name:`actual/${file.relativePath}`,path:resourcePath(project,file.relativePath)}]),metadata:{bookId:input.bookId}})
       return files.map(file => file.relativePath)
     } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined) }
   })

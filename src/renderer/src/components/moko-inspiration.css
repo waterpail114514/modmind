@@ -1,0 +1,18 @@
+.moko-inspiration-stage { position: fixed; inset: 0; z-index: 1100; overflow: hidden; outline: none; background: transparent; }
+.moko-inspiration-portrait { position: absolute; bottom: -150px; left: 28px; height: min(85vh, 820px); aspect-ratio: 1 / 2; opacity: .1; background: url('../assets/onboarding/moko-poses.png') no-repeat 0 0 / 300% 100%; pointer-events: none; transition: opacity 180ms ease; }
+.moko-inspiration-ai { position: absolute; bottom: -160px; right: 16px; height: min(95vh, 940px); width: auto; opacity: .14; pointer-events: none; transition: opacity 180ms ease, transform 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.moko-inspiration-stage[data-exiting=true] :is(.moko-inspiration-portrait,.moko-inspiration-ai) { opacity: 0; }
+.moko-inspiration-stage[data-exiting=true] .moko-inspiration-ai { transform: translateX(100%); }
+.moko-script-message[data-speaker=茉可] > span { color: var(--theme-accent); background: var(--theme-selected); }
+.moko-script-message p { font-size: var(--type-body, 14px); }
+.moko-script-cursor { color: var(--theme-muted); }
+.moko-script-hint { display: block; margin-top: 8px; color: var(--theme-muted); font-size: 12px; }
+.moko-inspiration-stage[data-mode=input][data-input-ready=true] { pointer-events: none; }
+.moko-input-outline { position: absolute; box-sizing: border-box; border: 2px solid var(--theme-accent); border-radius: 14px; box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--theme-shadow) 56%, transparent); pointer-events: none; }
+.moko-input-blocker { position: absolute; pointer-events: auto; }
+body[data-moko-intro-input] .inspiration-page:not([hidden]) .inspiration-composer [inert] { opacity: .4; }
+.moko-inspiration-recovery { position: absolute; top: 80px; left: 35%; right: 28px; padding: 20px; color: var(--theme-text); background: var(--theme-raised); }
+.moko-inspiration-recovery p { color: var(--theme-danger); }
+@media (prefers-reduced-motion: reduce) {
+  .moko-inspiration-ai, .moko-inspiration-stage[data-exiting=true] .moko-inspiration-ai { transform: none; transition: opacity 180ms ease; }
+}

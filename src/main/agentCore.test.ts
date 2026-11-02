@@ -72,8 +72,10 @@ describe('restoreManagedTreeExact', () => {
     await fs.writeFile(path.join(snapshot, 'src', 'file.txt'), 'before')
     await fs.writeFile(path.join(outside, 'file.txt'), 'outside')
     await fs.symlink(outside, path.join(project, 'src'), process.platform === 'win32' ? 'junction' : 'dir')
-    await expect(restoreManagedTreeExact(snapshot, project, ['src/file.txt'], () => false, copyTree)).rejects.toThrow(/link/)
-    expect(await fs.readFile(path.join(outside, 'file.txt'), 'utf8')).toBe('outside')
+    try {
+      await expect(restoreManagedTreeExact(snapshot, project, ['src/file.txt'], () => false, copyTree)).rejects.toThrow(/link/)
+      expect(await fs.readFile(path.join(outside, 'file.txt'), 'utf8')).toBe('outside')
+    } finally { await fs.unlink(path.join(project, 'src')) }
   })
   it('restores changed files and removes files created after the snapshot', async () => {
     const root = await temporaryDirectory()
@@ -110,9 +112,11 @@ describe('restoreManagedPathsFromSnapshot', () => {
     await fs.writeFile(path.join(outside, 'unlisted.txt'), 'outside')
     await fs.symlink(outside, path.join(snapshot, 'extra'), process.platform === 'win32' ? 'junction' : 'dir')
     await fs.writeFile(path.join(project, 'extra', 'unlisted.txt'), 'task-created')
-    await restoreManagedPathsFromSnapshot(snapshot, project, ['extra/unlisted.txt'], { files: ['original.txt'] })
-    await expect(fs.stat(path.join(project, 'extra', 'unlisted.txt'))).rejects.toThrow()
-    expect(await fs.readFile(path.join(outside, 'unlisted.txt'), 'utf8')).toBe('outside')
+    try {
+      await restoreManagedPathsFromSnapshot(snapshot, project, ['extra/unlisted.txt'], { files: ['original.txt'] })
+      await expect(fs.stat(path.join(project, 'extra', 'unlisted.txt'))).rejects.toThrow()
+      expect(await fs.readFile(path.join(outside, 'unlisted.txt'), 'utf8')).toBe('outside')
+    } finally { await fs.unlink(path.join(snapshot, 'extra')) }
   })
   it('distinguishes a missing backup from a task-created file using the manifest', async () => {
     const root = await temporaryDirectory()

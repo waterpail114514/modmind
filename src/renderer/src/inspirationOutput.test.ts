@@ -1,7 +1,7 @@
 import { latestContextUsage } from '../../shared/contextUsage'
 import { normalizeStoredInspirationMessages } from './inspirationStorage'
 import { describe, expect, it } from 'vitest'
-import { buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
+import { applyInspirationArtifact, buildInspirationRows, deleteInspirationTimelineItem, finalInspirationReply, inspirationConversationHandoff, inspirationStepStatus, replayInspirationEvents, rewindInspirationTimelineTo, settleInspirationCancellation, settleInspirationFailure, shouldResumeInspirationSession } from './inspirationOutput'
 
 describe('inspiration output settlement', () => {
   it('keeps the latest measured usage when cancelling and restoring a reply', () => {
@@ -115,21 +115,21 @@ describe('inspiration output settlement', () => {
     expect(finalInspirationReply({ summary: 'short', finalResponse: '这是完整且可展示的灵感回答。' })).toBe('这是完整且可展示的灵感回答。')
   })
 
-  it('demotes provisional narration when a run fails', () => {
+  it('preserves provisional narration as a paragraph when a run fails', () => {
     const result = settleInspirationFailure([
       { role: 'assistant', content: '我正在读取项目', status: 'streaming', isFinal: false, sessionId: 'run-1' }
     ], 'run-1', '线路仍不可用', () => 'step-1')
     expect(result).toEqual([
-      { role: 'assistant', kind: 'tool', id: 'step-1', content: '我正在读取项目', status: 'completed', isFinal: false, sessionId: 'run-1' },
+      { role: 'assistant', phase: 'commentary', id: 'step-1', content: '我正在读取项目', status: 'completed', isFinal: false, sessionId: 'run-1' },
       expect.objectContaining({ role: 'assistant', content: '线路仍不可用', status: 'error', isFinal: true, sessionId: 'run-1' })
     ])
   })
 
-  it('keeps provisional text as a step when cancellation is confirmed', () => {
+  it('keeps provisional text as a paragraph when cancellation is confirmed', () => {
     const result = settleInspirationCancellation([
       { role: 'assistant', content: '正在检查 API', status: 'streaming', isFinal: false, sessionId: 'run-1' }
     ], 'run-1', () => 'step-1')
-    expect(result[0]).toMatchObject({ kind: 'tool', isFinal: false })
+    expect(result[0]).toMatchObject({ phase: 'commentary', isFinal: false })
     expect(result[1]).toMatchObject({ content: '请求已暂停', status: 'cancelled', isFinal: true })
   })
 
@@ -157,4 +157,32 @@ describe('inspiration output settlement', () => {
     expect(handoff).toContain('.modmind/attachments/a1-api.txt')
     expect(handoff).toContain('User: 旧记录')
   })
+})
+
+it('attaches MCP artifacts to the answer while preserving an earlier reasoning row', () => {
+  const reasoning = { role: 'assistant' as const, kind: 'reasoning' as const, content: '正在核对需求', status: 'streaming' as const, turnId: 'turn', sessionId: 'session' }
+  const workflow = { version: 1 as const, reply: '', prompt: null, questions: [], suggestions: [], knowledgeCandidates: [] }
+  const result = applyInspirationArtifact([reasoning, { role: 'assistant', content: '', status: 'streaming', turnId: 'turn', sessionId: 'session' }], {
+    kind: 'tool', content: '', time: 'T', turnId: 'turn', sessionId: 'session', inspirationArtifact: { workflow, finalized: false }
+  })
+  expect(result[0]).toBe(reasoning)
+  expect(result[1].inspirationArtifact?.workflow).toBe(workflow)
+})
+
+it('persists MCP artifacts through live completion, replay and interrupted drafts', () => {
+  const workflow = { version: 1 as const, reply: '', prompt: { state: 'ready' as const, text: '制作雷鸣剑', blockingQuestionIds: [] }, questions: [], suggestions: [], knowledgeCandidates: [] }
+  const event = { kind: 'tool' as const, content: '', time: 'T', turnId: 'turn', sessionId: 'session', generation: 2, sequence: 1,
+    inspirationArtifact: { workflow, finalized: false } }
+  const draft = applyInspirationArtifact([{ role: 'assistant', turnId: 'turn', sessionId: 'session', content: '已整理要求', status: 'streaming' }], event)
+  expect(draft[0].isFinal).not.toBe(true)
+  expect(normalizeStoredInspirationMessages(JSON.parse(JSON.stringify(draft)))[0]).toMatchObject({ content: '已整理要求', status: 'error', inspirationArtifact: { finalized: false } })
+  const completedEvent = { ...event, sequence: 3, inspirationArtifact: { workflow, finalized: true } }
+  const live = applyInspirationArtifact(draft, completedEvent)
+  expect(live[0]).toMatchObject({ content: '已整理要求', status: 'completed', isFinal: true, inspirationArtifact: { finalized: true } })
+  expect(applyInspirationArtifact(live, event)).toEqual(live)
+  const replay = replayInspirationEvents([], [event, { kind: 'answer' as const, content: '已整理要求', time: 'T', turnId: 'turn', sessionId: 'session', sequence: 2 }, completedEvent].map((payload, i) => ({
+    eventId: String(i), conversationId: 'idea', generation: 2, turnId: 'turn', sequence: i + 1, kind: 'output' as const, time: 'T', payload
+  })))
+  expect(replay).toHaveLength(1)
+  expect(replay[0]).toMatchObject({ content: '已整理要求', status: 'completed', inspirationArtifact: { workflow, finalized: true } })
 })

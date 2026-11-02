@@ -1,10 +1,14 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import type { FeatureStoreSnapshot } from '../../shared/featureStore'
+import withdrawnIds from '../../shared/withdrawnFeatureDistributions.json'
 
 let snapshot: FeatureStoreSnapshot = { entries: [], checking: false, cached: false }
 const listeners = new Set<() => void>()
 let subscribers = 0, unsubscribe: (() => void) | undefined, interval: ReturnType<typeof setInterval> | undefined
-const publish = (value: FeatureStoreSnapshot): void => { snapshot=value; listeners.forEach(listener=>listener()) }
+const publish = (value: FeatureStoreSnapshot): void => {
+  snapshot={ ...value, entries: value.entries.filter(entry => entry.installed || !withdrawnIds.includes(entry.id)) }
+  listeners.forEach(listener=>listener())
+}
 export function useFeatureStore(): FeatureStoreSnapshot {
   useEffect(()=>{
     if(subscribers++===0){

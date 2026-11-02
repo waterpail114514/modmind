@@ -28,6 +28,11 @@ interface DiagnosticArchiveCollectorOptions {
 interface AddDirectoryOptions {
   include?: (relativePath: string) => boolean
   includePartialMetadata?: boolean
+  descend?: (relativePath: string) => boolean
+  maxEntries?: number
+  maxDepth?: number
+  /** Explicit raw crash evidence may be larger than ordinary text logs. */
+  maxBinaryBytes?: number
 }
 
 export interface DiagnosticDirectorySummary {
@@ -93,7 +98,7 @@ export async function summarizeDiagnosticDirectory(root: string, maxEntries = 50
 }
 
 function isBinaryDiagnostic(filePath: string, archiveName: string): boolean {
-  return /\.(?:gz|dmp)$/i.test(filePath) || /\.(?:gz|dmp)$/i.test(archiveName)
+  return /\.(?:gz|dmp|png|jpe?g|webp)$/i.test(filePath) || /\.(?:gz|dmp|png|jpe?g|webp)$/i.test(archiveName)
 }
 
 function looksLikeUnknownBinary(data: Buffer): boolean {
@@ -174,6 +179,10 @@ export class DiagnosticArchiveCollector {
       return
     }
     const output = redact ? Buffer.from(redactDiagnosticText(data.toString('utf8')), 'utf8') : data
+    if (output.byteLength > this.maxFileBytes) {
+      this.collectionItems.push({ archiveName: safeName, status: 'skipped', size: output.byteLength, reason: 'generated item exceeds per-file limit' })
+      return
+    }
     if (!this.canAdd(safeName, output.byteLength)) return
     this.names.add(safeName)
     this.archiveEntries.push({ name: safeName, data: output })
@@ -185,7 +194,7 @@ export class DiagnosticArchiveCollector {
     this.addBuffer(name, Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8'), true)
   }
 
-  async addFile(filePath: string, name: string): Promise<void> {
+  async addFile(filePath: string, name: string, maxBytes = this.maxFileBytes): Promise<void> {
     const safeName = archivePath(name)
     if (this.names.has(safeName)) {
       this.collectionItems.push({ archiveName: safeName, status: 'skipped', reason: 'duplicate archive name' })
@@ -193,7 +202,7 @@ export class DiagnosticArchiveCollector {
     }
     let stat
     try {
-      stat = await fs.stat(filePath)
+      stat = await fs.lstat(filePath)
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? String((error as NodeJS.ErrnoException).code) : ''
       this.collectionItems.push({ archiveName: safeName, status: code === 'ENOENT' ? 'missing' : 'error', reason: code === 'ENOENT' ? 'file does not exist' : redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
@@ -209,7 +218,10 @@ export class DiagnosticArchiveCollector {
     }
     const binary = isBinaryDiagnostic(filePath, safeName)
     try {
-      const snapshot = await readFileSnapshot(filePath, this.maxFileBytes, binary)
+      const byteLimit = Math.min(binary ? 128 * 1024 * 1024 : this.maxFileBytes, Math.max(1, maxBytes))
+      // Avoid allocating an entire dump when it cannot fit in the archive.
+      if (binary && !this.canAdd(safeName, stat.size)) return
+      const snapshot = await readFileSnapshot(filePath, byteLimit, binary)
       if (!binary && looksLikeUnknownBinary(snapshot.data)) {
         this.collectionItems.push({ archiveName: safeName, status: 'skipped', size: snapshot.originalSize, modifiedAt: stat.mtime.toISOString(), reason: 'unknown binary content omitted' })
         return
@@ -228,7 +240,7 @@ export class DiagnosticArchiveCollector {
         startOffset: snapshot.startOffset,
         endOffset: snapshot.endOffset,
         truncated: snapshot.truncated,
-        ...(snapshot.truncated ? { reason: `included complete records within ${this.maxFileBytes} bytes; omitted bytes are described by startOffset/endOffset` } : {})
+        ...(snapshot.truncated ? { reason: `included complete records within ${byteLimit} bytes; omitted bytes are described by startOffset/endOffset` } : {})
       })
     } catch (error) {
       this.collectionItems.push({ archiveName: safeName, status: 'error', size: stat.size, modifiedAt: stat.mtime.toISOString(), reason: redactDiagnosticText(error instanceof Error ? error.message : String(error)) })
@@ -236,9 +248,19 @@ export class DiagnosticArchiveCollector {
   }
 
   async addDirectory(directory: string, prefix: string, options: AddDirectoryOptions = {}): Promise<void> {
+    const rootStat = await fs.lstat(directory).catch(() => null)
+    if (rootStat?.isSymbolicLink()) {
+      this.collectionItems.push({ archiveName: archivePath(prefix), status: 'skipped', reason: 'symbolic link directory omitted' })
+      return
+    }
     const queue: Array<{ directory: string; relative: string }> = [{ directory, relative: '' }]
     let rootSeen = false
+    let visited = 0
     while (queue.length) {
+      if (visited >= (options.maxEntries ?? 10_000)) {
+        this.collectionItems.push({ archiveName: archivePath(prefix), status: 'skipped', reason: 'directory traversal limit reached; collection is incomplete' })
+        break
+      }
       const current = queue.shift()!
       let children
       try {
@@ -252,11 +274,16 @@ export class DiagnosticArchiveCollector {
         continue
       }
       for (const child of children) {
+        if (++visited > (options.maxEntries ?? 10_000)) {
+          this.collectionItems.push({ archiveName: archivePath(prefix), status: 'skipped', reason: 'directory traversal limit reached; collection is incomplete' })
+          break
+        }
         if (child.isSymbolicLink()) continue
         const relative = path.posix.join(current.relative, child.name)
         const childPath = path.join(current.directory, child.name)
         if (child.isDirectory()) {
-          queue.push({ directory: childPath, relative })
+          if (relative.split('/').length > (options.maxDepth ?? 16)) this.collectionItems.push({ archiveName: archivePath(path.posix.join(prefix, relative)), status: 'skipped', reason: 'directory depth limit reached' })
+          else if (options.descend?.(relative) !== false) queue.push({ directory: childPath, relative })
           continue
         }
         if (!child.isFile() || options.include?.(relative) === false) continue
@@ -267,7 +294,7 @@ export class DiagnosticArchiveCollector {
           }
           continue
         }
-        await this.addFile(childPath, path.posix.join(prefix, relative))
+        await this.addFile(childPath, path.posix.join(prefix, relative), isBinaryDiagnostic(childPath, relative) ? options.maxBinaryBytes ?? this.maxFileBytes : this.maxFileBytes)
       }
     }
     if (!rootSeen && !this.collectionItems.some((item) => item.archiveName === archivePath(prefix))) {

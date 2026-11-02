@@ -1,7 +1,11 @@
+import AgentMessage from './AgentMessage'
+import AgentActivityList from './AgentActivityList'
+import AgentReasoning from './AgentReasoning'
 import ContextUsage from './ContextUsage'
 import ReasoningControl from './ReasoningControl'
 import type { AiModelInfo } from '../../../shared/types'
 import WorkbenchApprovalDialog from './WorkbenchApprovalDialog'
+import WorkbenchQuestions from './WorkbenchQuestions'
 import { useAiAttachments } from '../useAiAttachments'
 import MoreActions from './MoreActions'
 import TurnCompletionCard, { isTurnCompletion } from './TurnCompletionCard'
@@ -23,7 +27,6 @@ import { ReplyMarkdown } from './ReplyImages'
 import { useWorkbenchPopover } from '../useWorkbenchPopover'
 import WorkbenchConversation from './WorkbenchConversation'
 import ConversationPickerList from './ConversationPickerList'
-import PagedSteps from './PagedSteps'
 import ChatWelcome, { ChatRecommendations } from './ChatWelcome'
 import QuotaPreferenceControls from './QuotaPreferenceControls'
 import { modelCatalogCurrent } from './ModelCatalogRows'
@@ -45,10 +48,8 @@ import {
   CircleAlert,
   Clock3,
   Download,
-  FileCode2,
   Gamepad2,
   History,
-  ListChecks,
   LoaderCircle,
   MessagesSquare,
   Pin,
@@ -116,6 +117,7 @@ export type AgentWorkbenchProps = {
   persistenceState?: 'loading' | 'ready' | 'saving' | 'saved' | 'degraded' | 'error'
   persistenceMessage?: string
   historyState?: 'loading' | 'ready' | 'error'
+  historyPage?: import('./WorkbenchConversation').ConversationScrollHistory
   historyMessage?: string
   onRetryHistory?: () => void
   onCancelHistory?: () => void
@@ -221,75 +223,21 @@ function groupTimeline(items: AgentWorkbenchTimelineItem[]): TimelineRow[] {
 }
 
 function ThinkingItem({ item, content }: { item: AgentWorkbenchTimelineItem; content: string }): React.JSX.Element {
-  const running = item.status === 'running'
-  const [expanded, setExpanded] = useState(running)
-  const [elapsed, setElapsed] = useState(0)
-  useEffect(() => {
-    if (!running) {
-      setExpanded(false)
-      return
-    }
-    const started = new Date(item.time).getTime()
-    const update = (): void => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)))
-    update()
-    const timer = window.setInterval(update, 1000)
-    return () => window.clearInterval(timer)
-  }, [item.time, running])
-  const [title, ...detail] = content.split('\n')
-  return <section className="agent-thinking">
-    <button type="button" className="agent-disclosure-header" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-      <span className="agent-disclosure-icon">{running ? <LoaderCircle className="spin" size={12} /> : <Brain size={14} />}</span>
-      <span>{running ? `${title || '正在思考'} · ${elapsed}s` : '思考完成'}</span>
-      <ChevronRight className={expanded ? 'expanded' : ''} size={12} />
-    </button>
-    {expanded && detail.length ? <div className="agent-disclosure-body">{detail.join('\n')}</div> : null}
-  </section>
+  return <AgentActivityList items={[{ ...item, content }]} />
 }
 
-function ToolGroup({ items, humanizeActivity }: { items: AgentWorkbenchTimelineItem[]; humanizeActivity: (value: string) => string }): React.JSX.Element {
-  const running = items.some((item) => item.status === 'running')
-  // Completed groups start collapsed; running groups reveal their progress.
-  const [expanded, setExpanded] = useState(false)
-  useEffect(() => { if (running) setExpanded(true) }, [running])
-  return <section className="agent-tool-group">
-    <button type="button" className="agent-disclosure-header" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-      <span className="agent-disclosure-icon">{running ? <LoaderCircle className="spin" size={12} /> : <ListChecks size={14} />}</span>
-      <span>查看步骤{items.length ? ` · ${items.length}` : ''}</span>
-      <ChevronRight className={expanded ? 'expanded' : ''} size={12} />
-    </button>
-    {expanded ? <PagedSteps items={items} renderItem={(item) => {
-      const content = humanizeActivity(item.content)
-      const [title, ...detail] = content.split('\n')
-      return <div className={`agent-tool-row${item.notice ? ' ai-notice-row' : ''}`} key={item.id}>
-        <span className={`agent-tool-dot ${item.kind === 'error' && item.terminal !== true ? 'warning' : item.status ?? 'done'}`} />
-        <div><strong>{title || '工具调用'}</strong>{detail.length ? <span>{detail.join(' ')}</span> : null}<AiNoticeDetails notice={item.notice} /></div>
-      </div>
-    }} /> : null}
-  </section>
+export function ReasoningItem({ item }: { item: AgentWorkbenchTimelineItem }): React.JSX.Element {
+  return <AgentReasoning reasoning={item.reasoning} running={item.status === 'running'} expandWhileRunning />
 }
 
-function UserTimelineItem({ item, content, onEdit, onDelete, onRewind }: { item: AgentWorkbenchTimelineItem; content: string; onEdit?: (id: string, content: string) => void; onDelete?: (id: string) => void; onRewind?: (id: string) => void }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  const long = content.length > 1_000 || content.split('\n').length > 12
-  return <article className={`agent-message-row user${long ? ' is-long' : ''}`}>
-    <div className={`agent-message agent-message-user${long && !expanded ? ' is-collapsed' : ''}`}><p>{long && !expanded ? `${content.slice(0, 1_200)}…` : content}</p></div>
-    {long ? <button type="button" className="agent-message-expand" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? '收起' : '展开全文'}</button> : null}
-    {(onEdit || onDelete || onRewind) ? <div className="agent-message-actions">{onEdit ? <button type="button" title="编辑并重新发送" aria-label="编辑并重新发送" onClick={() => onEdit(item.id, item.content)}><Pencil size={12} /></button> : null}{onDelete ? <button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => onDelete(item.id)}><Trash2 size={12} /></button> : null}{onRewind ? <button type="button" title="从这条提问重新开始" aria-label="从这条提问重新开始" onClick={() => onRewind(item.id)}><Undo2 size={12} /></button> : null}</div> : null}
-    <time>{formatTime(item.time)}</time>
-  </article>
-}
-
-function TimelineItem({ item, humanizeActivity, onEdit, onDelete, onRewind }: { item: AgentWorkbenchTimelineItem & { separateAnswer?: boolean }; humanizeActivity: (value: string) => string; onEdit?: (id: string, content: string) => void; onDelete?: (id: string) => void; onRewind?: (id: string) => void }): React.JSX.Element | null {
-  const [expanded, setExpanded] = useState(item.kind === 'error')
+function TimelineItem({ item, humanizeActivity, onEdit, onDelete, onRewind, onOpenFile }: { item: AgentWorkbenchTimelineItem & { separateAnswer?: boolean }; humanizeActivity: (value: string) => string; onEdit?: (id: string, content: string) => void; onDelete?: (id: string) => void; onRewind?: (id: string) => void; onOpenFile?: (path: string) => void }): React.JSX.Element | null {
   const content = useMemo(() => humanizeActivity(item.kind === 'answer' || item.kind === 'response' ? splitDiscussionChoices(item.content).content : item.content), [item.kind, item.content, humanizeActivity])
-  if (item.kind === 'user') return <UserTimelineItem item={item} content={content} onEdit={onEdit} onDelete={onDelete} onRewind={onRewind} />
+  if (item.kind === 'user') return <AgentMessage role="user" content={content} time={item.time} onEdit={onEdit ? () => onEdit(item.id, item.content) : undefined} onDelete={onDelete ? () => onDelete(item.id) : undefined} onRewind={onRewind ? () => onRewind(item.id) : undefined} />
   if (item.kind === 'thinking') return <ThinkingItem item={item} content={content} />
+  if (item.kind === 'reasoning') return <ReasoningItem item={item} />
   if (item.kind === 'start' || item.kind === 'retry' || item.kind === 'history') return <div className="agent-event-muted"><Clock3 size={13} /><span>{content}</span></div>
-  if (item.kind === 'diff') return <section className="agent-diff-card">
-    <button type="button" className="agent-diff-heading" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><FileCode2 size={14} /><span>{item.diff?.length ?? 0} 个文件变更</span><ChevronRight className={expanded ? 'expanded' : ''} size={12} /></button>
-    {expanded ? <div className="agent-diff-body">{item.diff?.map((file) => <div className="agent-diff-file" key={file.path}><code>{file.path}</code><span>+{file.added} -{file.removed}</span><pre>{[...file.additions.map((line) => `+ ${line}`), ...file.removals.map((line) => `- ${line}`)].join('\n')}</pre></div>)}</div> : null}
-  </section>
-  if (item.kind === 'answer' || item.kind === 'response') return content ? <article className="agent-message-row assistant">{item.kind === 'answer' && item.separateAnswer ? <hr className="agent-answer-divider" aria-label="最终回答" /> : null}<div className="agent-message agent-message-assistant"><MarkdownMessage content={content} /></div>{item.kind === 'answer' && (onDelete || onRewind) ? <div className="agent-message-actions">{onDelete ? <button type="button" title="删除这轮对话" aria-label="删除这轮对话" onClick={() => onDelete(item.id)}><Trash2 size={12} /></button> : null}{onRewind ? <button type="button" title="保留此回答并截断后续对话" aria-label="保留此回答并截断后续对话" onClick={() => onRewind(item.id)}><Undo2 size={12} /></button> : null}</div> : null}<time>{formatTime(item.time)}</time></article> : null
+  if (item.kind === 'diff') return <AgentActivityList onOpenFile={onOpenFile} items={(item.diff ?? []).map(file => ({ ...item, id: item.id + ':' + file.path, kind: 'tool', activity: { kind: 'file', title: '编辑文件', status: 'completed', startedAt: item.time, files: [{ path: file.path, operation: 'edit', added: file.added, removed: file.removed }], output: [...file.additions.map(line => '+ ' + line), ...file.removals.map(line => '- ' + line)].join('\n') } }))} />
+  if (item.kind === 'answer' || item.kind === 'response') return content ? <AgentMessage role="assistant" time={item.time} separateAnswer={item.kind === 'answer' && item.separateAnswer} onDelete={item.kind === 'answer' && onDelete ? () => onDelete(item.id) : undefined} onRewind={item.kind === 'answer' && onRewind ? () => onRewind(item.id) : undefined}><MarkdownMessage content={content} /></AgentMessage> : null
   if (item.kind === 'error' || item.kind === 'warning') {
     if (item.terminal !== true) return <div className="agent-event-muted"><CircleAlert size={13} /><span>{content}</span></div>
     return <div className={`agent-notice ${item.kind}`}><CircleAlert size={14} /><div><span>{content}</span><AiNoticeDetails notice={item.notice} /></div></div>
@@ -332,6 +280,36 @@ function SettingsPopover({ props }: { props: AgentWorkbenchProps }): React.JSX.E
     <label className="agent-settings-switch" title={preferences.account === 'ls' ? 'LS 暂不支持快速响应，原设置保留' : preferences.billing === 'free' ? '免费套餐不使用快速响应，付费设置保留' : undefined}><span>快速响应</span><input type="checkbox" checked={fastUnavailable ? false : preferences.fastMode} disabled={props.savingAiPreferences || fastUnavailable} onChange={event => props.onFastModeChange?.(event.target.checked)} /></label>
     {props.beginnerModelScanMessage ? <small>{props.beginnerModelScanMessage}</small> : null}
   </div>
+}
+
+function HistoryLoadingState({ historyState, historyMessage, onCancelHistory, onRetryHistory, onNewConversation }: Pick<AgentWorkbenchProps, 'historyState' | 'historyMessage' | 'onCancelHistory' | 'onRetryHistory' | 'onNewConversation'>): React.JSX.Element {
+  const loading = historyState === 'loading'
+  const paused = !loading && Boolean(historyMessage?.startsWith('已暂停'))
+  const [waiting, setWaiting] = useState(false)
+  useEffect(() => {
+    setWaiting(false)
+    if (!loading) return
+    const timer = window.setTimeout(() => setWaiting(true), 8_000)
+    return () => window.clearTimeout(timer)
+  }, [loading])
+  const progress = historyMessage?.startsWith('正在读取对话 ·') ? historyMessage : ''
+  return <section className={`agent-history-state ${loading ? 'loading' : 'error'}`}>
+    {loading ? <div className="agent-history-skeleton" aria-hidden="true">
+      <div className="agent-history-skeleton-user"><i /><i /></div>
+      <div className="agent-history-skeleton-answer"><i /><i /><i /><i /></div>
+      <div className="agent-history-skeleton-user short"><i /></div>
+      <div className="agent-history-skeleton-answer short"><i /><i /><i /></div>
+    </div> : null}
+    <div className="agent-history-status" role={loading ? 'status' : 'alert'} aria-live={loading ? 'polite' : 'assertive'}>
+      <span className="agent-history-status-icon" aria-hidden="true">{loading ? <LoaderCircle className="spin" size={17} /> : <CircleAlert size={18} />}</span>
+      <div className="agent-history-status-copy"><strong>{loading ? '正在打开聊天记录' : paused ? '已暂停加载' : '聊天记录暂时无法打开'}</strong><span>{loading ? progress || (waiting ? '仍在读取，你可以先写草稿。' : '正在读取最近的记录…') : paused ? '可以继续加载，或切换其他对话。' : historyMessage || '请重新加载，原有记录会保留。'}</span></div>
+      <div className="agent-history-status-actions">
+        {loading && onCancelHistory ? <button type="button" className="agent-text-button" onClick={onCancelHistory}>取消加载</button> : null}
+        {!loading && onRetryHistory ? <button type="button" className="agent-text-button" onClick={onRetryHistory}>{paused ? '继续加载' : '重新加载'}</button> : null}
+        {!loading ? <button type="button" className="agent-text-button" onClick={onNewConversation}>新建对话</button> : null}
+      </div>
+    </div>
+  </section>
 }
 
 export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.Element {
@@ -398,7 +376,7 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
   }, [displayedTimeline])
   const choiceAnswer = latestReply?.kind === 'answer' ? latestReply : undefined
   const choiceDisabled = !historyReady || planning || props.aiOutputStatus !== 'success' || Boolean(props.savingAiPreferences) || Boolean(props.prompt.trim()) || props.attachments.length > 0
-  const hasLiveThinking = useMemo(() => displayedTimeline.some((item) => item.kind === 'thinking' && item.status === 'running'), [displayedTimeline])
+  const hasLiveThinking = useMemo(() => displayedTimeline.some((item) => (item.kind === 'thinking' || item.kind === 'reasoning') && item.status === 'running'), [displayedTimeline])
   const canExport = props.canExportArtifact && !planning && !props.building
   const contextModel = props.beginnerAiPreferences?.model ?? props.contextModel
   const latestUsage = useMemo(() => latestWorkbenchUsage(aiTimeline, { model: contextModel, backend: effectiveBackend }), [aiTimeline, contextModel, effectiveBackend])
@@ -434,22 +412,16 @@ export default function AgentWorkbench(props: AgentWorkbenchProps): React.JSX.El
       </div>
     </header>
 
-    {!historyReady ? <section className={`agent-history-state ${props.historyState}`} role={props.historyState === 'error' ? 'alert' : 'status'}>
-      {props.historyState === 'loading' ? <LoaderCircle className="spin" size={16} /> : <CircleAlert size={16} />}
-      <div><strong>{props.historyState === 'loading' ? '正在加载对话历史' : '对话历史未载入'}</strong><span>{props.historyMessage || (props.historyState === 'loading' ? '可以先准备草稿，历史载入后即可发送。' : '请重试或切换对话，原历史不会被覆盖。')}</span></div>
-      {props.historyState === 'loading' && props.onCancelHistory ? <button type="button" className="agent-text-button" onClick={props.onCancelHistory}>取消加载</button> : null}
-      {props.historyState === 'error' && props.onRetryHistory ? <button type="button" className="agent-text-button" onClick={props.onRetryHistory}>重新加载</button> : null}
-      <button type="button" className="agent-text-button" disabled={planning} onClick={props.onNewConversation}>新建对话</button>
-    </section> : null}
     {historyReady && recovery ? <section className="agent-recovery-banner"><CircleAlert size={16} /><div><strong>发现未完成任务</strong><span>恢复点已保存{recovery.backend ? `，将使用 ${backendLabel(recovery.backend)} 继续` : ''}。</span></div><button type="button" className="agent-text-button" disabled={planning} onClick={props.onDismissRecovery}>稍后</button><button type="button" className="agent-primary-button" disabled={planning} onClick={props.onResume}>{planning ? <LoaderCircle className="spin" size={13} /> : null}继续</button></section> : null}
 
-    {timelineRows.length ? <WorkbenchConversation projectPath={project.path} key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} isUserRow={row => row.kind === 'user'} renderRow={(row) => row.kind !== 'tool-group' && isTurnCompletion(row) ? <TurnCompletionCard item={row} onOpenFile={props.onOpenChangedFile} /> : row.kind === 'tool-group' ? <ToolGroup items={row.items} humanizeActivity={props.humanizeActivity} /> : <><TimelineItem item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning && historyReady ? props.onEditTimelineItem : undefined} onDelete={!planning && historyReady ? props.onDeleteTimelineItem : undefined} onRewind={!planning && historyReady ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />{project.kind === 'server-plugin' ? '进入测试' : '进入游戏测试'}</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : !historyReady ? <div className="agent-history-placeholder" aria-hidden="true" /> : props.emptyState ?? <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" project={project} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); composerRef.current?.focus() }} />}
+    {historyReady && timelineRows.length ? <WorkbenchConversation history={props.historyPage} projectPath={project.path} key={`${project.path}:${props.activeConversationId}`} rows={timelineRows} isUserRow={row => row.kind === 'user'} renderRow={(row) => row.kind !== 'tool-group' && isTurnCompletion(row) ? <TurnCompletionCard item={row} onOpenFile={props.onOpenChangedFile} /> : row.kind === 'tool-group' ? <AgentActivityList items={row.items} humanizeActivity={props.humanizeActivity} onOpenFile={props.onOpenChangedFile} /> : <><TimelineItem onOpenFile={props.onOpenChangedFile} item={row} humanizeActivity={props.humanizeActivity} onEdit={!planning && historyReady ? props.onEditTimelineItem : undefined} onDelete={!planning && historyReady ? props.onDeleteTimelineItem : undefined} onRewind={!planning && historyReady ? props.onRewindTimelineTo : undefined} />{row.id === choiceAnswer?.id && props.onDiscussionChoice ? <DiscussionChoiceCards choices={splitDiscussionChoices(row.content).choices} disabled={choiceDisabled} onSelect={props.onDiscussionChoice} /> : null}</>} footer={taskState === 'success' && aiPlan && aiPlan.intent !== 'informational' ? <div className="agent-conversation-row"><div className="agent-result-actions"><button type="button" className="agent-secondary-button" onClick={props.onTest}><Gamepad2 size={14} />{project.kind === 'server-plugin' ? '进入测试' : '进入游戏测试'}</button>{props.canExportArtifact ? <button type="button" className="agent-secondary-button" onClick={props.onExport}><Download size={14} />导出</button> : null}</div></div> : null} /> : !historyReady ? <HistoryLoadingState key={`${project.path}:${props.activeConversationId}`} historyState={props.historyState} historyMessage={props.historyMessage} onCancelHistory={props.onCancelHistory} onRetryHistory={props.onRetryHistory} onNewConversation={props.onNewConversation} /> : props.emptyState ?? <ChatWelcome key={`${project.path}:${props.activeConversationId}`} mode="workbench" project={project} minimal={minimal} disabled={planning} onSelect={(prompt) => { props.setPrompt(prompt); composerRef.current?.focus() }} />}
 
     <div className="agent-composer-stack">
       {planning ? <PlanBar todo={aiTodo} /> : null}
       {planning && !hasLiveThinking ? <ProcessingBar label="正在处理" startedAt={props.processingStartedAt} /> : null}
       {settingsOpen ? <SettingsPopover props={props} /> : null}
       <WorkbenchApprovalDialog projectPath={project.path} conversationId={props.activeConversationId} />
+      <WorkbenchQuestions key={`${project.path}:${props.activeConversationId}`} projectPath={project.path} conversationId={props.activeConversationId} onDraft={text => props.setPrompt([props.prompt, text].filter(Boolean).join('\n\n'))} />
       <footer className={`agent-composer ai-attachment-dropzone${attachmentInput.dragging ? ' is-dragging' : ''}`} {...(props.independent ? {} : attachmentInput.handlers)}>
         {attachmentInput.dragging ? <div className="ai-attachment-drop-hint" role="status">松开即可添加文件、图片或文件夹</div> : null}
         <textarea ref={composerRef} aria-label="发送给 AI 的消息" value={props.prompt} onChange={(event) => props.setPrompt(event.target.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && (!historyReady || attachmentInput.isBusy())) { event.preventDefault(); return }; if (event.key === 'Enter' && event.shiftKey) return; if (props.savingAiPreferences && event.key === 'Enter' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); return } if (event.ctrlKey || event.metaKey) { if (event.key === 'Enter' && !planning) { event.preventDefault(); const textarea = event.currentTarget; const start = textarea.selectionStart; const end = textarea.selectionEnd; props.setPrompt(`${props.prompt.slice(0, start)}\n${props.prompt.slice(end)}`); window.requestAnimationFrame(() => textarea.setSelectionRange(start + 1, start + 1)) } return } if (event.key === 'Enter' && !planning && (props.prompt.trim() || props.attachments.length)) { event.preventDefault(); props.onStart() } }} placeholder={props.placeholder} disabled={planning} rows={2} />

@@ -4,7 +4,7 @@ import type { ServerPluginPlatform } from './types'
 export function supportsPluginTarget(platform: ServerPluginPlatform, version: string): boolean {
   return platform === 'velocity'
     ? /^[34]\.\d+\.\d+(?:-SNAPSHOT)?$/.test(version)
-    : (platform === 'spigot' && ['1.8.8', '1.12.2', '1.16.5'].includes(version)) || /^(?:1\.(?:1[7-9]|2[01])(?:\.\d+)?|26\.[12](?:\.\d+)?)$/.test(version)
+    : (platform === 'spigot' && ['1.8.8', '1.12.2', '1.16.5'].includes(version)) || /^(?:1\.(?:1[7-9]|2[01])(?:\.\d+)?|26\.[12](?:\.\d+)?|26\.3)$/.test(version)
 }
 
 export function pluginJavaVersion(platform: ServerPluginPlatform, version: string): number {

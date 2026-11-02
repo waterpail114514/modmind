@@ -1092,22 +1092,24 @@ export class BlockbenchBridge {
   }
 
   loadSourceDocument(document: ModelSourceDocument): Promise<string> {
-    return this.enqueue(async () => {
-      this.assertAlive()
-      if (this.status.phase !== 'ready') throw new Error('模型编辑器尚未就绪，请稍后重试')
-      if (Buffer.byteLength(JSON.stringify(document), 'utf8') > 48 * 1024 * 1024) throw new Error('模型数据超过导入限制')
-      const previous = await this.activeProjectUuid()
-      try {
-        const result = await this.invokePage({ type: 'load-source-document', document })
-        const uuid = result.data?.projectUuid
-        if (typeof uuid !== 'string' || uuid === previous) throw new Error('未能在新文档中打开模型')
-        return uuid
-      } catch (error) {
-        const current = await this.activeProjectUuid()
-        if (current && current !== previous) await this.discardProject(current, previous)
-        throw error
-      }
-    })
+    return this.enqueue(() => this.loadSourceDocumentInQueue(document))
+  }
+
+  private async loadSourceDocumentInQueue(document: ModelSourceDocument): Promise<string> {
+    this.assertAlive()
+    if (this.status.phase !== 'ready') throw new Error('模型编辑器尚未就绪，请稍后重试')
+    if (Buffer.byteLength(JSON.stringify(document), 'utf8') > 48 * 1024 * 1024) throw new Error('模型数据超过导入限制')
+    const previous = await this.activeProjectUuid()
+    try {
+      const result = await this.invokePage({ type: 'load-source-document', document })
+      const uuid = result.data?.projectUuid
+      if (typeof uuid !== 'string' || uuid === previous) throw new Error('未能在新文档中打开模型')
+      return uuid
+    } catch (error) {
+      const current = await this.activeProjectUuid()
+      if (current && current !== previous) await this.discardProject(current, previous)
+      throw error
+    }
   }
 
   serializeSourceDocument(projectUuid: string, projectFile: boolean): Promise<string> {
@@ -1202,8 +1204,7 @@ export class BlockbenchBridge {
   }
 
   executeActions(actions: BlockbenchAction[], signal?: AbortSignal, expectedRevision?: string): Promise<BlockbenchActionBatchResult> {
-    const newModelIndex = Array.isArray(actions) ? actions.findIndex((action) => action?.type === 'new-model') : -1
-    if (newModelIndex > 0) return Promise.reject(new Error('new-model must be the first action in a Blockbench batch'))
+    const newModelIndex = Array.isArray(actions) ? actions.findIndex((action) => action?.type === 'new-model' || action?.type === 'load-source-document') : -1
     return this.executeActionBatch(actions, signal, expectedRevision, newModelIndex === 0)
   }
 
@@ -1343,7 +1344,7 @@ export class BlockbenchBridge {
         if (signal?.aborted) throw Object.assign(new Error('Blockbench operation was cancelled'), { name: 'AbortError' })
         const result = await this.executeValidatedAction(action)
         results.push(result)
-        if (isolatedNewProject && action.type === 'new-model' && typeof result.data?.projectUuid === 'string') {
+        if (isolatedNewProject && (action.type === 'new-model' || action.type === 'load-source-document') && typeof result.data?.projectUuid === 'string') {
           createdProjectUuids.push(result.data.projectUuid)
         }
       }
@@ -1507,6 +1508,10 @@ export class BlockbenchBridge {
   }
 
   private async executeValidatedAction(action: BlockbenchAction): Promise<BlockbenchActionResult> {
+    if (action.type === 'load-source-document') {
+      const projectUuid = await this.loadSourceDocumentInQueue(action.document)
+      return { action: action.type, success: true, message: 'Model source loaded', data: { projectUuid } }
+    }
     this.assertAlive()
     if (this.status.phase !== 'ready') throw new Error('Blockbench is not ready')
 
@@ -1846,6 +1851,9 @@ function validateActionBatch(actions: BlockbenchAction[], expectedRevision?: str
     throw new Error('A Blockbench batch must contain between 1 and 500 actions')
   }
   const validated = actions.map((action) => validateAction(action))
+  if (validated.some((action, index) => index > 0 && (action.type === 'new-model' || action.type === 'load-source-document'))) {
+    throw new Error('new-model / load-source-document must be the first and only document creation action in a Blockbench batch')
+  }
   if (expectedRevision !== undefined && !/^sha256:[a-f0-9]{64}$/.test(expectedRevision)) {
     throw new Error('Blockbench expectedRevision is invalid')
   }
@@ -2127,6 +2135,36 @@ function normalizeBlockbenchPath(value: unknown, extensions: string[], label: st
 
 export function validateAction(input: BlockbenchAction): BlockbenchAction {
   if (!isRecord(input) || typeof input.type !== 'string') throw new Error('Invalid Blockbench action')
+
+  if (input.type === 'load-source-document') {
+    assertOnlyKeys(input, ['type', 'document'])
+    const document = input.document
+    if (!isRecord(document)) throw new Error('Invalid model source document')
+    assertOnlyKeys(document, ['name', 'format', 'model', 'textures', 'animations'])
+    assertName(document.name, 'model name')
+    if (/[\\/\u0000-\u001f]/.test(document.name as string)) throw new Error('Model name must not be a file path')
+    if (document.format !== 'java_block' && document.format !== 'bedrock') throw new Error('Source import supports only java_block / bedrock codecs')
+    if (!isRecord(document.model)) throw new Error('Model source must be a JSON object')
+    if (!Array.isArray(document.textures) || document.textures.length > 64 || !Array.isArray(document.animations) || document.animations.length > 64) throw new Error('Invalid model source assets')
+    if (Buffer.byteLength(JSON.stringify(document), 'utf8') > 8 * 1024 * 1024) throw new Error('Model source exceeds 8 MiB import limit')
+    if (document.format === 'java_block' && document.model.textures !== undefined) {
+      if (!isRecord(document.model.textures) || Object.values(document.model.textures).some(value => typeof value !== 'string' || !/^#?[a-z0-9_./:-]+$/.test(value) || value.includes('..') || value.includes('//') || value.startsWith('/') || value.includes(':/'))) throw new Error('Model textures must use Minecraft resource identifiers')
+    }
+    for (const item of document.textures) {
+      if (!isRecord(item)) throw new Error('Invalid model source texture')
+      assertOnlyKeys(item, ['id', 'name', 'dataUrl'])
+      assertName(item.id, 'texture ID')
+      assertName(item.name, 'texture name')
+      if (typeof item.dataUrl !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(item.dataUrl)) throw new Error('Source textures must be embedded PNG data')
+    }
+    for (const item of document.animations) {
+      if (!isRecord(item)) throw new Error('Invalid model source animation')
+      assertOnlyKeys(item, ['name', 'content'])
+      assertName(item.name, 'animation name')
+      if (typeof item.content !== 'string' || !isRecord(JSON.parse(item.content))) throw new Error('Source animations must contain JSON objects')
+    }
+    return input as unknown as BlockbenchAction
+  }
 
   if (input.type === 'new-model') {
     assertOnlyKeys(input, ['type', 'format', 'name', 'textureWidth', 'textureHeight'])

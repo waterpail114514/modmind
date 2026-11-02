@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { downloadModpackContent, importModpackContent, listModpackContent, modpackContentProjectPath, removeModpackContent } from "./src/main/modpackContentInventoryService"
 import { applyKeybindPreset, readKeybindState, writeFtbQuestChapter, writePatchouliBook } from "./src/main/modpackContentService"
 import { onModpackManifestChanged, addModpackFiles, addModpackModule, adoptExternalModpack, createModpackTemplate, createModrinthPackArchive, isModpackProject, readModpackManifest, removeModpackFile, removeModpackModule, updateModpackModuleSide, auditImportedPackArtifacts } from "../../src/main/modpackService"
@@ -67,7 +69,7 @@ import type { FeaturePluginInvocationContext } from '../../src/shared/featurePlu
 export function activate(options: { host: NativeFeatureHost }) {
 const host = options.host
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "modpack-content" }, () => handler(host.event(), ...(input.args as any[]))) }
 diagnosticHandle('modpack:get', () => readModpackManifest(host.requireProject()));
 diagnosticHandle('modpack:removeMod', (_event, fileName: string) => removeModpackFile(host.requireProject(), fileName));
 diagnosticHandle('modpack:sync', () => host.requireMinecraftRuntime().syncModpack());

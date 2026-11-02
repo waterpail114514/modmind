@@ -1016,6 +1016,7 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
    */
   function dispose() {
     stopLoop();
+    interruptNavigation();
     try { if (resizeObs) resizeObs.disconnect(); } catch { /* 尽力而为 */ }
     resizeObs = null;
     try {
@@ -1085,10 +1086,14 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
     const b = contentBounds();
     if (!b) { fit(); return; }
     const c = [(b.min[0] + b.max[0] + 1) / 2, (b.min[1] + b.max[1] + 1) / 2, (b.min[2] + b.max[2] + 1) / 2];
-    const ext = Math.max(b.max[0] - b.min[0] + 1, Math.max(b.max[1] - b.min[1] + 1, b.max[2] - b.min[2] + 1));
+    // A newly replaced renderer has no perspective until setViewport. Fitting
+    // against its identity matrix put the camera inside imported buildings.
+    const [W,H] = resize();
+    renderer.setViewport(0,0,W,H);
+    const extents = b.max.map((n,i)=>n-b.min[i]+1);
     const m = renderer.projMatrix;
-    const tanHalf = (m && m[5]) ? 1 / m[5] : 0.7;
-    baseDist = Math.max(4, (ext / 2) / tanHalf * 1.25);   // 留 25% 边距
+    const scale = Math.max(Math.abs(m[0]),Math.abs(m[5]));
+    baseDist = Math.max(4,Math.hypot(...extents)/2 * Math.sqrt(1+scale*scale) * 1.15);
     cam.target = c.slice();
     cam.dist = baseDist;
     cam.zoom = 1;
@@ -1118,6 +1123,12 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
   //   而闸门/静态渲染路径不一定在跑循环 ⇒ 只挂阻尼的话动画会永远停在中途。
   //   双通道与"分层滑块"用的是同一个已验证写法：谁先到谁执行，另一个立刻取消。
   let tweenRaf = 0, tweenTimer = 0, tweenTo = null;
+  function interruptNavigation() {
+    if(tweenRaf)cancelAnimationFrame(tweenRaf);
+    if(tweenTimer)clearTimeout(tweenTimer);
+    tweenRaf=0;tweenTimer=0;tweenTo=null;
+    syncWant();
+  }
   const nowMs = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   /**
    * 切到指定视角：`yr` = 水平角（弧度，可任意）、`xr` = 俯仰（会用 PITCH_MIN/MAX 夹住）。
@@ -1169,7 +1180,7 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
     const x = c[0] / L, y = c[1] / L, z = c[2] / L;
     return { yr: Math.atan2(-x, z), xr: Math.asin(Math.max(-1, Math.min(1, y))) };
   }
-  /** 轨道旋转（右键拖 / 浏览工具左键拖 / Alt+左键）：yaw 连续，俯仰 clamp [0.10,1.45] rad */
+  /** 轨道旋转（中键 / 浏览工具左键 / Alt+左键）。 */
   function orbit(dxPx, dyPx) {
     const dy = dyPx * PITCH_PER_PX;
     if (FEEL.damping > 0) {
@@ -1367,25 +1378,55 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
     return [Math.floor(px), Math.floor(planeY), Math.floor(pz)];
   }
 
-  /**
-   * 抓取式平移（右键 / 中键拖拽）。
-   * ★ 之前这里只用了 yaw、还没考虑 pitch，拉起来"很怪"；现在按**相机的 right/up 轴**算：
-   *   right = R_x(xr)·R_y(yr)·(1,0,0)，up = R_x(xr)·(0,1,0)；位移按 `2·dist·tan(fov/2)/画布高` 归一，
-   *   于是"拖多少像素 ≈ 目标平面上移动多少世界单位"，手感与地图类工具一致。
-   *   `tan(fov/2)` 直接从投影矩阵取（projMatrix[5] = 1/tan(fovY/2)），不依赖 Deepslate 的内部常量。
-   */
+  // Screen axes are the rows of the world-to-camera matrix, not its columns.
+  // Derive them from the same matrix used to draw, including the Rx · Ry order.
+  function cameraBasis() {
+    const v=viewMatrix();
+    return {right:[v[0],v[4],v[8]],up:[v[1],v[5],v[9]],back:[v[2],v[6],v[10]]};
+  }
+  /** Screen-space translation at the orbit target's depth (also used by layout compensation). */
   function panBy(dxPx, dyPx) {
-    const h = cssSize()[1] || 1;
-    const m = renderer.projMatrix;
-    const tanHalf = (m && m[5]) ? 1 / m[5] : 0.7;
-    const k = (2 * cam.dist * tanHalf) / h;
-    const cy = Math.cos(cam.yr), sy = Math.sin(cam.yr);
-    const cx = Math.cos(cam.xr), sx = Math.sin(cam.xr);
-    const right = [cy, sx * sy, -cx * sy];
-    const up = [0, cx, sx];
-    for (let i = 0; i < 3; i++) cam.target[i] += -right[i] * dxPx * k + up[i] * dyPx * k;
-    syncWant();   // 平移 = 抓取语义（1:1 跟手）：不进阻尼；want 拉齐，防止阻尼把 target 拉回去
+    interruptNavigation();
+    const [w,h]=cssSize(),m=renderer.projMatrix,{right,up}=cameraBasis();
+    const kx=2*cam.dist/(m[0]*w),ky=2*cam.dist/(m[5]*h);
+    for(let i=0;i<3;i++)cam.target[i]+=-right[i]*dxPx*kx+up[i]*dyPx*ky;
+    syncWant();
     render();
+  }
+
+  function pointOnPanPlane(ray,plane) {
+    if(!ray)return null;
+    const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    const denominator=dot(ray.dir,plane.normal);
+    if(Math.abs(denominator)<1e-8)return null;
+    const t=dot(plane.point.map((value,i)=>value-ray.A[i]),plane.normal)/denominator;
+    if(!Number.isFinite(t)||t<0)return null;
+    return ray.A.map((value,i)=>value+ray.dir[i]*t);
+  }
+  /** Keep the grabbed surface point under the cursor; empty space uses target depth. */
+  function beginPan(clientX,clientY) {
+    interruptNavigation();measure();
+    const [w,h]=resize();renderer.setViewport(0,0,w,h);
+    const ray=rayAt(clientX,clientY),normal=cameraBasis().back;
+    let point=cam.target.slice();
+    const hit=pick(clientX,clientY);
+    if(ray && hit){
+      const axis=hit.normal.findIndex(value=>value!==0);
+      if(axis>=0 && Math.abs(ray.dir[axis])>1e-8){
+        const t=(hit.pos[axis]+(hit.normal[axis]>0?1:0)-ray.A[axis])/ray.dir[axis];
+        if(t>=0 && Number.isFinite(t))point=ray.A.map((value,i)=>value+ray.dir[i]*t);
+      }
+    }
+    const plane={point,normal};
+    const grab=pointOnPanPlane(ray,plane);
+    return grab?{point:grab,normal}:null;
+  }
+  function panTo(anchor,clientX,clientY) {
+    if(!anchor)return;
+    const currentPoint=pointOnPanPlane(rayAt(clientX,clientY),anchor);
+    if(!currentPoint)return;
+    for(let i=0;i<3;i++)cam.target[i]+=anchor.point[i]-currentPoint[i];
+    syncWant();render();
   }
 
   /**
@@ -1393,12 +1434,8 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
    * 与鼠标平移共用同一套基向量，手感一致。
    */
   function moveLocal(fwd, strafe, vert) {
-    const cy = Math.cos(cam.yr), sy = Math.sin(cam.yr);
-    const cx = Math.cos(cam.xr), sx = Math.sin(cam.xr);
-    const right = [cy, sx * sy, -cx * sy];
-    const up = [0, cx, sx];
-    // 视线方向 = right × up 的反向（相机在 target + R*(0,0,dist) 处朝 target 看）
-    const f = [right[1] * up[2] - right[2] * up[1], right[2] * up[0] - right[0] * up[2], right[0] * up[1] - right[1] * up[0]];
+    interruptNavigation();
+    const {right,up,back:f}=cameraBasis();
     const sign = cam.dist > 0 ? -1 : 1;
     for (let i = 0; i < 3; i++) {
       cam.target[i] += (sign * f[i] * fwd) + right[i] * strafe + up[i] * vert;
@@ -1409,7 +1446,7 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
 
   return {
     gl, cam,
-    panBy, moveLocal,
+    panBy, beginPan, panTo, moveLocal, interruptNavigation,
     get renderer() { return renderer; },      // getter：setResources 后外部拿到的是新渲染器
     get structure() { return current; },
     resize, render, draw, fit, setStructure, updateBuffers, pick, pickPlane, project, viewMatrix,
@@ -1424,6 +1461,8 @@ export function createViewport(D, { canvas, structure, resources, chunkSize = CH
       //   32×16×32 白建 19.6 万条线；长到 208×16×480 就是 1960 万条线 ≈ 470 MB ⇒ 渲染进程 OOM、页面卡死。
       //   实测：把它关掉后，同样的长大过程不再卡（见 D098 的排查记录）。
       renderer = new D.StructureRenderer(gl, current, activeResources, { chunkSize, useInvisibleBlockBuffer: false });
+      const [W,H] = resize();
+      renderer.setViewport(0,0,W,H);
       resetVertexAttrs();   // 换渲染器等于全套重建 ⇒ 同样要防「启用但无 buffer」的属性槽
       rebuildGridMesh();    // 新渲染器的 gridMesh 是刚生成的默认版（角落轴）⇒ 覆盖回来
       render();

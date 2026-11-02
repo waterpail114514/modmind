@@ -1,4 +1,5 @@
 import { chapterSource, tableIdBigInt, validateFtbQuestBook } from '../../../../src/shared/ftbQuestValidation'
+import { recordDiagnosticArtifact } from '../../../../src/main/diagnosticArtifacts'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -331,6 +332,7 @@ async function saveBook(project: ProjectInfo, input: FtbQuestBook): Promise<FtbQ
   const temporary = new Map<string, string>()
   const changed = new Map<string, string | null>()
   const backup = path.join(project.path, '.modmind', 'ftbquests-backups', randomUUID())
+  await recordDiagnosticArtifact(project,'ftb-book-save-plan',{entries:[...desired].map(([file,content])=>({name:relative(project,file),data:Buffer.from(content)})),metadata:{baseline:current.baseline,backupPath:backup,removed:removed.map(file=>relative(project,file))}})
   try {
     for (const [target, content] of desired) {
       if (original.get(target) === content) continue
@@ -361,6 +363,7 @@ async function saveBook(project: ProjectInfo, input: FtbQuestBook): Promise<FtbQ
   } finally {
     await Promise.all([...temporary.values()].map((pending) => fs.rm(pending, { force: true }).catch(() => undefined)))
   }
+  await recordDiagnosticArtifact(project,'ftb-book-saved',{entries:[...desired.keys()].map(file=>({name:relative(project,file),path:file})),metadata:{backupPath:backup,removed:removed.map(file=>relative(project,file))}})
   return { written: [...temporary.keys()].map((target) => relative(project, target)), removed: removed.map((target) => relative(project, target)), diagnostics, baseline: await diskRevision(root) }
 }
 

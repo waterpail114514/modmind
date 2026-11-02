@@ -153,6 +153,19 @@ function Versions(context: FeaturePageContext): React.JSX.Element | null {
     } catch (error) { if (isActiveProject(path)) setNotice(`删除快照失败：${errorMessage(error)}`) }
     finally { snapshotMutationsRef.current.delete(path); if (isActiveProject(path)) setDeletingSnapshotId('') }
   }
+  const deleteSnapshots = async (selected: SnapshotInfo[]): Promise<import('../../src/shared/types').SnapshotBatchDeleteResult | undefined> => {
+    const path = project?.path ?? ''
+    if (!selected.length || !isActiveProject(path) || snapshotMutationsRef.current.has(path) || context.projectBusy || migrationBusy) return
+    if (!await requestConfirm({ title: '永久删除所选 ' + selected.length + ' 个快照？', message: '仅删除所选快照，不修改当前项目文件。删除后无法从 ModMind 恢复。', confirmLabel: '永久删除 ' + selected.length + ' 个快照', tone: 'danger' })) return
+    if (!isActiveProject(path) || snapshotMutationsRef.current.has(path)) return
+    snapshotMutationsRef.current.set(path, { kind: 'delete', id: '__batch__' })
+    setDeletingSnapshotId('__batch__')
+    try {
+      const result = await window.modmind.snapshots.deleteMany(selected.map(snapshot => snapshot.id), path)
+      if (isActiveProject(path)) { snapshotListRevisionRef.current += 1; setSnapshots(result.snapshots); setNotice('已删除 ' + result.deletedIds.length + ' 个快照' + (result.failed.length ? '，' + result.failed.length + ' 个未删除' : '')) }
+      return result
+    } finally { snapshotMutationsRef.current.delete(path); if (isActiveProject(path)) setDeletingSnapshotId('') }
+  }
   const previewMigration = async (): Promise<void> => {
     if (!project || !selectedMigrationVersion) return
     setMigrationBusy(true)
@@ -196,7 +209,7 @@ function Versions(context: FeaturePageContext): React.JSX.Element | null {
                     {snapshotStorageWarning ? <p>{currentSnapshotStorage.incomplete ? '文件过多，统计未完成。' : ''}历史运行数据不会自动删除；可在下方移除不再需要的快照。</p> : null}
                   </> : snapshotStorageError ? <><strong>无法统计备份占用</strong><span>{snapshotStorageError}</span><button className="secondary-button compact" type="button" onClick={() => void refreshSnapshotStorage()}>重试</button></> : <span>正在统计备份占用…</span>}
                 </div>
-                <SnapshotList key={project.path} snapshots={snapshots} loading={snapshotsLoading} error={snapshotsError} onRetry={() => void refreshSnapshots().catch(() => undefined)} restoringId={restoringSnapshotId} deletingId={deletingSnapshotId} disabled={creatingSnapshot || Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || context.projectBusy || migrationBusy} onRestore={snapshot => void restoreSnapshot(snapshot)} onDelete={snapshot => void deleteSnapshot(snapshot)} formatDate={formatDate} />
+                <SnapshotList key={project.path} snapshots={snapshots} loading={snapshotsLoading} error={snapshotsError} onRetry={() => void refreshSnapshots().catch(() => undefined)} restoringId={restoringSnapshotId} deletingId={deletingSnapshotId} disabled={creatingSnapshot || Boolean(restoringSnapshotId) || Boolean(deletingSnapshotId) || context.projectBusy || migrationBusy} onRestore={snapshot => void restoreSnapshot(snapshot)} onDelete={snapshot => void deleteSnapshot(snapshot)} onDeleteMany={deleteSnapshots} formatDate={formatDate} />
               </div>
   {confirmDialog}</>
 }

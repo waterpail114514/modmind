@@ -4,11 +4,11 @@ import type { AgentSettings } from '../../../shared/types'
 import { getThemePalette, normalizeBackground, normalizeThemePreset, themePresets, type AppBackground } from '../../../shared/appTheme'
 import { backgroundMediaUrl } from './AppBackground'
 
-function BackgroundSlider({ label, value, max, suffix, onCommit }: { label: string; value: number; max: number; suffix: string; onCommit: (value: number) => void }): React.JSX.Element {
+function AppearanceSlider({ label, value, min = 0, max, step = 1, suffix, onCommit }: { label: string; value: number; min?: number; max: number; step?: number; suffix: string; onCommit: (value: number) => void }): React.JSX.Element {
   const [draft, setDraft] = useState(value)
   useEffect(() => setDraft(value), [value])
   const commit = (): void => { if (draft !== value) onCommit(draft) }
-  return <label className="appearance-slider"><span>{label}</span><input type="range" aria-label={label} min={0} max={max} step={1} value={draft} onChange={event => setDraft(Number(event.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit} /><output>{draft}{suffix}</output></label>
+  return <label className="appearance-slider"><span>{label}</span><input type="range" aria-label={label} min={min} max={max} step={step} value={draft} onChange={event => setDraft(Number(event.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit} /><output>{draft}{suffix}</output></label>
 }
 
 export default function AppearanceSettings({ settings, onSave }: { settings: AgentSettings; onSave: (patch: Partial<AgentSettings>) => Promise<boolean> }): React.JSX.Element {
@@ -56,6 +56,7 @@ export default function AppearanceSettings({ settings, onSave }: { settings: Age
       </div>
     </div>
     <div className="appearance-row"><strong>深色模式</strong><button className={`toggle ${settings.darkMode ? 'on' : ''}`} type="button" role="switch" aria-label="深色模式" aria-checked={settings.darkMode} onClick={() => void onSave({ darkMode: !settings.darkMode })}><span /></button></div>
+    <AppearanceSlider label="字体大小" value={settings.fontScale ?? 100} min={80} max={125} step={5} suffix="%" onCommit={fontScale => { void onSave({ fontScale }) }} />
     <details className="appearance-custom-colors">
       <summary>手动调色{custom ? <span>已自定义 · {settings.darkMode ? '深色' : '浅色'}</span> : null}</summary>
       <div className="appearance-color-controls">
@@ -78,8 +79,8 @@ export default function AppearanceSettings({ settings, onSave }: { settings: Age
         <span title={media.name}>{media.name}</span>
       </div>
       <div className="appearance-background-controls">
-        <BackgroundSlider label="背景可见度" value={Math.round(background.opacity * 100)} max={100} suffix="%" onCommit={value => saveBackground({ opacity: value / 100 })} />
-        <BackgroundSlider label="背景模糊" value={background.blur} max={24} suffix="px" onCommit={blur => saveBackground({ blur })} />
+        <AppearanceSlider label="背景可见度" value={Math.round(background.opacity * 100)} max={100} suffix="%" onCommit={value => saveBackground({ opacity: value / 100 })} />
+        <AppearanceSlider label="背景模糊" value={background.blur} max={24} suffix="px" onCommit={blur => saveBackground({ blur })} />
         <label className="appearance-fit"><span>图片 / 视频适配</span><select aria-label="背景适配" value={background.fit} onChange={event => saveBackground({ fit: event.target.value as AppBackground['fit'] })}><option value="cover">填满窗口</option><option value="contain">完整显示</option></select></label>
         {media.kind === 'video' && <div className="appearance-row"><strong>播放背景视频</strong><button className={`toggle ${!background.paused ? 'on' : ''}`} type="button" role="switch" aria-label="播放背景视频" aria-checked={!background.paused} onClick={() => saveBackground({ paused: !background.paused })}><span /></button></div>}
       </div>

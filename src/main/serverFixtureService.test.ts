@@ -68,3 +68,26 @@ it('supports numeric Maven bounds and mature semver predicates without guessing 
   expect(() => fixtureVersionMatches('1.0.0', '[1,2),[3,4)', true)).toThrow('暂不支持')
   expect(() => fixtureVersionMatches('${version}', '[1,2)', true)).toThrow('无法校验')
 })
+
+it('preserves every Maven version component, endpoint and numeric precision', () => {
+  for (const [version, matches] of [['0.12.6.2', false], ['0.12.6.3', true], ['0.12.6.4', true]] as const) {
+    expect(fixtureVersionMatches(version, '[0.12.6.3,)', true)).toBe(matches)
+  }
+  expect(fixtureVersionMatches('0.12.6.3', '(0.12.6.3,0.12.6.4)', true)).toBe(false)
+  expect(fixtureVersionMatches('0.12.6.4', '[0.12.6.3,0.12.6.4)', true)).toBe(false)
+  expect(fixtureVersionMatches('0.12.6.4', '[0.12.6.3,0.12.6.4]', true)).toBe(true)
+  expect(fixtureVersionMatches('1.2.3.0', '[1.2.3]', true)).toBe(true)
+  expect(fixtureVersionMatches('1.2.3.4.5', '[1.2.3.4.5]', true)).toBe(true)
+  expect(fixtureVersionMatches('1.2.3.9007199254740993', '[1.2.3.9007199254740994,)', true)).toBe(false)
+  expect(() => fixtureVersionMatches('1.2.3', '[1.2,2..0)', true)).toThrow('无法校验')
+  expect(() => fixtureVersionMatches('1.2.3.4', '[1.0-beta,2.0)', true)).toThrow('暂不支持')
+})
+
+it('stages a real four-component Forge dependency before runtime preparation', async () => {
+  const f = await fixture()
+  const main = await f.jar('main', '[[dependencies.main]]\nmodId="api"\nmandatory=true\nversionRange="[0.12.6.3,)"')
+  const file = path.join(f.project.path, 'api.jar')
+  await fs.writeFile(file, createStoredZip([{ name: 'META-INF/mods.toml', data: Buffer.from('modLoader="javafml"\n[[mods]]\nmodId="api"\nversion="0.12.6.3"') }]))
+  const staged = await f.service.stage(f.project, { ...f.input, jars: [main, { path: file, sha256: (await fixtureJarHash(file)).sha256 }] }, path.join(f.root, 'four-part'), f.signal)
+  expect(staged.mods).toContainEqual(expect.objectContaining({ id: 'api', version: '0.12.6.3' }))
+})

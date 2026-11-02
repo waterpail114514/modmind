@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "decompile",
   "name": "反编译",
-  "version": "1.5.0",
+  "version": "1.5.3",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -42,5 +42,8 @@
     "spigot",
     "folia",
     "velocity"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

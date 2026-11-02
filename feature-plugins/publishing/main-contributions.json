@@ -1,6 +1,19 @@
 {
   "actions": [
     {
+      "id": "modpack_export",
+      "handler": "modpack_export",
+      "permission": "write",
+      "projectRequired": true,
+      "studioIds": ["minecraft-modpack"],
+      "surfaces": ["workbench"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "mode": { "type": "string", "enum": ["bundled", "download"] } }
+      }
+    },
+    {
       "id": "content:create",
       "handler": "content:create",
       "permission": "write",
@@ -230,6 +243,11 @@
     }
   ],
   "tools": [
+    {
+      "name": "modmind_modpack_export",
+      "action": "modpack_export",
+      "description": "Export the captured modpack into its managed exports folder using saved release metadata. mode bundled (default) embeds mods, resources and configuration; download lists verified HTTPS sources and hashes for launcher downloads, retaining local or edited files. Uses the saved mode when omitted. Streams large archives without a 1 GB limit and increments the saved version only after success. Minecraft base game and Java remain launcher-managed. Requires the publishing feature and a host with modpackExportV2."
+    },
     {
       "name": "modmind_validate_content",
       "action": "content_validate",

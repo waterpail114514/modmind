@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { GitService } from "./src/main/gitService"
 import type {
   AiAttachment,
@@ -64,7 +66,8 @@ import type { FeaturePluginInvocationContext } from '../../src/shared/featurePlu
 export function activate(options: { host: NativeFeatureHost }) {
 const host = options.host
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-actions.query = input => {
+actions.query = async input => {
+  if (input.operation === 'snapshots') { const project = host.requireProject(); return host.snapshotListPage(project.path, await host.listSnapshotSummaries(project.path), input) }
   const git = requireGitService()
   if (input.operation === 'diff') return git.diff(typeof input.path === 'string' ? input.path : undefined)
   if (input.operation === 'remotes') return git.listRemotes()
@@ -75,6 +78,10 @@ actions.manage = input => {
   host.assertProjectMutationAllowed(project.path, '管理项目版本')
   const git = requireGitService()
   switch (input.operation) {
+    case 'deleteSnapshots': {
+      if (input.confirmed !== true) throw new Error('请确认删除所选快照')
+      return host.deleteProjectSnapshots(input.ids, project.path).then(result => ({ projectPath: project.path, deletedIds: result.deletedIds, failed: result.failed, remainingCount: result.snapshots.length }))
+    }
     case 'initialize': return git.initialize()
     case 'commit': return git.commit(input.commit as import('../../src/shared/production').GitCommitInput)
     case 'createBranch': return git.createBranch(String(input.name))
@@ -86,7 +93,7 @@ actions.manage = input => {
     default: throw new Error('不支持的版本管理操作')
   }
 }
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "versions" }, () => handler(host.event(), ...(input.args as any[]))) }
 let gitService: GitService | null = null;
 function requireGitService(): GitService {
     if (!gitService)
@@ -114,6 +121,7 @@ diagnosticHandle('snapshots:storage', async (_event, projectPath?: string) => {
 });
 diagnosticHandle('snapshots:restore', (_event, id: string, projectPath?: string): Promise<SnapshotRestoreResult> => host.restoreProjectSnapshot(id, projectPath));
 diagnosticHandle('snapshots:delete', (_event, id: string, projectPath?: string): Promise<SnapshotInfo[]> => host.deleteProjectSnapshot(id, projectPath));
+diagnosticHandle('snapshots:deleteMany', (_event, ids: string[], projectPath?: string) => host.deleteProjectSnapshots(ids, projectPath));
 diagnosticHandle('git:status', () => requireGitService().status());
 diagnosticHandle('git:initialize', () => requireGitService().initialize());
 diagnosticHandle('git:diff', (_event, relativePath?: string) => requireGitService().diff(relativePath));

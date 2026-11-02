@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { AGENT_TOOL_RECOVERY_GUIDANCE, describeAiFailureForUser } from './aiFailure'
 
 describe('describeAiFailureForUser', () => {
+  it.each(['网络请求超时', '网络连接失败', '无法解析供应商地址', '供应商证书校验失败', '模型列表接口不存在或不支持访问', 'HTTP 401'])('preserves model discovery context and reason through IPC presentation: %s', reason => {
+    const message = `无法读取供应商模型列表（${reason}），请检查网络后重试`
+    expect(describeAiFailureForUser(new Error(`Error invoking remote method 'beginner-codex:prepare': Error: ${message}`))).toBe(message)
+    expect(describeAiFailureForUser(`任务未能开始：${message}`)).toBe(`任务未能开始：${message}`)
+  })
   it.each([
     '工具尚未准备好，本轮对话未开始。这是工具连接故障，不是用户禁用。等待工具目录超时。',
     'ModMind 工具连接已中断，当前会话和已完成操作已保留。'

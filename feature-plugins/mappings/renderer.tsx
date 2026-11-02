@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ExternalLink, LibraryBig, LoaderCircle, Search } from 'lucide-react'
+import { ExternalLink, GitCompareArrows, LoaderCircle, Search } from 'lucide-react'
 import type { MappingClassDetail, MappingClassResult } from '../../src/shared/mappings'
 import { platformLabel } from '../../src/shared/projectPlatform'
 import { reportClientFailure as errorMessage } from '../../src/renderer/src/lib/clientFailure'
@@ -55,7 +55,7 @@ function Mappings({ project }: FeaturePageContext): React.JSX.Element | null {
   return (
               <div className="mappings-page">
                 <div className="content-toolbar">
-                  <h1 className="visually-hidden">Minecraft Mappings</h1><span className="toolbar-context">Minecraft {project.minecraftVersion}</span>
+                  <h1 className="visually-hidden">Minecraft 映射表</h1><span className="toolbar-context">Minecraft {project.minecraftVersion}</span>
                   <div className="toolbar-actions">
                     <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openLoaderDocs(project.loader)}><ExternalLink size={13} />{platformLabel(project.loader)} 文档</button>
                     <button className="mapping-source-link" onClick={() => void window.modmind.mappings.openSource(project.minecraftVersion)}><ExternalLink size={13} />mappings.dev</button>
@@ -89,7 +89,7 @@ function Mappings({ project }: FeaturePageContext): React.JSX.Element | null {
                         </button>
                       )
                     })}
-                    {!mappingResults.length ? <div className="mapping-empty"><LibraryBig size={24} /><span>查询结果会显示在这里</span></div> : null}
+                    {!mappingResults.length ? <div className="mapping-empty"><GitCompareArrows size={24} /><span>查询结果会显示在这里</span></div> : null}
                   </aside>
                   <section className="mapping-detail">
                     {mappingDetail ? (
@@ -111,10 +111,10 @@ function Mappings({ project }: FeaturePageContext): React.JSX.Element | null {
                           ))}
                         </div>
                       </>
-                    ) : <div className="mapping-detail-empty"><LibraryBig size={30} /><h2>选择一个类查看完整映射</h2></div>}
+                    ) : <div className="mapping-detail-empty"><GitCompareArrows size={30} /><h2>选择一个类查看完整映射</h2></div>}
                   </section>
                 </div>
               </div>
   )
 }
-registerFeature('mappings', { apiVersion: 2, pages: [{ id: 'mappings', label: 'Mappings', group: '开发', icon: LibraryBig, supports: javaMod, component: Mappings }] })
+registerFeature('mappings', { apiVersion: 2, pages: [{ id: 'mappings', label: '映射表', group: '开发', icon: GitCompareArrows, supports: javaMod, component: Mappings }] })

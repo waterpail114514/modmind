@@ -76,9 +76,11 @@ export function structureToBuildJson(structure, { name, format = 'preview', sour
     Name: bs.getName().toString(),
     Properties: bs.getProperties() || {},
   }));
+  const stateKey = (name,props) => JSON.stringify([name,Object.entries(props || {}).sort(([a],[b])=>a.localeCompare(b))]);
+  const indices = new Map(palette.map((entry,index)=>[stateKey(entry.Name,entry.Properties),index]));
   const blocks = structure.getBlocks().map(b => ({
     pos: [b.pos[0], b.pos[1], b.pos[2]],
-    state: typeof b.state === 'number' ? b.state : palette.findIndex(p => p.Name === b.state.getName().toString()),
+    state: typeof b.state === 'number' ? b.state : indices.get(stateKey(b.state.getName().toString(),b.state.getProperties())),
   }));
   return { format, name, size: [sx, sy, sz], palette, blocks, source };
 }

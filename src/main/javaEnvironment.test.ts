@@ -5,9 +5,10 @@ it('preserves explicitly selected JVM options and socket directory', () => {
   expect(managedJavaEnvironment({ JAVA_TOOL_OPTIONS: options }).JAVA_TOOL_OPTIONS).toBe(options)
 })
 it('uses a real Windows directory for local Java sockets without accumulating options', () => {
-  const first = managedJavaEnvironment({ LOCALAPPDATA: process.env.LOCALAPPDATA })
+  const first = managedJavaEnvironment({ APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA })
   expect(managedJavaEnvironment(first).JAVA_TOOL_OPTIONS).toBe(first.JAVA_TOOL_OPTIONS)
   if (process.platform === 'win32') expect(first.JAVA_TOOL_OPTIONS).toContain('jdk.net.unixdomain.tmpdir=')
+  if (process.platform === 'win32' && process.env.APPDATA) expect(first.JAVA_TOOL_OPTIONS).toContain(process.env.APPDATA)
 })
 it('does not put proxy credentials in JVM command line properties', () => {
   const result = javaProxyOptions('http://user:secret@localhost:7890')

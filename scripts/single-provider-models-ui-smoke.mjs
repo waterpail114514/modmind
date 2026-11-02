@@ -26,6 +26,7 @@ globalThis.smokeCredentialReplacementChecks=[];const originalCredentialRename=fs
 `)
 let app, page
 if (websiteSyncOnly) await fs.appendFile(bootstrap, `
+fixture.catalogReads=0;const originalHandle=native.ipcMain.handle.bind(native.ipcMain);native.ipcMain.handle=(channel,listener)=>originalHandle(channel,channel==='device:getModelCatalog'?((...args)=>{fixture.catalogReads++;return listener(...args)}):listener);
 fixture.webSyncCases={};fixture.usedWebCodes=new Set();const beforeWebPoll=global.fetch;global.fetch=async(url,init={})=>{if(!String(url).endsWith('/api/device/poll'))return beforeWebPoll(url,init);const code=JSON.parse(init.body).code,headers=new Headers(init.headers);fixture.requests.push({url:String(url),method:init.method||'GET',code,syncVersion:headers.get('X-ModMind-Sync-Version'),capabilities:headers.get('X-ModMind-Sync-Capabilities')});if(fixture.usedWebCodes.has(code))return new Response(JSON.stringify({success:true,data:{status:'expired'}}));fixture.usedWebCodes.add(code);const item=fixture.webSyncCases[code];if(!item)throw new Error('Unknown test sync code');const next=structuredClone(item.snapshot||fixture.snapshot);if(next.selectionRevision>=fixture.snapshot.selectionRevision)fixture.snapshot=structuredClone(next);return new Response(JSON.stringify({success:true,data:{...next,status:'ok',username:item.username||'adaptive-test',balanceCents:'1000'}}))};
 `)
 const checks = [], captures = [], errors = [], motion = [], portraitGeometry = []
@@ -411,98 +412,84 @@ try {
     await page.evaluate(() => window.modmind.device.discoverModels())
     await page.evaluate(() => window.modmind.device.selectModel('gpt-6-astra', { account: 'ls', group: '25', billing: 'quota', scope: 'workspace' }))
     await page.evaluate(() => window.modmind.device.selectModel('deepseek-v4.1-flash', { account: 'trial:one', billing: 'free', scope: 'inspiration' }))
-    const readPreferenceText = () => fs.readFile(path.join(profile, 'beginner-ai-preferences.json'), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error })
-    const initial = (await stored()).sync, preferenceText = await readPreferenceText(), initialPreferences = await page.evaluate(() => window.modmind.device.getAiPreferences())
-    const initialOptions = new Set((await catalog()).models.map(modelCatalogIdentity))
-    async function deliver(code, payload = null, username) {
-      await app.evaluate(({ app }, args) => { const fixture = globalThis.adaptiveSmoke; fixture.webSyncCases[args.code] = { snapshot: args.payload, username: args.username }; app.emit('second-instance', {}, ['modmind-test', 'mcdev://sync?site=https%3A%2F%2Fadaptive-smoke.example&version=2&code=' + args.code]) }, { code, payload, username })
-    }
-    async function connectedRevision(revision) {
-      await app.evaluate(async (_electron, revision) => { for (let attempt = 0; attempt < 200; attempt++) { if (globalThis.adaptiveSmoke.readStored().sync.selectionRevision === revision) return; await new Promise(resolve => setTimeout(resolve, 50)) } throw new Error('Website sync revision was not persisted') }, revision)
-      await page.waitForFunction(async revision => { const fixture = await window.modmind.device.getState(); return fixture.status === 'connected' && (await window.modmind.device.getModelCatalog()).stale === false }, revision)
-      assert.equal((await stored()).sync.selectionRevision, revision)
-    }
-    async function waitForWebPoll(code) {
-      await app.evaluate(async (_electron, code) => { for (let attempt = 0; attempt < 200; attempt++) { if (globalThis.adaptiveSmoke.requests.some(request => request.url.endsWith('/api/device/poll') && request.code === code)) return; await new Promise(resolve => setTimeout(resolve, 50)) } throw new Error('Website one-time code was not polled') }, code)
-    }
-    const same = await app.evaluate(() => { const snapshot = structuredClone(globalThis.adaptiveSmoke.snapshot); snapshot.selectionRevision++; snapshot.defaultAccount = 'trial:one'; return snapshot })
-    await deliver('SYNC0001', same); await connectedRevision(same.selectionRevision)
-    assert.deepEqual((await stored()).sync.bindings, initial.bindings)
-    assert.deepEqual((await stored()).sync.defaults, initial.defaults)
-    assert.deepEqual(new Set((await catalog()).models.map(modelCatalogIdentity)), initialOptions)
-    assert.equal(await readPreferenceText(), preferenceText)
-    assert.deepEqual(await page.evaluate(() => window.modmind.device.getAiPreferences()), initialPreferences)
-    record('actual website deep-link/poll resync preserves independent bindings, local defaults, preferences and both verified paid catalogs')
-
-    const rotated = await app.evaluate(() => { const snapshot = structuredClone(globalThis.adaptiveSmoke.snapshot); snapshot.selectionRevision++; snapshot.connections.find(c => c.kind === 'free').apiKey = 'fixture-free-rotated-key'; return snapshot })
-    await deliver('SYNC0002', rotated); await connectedRevision(rotated.selectionRevision)
-    assert.deepEqual((await stored()).sync.bindings, initial.bindings)
-    assert.equal((await page.evaluate(() => window.modmind.device.selectModel('deepseek-v4.1-flash', { account: 'trial:one', billing: 'free', scope: 'inspiration' }))).status, 'ok')
-    assert.ok((await requests()).some(request => request.url.includes('/api/trial/v1/models')))
-    record('same-user website sync accepts a rotated free Key and keeps the explicit free model binding usable')
-
-    const beforeStale = (await stored()).sync
-    await deliver('SYNC0003', same)
-    await waitForWebPoll('SYNC0003')
-    await page.waitForFunction(async () => (await window.modmind.device.getState()).message?.includes('已过期'))
-    assert.deepEqual((await stored()).sync, beforeStale)
-    assert.equal((await requests()).filter(request => request.url.endsWith('/api/device/poll') && request.code === 'SYNC0003').length, 1)
-    record('an older one-time website snapshot is rejected once and does not overwrite newer credentials or bindings')
-
-    await new Promise(resolve => setTimeout(resolve, 16_000))
-    const postsBefore = (await groupPosts()).length
-    await app.evaluate(() => { globalThis.adaptiveSmoke.groupDelayMs = 250 })
-    await page.evaluate(() => { window.websiteScanCheck = window.modmind.device.discoverModels().then(value => { window.websiteScanDone = true; return value }, error => { window.websiteScanError = error.message; return null }) })
-    await app.evaluate(async (_electron, count) => { for (let attempt = 0; attempt < 100; attempt++) { if (globalThis.adaptiveSmoke.requests.filter(request => request.url.includes('/api/device/group') && request.method === 'POST').length > count) return; await new Promise(resolve => setTimeout(resolve, 50)) } throw new Error('Discovery did not begin') }, postsBefore)
-    await deliver('SYNC0004')
-    await page.waitForFunction(async () => (await window.modmind.device.getState()).status === 'authorizing')
-    const blocked = await page.evaluate(() => window.modmind.device.selectModel('gpt-6.1-sol', { account: 'ls', group: '25', billing: 'quota', scope: 'workspace' }).then(() => '', error => error.message))
-    assert.ok(blocked.includes('授权') || blocked.includes('同步'))
-    await page.waitForFunction(() => window.websiteScanDone || window.websiteScanError)
-    assert.equal(await page.evaluate(() => window.websiteScanError), undefined)
-    await page.evaluate(() => window.websiteScanCheck)
-    await waitForWebPoll('SYNC0004')
-    await page.waitForFunction(async () => (await window.modmind.device.getState()).status === 'connected' && !(await window.modmind.device.getModelCatalog()).stale)
-    assert.equal((await stored()).sync.connections.find(c => c.kind === 'paid').account, 'ls')
-    assert.equal((await stored()).sync.connections.find(c => c.kind === 'paid').group, '25')
-    assert.equal((await requests()).filter(request => request.url.endsWith('/api/device/poll') && request.code === 'SYNC0004').length, 1)
-    assert.ok((await groupPosts()).length > postsBefore)
-    assert.deepEqual((await stored()).sync.bindings, initial.bindings)
-    record('a website sync arriving during discovery waits for the original route restoration and claims its one-time code once; new selections remain blocked until sync completes')
-
-    const replacement = await app.evaluate(() => { const snapshot = structuredClone(globalThis.adaptiveSmoke.snapshot), paid = snapshot.connections.find(c => c.kind === 'paid'); Object.assign(paid, { account: 'secondary', label: '供应商 2', group: '90', apiKey: 'fixture-secondary-90-key', baseUrl: 'https://secondary.adaptive-smoke.example', inferenceBaseUrl: 'https://secondary.adaptive-smoke.example' }); snapshot.defaultAccount = 'secondary'; snapshot.selectionRevision++; return snapshot })
-    await deliver('SYNC0005', replacement); await connectedRevision(replacement.selectionRevision)
-    assert.deepEqual((await stored()).sync.bindings, initial.bindings)
-    assert.equal((await catalog()).selectionRequired, true)
-    assert.ok((await catalog()).models.some(model => model.account === 'ls' && model.group === '25'))
-    assert.equal((await page.evaluate(() => window.modmind.device.selectModel('gpt-6-astra', { account: 'ls', group: '25', billing: 'quota', scope: 'workspace' }))).status, 'ok')
-    record('website paid-provider replacement preserves the old exact selection for explicit reselection and the verified alternative supplier remains selectable')
-
-    const removed = await app.evaluate(() => { const snapshot = structuredClone(globalThis.adaptiveSmoke.snapshot); snapshot.connections = snapshot.connections.filter(c => c.kind === 'paid'); snapshot.defaultAccount = snapshot.connections[0].account; snapshot.selectionRevision++; return snapshot })
-    const groupCount = (await groupPosts()).length
-    await deliver('SYNC0006', removed); await connectedRevision(removed.selectionRevision)
-    assert.equal((await catalog()).models.filter(model => model.billing === 'free').length, 0)
-    assert.equal((await catalog()).bindings.inspiration.account, 'trial:one')
-    const unavailableFree = await page.evaluate(() => window.modmind.device.selectModel('deepseek-v4.1-flash', { account: 'trial:one', billing: 'free', scope: 'inspiration' }).then(result => result.message, error => error.message))
-    assert.ok(/尚未同步|已移除/.test(unavailableFree))
-    assert.equal((await groupPosts()).length, groupCount)
-    assert.equal(await readPreferenceText(), preferenceText)
-    record('unchecking a free supplier removes its models, preserves the old binding for recovery, and never silently selects a paid replacement')
-
     await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('navigation', { name: '设置分类' }).getByRole('button', { name: 'AI 与图像', exact: true }).click()
-    const picker = page.locator('.quota-model-picker'); await picker.getByRole('button', { name: 'GPT', exact: true }).click()
+    const picker = page.locator('.quota-model-picker')
+    await picker.getByRole('button', { name: 'GPT', exact: true }).click()
+    const luna = picker.locator('[data-model-id="gpt-6-luna"]')
+    await luna.getByRole('button', { name: /选择 .* 的线路/ }).click()
+    await luna.getByRole('button', { name: '使用 GPT-6 Luna · LS · GPT 高速，稳定性强', exact: true }).click()
     await picker.locator('.model-catalog-more').waitFor()
+    await page.waitForFunction(() => document.querySelector('[aria-label="刷新模型与连接"]')?.disabled === false)
+    const initial = (await stored()).sync
+    const readPreferenceText = () => fs.readFile(path.join(profile, 'beginner-ai-preferences.json'), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error })
+    const preferenceText = await readPreferenceText()
+    const localChoices = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage).filter(key => key.startsWith('modmind-model-route-choices:')).map(key => [key, localStorage.getItem(key)])))
+    const choicesBefore = await localChoices()
+    const visibleRows = () => picker.locator('.model-catalog-item').evaluateAll(rows => rows.map(row => [row.dataset.modelId, row.querySelector('.model-catalog-model-row')?.dataset.optionKey]))
+    const rowsBefore = await visibleRows()
+    const directoryReads = async () => (await requests()).filter(request => request.url.includes('/providers') || request.url.includes('/group') || request.url.endsWith('/models')).length
+    async function deliver(code, change) {
+      const prior = JSON.parse((await stored()).raw).connectedAt
+      const readsBefore = await directoryReads()
+      const ipcReadsBefore = await app.evaluate(() => globalThis.adaptiveSmoke.catalogReads)
+      await app.evaluate(({ app }, args) => {
+        const fixture = globalThis.adaptiveSmoke, snapshot = structuredClone(fixture.snapshot)
+        snapshot.selectionRevision++
+        if (args.change === 'default') snapshot.defaultAccount = 'trial:one'
+        if (args.change === 'rotated') snapshot.connections.find(c => c.kind === 'free').apiKey = 'fixture-free-rotated-key'
+        if (args.change === 'paid') Object.assign(snapshot.connections.find(c => c.kind === 'paid'), { account: 'secondary', label: '供应商 2', group: '90', apiKey: 'fixture-secondary-90-key', baseUrl: 'https://secondary.adaptive-smoke.example', inferenceBaseUrl: 'https://secondary.adaptive-smoke.example' })
+        if (args.change === 'removed') { snapshot.connections = snapshot.connections.filter(c => c.kind === 'paid'); snapshot.defaultAccount = snapshot.connections[0].account }
+        fixture.webSyncCases[args.code] = { snapshot }
+        app.emit('second-instance', {}, ['modmind-test', 'mcdev://sync?site=https%3A%2F%2Fadaptive-smoke.example&version=2&code=' + args.code])
+      }, { code, change })
+      await app.evaluate(async (_electron, args) => {
+        for (let attempt = 0; attempt < 240; attempt++) {
+          const fixture = globalThis.adaptiveSmoke, outer = JSON.parse(fixture.readStored().raw)
+          if (fixture.usedWebCodes.has(args.code) && outer.connectedAt !== args.prior) return
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        throw new Error('Website authorization did not finish')
+      }, { code, prior })
+      await page.waitForFunction(async () => (await window.modmind.device.getState()).status === 'connected')
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+      assert.deepEqual((await stored()).sync, initial, 'website sync never replaces the client snapshot')
+      assert.deepEqual(await visibleRows(), rowsBefore, 'rendered model rows and per-model choices stay unchanged')
+      assert.deepEqual(await localChoices(), choicesBefore)
+      assert.equal(await readPreferenceText(), preferenceText)
+      assert.equal(await directoryReads(), readsBefore, 'website authorization must not fetch providers, groups or model catalogs')
+      assert.equal(await app.evaluate(() => globalThis.adaptiveSmoke.catalogReads), ipcReadsBefore, 'account events must not trigger a renderer catalog reload, even from cache')
+      assert.equal((await requests()).filter(request => request.url.endsWith('/api/device/poll') && request.code === code).length, 1)
+    }
+    await deliver('SYNC0001', 'default')
+    record('website v2 deep-link authorization changes its default without reloading the desktop catalog or changing independent model choices and surface bindings')
+    await deliver('SYNC0002', 'rotated')
+    record('website free-Key rotation updates authorization without replacing the retained free models or scanning routes')
+    await deliver('SYNC0003', 'paid')
+    record('website paid-provider replacement leaves the existing paid/free model catalog and prepared per-model routes intact')
+    await deliver('SYNC0004', 'removed')
+    record('a website response reduced to one paid connection cannot shrink the desktop model catalog')
     assert.equal(await picker.locator('.model-catalog-more').getAttribute('open'), null)
     assert.equal(await picker.locator('.quota-model-feedback').count(), 0)
-    await page.setViewportSize({ width: 1440, height: 1100 })
-    await page.waitForFunction(() => { const frame = document.querySelector('.quota-model-character'), layers = frame?.querySelectorAll('.quota-model-character-layer'); return layers?.length === 1 && layers[0].dataset.family === 'GPT' && layers[0].querySelector('img')?.naturalWidth > 0 })
-    await capture('website-resync-keeps-folded-gpt-and-clean-settings')
+    for (const [width, height] of [[1440, 1100], [1080, 680]]) {
+      await page.setViewportSize({ width, height })
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+      await capture('website-sync-independent-catalog-' + width)
+    }
+    await new Promise(resolve => setTimeout(resolve, 16_000))
+    const readsBeforeRefresh = await directoryReads()
+    await picker.getByRole('button', { name: '刷新模型与连接', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('[aria-label="刷新模型与连接"]')?.disabled === false)
+    const afterManualRefresh = (await stored()).sync
+    assert.equal(afterManualRefresh.connections.some(c => c.kind === 'free'), false)
+    assert.equal(afterManualRefresh.connections.find(c => c.kind === 'paid').account, 'secondary')
+    assert.deepEqual(afterManualRefresh.bindings, initial.bindings)
+    assert.ok(await directoryReads() > readsBeforeRefresh)
+    record('the explicit refresh control still imports updated website credentials while preserving exact selections for recovery')
     const polls = (await requests()).filter(request => request.url.endsWith('/api/device/poll'))
-    assert.equal(polls.length, 6)
+    assert.equal(polls.length, 4)
     assert.ok(polls.every(request => request.syncVersion === '2' && request.capabilities === 'provider-ls'))
     assert.deepEqual(errors, [])
-    record('real desktop sync uses the v2/provider-ls protocol and retains the folded GPT list and removed footer information row')
   } else if (catalogPolishOnly) {
     await app.evaluate(() => {
       const fixture = globalThis.adaptiveSmoke

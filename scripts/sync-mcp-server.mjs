@@ -14,7 +14,10 @@ for (const statement of source.statements) {
   declaration = statement.declarationList.declarations.find(item => item.name.getText(source) === 'MCP_SERVER_SOURCE') ?? declaration
 }
 if (!declaration?.initializer) throw new Error('Embedded MCP source was not found')
-const entry = `import { SERVER_SCENARIO_SCHEMA } from '../shared/serverScenario';
+const entry = `import { MCP_TOOL_ROUTES } from './mcpToolRegistry';
+import { INSPIRATION_SUBMISSION_SCHEMA } from '../shared/inspirationSubmission';
+import { GAME_TEST_SCHEMAS, GAME_TEST_DESCRIPTIONS } from '../shared/gameControl';
+import { SERVER_SCENARIO_SCHEMA } from '../shared/serverScenario';
 import { PROVIDER_ACCOUNT_PATTERN } from '../shared/providerAccounts';
 import { imageGenerationInputSchema, perfectPixelInputSchema } from '../shared/imageStudioRequest';
 export default ${declaration.initializer.getText(source)};`

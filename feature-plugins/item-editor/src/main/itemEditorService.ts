@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import { recordDiagnosticArtifact } from '../../../../src/main/diagnosticArtifacts'
 import { constants } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -222,7 +223,10 @@ async function applyItems(project: ProjectInfo, document: ItemDocument, nextItem
       entries.push({ source, destination: target(project, relative) })
     }
     entries.push(...removals.map(relative => ({ source: null, destination: target(project, relative) })))
-    return await installContentTransaction(project.path, entries, () => listManagedItems(project))
+    await recordDiagnosticArtifact(project,'item-save-plan',{entries:[...writes].map(([name,content])=>({name,data:Buffer.from(content)})),metadata:{revision:next.revision,removed:removals}})
+    const result = await installContentTransaction(project.path, entries, () => listManagedItems(project))
+    await recordDiagnosticArtifact(project,'item-files-saved',{entries:[...writes.keys()].map(name=>({name,path:target(project,name)})),metadata:{revision:result.revision,removed:removals}})
+    return result
   } finally { await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined) }
 }
 

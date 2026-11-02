@@ -4,15 +4,23 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "mc-preview",
   "name": "3D 建筑预览",
-  "version": "1.14.13",
-  "description": "使用当前项目采集的数据进行建筑预览与编辑，支持放置、删除、撤销以及 NBT、Schem v2、Litematic 导入导出。",
+  "version": "1.16.0",
+  "description": "使用本地实例资源预览和编辑建筑，保存到当前项目。支持结构 NBT、Schem v2、Litematic 导入及后两种格式导出。",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
   "hostCapabilities": [
     "runtime"
   ],
-  "dependencies": [],
+  "dependencies": [
+    "mc-pull"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge"
+  ],
   "views": [
     {
       "id": "preview",
@@ -42,7 +50,12 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {}
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
       }
     },
     {
@@ -94,6 +107,21 @@
           "query": {
             "type": "string",
             "maxLength": 200
+          },
+          "namespace": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "blocksOnly": {
+            "type": "boolean"
+          },
+          "ids": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            }
           },
           "offset": {
             "type": "integer",
@@ -161,6 +189,10 @@
           "dataBase64": {
             "type": "string",
             "maxLength": 33554432
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
           }
         }
       }
@@ -186,6 +218,107 @@
               "schem",
               "litematic"
             ]
+          },
+          "build": {
+            "type": "object"
+          },
+          "allowLossy": {
+            "type": "boolean"
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:capture",
+      "handler": "preview_capture",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 36
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:documents",
+      "handler": "preview_documents",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 36
+          }
+        }
+      }
+    },
+    {
+      "id": "preview:save",
+      "handler": "preview_save",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation"
+        ],
+        "properties": {
+          "operation": {
+            "enum": [
+              "create",
+              "save",
+              "rename",
+              "delete"
+            ]
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 36
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 80
           },
           "build": {
             "type": "object"
@@ -218,6 +351,21 @@
       "name": "modmind_mc_preview_export",
       "action": "preview:export",
       "description": "把建筑数据转换为 Schem v2 或 Litematic，返回 base64 文件与材料清单。"
+    },
+    {
+      "name": "modmind_mc_preview_capture",
+      "action": "preview:capture",
+      "description": "读取当前项目可见的建筑视口 PNG 图片。先查询 documents 取得 id，在界面打开并保存对应建筑；只截取与保存 revision 一致的视口。未打开、已被外部修改或未保存时拒绝。静态资源预览不是游戏验证。"
+    },
+    {
+      "name": "modmind_mc_preview_documents",
+      "action": "preview:documents",
+      "description": "列出当前项目中已保存的建筑；提供 id 可读取建筑、原件、DataVersion 和 revision。与建筑预览页面使用同一份项目文件。"
+    },
+    {
+      "name": "modmind_mc_preview_save",
+      "action": "preview:save",
+      "description": "在当前项目创建、保存、重命名或删除建筑。已有建筑必须先读取并传 expectedRevision，过期修改会被拒绝；删除保留恢复副本。修改后请回读验证，页面重新打开可载入。"
     }
   ]
 }

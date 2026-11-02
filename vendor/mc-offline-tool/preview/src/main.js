@@ -11,7 +11,8 @@ import { BLOCK_DEFAULTS } from './block-defaults.generated.js';   // 构建时�
 import { loadRegistryDefaults } from './registry.js';
 import { importBuilding, exportBuilding, download, materialRows, materialsCsv, structureToBuildJson } from './io.js';
 import { createViewCube } from './viewcube.js';
-import * as projects from './projects.js';
+import * as projects from './document-projects.js';
+import { hostPrompt, hostConfirm } from './host.js';
 
 const D = window.deepslate;
 // ── 手感实验室（2026-10-11；《3D 建筑面板手感优化方案》的候选增强项）────────────────
@@ -112,7 +113,7 @@ function on(target, type, fn, opts) {
 /** 供功能包入口在组件卸载时调用（独立网页模式没人调也无害） */
 export function shutdown() {
   for (const f of TEARDOWN.splice(0)) f();
-  try { flushSave(); } catch { /* U3：卸载前把防抖中的存档落盘 */ }
+  const saved = flushSave();
   dismissToast();
   try { if (themeObs) themeObs.disconnect(); } catch { /* 尽力而为 */ }
   themeObs = null;
@@ -122,6 +123,18 @@ export function shutdown() {
   try { state.vcube && state.vcube.stopLoop(); } catch { /* 可能还没建 */ }
   try { state.vp && state.vp.dispose(); } catch { /* 视口可能还没建 */ }
   try { state.inv && state.inv.dispose && state.inv.dispose(); } catch { /* 物品栏可能还没建 */ }
+  projReady = false;
+  curProjId = '';
+  state.vp = null;
+  state.inv = null;
+  state.source = null;
+  state.edit = null;
+  state.proj = null;
+  state.sceneStates = [];
+  if (msgTimer) clearTimeout(msgTimer);
+  if (busy.timer) clearTimeout(busy.timer);
+  busy.timer = null;
+  return saved;
 }
 
 /**
@@ -192,6 +205,10 @@ function loadBuild(build, label) {
   state.build = build;
   const { st, placed, skippedAir, skippedBadRef, skippedOutOfBounds } = structureFrom(build, D);
   state.source = st;
+  state.hoverPos = null;
+  state.proj = null;
+  projStructCache = null;
+  clearSelRegion();
   centerOrigin(st.size);               // ★ 坐标系：原点摆到网格中心（x/z 居中，y=0 地面）
   state.edit = new EditStack(st);
   state.layerMax = Infinity;           // 换建筑 ⇒ 分层复位（视口的 limit 也要跟着清）
@@ -219,11 +236,8 @@ function loadBuild(build, label) {
   //   游戏导出的文件里 state 本来就是对的 ⇒ **补 0 格、无副作用**；
   //   别的工具导出的常是默认态（栅栏=孤柱、按钮=贴一堵不存在的北墙）⇒ 这里把它们修回来。
   //   报数字而不是静默改数据：用户得看得见工具动了什么。
-  let fixed = 0;
-  if (st.getBlocks().length) {
-    const fix = growConnectAll();
-    if (fix.length && doEdit(fix, { repair: false })) fixed = fix.length;
-  }
+  // Imported states are authoritative. Connection repair belongs to placement.
+  const fixed = 0;
   setMsg(`已载入 ${label}：${st.size.join('×')} / ${placed} 方块${fixed ? ` · 已补全 ${fixed} 个方块的连接/附着状态` : ''}${notes.length ? `（${notes.join('，')}）` : ''}`,
     (badRef || skippedOutOfBounds) ? 'err' : '');
   updateStatus();
@@ -520,28 +534,35 @@ function growConnectAll() {
  * 只在"确实缺"时往返一次；拿到就并进 `sceneDefaults`，后续放置直接命中缓存。
  */
 const blockFixPending = new Map();
+let resourceQueue = Promise.resolve();
+function queueResources(task) {const pending=resourceQueue.then(task);resourceQueue=pending.catch(()=>{});return pending;}
 async function ensureBlockDefaults(id) {
   const have = state.sceneDefaults && state.sceneDefaults[id];
-  if (have && Object.keys(have).length) return have;
+  if (have) return have;
   if (!state.build || !state.vp || !id) return null;
   if (blockFixPending.has(id)) return blockFixPending.get(id);
-  const p = (async () => {
+  const source = state.source;
+  const p = queueResources(async () => {
+    if(state.source!==source)return null;
     try {
-      const want = statesOfBuild(state.build);
+      const want = [...new Set([...(Array.isArray(state.sceneStates)?state.sceneStates:[]),...statesOfBuild(snapshotOf() || state.build)])];
       want.push(stateStringOf(id, {}));             // 裸名 ⇒ 后端按注册表补默认态
       const scene = await hostScene(want);
+      if(state.source!==source)return null;
       if (scene.key !== state.sceneKey) {
         const r = await buildResources(D, {
           assets: scene.assets, opaque: scene.flags || window.__OPAQUE__ || {}, atlasUrl: scene.atlasUrl,
         });
+        if(state.source!==source)return null;
         state.sceneKey = scene.key;
         state.sceneStates = want;
+        state.sceneFlags = scene.flags || null;
         state.vp.setResources(r.resources);
       }
       state.sceneDefaults = { ...(state.sceneDefaults || {}), ...(scene.defaults || {}) };
     } catch { /* 后端不可用：保持原样（propsForBlock 还有别的兜底） */ }
     return (state.sceneDefaults || {})[id] || null;
-  })();
+  });
   blockFixPending.set(id, p);
   const done = () => blockFixPending.delete(id);
   p.then(done, done);
@@ -582,7 +603,19 @@ async function applyScene(scene, want) {
   state.sceneFlags = scene.flags || null;
   state.sceneTruncated = scene.truncated || null;   // U4：后端截断标记（非空就要显黄条）
   const r = await buildResources(D, { assets: scene.assets, opaque: scene.flags || window.__OPAQUE__ || {}, atlasUrl: scene.atlasUrl });
+  reportScene(scene,r);
   return { ...r, onDemand: true };
+}
+function reportScene(scene,resources) {
+  const notes=[];
+  if(scene.unknownStates?.length)notes.push(`${scene.unknownStates.length} 种方块状态在当前实例中不存在`);
+  if(scene.flags?.noModel?.length)notes.push(`${scene.flags.noModel.length} 种方块没有静态模型`);
+  if(scene.stats?.missingTextures)notes.push(`缺少 ${scene.stats.missingTextures} 张贴图`);
+  if(scene.stats?.atlasFull)notes.push(`${scene.stats.atlasFull} 张贴图超出图集容量`);
+  if(resources?.skipped?.length)notes.push(`${resources.skipped.length} 条模型定义无法解析`);
+  const warning=$('resourceStatus');
+  if(warning){warning.hidden=!notes.length;warning.textContent=notes.join('；')+(notes.length?'。可重新选择“方块资源”；建筑数据仍保留。':'');}
+  if(rootNode().host){rootNode().host.dataset.renderWarnings=JSON.stringify(notes);rootNode().host.dataset.sceneReady='true';}
 }
 /**
  * 截断提示（审核员 U4）：后端为了限制体积会截断（states / missing / icons），
@@ -628,15 +661,21 @@ function sceneCovers(id) {
  * 这是按需打包引入的系统性问题，必须在工具层解决，而不是逐个方块打补丁。
  */
 async function growScene(id) {
+  const source=state.source;
+  return queueResources(async()=>{
+  if(state.source!==source)return false;
   try {
     const want = [...(Array.isArray(state.sceneStates) ? state.sceneStates : []), id];
     const scene = await hostScene(want);
+    if(state.source!==source)return false;
+    if(scene.dataVersion && state.build && !state.build.dataVersion) state.build.dataVersion=scene.dataVersion;
     if (scene.unknownStates.includes(id)) {
       setMsg(`「${id}」在实例里没有方块定义（多半是物品而不是方块），放不下`, 'warn');
       return false;
     }
     if (scene.key === state.sceneKey) { state.sceneStates = want; return true; }
     const r = await buildResources(D, { assets: scene.assets, opaque: scene.flags || window.__OPAQUE__ || {}, atlasUrl: scene.atlasUrl });
+    if(state.source!==source)return false;
     state.sceneKey = scene.key;
     state.sceneStates = want;
     state.sceneDefaults = { ...(state.sceneDefaults || {}), ...(scene.defaults || {}) };
@@ -650,27 +689,43 @@ async function growScene(id) {
     setMsg('按需补资源失败（这个方块可能仍放不出来）：' + ((e && e.message) || e), 'err');
     return false;
   }
+  });
 }
 /** 换建筑时热换资源：图集变了要换渲染器，但视口对象不变（事件处理器闭包引用它，不用重绑） */
 async function refreshScene(build) {
   if (!state.vp || !build) return;
+  const source=state.source;
+  if(rootNode().host)rootNode().host.dataset.sceneReady='false';
+  return queueResources(async()=>{
+  if(state.source!==source)return;
   try {
     const want = statesOfBuild(build);
     const scene = await hostScene(want);
-    if (scene.key === state.sceneKey) { state.sceneStates = want; return; }
+    if(state.source!==source)return;
+    if(scene.dataVersion && state.build && !state.build.dataVersion) state.build.dataVersion=scene.dataVersion;
+    if (scene.key === state.sceneKey) { state.sceneStates = want;reportScene(scene);return; }
     const r = await buildResources(D, { assets: scene.assets, opaque: scene.flags || window.__OPAQUE__ || {}, atlasUrl: scene.atlasUrl });
+    if(state.source!==source)return;
     state.sceneKey = scene.key;
     state.sceneStates = want;
+    state.sceneDefaults = scene.defaults || {};
+    state.sceneFlags = scene.flags || null;
     state.sceneTruncated = scene.truncated || state.sceneTruncated;
     state.vp.setResources(r.resources);
+    reportScene(scene,r);
     ghostSig = '';                            // ★ 同上：换图集必须让虚影重建
     refreshGhost();
     setStat({ ...r, onDemand: true });
     setMsg(`已按需打包：${scene.stats.textures} 张贴图 / 图集 ${scene.stats.atlas}${truncNote(scene) ? ' · ' + truncNote(scene) : ''}`,
       truncNote(scene) ? 'warn' : '');
   } catch (e) {
+    if(state.source!==source)return;
     setMsg('切换建筑的按需打包失败，沿用当前图集：' + ((e && e.message) || e), 'warn');
+    const warning=$('resourceStatus');
+    if(warning){warning.hidden=false;warning.textContent='无法读取当前建筑的资源，请重新选择“方块资源”。建筑数据仍保留。';}
+    if(rootNode().host)rootNode().host.dataset.renderWarnings=JSON.stringify(['资源读取失败，当前画面不完整']);
   }
+  });
 }
 
 // ---------------------------------------------------------------- 项目（多项目存档，2026-10-11）
@@ -692,40 +747,66 @@ const emptyBuild = (name) => ({
 });
 function snapshotOf() {
   if (!state.source || !state.edit) return null;
-  return structureToBuildJson(state.source, {
+  return { ...state.build, ...structureToBuildJson(state.source, {
     name: (state.build && state.build.name) || '编辑会话', format: 'autosave', source: 'autosave',
-  });
+  }), dataVersion:state.build?.dataVersion || state.resourceDataVersion, stats:{blocks:state.source.getBlocks().length} };
 }
 /** 保存状态小字。★ 三种状态必须**可区分**（未保存 / 已保存 / 失败），不能都写"就绪"。 */
+let documentDirty=false,dirtySequence=0;
 function setSaveState(kind, text) {
+  documentDirty=kind!=='ok';
+  if(kind==='dirty')dirtySequence++;
   const el = $('projSave');
   if (!el) return;
   el.textContent = text;
   el.className = 'saveState' + (kind === 'err' ? ' err' : (kind === 'dirty' ? ' warn' : ''));
+  if(rootNode().host)rootNode().host.dataset.dirty=kind === 'ok' ? 'false' : 'true';
 }
 function projNameOf(id) {
   const p = projects.list().find((x) => x.id === id);
   return p ? p.name : '(已删除)';
 }
 /** 落盘。manual = 用户按了「保存」/ Ctrl+S（成功要回话、失败要醒目）。 */
+let saveQueue = Promise.resolve();
 function flushSave(manual) {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   if (!projReady || !curProjId) return { ok: false, why: '项目还没就绪' };
+  if(!manual && !documentDirty)return {ok:true,unchanged:true};
   const snap = snapshotOf();
   if (!snap) return { ok: false, why: '世界还没准备好' };
-  const r = projects.save(curProjId, snap);
+  const id = curProjId;
+  const sequence=dirtySequence;
+  const pending = saveQueue.then(async () => {
+  const r = await projects.save(id, snap);
   if (!r.ok) {
     setSaveState('err', '保存失败');
     setMsg(r.why, 'err');
+    if($('saveRecovery')){$('saveRecovery').hidden=false;$('saveError').textContent=String(r.why).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'');}
     return r;
   }
-  setSaveState('ok', '已保存 ' + fmtTime(Date.now()));
+  if($('saveRecovery'))$('saveRecovery').hidden=true;
+  if(sequence===dirtySequence)setSaveState('ok', '已保存 ' + fmtTime(Date.now()));
   if (manual) {
     setMsg('已保存到项目「' + projNameOf(curProjId) + '」：' + (r.blocks || 0) + ' 方块 / '
       + ((r.bytes || 0) / 1024).toFixed(1) + 'KB');
   }
   refreshProjList();
   return r;
+  });
+  saveQueue = pending.catch(() => {});
+  return pending;
+}
+async function saveAsNew() {
+  const build=snapshotOf();
+  if(!build)return;
+  if(saveTimer){clearTimeout(saveTimer);saveTimer=null;}
+  await saveQueue;
+  const name=(build.name||'建筑')+' 副本';
+  const result=await projects.create(name,{...build,name});
+  if(!result.ok){setMsg(result.why,'err');return;}
+  curProjId=result.id;state.build={...build,name};
+  $('saveRecovery').hidden=true;setSaveState('ok','已保存 '+fmtTime(Date.now()));refreshProjList();
+  setMsg('已另存为新建筑「'+name+'」');
 }
 function scheduleSave() {
   if (!projReady || !curProjId) return;      // 就绪前不写盘（否则会把别的项目盖掉）
@@ -745,6 +826,10 @@ function fmtTime(ms) {
 function refreshProjList() {
   const box = $('projList');
   const nm = $('projName');
+  if(rootNode().host) {
+    rootNode().host.dataset.documentId=curProjId;
+    rootNode().host.dataset.revision=String(projects.list().find(entry=>entry.id===curProjId)?.revision || 0);
+  }
   if (nm) nm.textContent = curProjId ? projNameOf(curProjId) : '—';
   if (box) {
     const list = projects.list().slice().sort((a, b) => (b.at || 0) - (a.at || 0));
@@ -774,16 +859,15 @@ function refreshProjList() {
   const u = $('projUsage');
   if (u) {
     const g = projects.usage();
-    u.textContent = '存档 ' + (g.chars / 1048576).toFixed(2) + 'MB / 上限 ' + (g.max / 1048576).toFixed(1)
-      + 'MB（浏览器给本站的额度）· 每个项目独立存档，切换不会丢';
+    u.textContent = isFeature() ? '已保存到当前项目的 structures 目录' : '存档 ' + (g.chars / 1048576).toFixed(2) + 'MB';
   }
 }
 
 /** 切到某个项目：先把当前项目落盘（不丢），再载入目标。 */
-function switchProject(id) {
+async function switchProject(id) {
   if (!id || id === curProjId) { if (syncGroupOpen) syncGroupOpen(null); return { ok: false, why: 'already' }; }
-  if (curProjId && projReady) flushSave(false);          // ★ 关键：切换前先存当前项目
-  const build = projects.load(id);
+  if (curProjId && projReady && !(await flushSave(false)).ok) return {ok:false};
+  const build = await projects.load(id);
   if (!build) {
     setMsg('项目载入失败（存档损坏或被清掉）', 'err');
     return { ok: false, why: 'load-failed' };
@@ -801,12 +885,12 @@ function switchProject(id) {
 }
 
 /** 新建项目（★ 不再销毁当前项目 —— 这是本次要修的核心毛病） */
-function newProject() {
-  if (curProjId && projReady) flushSave(false);
+async function newProject() {
+  if (curProjId && projReady && !(await flushSave(false)).ok) return {ok:false};
   const prev = curProjId;
   const prevBlocks = prev ? (projects.list().find((p) => p.id === prev) || {}).blocks || 0 : 0;
   const n = projects.list().length + 1;
-  const r = projects.create('建筑 ' + n, emptyBuild('建筑 ' + n));
+  const r = await projects.create('建筑 ' + n, emptyBuild('建筑 ' + n));
   if (!r.ok) { setMsg(r.why, 'err'); return r; }
   curProjId = r.id;
   projReady = true;
@@ -820,27 +904,28 @@ function newProject() {
   return { ok: true, id: r.id };
 }
 
-function dupProject() {
+async function dupProject() {
   if (!curProjId) return { ok: false };
-  const b = projects.load(curProjId);
+  if (!(await flushSave(false)).ok) return {ok:false};
+  const b = await projects.load(curProjId);
   if (!b) { setMsg('副本失败：当前项目读不出来', 'err'); return { ok: false }; }
-  flushSave(false);
-  const r = projects.create(projNameOf(curProjId) + ' 副本', b);
+  const r = await projects.create(projNameOf(curProjId) + ' 副本', b);
   if (!r.ok) { setMsg(r.why, 'err'); return r; }
   setMsg('已另存为副本：' + projNameOf(r.id));
   refreshProjList();
   return r;
 }
 
-function renameProject() {
+async function renameProject() {
   if (!curProjId) return { ok: false };
   const old = projNameOf(curProjId);
   let next = null;
-  try { next = window.prompt('项目名', old); } catch { next = null; }
+  next = await hostPrompt('重命名建筑', old);
   if (next == null) return { ok: false, why: 'cancel' };
   next = String(next).trim();
   if (!next || next === old) return { ok: false, why: 'nochange' };
-  const r = projects.rename(curProjId, next);
+  if (!(await flushSave(false)).ok) return {ok:false};
+  const r = await projects.rename(curProjId, next);
   if (!r.ok) { setMsg(r.why, 'err'); return r; }
   if (state.build) state.build.name = next;
   setMsg('已重命名为「' + next + '」');
@@ -849,37 +934,40 @@ function renameProject() {
   return r;
 }
 
-function deleteProject() {
+async function deleteProject() {
   if (!curProjId) return { ok: false };
   const list = projects.list();
   const n = list.length;
   if (n <= 1) { setMsg('至少保留一个项目（删掉最后一个就没地方存了）', 'warn'); return { ok: false, why: 'last' }; }
   const nm = projNameOf(curProjId);
   let yes = true;
-  try { yes = window.confirm('删除项目「' + nm + '」？此操作不可撤销。'); } catch { yes = true; }
+  yes = await hostConfirm('删除建筑「' + nm + '」？原文件将保留为恢复副本。');
   if (!yes) return { ok: false, why: 'cancel' };
-  const r = projects.remove(curProjId);
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  await saveQueue;
+  const r = await projects.remove(curProjId);
   if (!r.ok) { setMsg(r.why, 'err'); return r; }
   const next = r.last || (projects.list()[0] || {}).id;
   curProjId = '';
   setMsg('已删除项目「' + nm + '」');
-  if (next) switchProject(next);
-  else newProject();
+  if (next) await switchProject(next);
+  else await newProject();
   return { ok: true };
 }
 
 /** 启动：迁移旧快照 → 保证至少一个项目 → 决定"这次打开要载入哪个"。 */
-function bootProjects() {
+async function bootProjects() {
+  await projects.initialize();
   const mig = projects.migrateLegacy();
   let list = projects.list();
   if (!list.length) {
-    const r = projects.create('我的建筑', emptyBuild('我的建筑'));
+    const r = await projects.create('我的建筑', emptyBuild('我的建筑'));
     if (!r.ok) { projReady = false; setSaveState('err', r.why); return { ok: false, why: r.why, migrated: mig }; }
     list = projects.list();
   }
   curProjId = projects.lastId() || list[0].id;
   projReady = true;
-  return { ok: true, id: curProjId, list, migrated: mig, build: projects.load(curProjId) };
+  return { ok: true, id: curProjId, list, migrated: mig, build: await projects.load(curProjId) };
 }
 
 
@@ -1185,10 +1273,10 @@ async function actAt(pos, normal) {
     } catch { /* 取不到资源就不自检 */ }
   }
 }
-function pickIntoInventory(blockId) {
+async function pickIntoInventory(blockId) {
   const base = blockId.includes('[') ? blockId.slice(0, blockId.indexOf('[')) : blockId;
-  state.inv.select(base);
-  setMsg(`已拾取 ${base}`);
+  const selected=await state.inv.select(base);
+  setMsg(selected===false ? `当前实例没有 ${base}，请检查“方块资源”的来源` : `已拾取 ${base}`,selected===false?'warn':'');
 }
 
 // ---------------------------------------------------------------- 框选（选区 + 动作条）
@@ -1269,6 +1357,7 @@ function doFill() {
   state.edit.beginGroup();
   const ok = doEdit(ops);
   state.edit.endGroup();
+  updateStatus();
   if (!ok) { setMsg('选区内没有产生变化', 'warn'); return; }
   state.inv.addRecent(row.id);
   setMsg(`已填充 ${ops.length} 格（${row.name}）`);
@@ -1296,6 +1385,7 @@ function doClear() {
   state.edit.beginGroup();
   doEdit(ops);
   state.edit.endGroup();
+  updateStatus();
   setMsg(`已清空 ${cols} 列`);
   clearSelRegion();
 }
@@ -1314,7 +1404,20 @@ export async function boot() {
     const url = new URLSearchParams(location.search).get('build') || 'data/build.json';
     showBusy('正在读取实例资源…');   // E4：首载文案要说明"在干什么"（V4 验收）
     // 功能包模式：初始建筑由后端给（包内没有静态文件可 fetch）；独立网页模式：取 data/build.json
-    const build = isFeature() ? await hostInitialBuild() : await fetchBuild(url);
+    projReady = false;
+    curProjId = '';
+    state.invOpen = true;
+    state.mirrorX = false;
+    state.mirrorZ = false;
+    state.proj = null;
+    state.selRegion = null;
+    state.sceneKey = null;
+    state.sceneStates = [];
+    state.resourceDataVersion = undefined;
+    const initial = isFeature() ? await hostInitialBuild() : await fetchBuild(url);
+    const boot = await bootProjects();
+    if(!boot.ok || !boot.build) throw new Error(boot.why || '建筑文件无法读取，请从项目 structures 目录的 .bak 恢复');
+    const build = boot.build || initial;
 
     setStage('贴图');
     showBusy('准备贴图…');
@@ -1362,16 +1465,7 @@ export async function boot() {
     //   因为"切项目不丢数据"要求打开面板就回到你上次在编辑的东西（等同编辑器打开上次的文件），
     //   而每次都要手动点一次"恢复"本身就是丢数据的入口（点错"新建"就没了）。
     //   只有在"世界已由 URL / 宿主给了内容"时才不打扰（免得覆盖用户明确要看的东西）。
-    const boot = bootProjects();
-    if (!boot.ok) setMsg('项目层没起来（存储不可用）：' + boot.why, 'err');
-    else if ((!build || !build.blocks || build.blocks.length === 0) && boot.build && boot.build.blocks.length) {
-      curProjId = boot.id;
-      loadBuild(boot.build, 'project');
-      setSaveState('ok', '已保存 ' + fmtTime(Date.now()));
-      setMsg('已载入上次项目「' + projNameOf(boot.id) + '」：' + boot.build.blocks.length + ' 方块');
-    } else {
-      loadBuild(build, build.source || url);
-    }
+    setSaveState('ok', '已保存 ' + fmtTime(Date.now()));
     refreshProjList();
     setStat(res);
     // 有模型/定义没吃进来要**明说**（以前是静默跳过 ⇒ 方块渲染成空白却毫无提示）
@@ -1386,6 +1480,7 @@ export async function boot() {
     setStage('完成');
     window.__PREVIEW_READY__ = { ok: true, size: state.source.size, blocks: state.source.getBlocks().length, onDemand: res.onDemand };
     window.__APP__ = state;              // 调试/自测用：能读到 vp / edit / inv / source
+    return {ok:true};
   } catch (e) {
     // ★ 失败必须**带阶段**说出来："空白面板"最贵的代价是分不清"还在加载"和"已经失败"。
     //   现在错误同时写进 #err（面板内可见）与 window.__PREVIEW_BOOT__（可被探针读到）。
@@ -1393,9 +1488,18 @@ export async function boot() {
     window.__PREVIEW_BOOT__ = { stage, error: String((e && e.stack) || e) };
     hideBusy();
     const errEl = $('err');
-    if (errEl) errEl.textContent = `ERROR[${stage}]：` + ((e && e.stack) || e);
+    if (errEl) errEl.textContent = '无法打开建筑：' + String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'');
     console.error('[preview] boot 失败于阶段「' + stage + '」', e);
+    return {ok:false};
   }
+}
+
+export const currentBuild = () => snapshotOf();
+export const acceptResourceVersion = version => {if(version)state.resourceDataVersion=version;};
+export async function reloadInventory() {
+  state.inv?.dispose?.();
+  state.inv = await createInventory({onSelect:r=>{updateStatus();if(r && r.isBlock!==false)void ensureBlockDefaults(r.id);}});
+  await refreshScene(snapshotOf());
 }
 
 // ---------------------------------------------------------------- 手感实验室（?feel=1）
@@ -1474,7 +1578,21 @@ function startFeelTicks() {
 // ---------------------------------------------------------------- 视口输入
 function bindViewportInput(canvas) {
   const vp = state.vp;
-  let drag = null, moved = 0, lastActAt = 0;
+  let drag = null, lastActAt = 0;
+  const buttonMask=button=>button===2?2:button===1?4:1;
+  function finishDrag(event,cancelled=false) {
+    if(!drag || event?.pointerId!=null && event.pointerId!==drag.pointerId)return;
+    const ending=drag;drag=null;
+    if(ending.mode==='act')state.edit.endGroup();
+    else if(ending.mode==='select'){
+      const cells=selCells();
+      if(!cancelled && cells.length>1){showSelBar(cells.length);syncSelPreview(true);}else clearSelRegion();
+    }
+    if(ending.mode==='pan' || ending.mode==='rotate')vp.interruptNavigation();
+    try{if(canvas.hasPointerCapture(ending.pointerId))canvas.releasePointerCapture(ending.pointerId);}catch{}
+    canvas.style.cursor=state.mode==='pan'?'grab':'crosshair';
+    updateStatus();
+  }
   // E2（P0）：**单次点击最多 1 次编辑**。actAt 是 async 的（放置可能先按需补资源），重复投递的
   // pointerdown（驱动重复注入、双击第二击、触摸+鼠标合成事件）会在极短时间内并发提交 ⇒ 编辑数无端跃升。
   // 120ms 去重窗口：窗口内的第二次"起手"直接丢弃。变异测试：去掉这层去重 ⇒ 闸门 E2 断言必须变红。
@@ -1487,13 +1605,7 @@ function bindViewportInput(canvas) {
     return true;
   };
   on(canvas, 'pointerdown', (e) => {
-    // ⚠ 这里曾经是 mousedown + setPointerCapture(e.pointerId)：鼠标事件的 pointerId 是 undefined，
-    // setPointerCapture(undefined) 会抛 TypeError 让整个处理器中断 ⇒ 旋转/放置/删除全都没反应。
-    // 现在统一用 pointer 事件，并且只在真有 pointerId 时捕获。
-    if (e.pointerId != null && typeof canvas.setPointerCapture === 'function') {
-      try { canvas.setPointerCapture(e.pointerId); } catch { /* 合成事件/不支持时忽略 */ }
-    }
-    moved = 0;
+    if(drag || e.isPrimary===false || ![0,1,2].includes(e.button))return;
     // 手势路由（2026-10-12 按用户要求对齐参考站 mcblock.top）：**右键拖=平移、中键拖=旋转**。
     // 参考站是「左键 旋转 · 右键 平移 · 滚轮 缩放」；我们的左键必须留给工具（摆放/删除/拾取/框选）
     // —— 它是编辑器不是纯查看器 —— 所以只把**右键与中键对调**。
@@ -1507,11 +1619,18 @@ function bindViewportInput(canvas) {
       else if (state.mode === 'select') mode = 'select';
       else mode = 'act';
     }
-    drag = { mode, x: e.clientX, y: e.clientY };
-    if (e.button === 0 || e.button === 2) e.preventDefault();
+    if(!mode)return;
+    e.preventDefault();
+    canvas.focus({preventScroll:true});
+    vp.interruptNavigation();
+    drag = { mode, x:e.clientX, y:e.clientY, pointerId:e.pointerId, pointerType:e.pointerType || 'mouse', button:e.button, mask:buttonMask(e.button), buttons:e.buttons, pan:mode==='pan'?vp.beginPan(e.clientX,e.clientY):null };
+    if(e.pointerId!=null){try{canvas.setPointerCapture(e.pointerId);}catch{}}
+    if(mode==='pan' || mode==='rotate'){
+      canvas.style.cursor='grabbing';state.hoverPos=null;vp.setOutline(null);vp.setGhost(null);updateStatus();
+    }
     if (mode === 'act' || mode === 'select') {
       const hit = pickAt(e.clientX, e.clientY);
-      if (!hit) { drag = null; return; }
+      if (!hit) { finishDrag(e,true); return; }
       if (mode === 'select') {
         state.selRegion = { x1: hit.pos[0], z1: hit.pos[2], x2: hit.pos[0], z2: hit.pos[2] };
         syncSelPreview(false);             // ★ 按下就出现预览（哪怕只有一格），拖动中才有"跟手"的反馈
@@ -1525,10 +1644,14 @@ function bindViewportInput(canvas) {
   });
   on(window, 'pointermove', (e) => {
     if (drag) {
+      if(e.pointerId!==drag.pointerId)return;
+      if(!(e.buttons & drag.mask)){finishDrag(e);return;}
+      drag.recoverCapture=e.buttons!==drag.buttons;
+      drag.buttons=e.buttons;
+      e.preventDefault();
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-      moved += Math.abs(dx) + Math.abs(dy);
       if (drag.mode === 'rotate') vp.orbit(dx, dy);
-      else if (drag.mode === 'pan') vp.panBy(dx, dy);
+      else if (drag.mode === 'pan') vp.panTo(drag.pan,e.clientX,e.clientY);
       else if (drag.mode === 'select') {
         const hit = pickAt(e.clientX, e.clientY);
         if (hit && state.selRegion) {
@@ -1557,26 +1680,35 @@ function bindViewportInput(canvas) {
       drag.x = e.clientX; drag.y = e.clientY;
       return;
     }
+    if(!e.composedPath().includes(canvas))return;
     const hit = pickAt(e.clientX, e.clientY);
     state.hoverPos = hit ? hit.pos : null;
     vp.setOutline(hit ? hit.pos : null);
     vp.setGhost(ghostFor(hit));            // 幽灵预览（摆放=半透明 / 删除=红调）
-    if (hit) canvas.style.cursor = state.mode === 'erase' ? 'not-allowed' : (state.mode === 'select' ? 'crosshair' : 'pointer');
+    if(state.mode==='pan')canvas.style.cursor='grab';
+    else if (hit) canvas.style.cursor = state.mode === 'erase' ? 'not-allowed' : (state.mode === 'select' ? 'crosshair' : 'pointer');
     else canvas.style.cursor = 'crosshair';
     updateStatus();
   });
-  on(window, 'pointerup', () => {
-    if (drag) {
-      if (drag.mode === 'act') state.edit.endGroup();        // 收束撤销组（一次拖拽 = 一次 Ctrl+Z 全撤）
-      else if (drag.mode === 'select') {
-        const cells = selCells();
-        if (cells.length > 1) { showSelBar(cells.length); syncSelPreview(true); }   // ★ 松手补框高（一次 O(方块数)）
-        else clearSelRegion();
-      }
-      drag = null;
+  on(window,'pointerup',e=>{if(drag && (e.button===drag.button || !(e.buttons & drag.mask)))finishDrag(e);});
+  // Mouse Pointer Events report pointerup only when the last button is released.
+  // mouseup lets the initiating button end its own drag while another stays held.
+  on(window,'mouseup',e=>{if(drag?.pointerType==='mouse' && e.button===drag.button)finishDrag();});
+  on(canvas,'pointercancel',e=>finishDrag(e,true));
+  on(canvas,'lostpointercapture',e=>{
+    // Chromium may release mouse capture when an additional button is released.
+    // Reacquire once for that chord transition while the initiating button stays down.
+    if(drag?.pointerId===e.pointerId && drag.recoverCapture && e.buttons & drag.mask){
+      drag.recoverCapture=false;
+      try{canvas.setPointerCapture(e.pointerId);return;}catch{}
     }
-    updateStatus();
+    finishDrag(e,true);
   });
+  on(window,'blur',()=>finishDrag(null,true));
+  on(canvas,'keydown',e=>{if(e.key==='Escape')finishDrag(null,true);});
+  on(document,'visibilitychange',()=>{if(document.hidden)finishDrag(null,true);});
+  TEARDOWN.push(()=>finishDrag(null,true));
+  on(canvas,'pointerleave',()=>{if(!drag){state.hoverPos=null;vp.setOutline(null);vp.setGhost(null);updateStatus();}});
   /** 摆放/删除工具下的幽灵：摆放显示将放置的相邻空格；删除显示红调命中格 */
   function ghostFor(hit) {
     if (!hit) return null;
@@ -1692,6 +1824,7 @@ function bindViewportInput(canvas) {
     selPreviewAB, syncSelPreview };
   on(canvas, 'wheel', (e) => {
     e.preventDefault();
+    if(drag)return; // Keep a drag's camera plane stable until the initiating button is released.
     // 1.12/档，clamp [0.02, 60]（2026-10-11 按用户"不要放大限制"放宽，见 viewport.js）；带上光标坐标 —— feel.zoomCursor 时按"朝光标"缩放
     vp.zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
   }, { passive: false });
@@ -1750,7 +1883,7 @@ function bindToolbar() {
   };
   /** 同步工具条高亮（唯一真相是 state.mode）。变异靶点：不调它 ⇒ 高亮不跟手。 */
   function syncTools() {
-    for (const t of TOOLS) { const b = $(t.btn); if (b) b.classList.toggle('on', t.id === state.mode); }
+    for (const t of TOOLS) { const b = $(t.btn); if (b) {b.classList.toggle('on', t.id === state.mode);b.setAttribute('aria-pressed',String(t.id===state.mode));} }
   }
   const setTool = (m) => {
     state.mode = m;
@@ -1793,9 +1926,7 @@ function bindToolbar() {
   if ($('selMove')) $('selMove').onclick = () => {
     const n = selCells().length;
     if (!n) { setMsg('先在视口里拖出一个选区', 'warn'); return; }
-    let ok = true;
-    try { ok = window.confirm('把选区里的方块整体搬到原点（中心对齐 + 贴地）？\n整批算一次操作，Ctrl+Z 可全撤。'); } catch { ok = true; }
-    if (ok) doMoveSel();
+    doMoveSel();
   };
   $('selCancel').onclick = () => { clearSelRegion(); setMsg('已取消选区'); };
 
@@ -1998,8 +2129,12 @@ function bindToolbar() {
       head.setAttribute('aria-expanded', 'false');
     }
   });
+  on(rootNode(),'click',e=>{const target=e.composedPath?.()[0] || e.target;if(target?.closest?.('[role="menuitem"]'))openGroup(null);});
   // ---- 项目按钮 ----
   if ($('saveBtn')) $('saveBtn').onclick = () => flushSave(true);
+  if ($('retrySave')) $('retrySave').onclick = () => flushSave(true);
+  if ($('saveCopy')) $('saveCopy').onclick = () => saveAsNew();
+  if ($('exportRecovery')) $('exportRecovery').onclick = () => doExport('schem');
   if ($('newBtn')) { /* 上面已接 */ }
   if ($('projDup')) $('projDup').onclick = () => dupProject();
   if ($('projRen')) $('projRen').onclick = () => renameProject();
@@ -2023,6 +2158,9 @@ function bindToolbar() {
   state.syncMirrorHead = syncMirrorHead;
   syncMirrorHead();
   on(document, 'keydown', (e) => {
+    if (isFeature() && (document.querySelector('[aria-modal="true"]') || !e.composedPath().some(node=>node?.classList?.contains('mcp-host')))) return;
+    if($('dlg')?.classList.contains('on')){if(e.key==='Escape'){$('dlg').classList.remove('on');$('matBtn').focus();e.preventDefault();}return;}
+    if(e.key==='Escape' && syncGroupOpen)syncGroupOpen(null);
     // ★ 事件跨 Shadow 边界会被**重定向（retargeting）**：挂在 document 上的监听器看到的 `e.target`
     //   是**宿主元素**（功能包里的 `<div class="mcp-host">`），不是里面真正获得焦点的 `<input>`。
     //   真实目标只在 `composedPath()[0]`。不修的话，功能包里**在搜索框打字会移动相机并吞掉字符**
@@ -2068,7 +2206,7 @@ function bindToolbar() {
 
   // 拖拽导入
   const wrap = $('stageWrap');
-  on(wrap, 'dragover', (e) => { e.preventDefault(); wrap.style.outline = '2px dashed #4a9eff'; });
+  on(wrap, 'dragover', (e) => { e.preventDefault(); wrap.style.outline = '2px dashed var(--theme-accent, #4a9eff)'; });
   on(wrap, 'dragleave', () => { wrap.style.outline = ''; });
   on(wrap, 'drop', async (e) => {
     e.preventDefault(); wrap.style.outline = '';
@@ -2078,7 +2216,7 @@ function bindToolbar() {
 
   $('dlgClose').onclick = () => $('dlg').classList.remove('on');
   $('dlgCsv').onclick = () => {
-    const rows = materialRows(state.build, (id) => state.inv.nameOf(id));
+    const rows = materialRows(snapshotOf(), (id) => state.inv.nameOf(id));
     download(new Blob([materialsCsv(rows)], { type: 'text/csv' }), `${(state.build.name || 'building')}-材料清单.csv`);
   };
 }
@@ -2439,6 +2577,7 @@ function applyProjection() {
   state.edit.beginGroup();
   const changed = doEdit(diff.ops);
   state.edit.endGroup();
+  updateStatus();
   if (changed) setMsg(`已按投影补全：放置/替换 ${diff.ops.length} 块（原有一致 ${diff.same} / 投影共 ${diff.total}；只补不删）；一次 Ctrl+Z 可全撤`);
   else setMsg('补全未产生变化（投影与建筑已一致）');
   refreshProjButtons();
@@ -2508,7 +2647,12 @@ async function doImport(file) {
   showBusy(`导入 ${file.name}…`);
   try {
     const build = await hostImport(file.name, new Uint8Array(await file.arrayBuffer()));
+    if (curProjId && projReady && !(await flushSave(false)).ok) return;
+    const created = await projects.create(build.name || file.name, build);
+    if (!created.ok) throw new Error(created.why);
+    curProjId = created.id;
     loadBuild(build, file.name);
+    refreshProjList();
     $('sample').value = '';
   } catch (e) {
     setMsg(String(e.message || e), 'err');
@@ -2525,7 +2669,7 @@ const EXPORT_CROP_MIN = 2000000;
 function buildJsonForExport(name) {
   const st = state.source;
   const [sx, sy, sz] = st.size;
-  const full = structureToBuildJson(st, { name, format: 'preview' });
+  const full = { ...state.build, ...structureToBuildJson(st, { name, format: 'preview' }), dataVersion:state.build?.dataVersion || state.resourceDataVersion };
   if (sx * sy * sz <= EXPORT_CROP_MIN) return { json: full, cropped: null };
   const bs = st.getBlocks();
   if (!bs.length) return { json: full, cropped: null };
@@ -2552,12 +2696,13 @@ function showMaterials() {
   const json = structureToBuildJson(state.source, { name: state.build?.name || 'building' });
   const rows = materialRows(json, (id) => state.inv.nameOf(id));
   const total = rows.reduce((s, r) => s + r.count, 0);
-  $('dlgBody').innerHTML =
-    `<p class="hint">共 ${rows.length} 种方块、${total} 个。按数量降序。</p>` +
-    `<table><thead><tr><th>方块</th><th>id</th><th style="text-align:right">数量</th></tr></thead><tbody>` +
-    rows.map(r => `<tr><td>${r.name}</td><td style="color:#7f8ea1">${r.id}</td><td class="n">${r.count}</td></tr>`).join('') +
-    `</tbody></table>`;
+  const summary=document.createElement('p');summary.className='hint';summary.textContent=`共 ${rows.length} 种方块、${total} 个。按数量降序。`;
+  const table=document.createElement('table'),head=table.createTHead().insertRow(),body=table.createTBody();
+  for(const label of ['方块','ID','数量']){const cell=document.createElement('th');cell.textContent=label;head.append(cell);}
+  for(const row of rows){const tr=body.insertRow();for(const [index,value] of [row.name,row.id,row.count].entries()){const td=tr.insertCell();td.textContent=String(value);if(index===2)td.className='n';}}
+  $('dlgBody').replaceChildren(summary,table);
   $('dlg').classList.add('on');
+  $('dlgClose').focus();
 }
 
 // 独立网页（index.html 用 `<script type="module">` 直接加载）没人替我们调 boot()，这里自动跑一次。

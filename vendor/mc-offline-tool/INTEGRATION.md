@@ -2,7 +2,7 @@
 
 源码来自用户提供的 `mc-offline-tool-交接包-2026-10-15.zip`；原始文件校验清单见 `UPSTREAM.json`。归档没有交接文档所称的根 `manifest.json`，因此该清单由实际解压文件生成。原包和原始归档未改动。
 
-构建入口为 `feature-plugins/mc-pull`（1.14.2）与 `feature-plugins/mc-preview`（1.14.13），使用仓库现有 esbuild/功能包打包脚本：
+构建入口为 `feature-plugins/mc-pull`（1.14.2）与 `feature-plugins/mc-preview`（1.15.1），使用仓库现有 esbuild/功能包打包脚本：
 
 ```powershell
 node scripts/build-feature-plugins.mjs --only=mc-pull
@@ -23,3 +23,7 @@ node --test scripts/mc-offline-features.test.mjs
 - 去掉采集页的重复标题说明，增加原生目录选择操作；未提供的探针构建保持不可用状态。
 
 已验证：自建最小客户端 JAR 的真实采集、中文名称与方块标识、分页和缓存更新、图标和模型图集、Schem/Litematic 往返、项目及只读边界，以及真实 stdio MCP 的工具发现、查询和 ZIP 导出。夹具不是 Minecraft 游戏数据。交接包未包含游戏数据、探针 JAR 或探针源码；真实游戏内采集、启动与跨游戏版本覆盖未验证。
+
+2026-10-30：预览修复至 1.15.0，新增 ModMind 原生主题外壳、项目内建筑文档、保存冲突恢复和 MCP 视口图片。修复相机取景、状态序列化、贴图继承和 Litematic 负尺寸区域；对导出损失保留原件并提示。补充使用本机 Minecraft 1.20.1 客户端的静态资源画面验收。具体流程、复用依据、测试和未覆盖边界见 `feature-plugins/mc-preview/README.zh-CN.md`。
+
+1.15.1 修正右键平移轴与视图矩阵不一致的问题，按抓取表面的深度跟随鼠标，统一相机移动基向量，并补齐拖动的捕获、组合按键、失焦/取消和动画打断。属于视口交互修复，继续复用现有 MCP 预览图片工具。

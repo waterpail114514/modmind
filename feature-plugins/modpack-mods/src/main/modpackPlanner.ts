@@ -1,12 +1,14 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ProjectInfo } from '../../../../src/shared/types'
 import type { McmodManualRequirement, McmodSearchResult } from '../../../../src/shared/types'
 import { addModpackFiles, readModpackManifest, writeModpackManifest } from '../../../../src/main/modpackService'
 import { modpackModsRoot } from '../../../../src/main/modpackPaths'
-import { auditModpackLock, lockedModFromFile, MODPACK_LOCK_FILE, readModpackLock, writeModpackLock, type ModpackLock } from '../../../../src/main/modpackLockService'
+import { auditModpackLock, hashModpackFile, lockedModFromFile, matchesLockedMod, MODPACK_LOCK_FILE, readModpackLock, upsertLockedMod, writeModpackLock, type ModpackLock } from '../../../../src/main/modpackLockService'
 import { safeModJarFileName } from '../../../../src/main/modpackFilename'
 import { withProjectMutation } from '../../../../src/main/projectMutation'
+import { assertContentTarget } from '../../../../src/main/contentInstallTransaction'
 import { candidateRuntimeSide, type AutomaticModPlatform, type ModCandidate, type ModDependency, type ModDependencyKind, type ModFile, type ModProviderRegistry } from '../../../../src/main/modProviderService'
 
 export interface ModpackConcept {
@@ -287,10 +289,12 @@ async function applyModpackPlanUnlocked(registry: ModProviderRegistry, project: 
   const modsRoot = modpackModsRoot(project, originalManifest)
   const stagedRoot = path.join(project.path, '.modmind', 'modpack-staging', `${Date.now()}-${process.pid}`)
   const backupRoot = path.join(stagedRoot, 'backup')
+  await assertContentTarget(project.path, stagedRoot)
   await fs.mkdir(stagedRoot, { recursive: true })
   const installed: string[] = []
   const skipped: string[] = []
-  const nextMods = new Map(current.mods.map((mod) => [`${mod.provider}:${mod.projectId}`, mod]))
+  let nextMods = current.mods
+  const stagedFiles = new Map<string, string>()
   const movedTargets: string[] = []
   const backedUpTargets: string[] = []
   const replacedTargets: string[] = []
@@ -300,29 +304,35 @@ async function applyModpackPlanUnlocked(registry: ModProviderRegistry, project: 
       if ((entry.selected as { provider: string }).provider === 'mcmod') {
         throw new Error('MC百科文件只能由用户在“第三方 Mod”中完成验证码下载')
       }
-      const key = `${entry.selected.provider}:${entry.selected.projectId}`
-      const targetName = safeModFileName(entry.selected.filename)
+      const requestedName = safeModFileName(entry.selected.filename)
+      const targetName = nextMods.find((mod) => mod.fileName.toLowerCase() === requestedName.toLowerCase())?.fileName ?? requestedName
       const target = path.join(modsRoot, targetName)
-      const existing = current.mods.find((mod) => mod.provider === entry.selected!.provider && mod.projectId === entry.selected!.projectId && mod.versionId === entry.selected!.versionId)
-      if (existing && await fs.stat(target).then((stat) => stat.isFile()).catch(() => false)) { skipped.push(targetName); continue }
-      const previous = current.mods.find((mod) => mod.provider === entry.selected!.provider && mod.projectId === entry.selected!.projectId)
+      await assertContentTarget(project.path, target)
+      const existing = nextMods.find((mod) => matchesLockedMod(mod, entry.selected!) && mod.fileName === targetName)
+      const actual = existing && !stagedFiles.has(targetName.toLowerCase()) ? await hashModpackFile(project, target).catch(() => null) : null
+      if (existing && (stagedFiles.has(targetName.toLowerCase()) || actual?.sha256 === existing.sha256 && actual.size === existing.size)) { skipped.push(targetName); continue }
+      const previous = nextMods.find((mod) => matchesLockedMod(mod, { provider: entry.selected!.provider, projectId: entry.selected!.projectId }))
       if (previous && previous.fileName !== targetName) replacedTargets.push(previous.fileName)
-      const staged = path.join(stagedRoot, targetName)
+      const staged = path.join(stagedRoot, randomUUID(), targetName)
+      await fs.mkdir(path.dirname(staged), { recursive: true })
       const result = await registry.install(entry.selected, staged, signal)
-      await fs.mkdir(path.dirname(target), { recursive: true })
-      nextMods.set(key, lockedModFromFile(entry.selected, result, targetName))
-      installed.push(targetName)
+      nextMods = upsertLockedMod(nextMods, lockedModFromFile(entry.selected, result, targetName))
+      if (!stagedFiles.has(targetName.toLowerCase())) installed.push(targetName)
+      else skipped.push(targetName)
+      stagedFiles.set(targetName.toLowerCase(), staged)
     }
     await fs.mkdir(backupRoot, { recursive: true })
+    await fs.mkdir(modsRoot, { recursive: true })
     for (const name of [...new Set([...installed, ...replacedTargets])]) {
       const target = path.join(modsRoot, name)
+      await assertContentTarget(project.path, target)
       if (await fs.stat(target).then((stat) => stat.isFile()).catch(() => false)) {
         await fs.rename(target, path.join(backupRoot, name))
         backedUpTargets.push(name)
       }
     }
     for (const name of installed) {
-      const staged = path.join(stagedRoot, name)
+      const staged = stagedFiles.get(name.toLowerCase())!
       const target = path.join(modsRoot, name)
       await fs.rename(staged, target)
       movedTargets.push(name)
@@ -330,9 +340,10 @@ async function applyModpackPlanUnlocked(registry: ModProviderRegistry, project: 
     const obsolete = new Set(replacedTargets.map((name) => name.toLowerCase()))
     const refreshedManifest = { ...originalManifest, mods: originalManifest.mods.filter((mod) => !obsolete.has(mod.fileName.toLowerCase()) && !installed.some((name) => name.toLowerCase() === mod.fileName.toLowerCase())) }
     await writeModpackManifest(project, refreshedManifest)
+    await writeModpackLock(project, { ...current, mods: nextMods.sort((left, right) => left.fileName.localeCompare(right.fileName)) })
     const added = installed.map((name) => path.join(modsRoot, name))
     if (added.length) await addModpackFiles(project, added)
-    const lock = await writeModpackLock(project, { ...current, mods: [...nextMods.values()].sort((left, right) => left.fileName.localeCompare(right.fileName)) })
+    const lock = await readModpackLock(project)
     const audit = await auditModpackLock(project)
     if (!audit.success) throw new Error(`modpack lock audit failed: ${audit.errors.join('; ')}`)
     return { lock, installed, skipped, audit }

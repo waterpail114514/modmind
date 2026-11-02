@@ -2,6 +2,7 @@ import path from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, net } from 'electron'
 import { PluginService } from './pluginService'
 import { PluginRuntime, type PluginRuntimeOptions } from './pluginRuntime'
+import { diagnosticJournal } from './diagnosticLog'
 import { registerPluginProtocol, registerPluginProtocolScheme } from './pluginProtocol'
 import { InitialReadiness } from './initialReadiness'
 import { requestPluginImportConfirmation } from './pluginImportConfirmation'
@@ -53,10 +54,7 @@ export function initializePlugins(options: {
     hostContextOp: options.hostContextOp,
     onRuntimeError: (pluginId, error) => pluginService?.setRuntimeError(pluginId, error),
     onDiagnostics: (diagnostics) => options.onDiagnosticsChanged?.(diagnostics),
-    log: (_level, message) => {
-      // 接入诊断日志由调用方决定；此处仅 console 以便开发期观察
-      console.log(`[plugins] ${message}`)
-    }
+    log: (level, message, data) => diagnosticJournal.record({ subsystem: 'plugin', operation: 'runtime', level: level === 'warn' ? 'warning' : level, message, data })
   })
 
   registerPluginProtocol({
@@ -69,6 +67,14 @@ export function initializePlugins(options: {
 
 export function registerPluginProtocolSchemeEarly(): void {
   registerPluginProtocolScheme()
+}
+
+export function pluginDiagnosticSnapshot(): unknown {
+  const summarize = (service: PluginService, runtime: PluginRuntime | null) => service.getSnapshot().plugins.map(record => ({
+    id: record.manifest.id, version: record.manifest.version, revision: record.revision, enabled: record.enabled, error: record.error, scope: record.scope,
+    runtime: runtime?.getDiagnostics(record.manifest.id)
+  }))
+  return { foreground: pluginService ? summarize(pluginService, pluginRuntime) : [], projects: [...projectContexts].map(([projectPath, context]) => ({ projectPath, plugins: summarize(context.service, context.runtime) })) }
 }
 
 /** 应用启动/项目切换后刷新注册表并启动目录监听。 */
@@ -152,7 +158,8 @@ export function createPluginBridgeTarget(projectRoot: string): ExternalAgentPlug
           if (!options.hostContextOp) throw new Error('宿主上下文能力未配置')
           return options.hostContextOp(plugin, op, args)
         },
-        onRuntimeError: (id, error) => service.setRuntimeError(id, error)
+        onRuntimeError: (id, error) => service.setRuntimeError(id, error),
+        log: (level, message, data) => diagnosticJournal.record({ subsystem: 'plugin', operation: 'runtime', level: level === 'warn' ? 'warning' : level, message, data: { projectPath: projectRoot, detail: data } })
       })
       context = { service, runtime, busy: 0 }
       projectContexts.set(key, context)

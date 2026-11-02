@@ -72,13 +72,16 @@ export class FeatureStoreService {
         const base: FeaturePluginCatalogEntry = entry ?? { id, name: release!.name, version: release!.version, enabled:false, installed:false, available:false, state:'not-installed', installHint:'侧边栏 → 功能' }
         const groups = entry?.manifest ? featureGroups(entry.manifest) : release?.groups ?? []
         const incompatible = release ? this.incompatible(release) : undefined
-        return { ...base, name: release?.name ?? base.name, description: release?.description ?? (featureDescriptions as Record<string,string>)[id] ?? entry?.manifest?.capabilities?.map(value=>value.description).join('；') ?? 'ModMind 应用功能', groups: groups.length ? groups : ['支持组件'], release, incompatible, updateAvailable: Boolean(release && !incompatible && entry?.installed && (compareSemanticAppVersions(release.version,entry.version) ?? 0) > 0) }
+        const official = Boolean(entry?.installed && this.receipts.has(id) && this.receipts.get(id) === this.plugins.fingerprint(id))
+        const installationSource = entry?.builtin ? 'builtin' as const : !entry?.installed ? undefined : official ? 'official' as const : 'local' as const
+        const withdrawn = Boolean(official && !entry?.builtin && this.index && !remote.has(id))
+        return { ...base, installationSource, withdrawn, name: release?.name ?? base.name, description: release?.description ?? (featureDescriptions as Record<string,string>)[id] ?? entry?.manifest?.capabilities?.map(value=>value.description).join('；') ?? 'ModMind 应用功能', groups: groups.length ? groups : ['支持组件'], release, incompatible, updateAvailable: Boolean(release && !incompatible && entry?.installed && (compareSemanticAppVersions(release.version,entry.version) ?? 0) > 0) }
       }), checking: Boolean(this.checking), checkedAt:this.checkedAt, error:this.error, cached:this.cached, job:this.job ? {...this.job} : undefined
     }
   }
   publish(): void { this.changed(this.snapshot()) }
   agentCatalog(): FeaturePluginCatalogEntry[] {
-    return this.snapshot().entries.map(entry => ({...entry, download:{available:Boolean(entry.release && !entry.incompatible),latestVersion:entry.release?.version,updateAvailable:entry.updateAvailable,message:entry.incompatible ?? (!entry.release ? this.error ?? '官方目录尚未发布' : undefined)}}))
+    return this.snapshot().entries.map(entry => ({...entry, download:{available:Boolean(entry.release && !entry.incompatible),latestVersion:entry.release?.version,updateAvailable:entry.updateAvailable,message:entry.incompatible ?? (entry.withdrawn ? '此功能已从官方目录下架，已安装版本保留，是否卸载由用户决定' : !entry.release ? this.error ?? '官方目录尚未发布' : undefined)}}))
   }
   async refresh(force = false): Promise<FeatureStoreSnapshot> {
     if (this.checking) return this.checking

@@ -89,7 +89,7 @@ try {
     }
     return { inspirationTools: service.tools('inspiration').filter(tool => tool.pluginId === 'testing').length, readOnly: await denied({ readOnly: true }), inspiration: await denied({ surface: 'inspiration' }) }
   }, project)
-  assert.equal(restrictions.inspirationTools, 0)
+  assert.equal(restrictions.inspirationTools, 1) // Read-only managed build status.
   assert.match(restrictions.readOnly, /READ_ONLY/)
   assert.match(restrictions.inspiration, /SURFACE_DENIED/)
   await call('modmind_runtime_state')

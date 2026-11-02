@@ -10,7 +10,7 @@ import { installServerRuntime, type ServerPackResult } from './serverPackService
 import { configureLocalServer } from './serverInstance'
 import { sameProjectPath } from '../../../../src/main/projectPath'
 
-interface TaskRecord { project: ProjectInfo; state: IsolatedServerTask; controller: AbortController; finished: Promise<void>; server?: ServerProcess }
+interface TaskRecord { project: ProjectInfo; state: IsolatedServerTask; controller: AbortController; finished: Promise<void>; server?: ServerProcess; timeoutMs?: number }
 interface Options {
   fixtures: ServerFixtureService
   java: (project: ProjectInfo, signal: AbortSignal) => Promise<{ path: string; version: string }>
@@ -65,7 +65,7 @@ export class IsolatedServerScenarioService {
     const steps = validateSteps(input.steps)
     if (input.port !== undefined && (!Number.isInteger(input.port) || Number(input.port) < 1024 || Number(input.port) > 65535)) throw new Error('测试端口需要在 1024–65535 之间')
     const timeoutMs = input.timeoutMs ?? 600000
-    if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 30000 || Number(timeoutMs) > 1800000) throw new Error('总超时需要在 30 秒至 30 分钟之间')
+    if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 30000 || Number(timeoutMs) > 1800000) throw new Error('场景执行时限需要在 30 秒至 30 分钟之间（不含首次安装和启动）')
     ownerSignal?.throwIfAborted()
     if (this.isBusy()) throw new Error('已有隔离服务端测试正在运行，请查询或取消该任务')
     while (this.tasks.size >= 32) {
@@ -76,13 +76,12 @@ export class IsolatedServerScenarioService {
     const taskId = randomUUID()
     const controller = new AbortController()
     const state: IsolatedServerTask = { taskId, projectPath: project.path, status: 'running', phase: 'validating', message: '正在校验测试输入', completed: 0, total: steps.length, canCancel: true, recentLogs: [] }
-    const task: TaskRecord = { project: { ...project }, state, controller, finished: Promise.resolve() }
+    const task: TaskRecord = { project: { ...project }, state, controller, timeoutMs: Number(timeoutMs), finished: Promise.resolve() }
     this.tasks.set(taskId, task)
     const abort = (): void => controller.abort(ownerSignal?.reason)
     ownerSignal?.addEventListener('abort', abort, { once: true })
-    const timer = setTimeout(() => controller.abort(new Error('隔离场景超过总时间限制')), Number(timeoutMs))
     task.finished = this.run(task, structuredClone(fixture), steps, input.port as number | undefined)
-      .finally(() => { clearTimeout(timer); ownerSignal?.removeEventListener('abort', abort) })
+      .finally(() => { ownerSignal?.removeEventListener('abort', abort) })
     return structuredClone(state)
   }
 
@@ -142,6 +141,7 @@ export class IsolatedServerScenarioService {
     let result: IsolatedServerResult | undefined
     let terminalStatus: IsolatedServerTask['status'] = 'failed'
     const logPaths: string[] = []
+    let scenarioTimer: ReturnType<typeof setTimeout> | undefined
     const update = (phase: IsolatedServerTask['phase'], message: string): void => { Object.assign(task.state, { phase, message }) }
     try {
       const root = await ownedRoot(task.project)
@@ -186,6 +186,7 @@ export class IsolatedServerScenarioService {
         logPaths.push(started.logPath)
       }
       await start()
+      scenarioTimer = setTimeout(() => task.controller.abort(new Error('隔离场景执行超过时间限制')), task.timeoutMs)
       for (const [index, step] of steps.entries()) {
         signal.throwIfAborted()
         update('scenario', `正在执行第 ${index + 1}/${steps.length} 步`)
@@ -209,6 +210,7 @@ export class IsolatedServerScenarioService {
       task.state.error = failure instanceof Error ? failure.message : String(failure)
       if (result) result.success = false
     } finally {
+      clearTimeout(scenarioTimer)
       update('stopping', '正在停止隔离服务端并保存结果')
       let stopped = true
       try { await server?.stop() }

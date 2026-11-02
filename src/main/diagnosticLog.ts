@@ -5,6 +5,8 @@ import { appendFileSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { isExpectedCancellation } from '../shared/diagnostics'
+import { diagnosticContext } from './diagnosticContext'
+import { DiagnosticHistory } from './diagnosticHistory'
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warning' | 'error'
 
@@ -31,6 +33,7 @@ export interface DiagnosticEvent {
   message: string
   durationMs?: number
   project?: {
+    path?: string
     name?: string
     namespace?: string
     kind?: string
@@ -39,6 +42,7 @@ export interface DiagnosticEvent {
   }
   data?: unknown
   error?: DiagnosticError
+  trace?: { requestId: string; parentRequestId?: string; operation: string; projectPath?: string }
 }
 
 export interface DiagnosticRecordInput {
@@ -53,6 +57,7 @@ export interface DiagnosticRecordInput {
 }
 
 export interface DiagnosticJournalStatus {
+  history?: ReturnType<DiagnosticHistory['status']>
   sessionId: string
   logFile?: string
   bufferedEvents: number
@@ -170,6 +175,7 @@ export class DiagnosticJournal {
   private pendingBeforeConfigure: DiagnosticEvent[] = []
   private contextProvider: (() => DiagnosticEvent['project']) | undefined
   private lastWriteError = ''
+  private history?: DiagnosticHistory
 
   constructor(options: DiagnosticJournalOptions = {}) {
     this.maxFileBytes = Math.max(256 * 1024, options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES)
@@ -177,11 +183,12 @@ export class DiagnosticJournal {
     this.maxPendingBytes = Math.max(64 * 1024, options.maxPendingBytes ?? 4 * 1024 * 1024)
   }
 
-  configure(directory: string, contextProvider?: () => DiagnosticEvent['project']): void {
+  configure(directory: string, contextProvider?: () => DiagnosticEvent['project'], retainHistory = true): void {
     this.directory = path.resolve(directory)
     this.currentFile = path.join(this.directory, 'diagnostic-events.jsonl')
     this.previousFile = path.join(this.directory, 'diagnostic-events.previous.jsonl')
     this.criticalFile = path.join(this.directory, 'diagnostic-critical.jsonl')
+    this.history = retainHistory ? new DiagnosticHistory(path.join(this.directory, 'diagnostic-history')) : undefined
     this.contextProvider = contextProvider
     const pending = this.pendingBeforeConfigure.splice(0)
     for (const event of pending) {
@@ -220,6 +227,7 @@ export class DiagnosticJournal {
   }
 
   private writeCritical(event: DiagnosticEvent): void {
+    this.history?.record(event)
     const line = `${JSON.stringify(event)}\n`
     try {
       mkdirSync(this.directory, { recursive: true })
@@ -286,6 +294,13 @@ export class DiagnosticJournal {
       ...(input.data !== undefined ? { data } : {}),
       ...(error ? { error } : {})
     }
+    const trace = diagnosticContext.getStore()
+    if (trace) {
+      event.trace = { ...trace }
+      if (trace.projectPath && trace.projectPath !== event.project?.path) event.project = { path: trace.projectPath }
+    }
+    const explicitProject = input.data && typeof input.data === 'object' && 'projectPath' in input.data ? input.data.projectPath : undefined
+    if (typeof explicitProject === 'string' && explicitProject && explicitProject !== event.project?.path) event.project = { path: boundedText(explicitProject, 4096) }
     return event
   }
 
@@ -301,6 +316,7 @@ export class DiagnosticJournal {
   status(): DiagnosticJournalStatus {
     return {
       sessionId: this.sessionId,
+      history: this.history?.status(),
       ...(this.currentFile ? { logFile: this.currentFile } : {}),
       bufferedEvents: this.buffered.length,
       ...(this.criticalFile ? { criticalFile: this.criticalFile } : {}),

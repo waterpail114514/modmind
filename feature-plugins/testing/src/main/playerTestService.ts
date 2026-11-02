@@ -1,35 +1,42 @@
+import type { BackgroundMinecraftTestService } from './backgroundMinecraftTestService'
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ProjectInfo } from "../../../../src/shared/types"
-import type { LocalServerManager } from "./localServerService"
-import type { HeadlessMcService } from "./headlessMcService"
-import { MinecraftRuntimeManager } from "./minecraftRuntime"
-import { CreationFeedbackService } from "../../../../src/main/creationFeedbackService"
-import { TestClientSession } from "./testClientSession"
-import { SerialState } from "../../../../src/main/liveConfiguration"
-import { specificsFor, installTestSpecifics } from "./testSpecifics"
-import { sameProjectPath } from "../../../../src/main/projectPath"
-import type { NativeMinecraftTestService } from "./nativeMinecraftTestService"
+import type { ProjectInfo } from '../../../../src/shared/types'
+import type { LocalServerManager } from './localServerService'
+import type { HeadlessMcService } from './headlessMcService'
+import { MinecraftRuntimeManager } from './minecraftRuntime'
+import { CreationFeedbackService } from '../../../../src/main/creationFeedbackService'
+import { TestClientSession } from './testClientSession'
+import { SerialState } from '../../../../src/main/liveConfiguration'
+import { specificsFor, installTestSpecifics } from './testSpecifics'
+import { sameProjectPath } from '../../../../src/main/projectPath'
+import type { NativeMinecraftTestService } from './nativeMinecraftTestService'
+import { OwnedTestPreparation } from '../../../../src/main/ownedTestPreparation'
 
 export class PlayerTestService {
-  isBusy(): boolean { return Boolean(this.session || this.controller || this.stopping || this.dependencies.native?.isBusy()) }
+  private preparation = new OwnedTestPreparation()
+  isBusy(): boolean { return Boolean(this.preparation.running || this.session || this.controller || this.stopping || this.dependencies.native?.isBusy() || this.dependencies.background?.isBusy()) }
   private session?: { id: string; project: ProjectInfo; username: string; directory: string; mode: 'headless' | 'rendered'; joined: boolean; serverOwned: boolean; operatorBefore?: boolean; serverRoot?: string; operatorChanged?: boolean; serverId?: string; buildId?: string }
   private client = new TestClientSession()
   private lane = new SerialState()
   private controller?: AbortController
   private stopping?: Promise<void>
-  async stopNativeForSignal(signal: AbortSignal): Promise<void> { await this.dependencies.native?.stopForSignal(signal) }
+  assertReadyForSignal(signal: AbortSignal): void { this.preparation.assertReadyForSignal(signal); this.dependencies.native?.assertReadyForSignal(signal); this.dependencies.background?.assertReadyForSignal(signal) }
+  async stopNativeForSignal(signal: AbortSignal): Promise<void> { await this.dependencies.native?.stopForSignal(signal); await this.dependencies.background?.stopForSignal(signal); if (this.preparation.owns(signal)) await this.stop() }
   async projectChanged(projectPath?: string): Promise<void> {
     await this.dependencies.native?.projectChanged(projectPath)
-    if (this.session && (!projectPath || !sameProjectPath(projectPath, this.session.project.path))) await this.stop()
+    await this.dependencies.background?.projectChanged(projectPath)
+    if ((this.session || this.preparation.id) && !this.preparation.belongsTo(projectPath)) await this.stop()
   }
-  constructor(private dependencies: { server: () => LocalServerManager; headless: () => HeadlessMcService; currentProject: () => ProjectInfo | null; javaPreferences: () => Promise<import("../../../../src/shared/types").AgentSettings['javaPreferences']>; onEvent?: (event: import("../../../../src/shared/minecraft").MinecraftRuntimeEvent) => void; native?: NativeMinecraftTestService }) {}
+  constructor(private dependencies: { server: () => LocalServerManager; headless: () => HeadlessMcService; currentProject: () => ProjectInfo | null; javaPreferences: () => Promise<import('../../../../src/shared/types').AgentSettings['javaPreferences']>; onEvent?: (event: import('../../../../src/shared/minecraft').MinecraftRuntimeEvent) => void; native?: NativeMinecraftTestService; background?: BackgroundMinecraftTestService }) {}
   async stop(): Promise<void> {
     if (this.stopping) return this.stopping
+    this.preparation.cancel()
     this.controller?.abort()
+    const backgroundStop = this.dependencies.background?.stop().then(() => undefined, error => error as Error)
     const nativeStop = this.dependencies.native?.stop().then(() => undefined, error => error as Error)
-    const request = this.lane.run(async () => { const failure = await nativeStop; await this.cleanup(); if (failure) throw failure })
+    const request = this.lane.run(async () => { const failures = await Promise.all([nativeStop, backgroundStop]); await this.cleanup(); const failure = failures.find(Boolean); if (failure) throw failure })
     this.stopping = request
     try { await request } finally { this.stopping = undefined }
   }
@@ -51,10 +58,35 @@ export class PlayerTestService {
     this.session = undefined
   }
   execute(project: ProjectInfo, category: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (category === 'session' && input.operation === 'start' && input.backend === 'legacy' && this.dependencies.background?.isBusy()) return Promise.reject(new Error('请先停止后台会话后更换后端'))
+    if (this.dependencies.background && input.backend !== 'legacy') {
+      const background = this.dependencies.background
+      const request = category === 'session' && (input.operation === 'capabilities' || input.operation === 'start' && input.mode === 'rendered')
+      if (request || category === 'session' && ['state', 'stop'].includes(String(input.operation)) && background.isBusy() || input.sessionId && background.hasSession(input.sessionId)) {
+        if (input.operation === 'start' && (this.session || this.dependencies.native?.isBusy())) return Promise.reject(new Error('请先停止现有测试会话后更换后端'))
+        return background.execute(project, category, input, signal)
+      }
+    }
     if ((project.kind ?? 'mod') === 'mod' && this.dependencies.native) return this.dependencies.native.execute(project, category, input, signal)
+    if (!sameProjectPath(this.dependencies.currentProject()?.path ?? '', project.path)) return Promise.reject(new Error('玩家测试仅操作当前项目'))
+    if (category === 'session' && ['start', 'state'].includes(String(input.operation))) {
+      if (input.operation === 'start') {
+        if (this.stopping) return Promise.reject(new Error('测试正在停止，请等待完成'))
+        if (!['server-plugin', 'modpack'].includes(project.kind ?? '') || project.loader === 'velocity') return Promise.reject(new Error('当前项目不支持自动测试服拓扑'))
+        if (!['rendered', 'headless'].includes(String(input.mode))) return Promise.reject(new Error('mode 必须是 headless 或 rendered'))
+        if (input.hidden === true) return Promise.reject(new Error('当前尚未验证后台真实渲染'))
+        if (input.readyTimeoutMs !== undefined && (typeof input.readyTimeoutMs !== 'number' || !Number.isInteger(input.readyTimeoutMs) || input.readyTimeoutMs < 30000 || input.readyTimeoutMs > 900000)) return Promise.reject(new Error('readyTimeoutMs 需要在 30000–900000 之间'))
+        if (input.offline !== true && !/^[A-Za-z0-9_]{3,16}$/.test(String(input.username ?? ''))) return Promise.reject(new Error('正版测试需要提供已登录账号的玩家名'))
+        if (!specificsFor(project.minecraftVersion, project.kind === 'server-plugin' ? 'fabric' : project.loader)) return Promise.reject(new Error('未收录可校验的控制插件组合'))
+      }
+      return this.preparation.invoke(project, input, signal, (id, preparationSignal) => this.lane.run(() => this.start(project, input, preparationSignal, id) as Promise<object>), () => ({ ...(this.session ? { ...this.session, project: undefined } : {}), running: this.client.isRunning(), capabilities: this.client.capabilities() }))
+    }
     if (category === 'session' && input.operation === 'stop') {
-      if (this.session && (!sameProjectPath(this.session.project.path, project.path) || input.sessionId !== this.session.id)) return Promise.reject(new Error('测试会话不匹配'))
-      return this.stop().then(() => ({ stopped: true }))
+      if (input.sessionId && input.sessionId !== (this.session?.id ?? this.preparation.id)) return Promise.reject(new Error('测试会话不匹配'))
+      const preparing = this.preparation.running
+      const stopped = this.stop()
+      if (preparing) { void stopped.catch(() => undefined); return Promise.resolve({ status: 'cancelling', stopped: false }) }
+      return stopped.then(() => ({ status: 'stopped', stopped: true }))
     }
     return this.lane.run(async () => {
       signal?.throwIfAborted()
@@ -120,13 +152,14 @@ export class PlayerTestService {
       throw new Error('不支持的测试操作')
     })
   }
-  private async start(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  private async start(project: ProjectInfo, input: Record<string, unknown>, signal?: AbortSignal, taskId?: string): Promise<unknown> {
+    signal?.throwIfAborted()
     if (this.session) throw new Error(`测试会话 ${this.session.id} 尚未结束，请先停止；不会重复启动`)
     if (!['server-plugin', 'modpack'].includes(project.kind ?? '')) throw new Error('玩家测试需要服务端插件或整合包测试服')
     if (project.loader === 'velocity') throw new Error('Velocity 需要配置后端世界服，暂不自动创建代理拓扑')
     if (input.mode !== 'headless' && input.mode !== 'rendered') throw new Error('mode 必须是 headless 或 rendered')
     if (input.hidden === true) throw new Error('当前尚未验证后台真实渲染；请使用 headless 逻辑测试或 rendered 可见客户端')
-    const id = randomUUID(); const username = input.offline === true ? `ModMind_${id.slice(0, 6)}` : String(input.username ?? '')
+    const id = taskId ?? randomUUID(); const username = input.offline === true ? `ModMind_${id.slice(0, 6)}` : String(input.username ?? '')
     if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) throw new Error('正版测试需要提供已登录账号的玩家名')
     const entry = specificsFor(project.minecraftVersion, project.kind === 'server-plugin' ? 'fabric' : project.loader)
     if (!entry) throw new Error('未收录可校验的控制插件组合；不会拿相近版本代替')
@@ -173,14 +206,14 @@ export class PlayerTestService {
       this.session.operatorBefore = ops.some(op => op.name.toLowerCase() === username.toLowerCase())
       this.session.serverRoot = serverRoot
       const logBefore = (await fs.stat(state.logPath)).size
-      await this.client.start({ javaPath: prepared.javaPath, launcherPath: await this.dependencies.headless().ensureLauncher(combined), profile: prepared.loaderVersionId, minecraftRoot: runtime.managedMinecraftDirectory(), gameDirectory: game, mode: input.mode, username, offline: input.offline === true, inventorySupported: entry.inventory, keysSupported: entry.key }, combined)
+      await this.client.start({ javaPath: prepared.javaPath, launcherPath: await this.dependencies.headless().ensureLauncher(combined), profile: prepared.loaderVersionId, minecraftRoot: runtime.managedMinecraftDirectory(), gameDirectory: game, mode: input.mode, username, offline: input.offline === true, inventorySupported: entry.inventory, keysSupported: entry.key, readyTimeoutMs: input.readyTimeoutMs as number | undefined }, combined)
       await this.client.connect(state.port, combined)
       const deadline = Date.now() + 30000
       while (Date.now() < deadline) {
         combined?.throwIfAborted()
         const handle = await fs.open(state.logPath, 'r')
         let text = ''
-        try { const buffer = Buffer.alloc(256 * 1024); const { bytesRead } = await handle.read(buffer, 0, buffer.length, logBefore); text = buffer.subarray(0, bytesRead).toString('utf8') } finally { await handle.close() }
+        try { const stat = await handle.stat(); const buffer = Buffer.alloc(256 * 1024); const { bytesRead } = await handle.read(buffer, 0, buffer.length, Math.max(logBefore, stat.size - buffer.length)); text = buffer.subarray(0, bytesRead).toString('utf8') } finally { await handle.close() }
         if (new RegExp(`${username}.*(?:joined the game|logged in with entity id)`).test(text)) { this.session.joined = true; break }
         await new Promise(resolve => setTimeout(resolve, 250))
       }

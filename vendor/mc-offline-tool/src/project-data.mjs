@@ -27,7 +27,7 @@ export function selectedData(project) {
   let key
   try { key = fs.readFileSync(active, 'utf8').trim() } catch (error) {
     if (error.code !== 'ENOENT') throw error
-    throw new Error('当前项目还没有采集数据，请先在「游戏数据采集」中选择本地游戏实例并采集，再返回预览')
+    throw new Error('当前项目尚未选择本地方块资源，请在预览中的「方块资源」或物品选择器的「资源来源」中选择游戏实例')
   }
   packKey(key)
   return projectDataPath(project, `packs/${key}`)

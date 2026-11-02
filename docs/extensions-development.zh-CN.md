@@ -40,6 +40,37 @@ ModMind 的原生扩展分为功能包 `.mmfeature` 和领域工作台包 `.mmst
 
 三个基础工作台 `studio-mod`、`studio-modpack`、`studio-server-plugin` 随软件内置，只随主程序更新，不能停用、卸载或作为商店包替换。自定义工作台和其他功能包按需安装。
 
+## 仓库内功能的本地实时加载
+
+在源码仓库根目录执行：
+
+```sh
+npm run dev:features -- --only=image-studio
+```
+
+这条命令构建选中的功能及其声明依赖，启动完整桌面应用，并监听功能源码、引用的共享模块与资源目录。保存 `.ts`、`.tsx`、CSS、资源或清单后，自动构建并通过现有插件服务校验、更新与加载；按文件内容指纹刷新界面，所以无需递增版本号。不会经过对象存储上传或功能商店下载。内置三个工作台仍由主程序开发启动流程准备，不使用此替换入口。
+
+开发多个功能使用 `--only=image-studio,resource-packs`，省略 `--only` 构建全部可选功能。增加或删除清单依赖后重新启动命令，以刷新监听范围。只构建监听而不启动窗口可加 `--watch-only`；它只供另一条已经配置本地开发模式的宿主或自动化验收使用，不会自动改变普通 `npm run dev` 会话。
+
+开发数据位于 `node_modules/.cache/modmind-feature-dev/profile/`，本地构建和就绪索引位于同级 `build/`、`packages/`、`ready.json`。开发配置与普通配置隔离，首次需要重新登录、设置外观并打开测试项目；之后会保留开发配置及项目记录。不要把 `.cache` 当长期备份，重要画布和项目仍应自行保存或导出。
+
+更新沿用原有 schema、文件哈希、权限、项目范围和原子替换流程。插件调用、游戏测试或工作台任务运行时等待结束后加载；构建失败、包损坏或激活失败保留上一版并在终端显示原因，修复后继续保存即可重试。新界面会重新挂载，已经写盘的项目与画布保留；未保存的页面局部状态不承诺保留。修改主程序接口时，electron-vite 的主进程监听会重启桌面进程。
+
+开发加载只对非打包宿主生效。`npm run dev` 与正式发行版仍沿用现有功能安装流程，开发命令不会替换正式配置中的插件。退出开发应用或在终端按 Ctrl+C 会结束监听与开发子进程。
+
+实现复用现有插件构建器、FeaturePluginService、回退和 `feature-plugins:changed` 通知，使用 Node 内置文件监听与已有 esbuild；不引入新的插件框架或运行依赖。每个功能保留至多三个完整开发包。这个能力是仓库开发基础设施，不新增工作台业务 MCP 工具；已有工具通过同一服务更新后继续使用。
+
+验收命令：
+
+```sh
+node --test scripts/dev-features.test.mjs
+node node_modules/vitest/vitest.mjs run src/main/featureDevelopment.test.ts src/main/featureDevelopmentEnvironment.test.ts src/main/featurePluginService.test.ts
+node scripts/feature-development-watch-smoke.mjs
+node scripts/feature-development-smoke.mjs
+```
+
+监听验收使用临时源码功能，覆盖保存重建、同版本更新、编译失败不发布和修复恢复；Electron 验收通过真实插件服务与前端加载器验证 JS、CSS、后端动作共同切换，以及激活失败回退。结果位于 `test-results/feature-development/`。
+
 ## 源码与维护文档
 
 | 查什么 | 来源 |

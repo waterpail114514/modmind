@@ -184,6 +184,50 @@ describe('add-on relationship service', () => {
     await expect(fs.access(path.join(project.path, 'libs', 'modmind', 'one.jar'))).rejects.toThrow()
   })
 
+  it('installs a Forge test relationship when Gradle contains quoted comments and example braces', async () => {
+    const project = { ...await projectFixture(), loader: 'forge' as const, minecraftVersion: '1.20.1' }
+    const source = [
+      "plugins { id 'net.minecraftforge.gradle' version '6.0.+' }",
+      'dependencies {',
+      "    // Don't remove the Minecraft dependency; example dependencies {",
+      '    minecraft "net.minecraftforge:forge:1.20.1-47.3.0"',
+      '}',
+      ''
+    ].join('\n')
+    await fs.writeFile(path.join(project.path, 'build.gradle'), source)
+    const descriptorPath = path.join(project.path, 'src', 'main', 'resources', 'META-INF', 'mods.toml')
+    const descriptor = 'modLoader="javafml"\nloaderVersion="[47,)"\nlicense="MIT"\n[[mods]]\nmodId="addon"\nversion="1.0.0"\n'
+    await fs.mkdir(path.dirname(descriptorPath), { recursive: true })
+    await fs.writeFile(descriptorPath, descriptor)
+    const jar = path.join(project.path, 'curios-source.jar')
+    await fs.writeFile(jar, createStoredZip([
+      { name: 'META-INF/mods.toml', data: Buffer.from('[[mods]]\nmodId="curios"\ndisplayName="Curios API"\nversion="5.14.1+1.20.1"\n') },
+      { name: 'top/theillusivec4/curios/api/CuriosApi.class', data: Buffer.from([0xca, 0xfe, 0xba, 0xbe]) }
+    ]))
+    const file: ModFile = { provider: 'modrinth', projectId: 'curios', versionId: 'curios-v1', versionName: '5.14.1+1.20.1', filename: 'curios.jar', primary: true, side: 'both', sources: [] }
+    const imported: string[] = []
+    const service = new AddonRelationshipService({
+      getProject: () => project,
+      registry: () => registry({ curios: { candidate: candidate('curios', 'Curios API'), file, source: jar } }),
+      cacheRoot: path.join(project.path, '.cache'),
+      importRuntime: async (target) => { imported.push(path.basename(target)) },
+      removeRuntime: async () => undefined,
+      readProject: async () => null
+    })
+    const manifest = await service.installPlatform({ provider: 'modrinth', projectId: 'curios', versionId: 'curios-v1', role: 'test' })
+    expect(manifest.relationships).toHaveLength(1)
+    expect(manifest.relationships[0]).toMatchObject({ primaryModId: 'curios', role: 'test', version: '5.14.1+1.20.1' })
+    expect(imported).toEqual(['curios.jar'])
+    const gradle = await fs.readFile(path.join(project.path, 'build.gradle'), 'utf8')
+    expect(gradle).toContain("implementation fg.deobf(files('libs/modmind/curios.jar'))")
+    expect(gradle).toContain("// Don't remove the Minecraft dependency; example dependencies {")
+    await expect(fs.readFile(descriptorPath, 'utf8')).resolves.toBe(descriptor)
+    await expect(service.audit()).resolves.toMatchObject({ success: true })
+    await service.remove(manifest.relationships[0].id)
+    expect(await fs.readFile(path.join(project.path, 'build.gradle'), 'utf8')).not.toContain('MODMIND DEPENDENCIES')
+    await expect(fs.access(path.join(project.path, 'libs', 'modmind', 'curios.jar'))).rejects.toThrow()
+  })
+
   it('links another ModMind project together with that project\'s required runtime dependency', async () => {
     const project = await projectFixture()
     const target = await projectFixture()

@@ -98,15 +98,21 @@ try {
   await page.locator('.modpack-mod-list-page').waitFor()
   await page.screenshot({ path: path.join(run, 'import-complete.png') })
   const exportedPath = path.join(run, 'roundtrip.mrpack')
+  await page.evaluate(async () => window.modmind.production.release.saveSettings({ ...await window.modmind.production.release.getSettings(), modpackExportMode: 'download' }))
   await app.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }) }, exportedPath)
   assert.equal(await page.evaluate(() => window.modmind.project.exportArtifact()), exportedPath)
   const exportedRoot = path.join(run, 'roundtrip')
   await extractZip(exportedPath, { dir: exportedRoot })
   const exportedIndex = JSON.parse(await readFile(path.join(exportedRoot, 'modrinth.index.json'), 'utf8'))
-  assert.equal(exportedIndex.files.length, 50)
+  assert.equal(exportedIndex.files.length, 0, 'the default full pack embeds downloaded files')
   for (const file of index.files) {
-    const exportedFile = exportedIndex.files.find(item => item.path === file.path)
-    assert.deepEqual(exportedFile, file, file.path)
+    let embedded
+    for (const prefix of ['overrides', 'client-overrides', 'server-overrides']) {
+      embedded = await readFile(path.join(exportedRoot, prefix, file.path)).catch(() => undefined)
+      if (embedded) break
+    }
+    assert.ok(embedded, file.path)
+    for (const [algorithm, digest] of Object.entries(file.hashes)) assert.equal(createHash(algorithm).update(embedded).digest('hex'), digest, file.path)
   }
   for (const file of overrides) assert.deepEqual(await readFile(path.join(exportedRoot, 'overrides', file)), await readFile(path.join(original, 'overrides', file)), file)
   const report = { project, manifest, verifiedRemoteFiles: checks, verifiedOverrides: overrides, archiveIdentity, audit, sync, exportedPath, exportedRemoteFiles: exportedIndex.files.length, errors, progress }

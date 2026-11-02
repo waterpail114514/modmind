@@ -1,16 +1,15 @@
-import { Archive, Code2, FileCog, FolderOpen, Save, ServerCog, SlidersHorizontal, Sparkles, WandSparkles } from 'lucide-react'
+import { Code2, FileCog, FileJson, FolderOpen, Globe2, LayoutTemplate, ListTree, ServerCog, SlidersHorizontal, Sparkles } from 'lucide-react'
 import ModpackContentWorkspace from './components/ModpackContentWorkspace'
 import ModpackKeybindWorkspace from './components/ModpackKeybindWorkspace'
 import { modpack, registerFeature, type FeaturePageContext } from '../sdk/renderer'
 import type { FeaturePageDefinition } from '../../src/renderer/src/featurePluginTypes'
 const definitions = [
-  ['modpack-manifest', '文件清单', 'other', Archive],
+  ['modpack-manifest', '文件清单', 'other', ListTree],
   ['modpack-config', '配置与默认项', 'config', FileCog],
   ['modpack-scripts', '脚本与 KubeJS', 'scripts', Code2],
-  ['modpack-datapacks', '数据包', 'datapacks', Archive],
   ['modpack-shaders', '光影包', 'shaderpacks', Sparkles],
-  ['modpack-ui', '界面资源', 'ui', WandSparkles],
-  ['modpack-worlds', '存档与世界', 'worlds', Save],
+  ['modpack-ui', '界面资源', 'ui', LayoutTemplate],
+  ['modpack-worlds', '存档与世界', 'worlds', Globe2],
   ['modpack-server-content', '服务端配置', 'server', ServerCog],
   ['modpack-files', '文件工作台', 'other', FolderOpen]
 ] as const

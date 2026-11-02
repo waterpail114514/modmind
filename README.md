@@ -16,12 +16,21 @@ AI 辅助开发 · 模组与整合包 · 资源创作 · 游戏测试
 
 ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感台整理想法，再让 AI 协助编写代码、制作资源、处理依赖，并在项目中构建和测试。编辑器、对话、图片、模型、整合包和服务端工具都集中在同一个工作区。
 
-### 1.4.12 更新
+## 2.0.0-preview.1
 
-- 改进模型上下文、自动整理和思考强度设置。
-- 优化额度模型偏好、Agent 工具准备状态和工作台配置。
-- 完善扩展准备与设置界面。
-- 移除 Herobrine。
+主线进入 2.0 预览系列：功能包、可扩展工作台和内置开发者工作台统一交付；基础模组、整合包和服务端插件工作台随客户端提供，其他能力按需安装。新增数据包编辑、后台游戏测试、图像无限画布，并改进长会话读取、诊断与构建恢复。
+
+本次提供 Windows x64 安装包。macOS 当前请使用 1.4 维护版；预览版不替代稳定维护版。
+
+## 版本与仓库
+
+| 版本线 | 仓库 | 下载 |
+| --- | --- | --- |
+| 桌面 2.0 预览版 | [modmind](https://github.com/waterpail114514/modmind) | [2.0.0-preview.1](https://github.com/waterpail114514/modmind/releases/tag/2.0.0-preview.1) |
+| 桌面 1.4 维护版 | [modmind-1.4](https://github.com/waterpail114514/modmind-1.4) | [最新维护版](https://github.com/waterpail114514/modmind-1.4/releases/latest) |
+| Android 独立版 | [modmind-mobile](https://github.com/waterpail114514/modmind-mobile) | [1.0.0-preview.1](https://github.com/waterpail114514/modmind-mobile/releases/tag/1.0.0-preview.1) |
+
+三个仓库保留各自开发历史。Android 独立版源码位于 `android-mobile/`，与桌面仓库中的 `android-twa/` 网页壳不同。
 
 ## 开始使用
 
@@ -32,8 +41,8 @@ ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感�
 | 你的设备 | 选择的安装包 |
 | --- | --- |
 | Windows 10 及以上（x64） | `ModMind-Setup-<版本>.exe` |
-| Mac · Apple Silicon（M 系列） | 文件名包含 `arm64` 的 `.dmg` 或 `.zip` |
-| Mac · Intel | 文件名包含 `x64` 的 `.dmg` 或 `.zip` |
+| Mac · Apple Silicon（M 系列） | [1.4 维护版](https://github.com/waterpail114514/modmind-1.4/releases/latest)的 `arm64` 包 |
+| Mac · Intel | [1.4 维护版](https://github.com/waterpail114514/modmind-1.4/releases/latest)的 `x64` 包 |
 
 macOS 最低版本按当前构建配置为 **macOS 13**。Linux 提供源码构建命令，是否有预构建下载请以对应 Release 的附件为准。
 
@@ -84,6 +93,14 @@ cd modmind
 npm ci
 npm run dev
 ```
+
+修改仓库内功能插件时，可用本地实时加载模式，无需上传或从功能商店重新下载：
+
+```sh
+npm run dev:features -- --only=image-studio
+```
+
+保存插件源码后会自动构建并刷新对应界面与后端；版本号不变也会生效。逗号分隔可开发多个功能，例如 `--only=image-studio,resource-packs`；省略 `--only` 则构建全部可选功能。运行任务期间延后加载，构建失败保留上一版。使用独立开发配置，首次需要重新登录并打开测试项目；热更新会重建插件界面，未保存的页面状态可能重置。详见[本地功能开发流程](docs/extensions-development.zh-CN.md#仓库内功能的本地实时加载)。
 
 ### 检查与测试
 

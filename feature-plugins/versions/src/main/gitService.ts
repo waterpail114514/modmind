@@ -4,6 +4,9 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import type { GitCommitInput, GitRemote, GitStatus } from '../../../../src/shared/production'
 import type { ProjectInfo } from '../../../../src/shared/types'
+import { diagnosticJournal } from '../../../../src/main/diagnosticLog'
+import { diagnosticValue } from '../../../../src/main/diagnosticContext'
+import { randomUUID } from 'node:crypto'
 
 const execFileAsync = promisify(execFile)
 const MAX_OUTPUT = 2 * 1024 * 1024
@@ -21,18 +24,23 @@ export async function assertGitRepositoryRoot(projectRoot: string, repositoryRoo
 }
 
 async function git(cwd: string, args: string[], allowFailure = false): Promise<{ stdout: string; stderr: string; code: number }> {
+  const started = Date.now(), requestId = randomUUID()
+  const input = { projectPath: cwd, requestId, command: args[0], arguments: args.map((value, index) => diagnosticValue(value, index && ['-m', '--message'].includes(args[index - 1]) ? 'content' : /:\/\//.test(value) ? 'url' : 'path')) }
+  diagnosticJournal.record({ subsystem: 'git', operation: args[0] ?? 'command', phase: 'start', message: 'Git command started', data: input })
+  try {
   if (args[0] !== '--version') {
     const root = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd, windowsHide: true, maxBuffer: MAX_OUTPUT, encoding: 'utf8' }).catch(() => null)
     if (root) await assertGitRepositoryRoot(cwd, root.stdout)
   }
-  try {
     const result = await execFileAsync('git', args, { cwd, windowsHide: true, maxBuffer: MAX_OUTPUT, encoding: 'utf8' })
+    diagnosticJournal.record({ subsystem: 'git', operation: args[0], phase: 'complete', message: 'Git command completed', durationMs: Date.now() - started, data: { ...input, exitCode: 0, stderr: result.stderr, stdout: diagnosticValue(result.stdout, args.includes('--porcelain') || args.some(arg => arg.startsWith('--porcelain=')) ? 'message' : 'content') } })
     return { stdout: result.stdout, stderr: result.stderr, code: 0 }
   } catch (error) {
     const value = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number | string }
+    diagnosticJournal.record({ subsystem: 'git', operation: args[0], phase: 'error', level: allowFailure ? 'warning' : 'error', message: 'Git command failed', durationMs: Date.now() - started, data: { ...input, exitCode: value.code, stderr: value.stderr }, error })
     if (allowFailure) return { stdout: value.stdout ?? '', stderr: value.stderr ?? value.message, code: typeof value.code === 'number' ? value.code : 1 }
-    if (value.code === 'ENOENT') throw new Error('未检测到 Git，请先安装 Git')
-    throw new Error((value.stderr || value.message || 'Git 命令失败').trim())
+    if (value.code === 'ENOENT') throw new Error('未检测到 Git，请先安装 Git', { cause: error })
+    throw new Error((value.stderr || value.message || 'Git 命令失败').trim(), { cause: error })
   }
 }
 

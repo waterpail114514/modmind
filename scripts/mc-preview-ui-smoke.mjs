@@ -1,0 +1,221 @@
+import { promises as fs, createWriteStream } from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import assert from 'node:assert/strict'
+import { build } from 'esbuild'
+import { encodeRGBA } from '../vendor/mc-offline-tool/src/png.mjs'
+import { writeSchem, toApiJson } from '../vendor/mc-offline-tool/preview/api.mjs'
+import { readBuildFile } from '../vendor/mc-offline-tool/src/schem-reader.mjs'
+import { spawn } from 'node:child_process'
+import { createInterface } from 'node:readline'
+import { checkEmptyNavigation, checkSurfaceNavigation } from './fixtures/mc-preview-navigation-checks.mjs'
+
+// Browser plugin bootstrap is unavailable on this host. Exercise the desktop
+// feature in an isolated Electron profile with real FeaturePluginService IPC.
+const require=createRequire(import.meta.url),{_electron:electron}=require('playwright'),archiver=require('archiver')
+const root=path.resolve(import.meta.dirname,'..'),work=path.join(root,'test-results','mc-preview-ui',String(Date.now()))
+const realInstance=process.argv.find(argument=>argument.startsWith('--real-instance='))?.slice(16)
+const navigationOnly=process.argv.includes('--navigation-only')
+await fs.mkdir(work,{recursive:true})
+const project=path.join(work,'project'),other=path.join(work,'other-project'),instance=path.join(work,'minecraft','versions','fixture')
+const projectInfo={name:'建筑工作区验收',kind:'mod',loader:'fabric',studioId:'minecraft-mod',minecraftVersion:'1.20.1',namespace:'qa',createdAt:new Date().toISOString()}
+for(const target of [project,other]){await fs.mkdir(target,{recursive:true});await fs.writeFile(path.join(target,'modmind.project.json'),JSON.stringify({...projectInfo,path:target}))}
+await fs.mkdir(path.join(instance,'mods'),{recursive:true})
+const faces=Object.fromEntries(['up','down','north','south','east','west'].map(face=>[face,{texture:'#all'}]))
+const entries={'version.json':JSON.stringify({id:'1.20.1',world_version:3465}),'assets/fixture/lang/zh_cn.json':JSON.stringify(Object.fromEntries(Array.from({length:110},(_,i)=>['block.fixture.cube_'+i,'测试方块 '+i])))}
+for(let n=0;n<110;n++) {
+  const rgba=Buffer.alloc(16*16*4)
+  for(let i=0;i<rgba.length;i+=4){const checker=((i/4)%16+Math.floor(i/64))%4<2;rgba[i]=checker?74+(n*23)%130:45;rgba[i+1]=checker?130:70;rgba[i+2]=checker?86+(n*11)%110:54;rgba[i+3]=255}
+  entries[`assets/fixture/blockstates/cube_${n}.json`]=JSON.stringify({variants:{'':{model:`fixture:block/cube_${n}`}}})
+  entries[`assets/fixture/models/block/cube_${n}.json`]=JSON.stringify({textures:{all:`fixture:block/cube_${n}`},elements:[{from:[0,0,0],to:[16,16,16],faces}]})
+  entries[`assets/fixture/textures/block/cube_${n}.png`]=encodeRGBA(16,16,rgba)
+}
+await new Promise((resolve,reject)=>{const out=createWriteStream(path.join(instance,'fixture.jar')),zip=archiver('zip');out.on('close',resolve);out.on('error',reject);zip.on('error',reject);zip.pipe(out);for(const [name,data] of Object.entries(entries))zip.append(data,{name});void zip.finalize().catch(reject)})
+await fs.writeFile(path.join(instance,'fixture.json'),JSON.stringify({id:'fixture',inheritsFrom:'1.20.1'}))
+const house={name:'验收小屋',dataVersion:3465,size:[14,11,12],palette:[{Name:'fixture:cube_0',Properties:{}},{Name:'fixture:cube_3',Properties:{}},{Name:'fixture:cube_9',Properties:{}}],blocks:[]}
+for(let x=1;x<13;x++)for(let z=1;z<11;z++)for(let y=0;y<6;y++){
+  if(y===0 || ((x===1||x===12||z===1||z===10) && !(z===1&&x>=6&&x<=7&&y<4) && !(y===3&&((z===1||z===10)&&x>=3&&x<=4))))house.blocks.push({pos:[x,y,z],state:y===0?0:1})
+}
+for(let y=6;y<10;y++){const inset=y-6;for(let x=1+inset;x<=12-inset;x++)for(let z=0;z<12;z++)if(x===1+inset||x===12-inset)house.blocks.push({pos:[x,y,z],state:2})}
+await fs.writeFile(path.join(work,'house.schem'),writeSchem(house));await fs.writeFile(path.join(work,'broken.schem'),Buffer.from('broken input'))
+await fs.writeFile(path.join(work,'missing.schem'),writeSchem({...house,name:'缺资源建筑',palette:[{Name:'unavailable:block',Properties:{}},...house.palette.slice(1)]}))
+const entry=path.join(work,'service.ts')
+await fs.writeFile(entry,`export {FeaturePluginService,prepareFeaturePlugin} from ${JSON.stringify(path.join(root,'src/main/featurePluginService.ts').replaceAll('\\','/'))};export {ModMindBridge} from ${JSON.stringify(path.join(root,'src/main/externalAgents.ts').replaceAll('\\','/'))};export {StudioRegistry,configureStudios} from ${JSON.stringify(path.join(root,'src/main/studioRegistry.ts').replaceAll('\\','/'))}`)
+await build({entryPoints:[entry],outfile:path.join(work,'service.cjs'),bundle:true,platform:'node',format:'cjs',define:{'import.meta.url':JSON.stringify(pathToFileURL(path.join(root,'src/main/externalAgents.ts')).href)},external:['electron','sharp','ffmpeg-static','7zip-bin'],logLevel:'silent'})
+await build({entryPoints:[path.join(root,'scripts/fixtures/mc-preview-ui.tsx')],outfile:path.join(work,'ui.js'),bundle:true,platform:'browser',format:'iife',jsx:'automatic',logLevel:'silent'})
+await fs.writeFile(path.join(work,'index.html'),`<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="ui.css"><style>html,body{margin:0;height:100%;overflow:hidden}.qa-shell{display:grid;height:100%;grid-template-columns:172px 1fr;grid-template-rows:36px 1fr;background:var(--theme-canvas)}.qa-title{grid-column:1/-1;background:var(--theme-panel);border-bottom:1px solid var(--theme-line);padding:8px 14px;color:var(--theme-muted);font:12px system-ui}.qa-nav{background:var(--theme-panel);border-right:1px solid var(--theme-line);padding:20px 10px;font:13px system-ui}.qa-nav div{padding:9px}.qa-nav .active{background:var(--theme-selected);color:var(--theme-accent);border-radius:6px}#workspace{height:100%;min-width:0;min-height:0;overflow:hidden}</style><div class="qa-shell"><div class="qa-title">ModMind　 /　建筑工作区验收</div><aside class="qa-nav"><div>工作台</div><div>代码</div><div>物品与装备</div><div class="active">3D 建筑预览</div><div>游戏数据采集</div></aside><main id="workspace"></main></div><script src="ui.js"></script>`)
+await fs.writeFile(path.join(work,'preload.cjs'),`const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('modmind',{featurePlugins:{invoke:(id,action,input)=>ipcRenderer.invoke('feature',id,action,input)}});contextBridge.exposeInMainWorld('qa',{rendererUrl:${JSON.stringify(pathToFileURL(path.join(root,'feature-plugin-dist/mc-preview/renderer.js')).href)},project:()=>ipcRenderer.invoke('project'),switchProject:()=>ipcRenderer.invoke('switchProject')});`)
+await fs.writeFile(path.join(work,'main.cjs'),`const {app,BrowserWindow,ipcMain,dialog}=require('electron');const path=require('path');app.setPath('userData',${JSON.stringify(path.join(work,'profile'))});app.commandLine.appendSwitch('use-angle','swiftshader');app.whenReady().then(async()=>{let project=${JSON.stringify(project)};const {FeaturePluginService,prepareFeaturePlugin}=require('./service.cjs');const info=()=>({...${JSON.stringify(projectInfo)},path:project});const service=new FeaturePluginService(${JSON.stringify(path.join(work,'plugins'))},{requireFrom:${JSON.stringify(path.join(root,'package.json'))},capabilities:{runtime:{},studioV1:true},options:()=>({}),busy:()=>false,changed:()=>{},projectRoot:()=>project,project:info});await service.initialize(['studio-mod','studio-modpack','studio-server-plugin'].map(id=>({id,directory:path.join(${JSON.stringify(root)},'resources/bundled-studios',id)})));for(const id of ['mc-pull','mc-preview'])await service.install(await prepareFeaturePlugin(path.join(${JSON.stringify(root)},'feature-plugin-dist',id+'.mmfeature')));dialog.showOpenDialog=async()=>({canceled:false,filePaths:[${JSON.stringify(instance)}]});ipcMain.handle('feature',(_,id,action,input)=>service.invoke(id,action,input,{projectPath:project,surface:'workbench'}));ipcMain.handle('project',info);ipcMain.handle('switchProject',()=>{project=project===${JSON.stringify(project)}?${JSON.stringify(other)}:${JSON.stringify(project)};return info()});const win=new BrowserWindow({width:1440,height:900,minWidth:1080,minHeight:680,show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true}});await win.loadFile(path.join(__dirname,'index.html'));});app.on('window-all-closed',()=>app.quit());`)
+let mainSource=await fs.readFile(path.join(work,'main.cjs'),'utf8')
+mainSource=mainSource.replace("ipcMain.handle('project',info);",`const {ModMindBridge,StudioRegistry,configureStudios}=require('./service.cjs');configureStudios(new StudioRegistry(()=>service.catalog(),id=>service.service(id),(id,group)=>service.assetDirectory(id,group),(id,action,input,context)=>service.invoke(id,action,input,context)));const bridge=new ModMindBridge(info(),{featureCatalog:async()=>service.catalog(),featureTools:async surface=>service.tools(surface),featureInvoke:async(id,action,input,context)=>service.invoke(id,action,input,context)},'preview-qa');globalThis.mcPreviewQaConfig=await bridge.start();app.on('before-quit',()=>bridge.stop());ipcMain.handle('project',info);`)
+mainSource=mainSource.replace('show:false,webPreferences','frame:false,show:false,webPreferences')
+mainSource=mainSource.replace('await win.loadFile',"win.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_,done)=>done({cancel:true}));await win.loadFile")
+await fs.mkdir(path.join(work,'exports'))
+mainSource=mainSource.replace("await win.loadFile",`win.webContents.session.on('will-download',(_,item)=>{item.setSavePath(path.join(${JSON.stringify(path.join(work,'exports'))},item.getFilename()));item.once('done',(_,state)=>{globalThis.mcPreviewQaDownload={state,path:item.getSavePath()}})});await win.loadFile`)
+await fs.writeFile(path.join(work,'main.cjs'),mainSource)
+const env={...process.env};delete env.ELECTRON_RUN_AS_NODE
+const app=await electron.launch({args:[path.join(work,'main.cjs')],env,cwd:root})
+const page=await app.firstWindow();page.setDefaultTimeout(20000)
+const errors=[];page.on('pageerror',error=>errors.push(error.message))
+const report={work,checks:[],errors,rendererNetwork:'HTTP/HTTPS blocked; fresh isolated profile, project and capture cache'}
+let child,reader
+const ready=()=>page.waitForFunction(()=>document.querySelector('.mcp-host')?.dataset.ready==='true')
+try {
+  await ready()
+  assert.equal(await page.locator('#err').innerText(),'')
+  assert.equal(await page.locator('#sourceEmpty').isVisible(),true)
+  await page.screenshot({path:path.join(work,'first-offline-light.png')})
+  report.checks.push('首次无资源启动，视口和就近资源入口可用')
+  await checkEmptyNavigation(page,work,report)
+  if(!navigationOnly){
+  await page.locator('#setupSource').click()
+  await page.locator('.cell').first().waitFor()
+  assert.ok(await page.locator('#ns option[value="fixture"]').count())
+  assert.equal(await page.locator('.cell').count(),48)
+  await page.getByRole('button',{name:'下一页',exact:true}).click()
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#invFoot').textContent.includes('2 /'))
+  await page.locator('#q').fill('测试方块 109')
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelectorAll('.cell').length===1)
+  await page.locator('.cell').first().click()
+  await page.locator('#q').fill('')
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelectorAll('.cell').length===48)
+  report.checks.push('本地实例采集、48 项分页、中文搜索和选择')
+  const canvas=await page.locator('#stage').boundingBox()
+  await page.mouse.click(canvas.x+canvas.width/2,canvas.y+canvas.height*.58)
+  await page.waitForFunction(()=>Number(document.querySelector('.mcp-host').shadowRoot.querySelector('#stBlocks').textContent)>0)
+  await page.locator('#saveBtn').click()
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#projSave').textContent.startsWith('已保存'))
+  let before=await page.locator('#stBlocks').innerText()
+  await page.locator('#undoBtn').click();assert.equal(await page.locator('#stBlocks').innerText(),'0')
+  await page.locator('#redoBtn').click();assert.equal(await page.locator('#stBlocks').innerText(),before)
+  const blockCenter=await page.evaluate(()=>{const app=window.__APP__,pos=app.source.getBlocks()[0].pos;return app.vp.project(pos.map(value=>value+.5))})
+  await page.locator('#m_pick').click();await page.mouse.click(...blockCenter)
+  assert.ok((await page.locator('#selLine').innerText()).includes('fixture:cube_109'))
+  await page.locator('#m_erase').click();await page.mouse.click(...blockCenter)
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#stBlocks').textContent==='0')
+  await page.locator('#undoBtn').click();assert.equal(await page.locator('#stBlocks').innerText(),before)
+  await page.locator('#projHead').click();await page.locator('#projRen').click()
+  const rename=page.getByRole('dialog',{name:'重命名建筑'});await rename.getByRole('textbox').fill('离线小屋');await rename.getByRole('button',{name:'重命名',exact:true}).click()
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#projName').textContent==='离线小屋')
+  await page.locator('#saveBtn').click()
+  await page.screenshot({path:path.join(work,'edited-light-1440.png')})
+  report.checks.push('空地放置首块、撤销重做、宿主重命名弹窗和项目文件保存')
+  await page.evaluate(()=>window.qaMount(false));await page.waitForFunction(()=>!document.querySelector('.mcp-host'))
+  await page.evaluate(()=>window.qaMount());await ready();assert.equal(await page.locator('#stBlocks').innerText(),before)
+  assert.equal(await page.locator('#projName').innerText(),'离线小屋')
+  report.checks.push('切走再返回恢复建筑和控件，不重复绑定监听')
+  await page.locator('#importInput').setInputFiles(path.join(work,'broken.schem'))
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#msg').className.includes('err'))
+  assert.equal(await page.locator('#stBlocks').innerText(),before)
+  await page.locator('#importInput').setInputFiles(path.join(work,'missing.schem'))
+  await page.locator('#resourceStatus').waitFor();assert.ok((await page.locator('#resourceStatus').innerText()).includes('不存在'))
+  await page.locator('#importInput').setInputFiles(path.join(work,'house.schem'))
+  await page.waitForFunction(count=>Number(document.querySelector('.mcp-host').shadowRoot.querySelector('#stBlocks').textContent)===count,house.blocks.length)
+  before=String(house.blocks.length)
+  await page.locator('#projHead').click();await page.locator('#projRen').click()
+  const renameHouse=page.getByRole('dialog',{name:'重命名建筑'});await renameHouse.getByRole('textbox').fill('离线小屋');await renameHouse.getByRole('button',{name:'重命名',exact:true}).click()
+  await page.locator('#saveBtn').click();await page.waitForFunction(()=>document.querySelector('.mcp-host').dataset.dirty==='false')
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').dataset.sceneReady==='true')
+  assert.equal(await page.locator('#resourceStatus').isVisible(),false)
+  await page.locator('#fileHead').click();await page.locator('#matBtn').click()
+  assert.equal(await page.locator('#dlgBody tbody tr').count(),3)
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#dlg').isVisible(),false)
+  await page.screenshot({path:path.join(work,'house-light-1440.png')})
+  const framing=await page.evaluate(()=>{const app=window.__APP__,vp=app.vp,rect=document.querySelector('.mcp-host').shadowRoot.querySelector('#stage').getBoundingClientRect(),size=app.source.getSize();const corners=[];for(const x of [0,size[0]])for(const y of [0,size[1]])for(const z of [0,size[2]])corners.push(vp.project([x,y,z]));return {corners,rect:{x:rect.x,y:rect.y,right:rect.right,bottom:rect.bottom}}})
+  assert.ok(framing.corners.every(([x,y])=>x>=framing.rect.x && x<=framing.rect.right && y>=framing.rect.y && y<=framing.rect.bottom),JSON.stringify(framing))
+  report.checks.push('损坏导入保留当前建筑，重试导入独立建筑，原件随项目保留')
+  report.checks.push('拾取、删除与撤销，缺资源时保留数据并提示，材料清单和 Esc 关闭')
+  const config=await app.evaluate(()=>globalThis.mcPreviewQaConfig)
+  child=spawn(process.execPath,[path.join(path.dirname(config.mcpConfigPath),'modmind-mcp-server.mjs')],{stdio:['pipe','pipe','ignore'],windowsHide:true})
+  reader=createInterface({input:child.stdout});let sequence=0;const pending=new Map()
+  reader.on('line',line=>{const response=JSON.parse(line);pending.get(response.id)?.(response);pending.delete(response.id)})
+  const rpc=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>reject(Error('MCP timeout')),30000);pending.set(id,result=>{clearTimeout(timer);resolve(result)});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')})
+  await rpc('initialize',{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'preview-ui-qa',version:'1'}})
+  const docs=await rpc('tools/call',{name:'modmind_mc_preview_documents',arguments:{}})
+  assert.ok(!docs.result.isError,JSON.stringify(docs));const id=await page.evaluate(()=>document.querySelector('.mcp-host').dataset.documentId)
+  const captured=await rpc('tools/call',{name:'modmind_mc_preview_capture',arguments:{id}})
+  assert.ok(!captured.result.isError,JSON.stringify(captured));const png=captured.result.content.find(item=>item.type==='image');assert.ok(png)
+  await fs.writeFile(path.join(work,'mcp-house.png'),Buffer.from(png.data,'base64'))
+  report.checks.push('真实 stdio MCP 发现和查询建筑，返回与已保存版本一致的 PNG 图片')
+  await page.locator('#fileHead').click()
+  await page.locator('#expSchem').click()
+  // Electron handles downloads through session.DownloadItem; its native download
+  // does not emit Playwright Page's browser-download event.
+  let exportedDownload
+  const downloadDeadline=Date.now()+20000
+  while(Date.now()<downloadDeadline){exportedDownload=await app.evaluate(()=>globalThis.mcPreviewQaDownload);if(exportedDownload)break;await new Promise(resolve=>setTimeout(resolve,100))}
+  assert.equal(exportedDownload?.state,'completed',JSON.stringify(exportedDownload))
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#msg').textContent.includes('已导出'))
+  if(await page.locator('#filePop').isVisible())await page.locator('#fileHead').click()
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1080,680))
+  await page.evaluate(()=>window.qaTheme('dark'))
+  await checkSurfaceNavigation(page,report,work)
+  await page.screenshot({path:path.join(work,'dark-1080.png')})
+  const rects=await page.evaluate(()=>{const root=document.querySelector('.mcp-host').shadowRoot;return [...root.querySelectorAll('#bar button:not([hidden]),#editbar>.btn,#toolGroup button')].filter(node=>node.getClientRects().length).map(node=>({id:node.id,x:node.getBoundingClientRect().x,right:node.getBoundingClientRect().right}))})
+  assert.ok(rects.every(rect=>rect.x>=172 && rect.right<=1080),JSON.stringify(rects))
+  await page.locator('#mirrorHead').click();await page.screenshot({path:path.join(work,'dark-view-menu-1080.png')});await page.locator('#mirrorHead').click()
+  await page.evaluate(()=>window.qaTheme('light','warm'))
+  await page.screenshot({path:path.join(work,'custom-light-1080.png')})
+  report.checks.push('1080×680 工具栏、视图菜单、深浅和其他主题')
+  await page.evaluate(async()=>{await window.qaMount(false);await window.qa.switchProject()});await page.evaluate(()=>window.qaMount());await ready()
+  assert.equal(await page.locator('#stBlocks').innerText(),'0');assert.equal(await page.locator('#sourceEmpty').isVisible(),true)
+  await page.evaluate(async()=>{await window.qaMount(false);await window.qa.switchProject()});await page.evaluate(()=>window.qaMount());await ready()
+  assert.equal(await page.locator('#projName').innerText(),'离线小屋');assert.equal(await page.locator('#stBlocks').innerText(),before)
+  report.checks.push('切换宿主项目：建筑和资源隔离，返回恢复')
+  const files=await fs.readdir(path.join(work,'exports'));const schem=files.find(file=>file.endsWith('.schem'));assert.ok(schem)
+  const roundTrip=toApiJson(readBuildFile(await fs.readFile(path.join(work,'exports',schem)),schem),schem)
+  assert.equal(roundTrip.blocks.length,house.blocks.length)
+  report.checks.push('实际下载的 Schem 文件回读，方块数量保持一致')
+  const activeId=await page.evaluate(()=>document.querySelector('.mcp-host').dataset.documentId)
+  const current=await rpc('tools/call',{name:'modmind_mc_preview_documents',arguments:{id:activeId}})
+  const currentDoc=JSON.parse(current.result.content[0].text).document
+  assert.equal(currentDoc.build.dataVersion,3465)
+  const external=await rpc('tools/call',{name:'modmind_mc_preview_save',arguments:{operation:'rename',id:activeId,expectedRevision:currentDoc.revision,name:'工作台更新的建筑'}})
+  assert.ok(!external.result.isError,JSON.stringify(external))
+  await page.locator('#saveBtn').click();await page.locator('#saveRecovery').waitFor()
+  await page.locator('#saveCopy').click();await page.locator('#saveRecovery').waitFor({state:'hidden'})
+  assert.notEqual(await page.evaluate(()=>document.querySelector('.mcp-host').dataset.documentId),activeId)
+  const preserved=await rpc('tools/call',{name:'modmind_mc_preview_documents',arguments:{id:activeId}})
+  assert.equal(JSON.parse(preserved.result.content[0].text).document.name,'工作台更新的建筑')
+  report.checks.push('MCP 与界面并发修改拒绝覆盖，视口草稿可另存，外部版本保留')
+  await page.evaluate(build=>localStorage.setItem('mc-preview:autosave',JSON.stringify({build})),{name:'旧版会话',dataVersion:3465,size:[2,1,1],palette:house.palette.slice(0,1),blocks:[{pos:[0,0,0],state:0}]})
+  await page.evaluate(()=>window.qaMount(false));await page.evaluate(()=>window.qaMount());await ready()
+  await page.locator('#projHead').click();await page.locator('#legacyImport').click()
+  await page.getByRole('dialog',{name:'恢复旧版建筑存档'}).getByRole('button',{name:'恢复上次会话'}).click()
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#projName').textContent==='旧版会话')
+  assert.equal(await page.locator('#stBlocks').innerText(),'1')
+  assert.ok(await page.evaluate(()=>localStorage.getItem('mc-preview:autosave')))
+  await page.locator('#projHead').click();await page.locator('#newBtn').click()
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#stBlocks').textContent==='0')
+  await page.locator('#projInput').setInputFiles(path.join(work,'house.schem'))
+  await page.locator('#projApply').waitFor();await page.locator('#projApply').click()
+  await page.waitForFunction(count=>Number(document.querySelector('.mcp-host').shadowRoot.querySelector('#stBlocks').textContent)===count,house.blocks.length)
+  await page.locator('#undoBtn').click();assert.equal(await page.locator('#stBlocks').innerText(),'0')
+  await page.locator('#redoBtn').click();assert.equal(await page.locator('#stBlocks').innerText(),String(house.blocks.length))
+  await page.locator('#saveBtn').click()
+  await page.locator('#projHead').click();await page.locator('#projDel').click()
+  await page.getByRole('alertdialog',{name:'删除建筑'}).getByRole('button',{name:'删除建筑',exact:true}).click()
+  await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#projName').textContent==='旧版会话')
+  assert.ok((await fs.readdir(path.join(project,'structures'))).some(file=>file.includes('.deleted-')))
+  report.checks.push('旧版存档明确恢复并保留原数据，新建建筑、导入投影补全、撤销重做及删除恢复副本')
+  if(realInstance){
+    const realHouse={...house,name:'本地原版资源验收',palette:[{Name:'minecraft:stone_bricks',Properties:{}},{Name:'minecraft:oak_planks',Properties:{}},{Name:'minecraft:bricks',Properties:{}}]}
+    await fs.writeFile(path.join(work,'real-house.schem'),writeSchem(realHouse))
+    const realCapture=await page.evaluate(async directory=>{const project=await window.qa.project();return window.modmind.featurePlugins.invoke('mc-pull','pull:run',{instanceDir:directory,projectPath:project.path})},realInstance)
+    await page.locator('#importInput').setInputFiles(path.join(work,'real-house.schem'))
+    await page.waitForFunction(()=>document.querySelector('.mcp-host').shadowRoot.querySelector('#projName').textContent.includes('real-house'))
+    assert.equal(await page.locator('#projBar').isVisible(),false)
+    await page.evaluate(()=>window.qaMount(false));await page.evaluate(()=>window.qaMount());await ready()
+    await page.locator('#fitBtn').click()
+    await page.locator('#saveBtn').click()
+    await page.waitForFunction(()=>document.querySelector('.mcp-host').dataset.dirty==='false')
+    await page.evaluate(()=>window.qaTheme('light'));await page.screenshot({path:path.join(work,'real-vanilla-light-1080.png')})
+    await page.evaluate(()=>window.qaTheme('dark'));await page.screenshot({path:path.join(work,'real-vanilla-dark-1080.png')})
+    report.realCapture={count:realCapture.count,instance:realInstance}
+    report.checks.push('本机 Minecraft 1.20.1 客户端资源：实际采集、贴图模型、建筑导入和深浅主题画面')
+  }
+  }
+  assert.deepEqual(errors,[])
+} catch(error) {report.failure=String(error);report.lastState=await page.evaluate(()=>document.querySelector('.mcp-host')?.shadowRoot?.textContent.slice(-4000));await page.screenshot({path:path.join(work,'failure.png')});throw error}
+finally {child?.kill();reader?.close();await fs.writeFile(path.join(work,'report.json'),JSON.stringify(report,null,2));await app.close();console.log(JSON.stringify(report,null,2))}

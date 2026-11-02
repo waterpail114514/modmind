@@ -681,6 +681,12 @@ export interface SnapshotInfo {
   fileCount: number
 }
 
+export interface SnapshotBatchDeleteResult {
+  deletedIds: string[]
+  failed: { id: string; message: string }[]
+  snapshots: SnapshotInfo[]
+}
+
 export interface SnapshotStorageInfo {
   projectPath: string
   snapshotCount: number
@@ -742,6 +748,7 @@ export type DeviceConnectionStatus = 'disconnected' | 'authorizing' | 'connected
 export type DeviceKeyStatus = 'ACTIVE' | 'FROZEN'
 
 export interface DeviceConnectionState {
+  modelCatalogRevision?: number
   account?: string
   status: DeviceConnectionStatus
   configured: boolean
@@ -883,6 +890,7 @@ export interface AgentSettings {
   javaPreferences: JavaPreferences
   darkMode: boolean
   themePreset?: import('./appTheme').ThemePreset
+  fontScale?: number
   customThemeColors?: import('./appTheme').CustomThemeColors
   background?: import('./appTheme').AppBackground
   closeBehavior: 'ask' | 'tray' | 'quit'
@@ -1029,9 +1037,12 @@ export interface AiNotice {
 }
 
 export interface AiOutputEvent {
+  inspirationArtifact?: import('./inspirationSubmission').InspirationArtifact
+  activity?: import('./aiActivity').AiActivity
   inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   notice?: AiNotice
-  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage'
+  kind: 'start' | 'stream-start' | 'delta' | 'response' | 'answer' | 'retry' | 'tool' | 'warning' | 'error' | 'usage' | 'reasoning'
+  reasoning?: AiReasoningUpdate
   content: string
   time: string
   sessionId?: string
@@ -1057,7 +1068,22 @@ export interface AiOutputEvent {
   recoverable?: boolean
 }
 
+export type AiReasoningUpdate =
+  | { phase: 'start' }
+  | { phase: 'delta'; channel: 'summary' | 'text'; index: number }
+  | { phase: 'completed'; summary: string[]; text: string[] }
+
+export interface AgentReasoningContent { summary: string[]; text: string[] }
+
 export interface InspirationChatMessage {
+  /** Native text identity; progress never becomes a tool receipt. */
+  itemId?: string
+  streamId?: string
+  phase?: 'commentary' | 'final_answer'
+  activity?: import('./aiActivity').AiActivity
+  inspirationArtifact?: import('./inspirationSubmission').InspirationArtifact
+  /** Host-authored onboarding dialogue, never an upstream model completion. */
+  onboarding?: { speaker: 'moko' | 'model'; character: 'sol' | 'deepseek' | 'other'; complete: boolean; advanced?: boolean }
   /** Selection snapshot for this turn; history never adopts later capability choices. */
   inspirationFeatures?: import('./inspirationFeatures').InspirationFeatures
   generation?: number
@@ -1065,7 +1091,9 @@ export interface InspirationChatMessage {
   usage?: AiTokenUsage
   notice?: AiNotice
   role: 'user' | 'assistant'
-  kind?: 'tool'
+  kind?: 'tool' | 'reasoning'
+  reasoning?: AgentReasoningContent
+  reasoningCompleted?: boolean
   id?: string
   time?: string
   sessionId?: string
@@ -1151,8 +1179,31 @@ export interface ConversationCreateInput {
   view?: ConversationDocument['view']
 }
 
+export interface ConversationHistoryPageInput {
+  before?: number
+  after?: number
+  limit?: number
+  token?: string
+  generation?: number
+}
+
+export interface ConversationHistoryPage {
+  document: ConversationDocument
+  items: unknown[]
+  start: number
+  end: number
+  total: number
+  token: string
+  nextBefore: number | null
+  /** Bounded dialogue from rows before the visible window, for provider fallback. */
+  dialoguePrefix?: string
+  writeResult?: WorkbenchDataWriteResult
+}
+
 export interface ConversationForkInput {
   sourceConversationId: string
+  /** For a paged workbench: the host retains the entire prefix, including unloaded rows. */
+  historyItemId?: string
   id?: string
   title?: string
   beforeTurnId?: string
@@ -1172,6 +1223,8 @@ export interface ConversationEventsPage {
 }
 
 export interface AiCreateCodeOptions {
+  /** Fixed host guidance for the first inspiration exchange and its retries. */
+  onboarding?: 'moko-inspiration'
   /** Conversation guidance, not a separate execution lane or permission mode. */
   agentMode?: 'beginner'
   modelSelection?: import('./aiSelection').AiModelSelection
@@ -1275,6 +1328,7 @@ export interface DiagnosticPageSnapshot {
   url: string
   capturedAt: string
   html: string
+  state?: Record<string, unknown>
 }
 
 export type SidebarViewId =
@@ -1479,6 +1533,7 @@ export interface ModMindApi {
     getKeybinds: () => Promise<ModpackKeybindState>
     readLock: () => Promise<unknown>
     auditLock: () => Promise<unknown>
+    manageLock: (operation: 'inspect' | 'repair', projectPath: string) => Promise<import('./modpackLock').ModpackLockResult>
     providers: () => Promise<ModpackProviderInfo[]>
     recommendProviders: () => Promise<ModpackSearchResponse[]>
     recommendMcmod: () => Promise<McmodSearchResult[]>
@@ -1541,6 +1596,7 @@ export interface ModMindApi {
     onStorageChanged: (listener: (status: SnapshotStorageInfo) => void) => () => void
     restore: (id: string, projectPath?: string) => Promise<SnapshotRestoreResult>
     delete: (id: string, projectPath?: string) => Promise<SnapshotInfo[]>
+    deleteMany: (ids: string[], projectPath?: string) => Promise<SnapshotBatchDeleteResult>
   }
   settings: {
     revealSecret: (key: 'codex' | 'image' | 'gitee' | 'modrinthToken' | 'curseForgeToken' | 'githubToken') => Promise<string>
@@ -1554,20 +1610,30 @@ export interface ModMindApi {
     probeJavaHome: (home: string) => Promise<JavaProbeOutcome>
     pickJavaHome: () => Promise<string | null>
   }
+  contributions: {
+    getState: () => Promise<import('./contributions').ContributionState>
+    beginConsent: () => Promise<import('./contributions').ContributionChallenge>
+    enable: (token: string, termsVersion: string) => Promise<import('./contributions').ContributionState>
+    disable: () => Promise<import('./contributions').ContributionState>
+    preview: () => Promise<import('./contributions').ContributionPreview>
+  }
   diagnostics: {
     reportError: (error: import('./diagnostics').DiagnosticErrorPayload, operation?: string) => void
-    exportLogs: (pages?: DiagnosticPageSnapshot[]) => Promise<string | null>
+    reportEvent: (event: import('./diagnostics').DiagnosticUiEvent) => void
+    pickAttachments: () => Promise<import('./diagnostics').DiagnosticAttachment[]>
+    readState: (limit?: number) => Promise<unknown>
+    exportLogs: (pages?: DiagnosticPageSnapshot[], options?: import('./diagnostics').DiagnosticExportOptions) => Promise<string | null>
   }
   device: {
     getState: () => Promise<DeviceConnectionState>
     authorize: () => Promise<DeviceConnectionState>
     cancelAuthorization: () => Promise<DeviceConnectionState>
     disconnectLocal: () => Promise<DeviceConnectionState>
-    refreshUsage: () => Promise<DeviceConnectionState>
+    refreshUsage: (options?: { force?: boolean; account?: string }) => Promise<DeviceConnectionState>
     getAiPreferences: () => Promise<BeginnerAiPreferences>
     saveAiPreferences: (preferences: BeginnerAiPreferences) => Promise<BeginnerAiPreferences>
     listModels: (force?: boolean) => Promise<AiModelInfo[]>
-    getModelCatalog: (force?: boolean) => Promise<import('./quotaModels').QuotaModelCatalog>
+    getModelCatalog: (force?: boolean, cached?: boolean) => Promise<import('./quotaModels').QuotaModelCatalog>
     discoverModels: () => Promise<import('./quotaModels').QuotaModelCatalog>
     refreshConnections: () => Promise<import('./quotaModels').QuotaModelCatalog>
     resetModelSelection: (surface: 'workspace' | 'inspiration') => Promise<void>
@@ -1589,6 +1655,10 @@ export interface ModMindApi {
     onState: (listener: (state: McpBridgeState) => void) => () => void
   }
   ai: {
+    listQuestions: () => Promise<import('./agentQuestion').WorkbenchQuestionRequest[]>
+    answerQuestion: (context: import('./agentQuestion').WorkbenchQuestionContext, answers: import('./agentQuestion').AgentQuestionAnswers) => Promise<boolean>
+    dismissQuestion: (context: import('./agentQuestion').WorkbenchQuestionContext) => Promise<boolean>
+    onQuestionsChanged: (listener: () => void) => () => void
     listApprovals: () => Promise<import('./agentApproval').WorkbenchApprovalRequest[]>
     respondApproval: (id: string, decision: import('./agentApproval').AgentApprovalDecision) => Promise<boolean>
     onApprovalsChanged: (listener: () => void) => () => void
@@ -1611,6 +1681,9 @@ export interface ModMindApi {
     list: (projectPath: string, surface?: AiSurface, includeArchived?: boolean) => Promise<ConversationSummary[]>
     read: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
     readProjection?: (projectPath: string, conversationId: string) => Promise<ConversationDocument | null>
+    historyPage?: (projectPath: string, conversationId: string, input?: ConversationHistoryPageInput) => Promise<ConversationHistoryPage | null>
+    saveHistoryWindow?: (projectPath: string, conversationId: string, generation: number, token: string, start: number, items: unknown[]) => Promise<ConversationHistoryPage | null>
+    deleteHistoryItem?: (projectPath: string, conversationId: string, generation: number, itemId: string) => Promise<ConversationDocument>
     create: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
     ensureProjection?: (projectPath: string, input: ConversationCreateInput) => Promise<ConversationDocument>
     saveView: (projectPath: string, conversationId: string, generation: number, view: ConversationDocument['view'], title?: string) => Promise<ConversationDocument>
@@ -1626,7 +1699,7 @@ export interface ModMindApi {
     flush: () => Promise<void>
   }
   beginnerCodex: {
-    prepare: (projectPath?: string) => Promise<BeginnerCodexPreparationResult>
+    prepare: (projectPath?: string, selection?: import('./aiSelection').AiModelSelection) => Promise<BeginnerCodexPreparationResult>
     onProgress: (listener: (progress: BeginnerCodexProgress) => void) => () => void
   }
   externalAgents: {

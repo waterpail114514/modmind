@@ -1,0 +1,129 @@
+.moko-onboarding {
+  position: fixed; inset: 42px 0 0; width: 100%; height: calc(100dvh - 42px); max-width: none; max-height: none;
+  margin: 0; padding: 0 clamp(28px, 4vw, 72px); box-sizing: border-box; overflow: clip; z-index: 1001;
+  border: 0; color: var(--theme-text); background: var(--appearance-base, var(--theme-canvas)); font: inherit;
+  --moko-ease-move: cubic-bezier(0.77, 0, 0.175, 1);
+}
+.moko-onboarding[open] { display: grid; grid-template-rows: 62px minmax(260px, 1fr) 160px 48px; }
+.moko-onboarding:focus { outline: none; }
+body:has(.moko-onboarding[open]) .global-download-host { display: none; }
+.moko-header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.moko-chapters { display: flex; align-items: center; gap: 24px; margin: 0; padding: 0; list-style: none; }
+.moko-chapters li { display: flex; align-items: center; gap: 8px; color: var(--theme-muted); font-size: 13px; white-space: nowrap; }
+.moko-chapters li > span:first-child { display: grid; place-items: center; width: 23px; height: 23px; border: 1px solid var(--theme-line); border-radius: 50%; font-size: 12px; }
+.moko-chapters li[aria-current=step] { color: var(--theme-accent); font-weight: 600; }
+.moko-chapters li[aria-current=step] > span:first-child, .moko-chapters .passed > span:first-child { border-color: var(--theme-action); color: var(--theme-on-action); background: var(--theme-action); }
+.moko-stage { position: relative; display: grid; grid-template-columns: 42% minmax(0, 1fr); min-height: 0; gap: 32px; --moko-portrait-height: 210%; --moko-portrait-max-height: 1100px; }
+.moko-stage-actor { position: relative; height: 100%; min-height: 0; display: flex; justify-content: center; align-items: flex-start; pointer-events: none; }
+.moko-actor { position: absolute; top: 10px; height: var(--moko-portrait-height); max-height: var(--moko-portrait-max-height); aspect-ratio: 1 / 2; flex-shrink: 0; transform: translateY(0); }
+.moko-portrait { position: absolute; inset: 0; background-image: url('../assets/onboarding/moko-poses.png'); background-repeat: no-repeat; background-size: 300% 100%; opacity: 0; transition: opacity 160ms ease; }
+.moko-portrait-welcome { background-position: 0 0; }
+.moko-portrait-think { background-position: 50% 0; }
+.moko-portrait-happy { background-position: 100% 0; }
+.moko-portrait.active { opacity: 1; }
+/* A fixed stage cell and immediate choices prevent typewriter/focus changes from moving controls. */
+.moko-options { position: relative; z-index: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; max-width: 660px; overflow: hidden; }
+.moko-options h2 { margin: 0 0 18px; font-size: clamp(24px, 2.3vw, 32px); line-height: 1.35; font-weight: 650; letter-spacing: -.02em; }
+.moko-choice-panel { display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: 14px; height: 100%; min-height: 0; }
+.moko-choice-panel h2 { margin-bottom: 4px; }
+.moko-experience-choices { display: grid; gap: 14px; max-width: 400px; width: 100%; }
+.moko-existing-choices { display: grid; gap: 14px; padding-top: 12px; }
+.moko-existing-choices .moko-choice > span { flex: 1; }
+.moko-choice { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; min-height: 66px; padding: 18px 22px; border: 1px solid var(--theme-line); border-radius: 10px; color: var(--theme-text); background: var(--theme-surface); font: inherit; font-size: 17px; text-align: left; cursor: pointer; transition: background-color 160ms ease, border-color 160ms ease; }
+.moko-choice svg { flex-shrink: 0; color: var(--theme-accent); }
+.moko-goal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.moko-goal { position: relative; min-width: 0; min-height: 135px; padding: 18px; display: flex; align-items: flex-start; flex-direction: column; gap: 8px; border: 1px solid var(--theme-line); border-radius: 12px; color: var(--theme-text); background: var(--theme-surface); font: inherit; text-align: left; cursor: pointer; transition: background-color 160ms ease, border-color 160ms ease; }
+.moko-goal > svg:first-child { color: var(--theme-accent); margin-bottom: 3px; }
+.moko-goal strong { font-size: 17px; font-weight: 600; line-height: 1.4; }
+.moko-goal > span { font-size: 13px; color: var(--theme-muted); line-height: 1.6; }
+.moko-goal.selected, .moko-choice.selected { border-color: var(--theme-accent); background: var(--theme-selected); }
+.moko-selected-check { position: absolute; top: 20px; right: 18px; color: var(--theme-accent); }
+.moko-panel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; min-height: 44px; flex-shrink: 0; }
+.moko-panel-actions .primary-button, .moko-panel-actions .secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 42px; padding: 10px 20px; font: inherit; font-size: 14px; }
+.moko-workflow-panel { display: flex; flex-direction: column; align-items: stretch; box-sizing: border-box; height: 100%; min-height: 0; padding: 22px 0; }
+.moko-panel-content { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; padding-right: 8px; }
+.moko-workflow-panel > .moko-panel-actions { padding-top: 16px; }
+.moko-workflow-panel.moko-model-panel { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) 44px; row-gap: 12px; padding: 0; --moko-model-footer-height: 56px; }
+.moko-model-grid { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-height: 0; }
+.moko-model-choice { position: relative; min-width: 0; min-height: 0; padding: 0; overflow: hidden; border: 0; border-radius: 0; color: var(--theme-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+/* Keep full-stage portrait scale while clipping the gallery above the controls. */
+.moko-model-art { position: absolute; inset: 0 0 calc(-1 * var(--moko-model-footer-height)); display: block; pointer-events: none; }
+.moko-model-art img { position: absolute; top: 10px; left: 50%; display: block; width: auto; max-width: none; height: var(--moko-portrait-height); max-height: var(--moko-portrait-max-height); transform: translateX(-50%); pointer-events: none; transition: opacity 180ms ease; }
+.moko-model-glow { filter: drop-shadow(0 0 4px var(--theme-accent)) drop-shadow(0 0 12px color-mix(in srgb, var(--theme-accent) 60%, transparent)); opacity: 0; }
+.moko-model-silhouette { filter: brightness(0) drop-shadow(0 0 1px var(--theme-muted)); opacity: 1; }
+.moko-model-lit { opacity: .5; }
+.moko-model-choice.selected .moko-model-glow { opacity: 1; }
+.moko-model-choice.selected .moko-model-silhouette { opacity: 0; }
+.moko-model-choice.selected .moko-model-lit { opacity: 1; }
+.moko-model-choice:focus-visible:not(.selected):not(:disabled) .moko-model-lit { opacity: 1; }
+.moko-model-copy { position: absolute; z-index: 1; left: 0; right: 0; bottom: 8px; display: flex; flex-direction: column; gap: 6px; padding: 14px 12px; background: color-mix(in srgb, var(--appearance-base, var(--theme-canvas)) 88%, transparent); line-height: 1.4; }
+.moko-model-copy strong { font-size: clamp(19px, 1.7vw, 25px); font-weight: 650; letter-spacing: -.02em; }
+.moko-model-copy > span { font-size: 13px; color: var(--theme-muted); }
+.moko-model-copy .moko-model-availability { min-height: 18px; font-size: 12px; }
+.moko-model-choice.selected .moko-model-copy strong { color: var(--theme-accent); }
+.moko-model-check { position: absolute; z-index: 2; top: 18px; right: 12px; color: var(--theme-accent); }
+.moko-model-feedback { flex: 1; min-width: 0; max-height: 44px; overflow: auto; }
+.moko-model-feedback .moko-panel-error { margin: 0; }
+.moko-model-panel > .moko-panel-actions { height: 44px; padding-top: 0; flex-wrap: nowrap; }
+.moko-model-panel > .moko-panel-actions > button { flex-shrink: 0; }
+.moko-onboarding .moko-model-choice:disabled { opacity: 1; }
+.moko-panel-status { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; color: var(--theme-muted); font-size: 14px; line-height: 1.65; }
+.moko-panel-error { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; color: var(--theme-danger); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.moko-panel-error svg, .moko-panel-status svg { flex-shrink: 0; margin-top: 3px; }
+.moko-tool-list { margin: 0; padding: 0; list-style: none; }
+.moko-tool-list li { display: flex; align-items: center; gap: 10px; min-height: 35px; border-bottom: 1px solid var(--theme-line); font-size: 14px; }
+.moko-tool-list li > svg { flex-shrink: 0; color: var(--theme-accent); }
+.moko-tool-list li > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.moko-tool-list li > span:last-child { color: var(--theme-muted); font-size: 12px; white-space: nowrap; }
+.moko-install-status { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-height: 62px; color: var(--theme-muted); font-size: 13px; }
+.moko-install-status progress { width: 100%; height: 6px; accent-color: var(--theme-accent); }
+.moko-project-panel .moko-panel-content { display: flex; flex-direction: column; justify-content: center; }
+.moko-project-panel .studio-declared-fields { display: block; }
+.moko-project-panel .studio-declared-field { display: flex; flex-direction: column; gap: 12px; }
+.moko-project-panel .studio-declared-field label { color: var(--theme-muted); font-size: 14px; }
+.moko-project-panel input, .moko-project-panel select { width: 100%; min-height: 44px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--theme-line); border-radius: 7px; background: var(--theme-surface); color: var(--theme-text); font: inherit; font-size: 16px; }
+.moko-project-panel .studio-field-select { display: flex; align-items: center; gap: 10px; }
+.moko-project-panel .segmented-control { display: flex; flex-wrap: wrap; gap: 7px; }
+.moko-project-panel .segmented-control button { flex: 1; min-height: 40px; padding: 8px 12px; border: 1px solid var(--theme-line); border-radius: 7px; background: var(--theme-surface); color: var(--theme-text); font: inherit; }
+.moko-project-panel .segmented-control button[aria-pressed=true] { color: var(--theme-accent); border-color: var(--theme-accent); background: var(--theme-selected); }
+.moko-dialogue { position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: center; gap: 12px; margin-top: 12px; padding: 20px 30px; border: 1px solid var(--theme-line); border-radius: 12px; background: var(--theme-raised); }
+.moko-name { color: var(--theme-accent); font-size: 15px; font-weight: 600; line-height: 20px; }
+.moko-line { display: block; min-width: 0; min-height: 68px; max-height: 80px; overflow: auto; color: var(--theme-text); font: inherit; font-size: 20px; line-height: 1.7; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.moko-onboarding .primary-button { border: 1px solid var(--theme-action); color: var(--theme-on-action); background: var(--theme-action); box-shadow: none; }
+.moko-onboarding .secondary-button { border: 1px solid var(--theme-line); color: var(--theme-text); background: var(--theme-surface); box-shadow: none; }
+.moko-continue-hint { display: inline-flex; align-items: center; justify-content: center; color: var(--theme-muted); font-size: 12px; white-space: nowrap; }
+.moko-onboarding[data-moko-pure=true] { cursor: pointer; }
+.moko-footer { position: relative; z-index: 2; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; background: var(--appearance-base, var(--theme-canvas)); }
+.moko-footer > .moko-text-button { justify-self: end; }
+.moko-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 32px; padding: 4px 0; border: 0; background: transparent; color: var(--theme-muted); font: inherit; font-size: 13px; cursor: pointer; }
+.moko-onboarding button:disabled { opacity: .5; cursor: default; }
+.moko-ready { align-items: flex-start; }
+.moko-ready > svg { color: var(--theme-accent); }
+.moko-ready > span { color: var(--theme-muted); }
+.moko-onboarding :is(button,input,select):focus-visible { outline: 2px solid var(--theme-accent); outline-offset: 4px; }
+.moko-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) {
+  .moko-choice:hover, .moko-goal:hover { border-color: var(--theme-accent); background: var(--theme-selected); }
+  .moko-model-choice:hover:not(:disabled) .moko-model-copy strong { color: var(--theme-accent); }
+  .moko-model-choice:hover:not(.selected):not(:disabled) .moko-model-lit { opacity: 1; }
+  .moko-text-button:hover { color: var(--theme-text); }
+}
+@media (max-height: 740px) {
+  .moko-onboarding[open] { grid-template-rows: 54px minmax(245px, 1fr) 142px 42px; }
+  .moko-goal { min-height: 112px; padding: 14px; gap: 5px; }
+  .moko-goal > svg:first-child { width: 23px; height: 23px; margin: 0; }
+  .moko-options h2 { margin-bottom: 10px; font-size: 25px; }
+  .moko-choice-panel { gap: 12px; }
+  .moko-workflow-panel { padding: 14px 0; }
+  .moko-dialogue { padding: 16px 24px; gap: 9px; }
+  .moko-line { min-height: 60px; max-height: 68px; font-size: 18px; }
+}
+@media (max-width: 1150px) {
+  .moko-onboarding { padding-inline: 28px; }
+  .moko-stage { grid-template-columns: 38% minmax(0, 1fr); gap: 20px; }
+  .moko-chapters { gap: 18px; }
+  .moko-goal strong { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .moko-portrait { transition-duration: 160ms; }
+}

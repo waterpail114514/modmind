@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { sameProjectPath } from "../../src/main/projectPath"
 import { importItemTexture, listManagedItems, removeManagedItem, saveManagedItem } from "./src/main/itemEditorService"
 import { listVanillaItems } from "./src/main/itemCatalogService"
@@ -17,7 +19,7 @@ actions.manage = input => {
   if (input.operation === 'remove') return removeManagedItem(project, String(input.id), Number(input.revision))
   throw new Error('不支持的物品编辑操作')
 }
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "item-editor" }, () => handler(host.event(), ...(input.args as any[]))) }
 diagnosticHandle('itemEditor:list', async (_event, projectPath: string) => {
     const project = host.requireProject();
     if (typeof projectPath !== 'string' || !sameProjectPath(projectPath, project.path))

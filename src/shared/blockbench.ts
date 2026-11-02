@@ -71,6 +71,10 @@ export type BlockbenchCommand =
 
 export type BlockbenchAction =
   | {
+      type: 'load-source-document'
+      document: Omit<import('./modelSource').ModelSourceDocument, 'format'> & { format: 'java_block' | 'bedrock' }
+    }
+  | {
       type: 'new-model'
       format: BlockbenchFormat
       name: string

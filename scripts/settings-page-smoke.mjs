@@ -86,7 +86,7 @@ try {
     assert.ok(Math.abs(bounds.height - 40) < 0.1)
   }
   await page.getByRole('button', { name: '展开侧栏', exact: true }).click()
-  assert.deepEqual(await visibleIds(), ['settings-appearance', 'settings-sidebar-order', 'settings-notifications'])
+  assert.deepEqual(await visibleIds(), ['settings-appearance', 'settings-sidebar-order', 'settings-notifications', 'settings-contributions'])
   assert.equal(await nav.locator('[aria-current="page"]').innerText(), '通用')
 
   const search = page.getByRole('searchbox', { name: '搜索设置' })

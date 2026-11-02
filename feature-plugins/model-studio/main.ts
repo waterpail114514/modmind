@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { BlockbenchBridge } from "./src/main/blockbenchBridge"
 import path from 'node:path'
 import type {
@@ -73,7 +75,7 @@ import type { FeaturePluginInvocationContext } from '../../src/shared/featurePlu
 export function activate(options: { host: NativeFeatureHost; pluginDirectory?: string }) {
 const host = options.host
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "model-studio" }, () => handler(host.event(), ...(input.args as any[]))) }
 const bridges = new Map<number, { bridge: BlockbenchBridge; window: BrowserWindow; closed: () => void }>()
 function disposeBridges(): void {
     for (const { bridge, window, closed } of bridges.values()) { window.removeListener('closed', closed); bridge.destroy() }

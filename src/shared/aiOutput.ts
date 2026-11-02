@@ -1,4 +1,4 @@
-const OPERATIONAL_STATUS_PATTERNS = [
+const LIFECYCLE_STATUS_PATTERNS = [
   /模型服务暂时不可用.{0,120}(?:自动)?重试/i,
   /(?:线路繁忙|连接中断|响应超时).{0,120}(?:自动)?重试/i,
   /(?:正在|稍后|后|将于).{0,40}(?:自动)?重试(?:并继续)?/i,
@@ -7,6 +7,9 @@ const OPERATIONAL_STATUS_PATTERNS = [
   /(?:retrying|retry\s+attempt|will\s+retry|retries?\s+exhausted|retry\s+limit)/i,
   /^(?:external\s+agent|codex).{0,100}(?:waiting|reconnecting|retrying)/i,
   /^外部(?:代理| Agent)任务已停止/i,
+]
+
+const MODEL_PROGRESS_PATTERNS = [
   /^(?:我会先|我先|我将|我正在|接下来我会|现在我会).{0,180}(?:读取|检查|定位|调用|重试|继续|切换|验证|处理)/i,
   /^(?:我已|.{0,40}已确认).{0,180}(?:接下来|下一步|现在).{0,120}(?:读取|检查|定位|调用|重试|继续|切换|验证|处理|实现)/i,
   /^(?:i(?:'ll| will| need to| must)|we(?:'ll| need to| must)|let's).{0,180}(?:read|inspect|check|retry|continue|switch|call|validate|fix)/i,
@@ -18,7 +21,13 @@ const OPERATIONAL_STATUS_PATTERNS = [
 export function isAiOperationalStatusText(value: string): boolean {
   const text = value.trim().replace(/\s+/g, ' ')
   if (!text || text.length > 800) return false
-  return OPERATIONAL_STATUS_PATTERNS.some((pattern) => pattern.test(text))
+  return [...LIFECYCLE_STATUS_PATTERNS, ...MODEL_PROGRESS_PATTERNS].some((pattern) => pattern.test(text))
+}
+
+/** Host retry and connection notices remain status rows, not model paragraphs. */
+export function isAiLifecycleStatusText(value: string): boolean {
+  const text = value.trim().replace(/\s+/g, ' ')
+  return Boolean(text && text.length <= 800 && LIFECYCLE_STATUS_PATTERNS.some(pattern => pattern.test(text)))
 }
 
 export function isUsableAiAnswer(value: string | undefined | null): value is string {

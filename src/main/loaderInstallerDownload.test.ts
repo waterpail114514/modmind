@@ -8,8 +8,35 @@ import { Version } from '@xmcl/core'
 import { createStoredZip } from './bedrockAddon'
 import { loaderLibraryHost, prepareLoaderInstaller } from './loaderInstallerDownload'
 import { httpTransport } from './networkRequest'
+import { forgeInstallerUrl, forgeInstallerVersion } from './forgeInstallerVersion'
 
 afterEach(() => vi.restoreAllMocks())
+
+it.each([
+  ['1.8.8', '1.8.8-11.15.0.1655'],
+  ['1.8', '1.8-11.14.4.1577'],
+  ['1.7.2', '1.7.2-10.12.2.1161-mc172']
+])('downloads the catalog-selected %s Forge installer without SDK-invented suffixes', async (minecraftVersion, artifact) => {
+  const bytes = createStoredZip([{ name: 'install_profile.json', data: Buffer.from('{}') }, { name: 'Installer.class', data: Buffer.from('class fixture') }])
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-exact-forge-')), requested: string[] = []
+  const server = createServer((req, res) => { res.end(req.url!.endsWith('.sha1') ? createHash('sha1').update(bytes).digest('hex') : bytes) })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const transport = httpTransport.request
+  const mock = vi.spyOn(httpTransport, 'request').mockImplementation((url, options) => {
+    requested.push(url)
+    return transport(`http://127.0.0.1:${(server.address() as { port: number }).port}${new URL(url).pathname}`, options)
+  })
+  try {
+    const options = { loader: 'forge' as const, minecraftVersion, version: forgeInstallerVersion(minecraftVersion, artifact), installerUrl: forgeInstallerUrl(minecraftVersion, artifact), resourceRoot: root }
+    await prepareLoaderInstaller(options)
+    expect(requested.filter(url => url.endsWith('.jar'))).toEqual([`https://maven.minecraftforge.net/net/minecraftforge/forge/${artifact}/forge-${artifact}-installer.jar`])
+    mock.mockImplementation(async () => { throw new Error('offline') })
+    await expect(prepareLoaderInstaller(options)).resolves.toBeUndefined()
+  } finally {
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
 
 it('omits Maven Central for NeoForge while retaining it for ordinary dependencies', () => {
   const resolve = loaderLibraryHost(['https://bmclapi2.bangbang93.com/maven', 'https://maven.neoforged.net/releases'])

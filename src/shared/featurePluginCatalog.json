@@ -3,9 +3,521 @@
     "format": "modmind-feature",
     "apiVersion": 2,
     "hostVersion": "1.5.0-plugintest",
+    "id": "data-packs",
+    "name": "数据包",
+    "version": "1.0.0",
+    "description": "创建、导入、图形编辑、校验和导出 Minecraft 数据包；支持模组与整合包项目，按需使用本地游戏资源。",
+    "main": "main.cjs",
+    "renderer": "renderer.js",
+    "style": "renderer.css",
+    "dependencies": [],
+    "studioIds": [
+      "minecraft-mod",
+      "minecraft-modpack"
+    ],
+    "loaders": [
+      "fabric",
+      "quilt",
+      "forge",
+      "neoforge"
+    ],
+    "hostCapabilities": [
+      "runtime",
+      "diagnosticsV1"
+    ],
+    "views": [
+      {
+        "label": "数据包",
+        "icon": "FileJson",
+        "group": "内容",
+        "component": "modpack-datapacks",
+        "id": "modpack-datapacks",
+        "order": 40
+      }
+    ],
+    "capabilities": [
+      {
+        "name": "数据包",
+        "id": "data-packs",
+        "description": "配方、标签与简单掉落的图形编辑，完整源码回读、保存冲突保护与ZIP导出。复杂内容保留源码，校验不代替游戏验证。"
+      }
+    ],
+    "actions": [
+      {
+        "permission": "read",
+        "inputSchema": {
+          "properties": {
+            "root": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "list",
+                "files",
+                "read",
+                "validate",
+                "history"
+              ]
+            },
+            "limit": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "handler": "query",
+        "projectRequired": true,
+        "id": "query",
+        "surfaces": [
+          "workbench"
+        ]
+      },
+      {
+        "permission": "write",
+        "inputSchema": {
+          "properties": {
+            "root": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "limit": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "save",
+                "create",
+                "create-pack",
+                "remove",
+                "export",
+                "restore"
+              ]
+            },
+            "content": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "baseline": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            },
+            "id": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "recipe-shaped",
+                "recipe-shapeless",
+                "item-tag",
+                "block-tag",
+                "loot-block",
+                "advancement",
+                "predicate",
+                "function",
+                "json"
+              ]
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "historyId": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "handler": "write",
+        "projectRequired": true,
+        "id": "write",
+        "surfaces": [
+          "workbench"
+        ]
+      },
+      {
+        "permission": "write",
+        "inputSchema": {
+          "properties": {
+            "root": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "limit": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "handler": "import",
+        "projectRequired": true,
+        "id": "import",
+        "surfaces": [
+          "workbench"
+        ]
+      },
+      {
+        "permission": "read",
+        "inputSchema": {
+          "properties": {
+            "root": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "path": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "limit": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "handler": "catalog",
+        "projectRequired": true,
+        "id": "catalog",
+        "surfaces": [
+          "workbench"
+        ]
+      },
+      {
+        "id": "source:run",
+        "handler": "pull_run",
+        "permission": "write",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "instanceDir": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "maxIcons": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      {
+        "id": "source:importProbe",
+        "handler": "pull_import_probe",
+        "permission": "write",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "instanceDir": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "probeDir": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "outPx": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxPages": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      {
+        "id": "source:select",
+        "handler": "pull_select",
+        "permission": "write",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+            }
+          }
+        }
+      },
+      {
+        "id": "source:clear",
+        "handler": "pull_clear",
+        "permission": "write",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+            }
+          }
+        }
+      },
+      {
+        "id": "source:exportPack",
+        "handler": "pull_export_pack",
+        "permission": "write",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+            }
+          }
+        }
+      },
+      {
+        "id": "source:chooseInstance",
+        "handler": "pull_choose_instance",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        }
+      },
+      {
+        "permission": "read",
+        "inputSchema": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "handler": "pull_sources",
+        "surfaces": [
+          "workbench"
+        ],
+        "id": "source:sources",
+        "projectRequired": true
+      },
+      {
+        "permission": "read",
+        "inputSchema": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "handler": "pull_choose_probe",
+        "surfaces": [
+          "workbench"
+        ],
+        "id": "source:chooseProbe",
+        "projectRequired": true
+      },
+      {
+        "handler": "pull_icons",
+        "id": "source:icons",
+        "surfaces": [
+          "workbench"
+        ],
+        "permission": "read",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "ids": {
+              "items": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "ids"
+          ],
+          "type": "object"
+        },
+        "projectRequired": true
+      }
+    ],
+    "tools": [
+      {
+        "name": "modmind_data_pack_query",
+        "description": "List project data packs, paginate files, read exact source and baseline, validate a pack, or list recoverable history (operation history). Validation is scoped static validation, not proof of in-game behavior.",
+        "action": "query"
+      },
+      {
+        "name": "modmind_data_pack_write",
+        "description": "Create a pack or entry, save exact JSON/function source with baseline conflict protection (null for new files), remove with recovery copy, export a validated ZIP inside the project, or restore a historyId with the baseline returned by query/history. Operations create-pack/create/save/remove/export/restore.",
+        "action": "write"
+      },
+      {
+        "name": "modmind_data_pack_items",
+        "description": "Search paginated vanilla and selected local-instance item IDs and names for data pack authoring; does not download resources or start Minecraft.",
+        "action": "catalog"
+      }
+    ]
+  },
+  {
+    "format": "modmind-feature",
+    "apiVersion": 2,
+    "hostVersion": "1.5.0-plugintest",
     "id": "decompile",
     "name": "反编译",
-    "version": "1.5.0",
+    "version": "1.5.3",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -45,6 +557,7 @@
       "velocity"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -406,7 +919,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "ftb-quests",
     "name": "FTB 任务书",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -437,6 +950,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -706,12 +1220,13 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "image-studio",
     "name": "图像工坊",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
     "hostCapabilities": [
       "downloadActivities",
+      "diagnosticsV1",
       "runtime"
     ],
     "capabilities": [
@@ -726,7 +1241,7 @@
         "id": "image-studio",
         "label": "图像工坊",
         "component": "Workspace",
-        "icon": "WandSparkles",
+        "icon": "Image",
         "group": "资源",
         "order": 20
       }
@@ -1148,7 +1663,10 @@
         "action": "remove-background",
         "description": "Remove a detected solid background from an image data URL. Use the returned image as a transparent draft and inspect edges before saving."
       }
-    ]
+    ],
+    "assets": {
+      "open-canvas-notices": "feature-plugins/image-studio/vendor/open-canvas"
+    }
   },
   {
     "format": "modmind-feature",
@@ -1156,7 +1674,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "item-editor",
     "name": "物品与装备",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -1165,7 +1683,7 @@
         "id": "item-editor",
         "label": "物品与装备",
         "component": "item-editor",
-        "icon": "PackageOpen",
+        "icon": "Pickaxe",
         "group": "资源",
         "order": 10
       }
@@ -1187,6 +1705,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -1371,17 +1890,17 @@
     "apiVersion": 2,
     "hostVersion": "1.5.0-plugintest",
     "id": "mappings",
-    "name": "Mappings",
-    "version": "1.5.0",
+    "name": "映射表",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
     "views": [
       {
         "id": "mappings",
-        "label": "Mappings",
+        "label": "映射表",
         "component": "mappings",
-        "icon": "LibraryBig",
+        "icon": "GitCompareArrows",
         "group": "开发",
         "order": 50
       }
@@ -1389,7 +1908,7 @@
     "capabilities": [
       {
         "id": "mappings",
-        "name": "Mappings",
+        "name": "映射表",
         "description": "查询目标 Minecraft 版本的类、字段和方法命名映射，已缓存结果支持离线查看。安装并启用后才可使用；能力目录不代表当前工具已经开放。"
       }
     ],
@@ -1403,6 +1922,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -1554,15 +2074,23 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "mc-preview",
     "name": "3D 建筑预览",
-    "version": "1.14.13",
-    "description": "使用当前项目采集的数据进行建筑预览与编辑，支持放置、删除、撤销以及 NBT、Schem v2、Litematic 导入导出。",
+    "version": "1.16.0",
+    "description": "使用本地实例资源预览和编辑建筑，保存到当前项目。支持结构 NBT、Schem v2、Litematic 导入及后两种格式导出。",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
     "hostCapabilities": [
       "runtime"
     ],
-    "dependencies": [],
+    "dependencies": [
+      "mc-pull"
+    ],
+    "loaders": [
+      "fabric",
+      "quilt",
+      "forge",
+      "neoforge"
+    ],
     "views": [
       {
         "id": "preview",
@@ -1592,7 +2120,12 @@
         "inputSchema": {
           "type": "object",
           "additionalProperties": false,
-          "properties": {}
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
         }
       },
       {
@@ -1644,6 +2177,21 @@
             "query": {
               "type": "string",
               "maxLength": 200
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "blocksOnly": {
+              "type": "boolean"
+            },
+            "ids": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "string",
+                "maxLength": 512
+              }
             },
             "offset": {
               "type": "integer",
@@ -1711,6 +2259,10 @@
             "dataBase64": {
               "type": "string",
               "maxLength": 33554432
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
             }
           }
         }
@@ -1739,6 +2291,107 @@
             },
             "build": {
               "type": "object"
+            },
+            "allowLossy": {
+              "type": "boolean"
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        }
+      },
+      {
+        "id": "preview:capture",
+        "handler": "preview_capture",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "id": {
+              "type": "string",
+              "maxLength": 36
+            }
+          }
+        }
+      },
+      {
+        "id": "preview:documents",
+        "handler": "preview_documents",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "id": {
+              "type": "string",
+              "maxLength": 36
+            }
+          }
+        }
+      },
+      {
+        "id": "preview:save",
+        "handler": "preview_save",
+        "permission": "write",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation"
+          ],
+          "properties": {
+            "operation": {
+              "enum": [
+                "create",
+                "save",
+                "rename",
+                "delete"
+              ]
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "id": {
+              "type": "string",
+              "maxLength": 36
+            },
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "build": {
+              "type": "object"
             }
           }
         }
@@ -1764,6 +2417,21 @@
         "name": "modmind_mc_preview_export",
         "action": "preview:export",
         "description": "把建筑数据转换为 Schem v2 或 Litematic，返回 base64 文件与材料清单。"
+      },
+      {
+        "name": "modmind_mc_preview_capture",
+        "action": "preview:capture",
+        "description": "读取当前项目可见的建筑视口 PNG 图片。先查询 documents 取得 id，在界面打开并保存对应建筑；只截取与保存 revision 一致的视口。未打开、已被外部修改或未保存时拒绝。静态资源预览不是游戏验证。"
+      },
+      {
+        "name": "modmind_mc_preview_documents",
+        "action": "preview:documents",
+        "description": "列出当前项目中已保存的建筑；提供 id 可读取建筑、原件、DataVersion 和 revision。与建筑预览页面使用同一份项目文件。"
+      },
+      {
+        "name": "modmind_mc_preview_save",
+        "action": "preview:save",
+        "description": "在当前项目创建、保存、重命名或删除建筑。已有建筑必须先读取并传 expectedRevision，过期修改会被拒绝；删除保留恢复副本。修改后请回读验证，页面重新打开可载入。"
       }
     ]
   },
@@ -1772,9 +2440,9 @@
     "apiVersion": 2,
     "hostVersion": "1.5.0-plugintest",
     "id": "mc-pull",
-    "name": "游戏数据采集",
-    "version": "1.14.2",
-    "description": "从用户选择的本地游戏实例采集名称、方块和基础图标，按项目和实例保存，供建筑预览使用。可导入已有探针产物；交接包未包含探针 jar。",
+    "name": "本地游戏资源",
+    "version": "1.15.0",
+    "description": "供建筑预览、数据包等功能按需读取本地实例资源，自动随依赖安装；在使用位置选择和管理来源。",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -1782,21 +2450,12 @@
       "runtime"
     ],
     "dependencies": [],
-    "views": [
-      {
-        "id": "pull",
-        "label": "游戏数据采集",
-        "component": "PullWorkspace",
-        "icon": "Download",
-        "group": "创作",
-        "order": 62
-      }
-    ],
+    "views": [],
     "capabilities": [
       {
         "id": "mc-pull",
-        "name": "游戏数据采集",
-        "description": "用游戏内探针采集方块/物品/图标/贴图，按数据包存进项目，供 3D 建筑预览使用。"
+        "name": "本地游戏资源",
+        "description": "按项目共用本地实例名称、方块与基础图标；可导入已有探针结果，未附带探针。"
       }
     ],
     "actions": [
@@ -2053,8 +2712,81 @@
         "inputSchema": {
           "type": "object",
           "additionalProperties": false,
-          "properties": {}
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
         }
+      },
+      {
+        "permission": "read",
+        "inputSchema": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "handler": "pull_sources",
+        "surfaces": [
+          "workbench"
+        ],
+        "id": "pull:sources",
+        "projectRequired": true
+      },
+      {
+        "permission": "read",
+        "inputSchema": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "handler": "pull_choose_probe",
+        "surfaces": [
+          "workbench"
+        ],
+        "id": "pull:chooseProbe",
+        "projectRequired": true
+      },
+      {
+        "handler": "pull_icons",
+        "id": "pull:icons",
+        "surfaces": [
+          "workbench"
+        ],
+        "permission": "read",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "ids": {
+              "items": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "projectPath": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "ids"
+          ],
+          "type": "object"
+        },
+        "projectRequired": true
       }
     ],
     "tools": [
@@ -2091,7 +2823,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "media-runtime",
     "name": "媒体处理支持",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -2116,7 +2848,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "model-studio",
     "name": "模型",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -2159,6 +2891,7 @@
       "velocity"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -6932,7 +7665,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "modpack-automation",
     "name": "依赖与优化",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -6941,7 +7674,7 @@
         "id": "modpack-automation",
         "label": "依赖与优化",
         "component": "modpack-automation",
-        "icon": "Gauge",
+        "icon": "Network",
         "group": "运行",
         "order": 50
       }
@@ -6963,6 +7696,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -7042,7 +7776,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "modpack-content",
     "name": "文件清单",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -7051,7 +7785,7 @@
         "id": "modpack-manifest",
         "label": "文件清单",
         "component": "modpack-manifest",
-        "icon": "Archive",
+        "icon": "ListTree",
         "group": "内容",
         "order": 10
       },
@@ -7072,14 +7806,6 @@
         "order": 30
       },
       {
-        "id": "modpack-datapacks",
-        "label": "数据包",
-        "component": "modpack-datapacks",
-        "icon": "Archive",
-        "group": "内容",
-        "order": 40
-      },
-      {
         "id": "modpack-shaders",
         "label": "光影包",
         "component": "modpack-shaders",
@@ -7091,7 +7817,7 @@
         "id": "modpack-ui",
         "label": "界面资源",
         "component": "modpack-ui",
-        "icon": "WandSparkles",
+        "icon": "LayoutTemplate",
         "group": "内容",
         "order": 70
       },
@@ -7099,7 +7825,7 @@
         "id": "modpack-worlds",
         "label": "存档与世界",
         "component": "modpack-worlds",
-        "icon": "Save",
+        "icon": "Globe2",
         "group": "内容",
         "order": 80
       },
@@ -7145,6 +7871,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -7462,7 +8189,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "modpack-migration",
     "name": "版本迁移",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -7493,6 +8220,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -7768,7 +8496,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "modpack-mods",
     "name": "模组列表",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -7807,6 +8535,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -8477,7 +9206,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "patchouli",
     "name": "Patchouli 指南书",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -8508,6 +9237,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -8621,7 +9351,12 @@
       "media-runtime"
     ],
     "name": "发布",
-    "version": "1.5.0",
+    "version": "1.5.3",
+    "hostCapabilities": [
+      "modpackExportV2",
+      "diagnosticsV1",
+      "runtime"
+    ],
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -8678,10 +9413,32 @@
       "folia",
       "velocity"
     ],
-    "hostCapabilities": [
-      "runtime"
-    ],
     "actions": [
+      {
+        "id": "modpack_export",
+        "handler": "modpack_export",
+        "permission": "write",
+        "projectRequired": true,
+        "studioIds": [
+          "minecraft-modpack"
+        ],
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "bundled",
+                "download"
+              ]
+            }
+          }
+        }
+      },
       {
         "id": "content:create",
         "handler": "content:create",
@@ -8913,6 +9670,11 @@
     ],
     "tools": [
       {
+        "name": "modmind_modpack_export",
+        "action": "modpack_export",
+        "description": "Export the captured modpack into its managed exports folder using saved release metadata. mode bundled (default) embeds mods, resources and configuration; download lists verified HTTPS sources and hashes for launcher downloads, retaining local or edited files. Uses the saved mode when omitted. Streams large archives without a 1 GB limit and increments the saved version only after success. Minecraft base game and Java remain launcher-managed. Requires the publishing feature and a host with modpackExportV2."
+      },
+      {
         "name": "modmind_validate_content",
         "action": "content_validate",
         "description": "Validate project JSON, OGG headers, and sound references without changing files."
@@ -8930,7 +9692,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "relationships",
     "name": "前置与联动",
-    "version": "1.5.0",
+    "version": "1.5.3",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -8966,6 +9728,7 @@
       "velocity"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -9695,7 +10458,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "resource-packs",
     "name": "资源包",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -9704,7 +10467,7 @@
         "id": "modpack-resourcepacks",
         "label": "资源包",
         "component": "modpack-resourcepacks",
-        "icon": "Image",
+        "icon": "Package",
         "group": "资源",
         "order": 40
       }
@@ -9727,6 +10490,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -10084,7 +10848,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "server-pack-runtime",
     "name": "服务端打包组件",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10127,7 +10891,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "server-pack-runtime-data",
     "name": "服务端打包资源",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10166,7 +10930,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "shader-export",
     "name": "检查与导出",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10289,6 +11053,7 @@
       "iris"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ]
   },
@@ -10298,7 +11063,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "shader-options",
     "name": "光影选项",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10455,7 +11220,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "shader-preview",
     "name": "效果预览",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10539,7 +11304,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "shader-source",
     "name": "光影源码",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10709,7 +11474,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "shader-testing",
     "name": "游戏验证",
-    "version": "1.1.0",
+    "version": "1.1.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -10926,6 +11691,7 @@
       "iris"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ]
   },
@@ -11100,7 +11866,7 @@
       "media-runtime"
     ],
     "name": "声音",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -11134,6 +11900,7 @@
       "neoforge"
     ],
     "hostCapabilities": [
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -12835,7 +13602,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "studio-shader",
     "name": "光影工作台",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -13006,14 +13773,15 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "testing",
     "name": "游戏与服务端测试",
-    "version": "1.0.4",
+    "version": "1.0.8",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
     "hostCapabilities": [
       "runtime",
       "testingV1",
-      "testingV2"
+      "testingV2",
+      "diagnosticsV1"
     ],
     "dependencies": [
       "server-pack-runtime"
@@ -13078,6 +13846,35 @@
       }
     ],
     "actions": [
+      {
+        "id": "build_status",
+        "handler": "build_status",
+        "permission": "read",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench",
+          "inspiration"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      },
+      {
+        "id": "cancel_build",
+        "handler": "cancel_build",
+        "permission": "process",
+        "projectRequired": true,
+        "surfaces": [
+          "workbench"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      },
       {
         "id": "local_server",
         "handler": "local_server",
@@ -13156,12 +13953,29 @@
         ],
         "inputSchema": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
             "operation": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "capabilities",
+                "start",
+                "state",
+                "stop",
+                "pause",
+                "resume",
+                "takeover"
+              ]
             },
             "sessionId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "waitSeconds": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
             },
             "mode": {
               "type": "string",
@@ -13170,11 +13984,19 @@
                 "rendered"
               ]
             },
+            "backend": {
+              "type": "string",
+              "enum": [
+                "background",
+                "legacy"
+              ]
+            },
             "offline": {
               "type": "boolean"
             },
             "username": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 16
             },
             "acceptEula": {
               "type": "boolean"
@@ -13182,149 +14004,28 @@
             "hidden": {
               "type": "boolean"
             },
-            "after": {
-              "type": "integer"
-            },
-            "tooltip": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
-            },
-            "button": {
-              "type": "integer"
-            },
-            "revision": {
-              "type": "string"
-            },
-            "command": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "durationMs": {
-              "type": "integer"
-            },
-            "x": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "y": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "yaw": {
-              "type": "number",
-              "minimum": -180,
-              "maximum": 180
-            },
-            "pitch": {
-              "type": "number",
-              "minimum": -90,
-              "maximum": 90
-            },
-            "clicks": {
-              "type": "integer",
-              "minimum": -20,
-              "maximum": 20
-            },
-            "pressEnter": {
+            "withoutProjectMod": {
               "type": "boolean"
             },
-            "enabled": {
-              "type": "boolean"
+            "maxMemoryMb": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 16384
             },
-            "steps": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 20,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "operation": {
-                    "type": "string",
-                    "enum": [
-                      "click",
-                      "text",
-                      "inventory",
-                      "close",
-                      "command",
-                      "key",
-                      "look",
-                      "scroll",
-                      "interact"
-                    ]
-                  },
-                  "slot": {
-                    "type": "integer"
-                  },
-                  "button": {
-                    "type": "integer"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "command": {
-                    "type": "string"
-                  },
-                  "key": {
-                    "type": "string"
-                  },
-                  "durationMs": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 2000
-                  },
-                  "x": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 16384
-                  },
-                  "y": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 16384
-                  },
-                  "yaw": {
-                    "type": "number",
-                    "minimum": -180,
-                    "maximum": 180
-                  },
-                  "pitch": {
-                    "type": "number",
-                    "minimum": -90,
-                    "maximum": 90
-                  },
-                  "clicks": {
-                    "type": "integer",
-                    "minimum": -20,
-                    "maximum": 20
-                  },
-                  "pressEnter": {
-                    "type": "boolean"
-                  },
-                  "expect": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 10,
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 500
-                    }
-                  }
-                },
-                "required": [
-                  "operation",
-                  "expect"
-                ]
-              }
+            "width": {
+              "type": "integer",
+              "minimum": 640,
+              "maximum": 3840
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 360,
+              "maximum": 2160
+            },
+            "readyTimeoutMs": {
+              "type": "integer",
+              "minimum": 30000,
+              "maximum": 900000
             }
           },
           "required": [
@@ -13342,175 +14043,31 @@
         ],
         "inputSchema": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "operation": {
-              "type": "string"
-            },
             "sessionId": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
             },
-            "mode": {
+            "operation": {
               "type": "string",
               "enum": [
-                "headless",
-                "rendered"
+                "state",
+                "gui",
+                "logs",
+                "result"
               ]
             },
-            "offline": {
-              "type": "boolean"
-            },
-            "username": {
-              "type": "string"
-            },
-            "acceptEula": {
-              "type": "boolean"
-            },
-            "hidden": {
-              "type": "boolean"
+            "requestId": {
+              "type": "string",
+              "pattern": "^[a-f0-9-]{36}$"
             },
             "after": {
               "type": "integer"
             },
             "tooltip": {
               "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
-            },
-            "button": {
-              "type": "integer"
-            },
-            "revision": {
-              "type": "string"
-            },
-            "command": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "durationMs": {
-              "type": "integer"
-            },
-            "x": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "y": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "yaw": {
-              "type": "number",
-              "minimum": -180,
-              "maximum": 180
-            },
-            "pitch": {
-              "type": "number",
-              "minimum": -90,
-              "maximum": 90
-            },
-            "clicks": {
-              "type": "integer",
-              "minimum": -20,
-              "maximum": 20
-            },
-            "pressEnter": {
-              "type": "boolean"
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "steps": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 20,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "operation": {
-                    "type": "string",
-                    "enum": [
-                      "click",
-                      "text",
-                      "inventory",
-                      "close",
-                      "command",
-                      "key",
-                      "look",
-                      "scroll",
-                      "interact"
-                    ]
-                  },
-                  "slot": {
-                    "type": "integer"
-                  },
-                  "button": {
-                    "type": "integer"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "command": {
-                    "type": "string"
-                  },
-                  "key": {
-                    "type": "string"
-                  },
-                  "durationMs": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 2000
-                  },
-                  "x": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 16384
-                  },
-                  "y": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 16384
-                  },
-                  "yaw": {
-                    "type": "number",
-                    "minimum": -180,
-                    "maximum": 180
-                  },
-                  "pitch": {
-                    "type": "number",
-                    "minimum": -90,
-                    "maximum": 90
-                  },
-                  "clicks": {
-                    "type": "integer",
-                    "minimum": -20,
-                    "maximum": 20
-                  },
-                  "pressEnter": {
-                    "type": "boolean"
-                  },
-                  "expect": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 10,
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 500
-                    }
-                  }
-                },
-                "required": [
-                  "operation",
-                  "expect"
-                ]
-              }
             }
           },
           "required": [
@@ -13528,173 +14085,261 @@
         ],
         "inputSchema": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
             "operation": {
-              "type": "string"
-            },
-            "sessionId": {
-              "type": "string"
-            },
-            "mode": {
               "type": "string",
               "enum": [
-                "headless",
-                "rendered"
+                "click",
+                "double_click",
+                "move",
+                "look",
+                "drag",
+                "scroll",
+                "text",
+                "key",
+                "key_down",
+                "key_up",
+                "button_down",
+                "button_up",
+                "combo",
+                "wait",
+                "inventory",
+                "close",
+                "command",
+                "interact",
+                "release",
+                "cancel",
+                "batch",
+                "operator"
               ]
             },
-            "offline": {
-              "type": "boolean"
-            },
-            "username": {
-              "type": "string"
-            },
-            "acceptEula": {
-              "type": "boolean"
-            },
-            "hidden": {
-              "type": "boolean"
-            },
-            "after": {
-              "type": "integer"
-            },
-            "tooltip": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
-            },
-            "button": {
-              "type": "integer"
-            },
-            "revision": {
-              "type": "string"
-            },
-            "command": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
             "key": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 80
+            },
+            "keys": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": "string"
+              }
             },
             "durationMs": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
             },
             "x": {
-              "type": "integer",
+              "type": "number",
               "minimum": 0,
               "maximum": 16384
             },
             "y": {
-              "type": "integer",
+              "type": "number",
               "minimum": 0,
               "maximum": 16384
             },
-            "yaw": {
+            "toX": {
               "type": "number",
-              "minimum": -180,
-              "maximum": 180
+              "minimum": 0,
+              "maximum": 16384
             },
-            "pitch": {
+            "toY": {
               "type": "number",
-              "minimum": -90,
-              "maximum": 90
+              "minimum": 0,
+              "maximum": 16384
+            },
+            "dx": {
+              "type": "number",
+              "minimum": -4096,
+              "maximum": 4096
+            },
+            "dy": {
+              "type": "number",
+              "minimum": -4096,
+              "maximum": 4096
+            },
+            "button": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7
             },
             "clicks": {
-              "type": "integer",
-              "minimum": -20,
-              "maximum": 20
+              "type": "number",
+              "minimum": -100,
+              "maximum": 100
+            },
+            "horizontal": {
+              "type": "number",
+              "minimum": -100,
+              "maximum": 100
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "command": {
+              "type": "string",
+              "maxLength": 500
             },
             "pressEnter": {
               "type": "boolean"
             },
+            "slot": {
+              "type": "integer"
+            },
+            "yaw": {
+              "type": "number"
+            },
+            "pitch": {
+              "type": "number"
+            },
             "enabled": {
+              "type": "boolean"
+            },
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "revision": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "requestId": {
+              "type": "string",
+              "pattern": "^[a-f0-9-]{36}$"
+            },
+            "capture": {
               "type": "boolean"
             },
             "steps": {
               "type": "array",
               "minItems": 1,
-              "maxItems": 20,
+              "maxItems": 32,
               "items": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                   "operation": {
                     "type": "string",
                     "enum": [
                       "click",
+                      "double_click",
+                      "move",
+                      "look",
+                      "drag",
+                      "scroll",
                       "text",
+                      "key",
+                      "key_down",
+                      "key_up",
+                      "button_down",
+                      "button_up",
+                      "combo",
+                      "wait",
                       "inventory",
                       "close",
                       "command",
-                      "key",
-                      "look",
-                      "scroll",
-                      "interact"
+                      "interact",
+                      "release",
+                      "cancel",
+                      "batch",
+                      "operator"
                     ]
                   },
-                  "slot": {
-                    "type": "integer"
-                  },
-                  "button": {
-                    "type": "integer"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "command": {
-                    "type": "string"
-                  },
                   "key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "keys": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "durationMs": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 2000
+                    "maximum": 5000
                   },
                   "x": {
-                    "type": "integer",
+                    "type": "number",
                     "minimum": 0,
                     "maximum": 16384
                   },
                   "y": {
-                    "type": "integer",
+                    "type": "number",
                     "minimum": 0,
                     "maximum": 16384
                   },
-                  "yaw": {
+                  "toX": {
                     "type": "number",
-                    "minimum": -180,
-                    "maximum": 180
+                    "minimum": 0,
+                    "maximum": 16384
                   },
-                  "pitch": {
+                  "toY": {
                     "type": "number",
-                    "minimum": -90,
-                    "maximum": 90
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "dx": {
+                    "type": "number",
+                    "minimum": -4096,
+                    "maximum": 4096
+                  },
+                  "dy": {
+                    "type": "number",
+                    "minimum": -4096,
+                    "maximum": 4096
+                  },
+                  "button": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 7
                   },
                   "clicks": {
-                    "type": "integer",
-                    "minimum": -20,
-                    "maximum": 20
+                    "type": "number",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "horizontal": {
+                    "type": "number",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 512
+                  },
+                  "command": {
+                    "type": "string",
+                    "maxLength": 500
                   },
                   "pressEnter": {
                     "type": "boolean"
                   },
-                  "expect": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 10,
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 500
-                    }
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "yaw": {
+                    "type": "number"
+                  },
+                  "pitch": {
+                    "type": "number"
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
-                  "operation",
-                  "expect"
+                  "operation"
                 ]
               }
             }
@@ -13715,175 +14360,12 @@
         ],
         "inputSchema": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "operation": {
-              "type": "string"
-            },
             "sessionId": {
-              "type": "string"
-            },
-            "mode": {
               "type": "string",
-              "enum": [
-                "headless",
-                "rendered"
-              ]
-            },
-            "offline": {
-              "type": "boolean"
-            },
-            "username": {
-              "type": "string"
-            },
-            "acceptEula": {
-              "type": "boolean"
-            },
-            "hidden": {
-              "type": "boolean"
-            },
-            "after": {
-              "type": "integer"
-            },
-            "tooltip": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
-            },
-            "button": {
-              "type": "integer"
-            },
-            "revision": {
-              "type": "string"
-            },
-            "command": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "durationMs": {
-              "type": "integer"
-            },
-            "x": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "y": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "yaw": {
-              "type": "number",
-              "minimum": -180,
-              "maximum": 180
-            },
-            "pitch": {
-              "type": "number",
-              "minimum": -90,
-              "maximum": 90
-            },
-            "clicks": {
-              "type": "integer",
-              "minimum": -20,
-              "maximum": 20
-            },
-            "pressEnter": {
-              "type": "boolean"
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "steps": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 20,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "operation": {
-                    "type": "string",
-                    "enum": [
-                      "click",
-                      "text",
-                      "inventory",
-                      "close",
-                      "command",
-                      "key",
-                      "look",
-                      "scroll",
-                      "interact"
-                    ]
-                  },
-                  "slot": {
-                    "type": "integer"
-                  },
-                  "button": {
-                    "type": "integer"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "command": {
-                    "type": "string"
-                  },
-                  "key": {
-                    "type": "string"
-                  },
-                  "durationMs": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 2000
-                  },
-                  "x": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 16384
-                  },
-                  "y": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 16384
-                  },
-                  "yaw": {
-                    "type": "number",
-                    "minimum": -180,
-                    "maximum": 180
-                  },
-                  "pitch": {
-                    "type": "number",
-                    "minimum": -90,
-                    "maximum": 90
-                  },
-                  "clicks": {
-                    "type": "integer",
-                    "minimum": -20,
-                    "maximum": 20
-                  },
-                  "pressEnter": {
-                    "type": "boolean"
-                  },
-                  "expect": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 10,
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 500
-                    }
-                  }
-                },
-                "required": [
-                  "operation",
-                  "expect"
-                ]
-              }
+              "minLength": 1,
+              "maxLength": 120
             }
           },
           "required": [
@@ -13901,89 +14383,12 @@
         ],
         "inputSchema": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "operation": {
-              "type": "string"
-            },
             "sessionId": {
-              "type": "string"
-            },
-            "mode": {
               "type": "string",
-              "enum": [
-                "headless",
-                "rendered"
-              ]
-            },
-            "offline": {
-              "type": "boolean"
-            },
-            "username": {
-              "type": "string"
-            },
-            "acceptEula": {
-              "type": "boolean"
-            },
-            "hidden": {
-              "type": "boolean"
-            },
-            "after": {
-              "type": "integer"
-            },
-            "tooltip": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
-            },
-            "button": {
-              "type": "integer"
-            },
-            "revision": {
-              "type": "string"
-            },
-            "command": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "key": {
-              "type": "string"
-            },
-            "durationMs": {
-              "type": "integer"
-            },
-            "x": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "y": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16384
-            },
-            "yaw": {
-              "type": "number",
-              "minimum": -180,
-              "maximum": 180
-            },
-            "pitch": {
-              "type": "number",
-              "minimum": -90,
-              "maximum": 90
-            },
-            "clicks": {
-              "type": "integer",
-              "minimum": -20,
-              "maximum": 20
-            },
-            "pressEnter": {
-              "type": "boolean"
-            },
-            "enabled": {
-              "type": "boolean"
+              "minLength": 1,
+              "maxLength": 120
             },
             "steps": {
               "type": "array",
@@ -13991,67 +14396,119 @@
               "maxItems": 20,
               "items": {
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                   "operation": {
                     "type": "string",
                     "enum": [
                       "click",
+                      "double_click",
+                      "move",
+                      "look",
+                      "drag",
+                      "scroll",
                       "text",
+                      "key",
+                      "key_down",
+                      "key_up",
+                      "button_down",
+                      "button_up",
+                      "combo",
+                      "wait",
                       "inventory",
                       "close",
                       "command",
-                      "key",
-                      "look",
-                      "scroll",
-                      "interact"
+                      "interact",
+                      "release",
+                      "cancel",
+                      "batch",
+                      "operator"
                     ]
                   },
-                  "slot": {
-                    "type": "integer"
-                  },
-                  "button": {
-                    "type": "integer"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "command": {
-                    "type": "string"
-                  },
                   "key": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "keys": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "durationMs": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 2000
+                    "maximum": 5000
                   },
                   "x": {
-                    "type": "integer",
+                    "type": "number",
                     "minimum": 0,
                     "maximum": 16384
                   },
                   "y": {
-                    "type": "integer",
+                    "type": "number",
                     "minimum": 0,
                     "maximum": 16384
                   },
-                  "yaw": {
+                  "toX": {
                     "type": "number",
-                    "minimum": -180,
-                    "maximum": 180
+                    "minimum": 0,
+                    "maximum": 16384
                   },
-                  "pitch": {
+                  "toY": {
                     "type": "number",
-                    "minimum": -90,
-                    "maximum": 90
+                    "minimum": 0,
+                    "maximum": 16384
+                  },
+                  "dx": {
+                    "type": "number",
+                    "minimum": -4096,
+                    "maximum": 4096
+                  },
+                  "dy": {
+                    "type": "number",
+                    "minimum": -4096,
+                    "maximum": 4096
+                  },
+                  "button": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 7
                   },
                   "clicks": {
-                    "type": "integer",
-                    "minimum": -20,
-                    "maximum": 20
+                    "type": "number",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "horizontal": {
+                    "type": "number",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "text": {
+                    "type": "string",
+                    "maxLength": 512
+                  },
+                  "command": {
+                    "type": "string",
+                    "maxLength": 500
                   },
                   "pressEnter": {
+                    "type": "boolean"
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "yaw": {
+                    "type": "number"
+                  },
+                  "pitch": {
+                    "type": "number"
+                  },
+                  "enabled": {
                     "type": "boolean"
                   },
                   "expect": {
@@ -15252,6 +15709,16 @@
     ],
     "tools": [
       {
+        "name": "modmind_build_status",
+        "action": "build_status",
+        "description": "Read the active managed build state and whether it can be cancelled. Does not start a build or game. Network timeout protection applies to new build Java processes after this feature update."
+      },
+      {
+        "name": "modmind_cancel_build",
+        "action": "cancel_build",
+        "description": "Cancel only the current project managed build and await process cleanup. Does not stop an independently running game or delete project files/caches. If status is cancelling, query modmind_build_status again before retrying."
+      },
+      {
         "name": "modmind_local_server",
         "action": "local_server",
         "description": "Manage the current project local server: state, start, stop, command or scenario. Uses managed core downloads and isolated persistent instances. Start does not prove plugin behavior; scenario requires fresh expected evidence."
@@ -15259,32 +15726,32 @@
       {
         "name": "modmind_test_rendered",
         "action": "test_rendered",
-        "description": "Build/sync and test a visible owned Minecraft client. Supported Java mods use the pinned Minecraft Mod MCP integration and return an actual screenshot plus GUI/player/world observations, then stop. Other versions/modpacks use startup checks only. Inspect returned images before claiming visual verification. For continued interaction use modmind_test_session with mode rendered. Requires real-interface testing."
+        "description": "Build/sync and launch the current Java mod/modpack with the bundled background Agent. Returns an actual framebuffer image, then stops the owned client. Inspect images before claiming visual or gameplay correctness. Startup is asynchronous: poll the returned taskId until completed; cancel stops preparation."
       },
       {
         "name": "modmind_test_session",
         "action": "test_session",
-        "description": "Manage an owned player test: capabilities, start, state, stop. Java mod projects use Minecraft Mod MCP in rendered mode, with isolated game files and native screenshots; navigate the title screen to create or enter a test world. Plugin/modpack tests use their supported HeadlessMC path. Probe capabilities first. Keep sessionId and stop when done. Headless cannot prove visuals."
+        "description": "Manage an owned game session: capabilities/start/state/stop, pause/resume AI input or takeover for human input. Rendered Java mod/modpack/plugin sessions default to the bundled background Agent, independent of control Mod catalogs. Start returns sessionId immediately; poll state until ready. The game retains real rendering and independent virtual input; hidden/minimized/locked states are not guaranteed. Legacy backend remains explicit; headless cannot prove visuals. Stop only owned processes."
       },
       {
         "name": "modmind_test_observe",
         "action": "test_observe",
-        "description": "Read fresh GUI or client logs. Java mod MCP observations also include player/world state. GUI revision must accompany click/text/scroll. HeadlessMC logs support a cursor; tooltip only if advertised."
+        "description": "Read current background input/render state or bounded client logs. operation=result with requestId checks an earlier action without repeating it. Background observations do not invent GUI, inventory or world semantics. Use test_capture for visible evidence."
       },
       {
         "name": "modmind_test_action",
         "action": "test_action",
-        "description": "Operate the test player: inventory, close, click, text, command, key. Native mod MCP also supports look(yaw,pitch), scroll(clicks), interact, coordinate click(x,y,button), and text with pressEnter. Click/text/scroll need latest revision; slot means GUI button index, not inventory slot for native MCP. Commands require in-game permissions and can build with setblock/fill. Operator is only for plugin/modpack owned test servers. Action acknowledgement is not gameplay success; do not blindly retry."
+        "description": "Operate the game through virtual keyboard/mouse: click/double_click, move, look(dx,dy relative pixels), drag(x,y,toX,toY), scroll, text, key/key_down/key_up, button_down/button_up, combo(keys), wait or batch(steps). Screenshot pixel coordinates require revision from latest test_capture; resizing/recreating invalidates it. Hold leases <=5000ms; batch <=32 steps and 10s. requestId deduplicates retries; query observe result after uncertainty. capture=true returns a later real image. release/cancel clear owned input. inventory/close use E/Escape; command types chat and needs in-game permissions. Completion means input and later render processed, never gameplay success."
       },
       {
         "name": "modmind_test_capture",
         "action": "test_capture",
-        "description": "Capture a new actual rendered-client screenshot if supported. Never accepts headless or blank frames as visual evidence."
+        "description": "Capture a fresh real framebuffer image, returned as MCP image content with frameId, timestamp, dimensions and revision. Click/drag/move use pixels of this returned image, not desktop coordinates. Paused/human sessions remain observable. No stale frames or headless images are presented as current visuals."
       },
       {
         "name": "modmind_test_scenario",
         "action": "test_scenario",
-        "description": "Run up to 20 player actions with expected output text per step. Records versioned evidence; stops on failed assertions. Does not prove visual correctness."
+        "description": "Legacy backend text-assertion scenarios. For background sessions use test_action batch followed by capture and inspect the actual image; no semantic game-state assertions are fabricated."
       },
       {
         "name": "modmind_test_matrix",
@@ -15339,7 +15806,7 @@
     "hostVersion": "1.5.0-plugintest",
     "id": "versions",
     "name": "版本记录",
-    "version": "1.5.0",
+    "version": "1.5.3",
     "main": "main.cjs",
     "renderer": "renderer.js",
     "style": "renderer.css",
@@ -15379,6 +15846,8 @@
       "velocity"
     ],
     "hostCapabilities": [
+      "snapshotBatchDeleteV1",
+      "diagnosticsV1",
       "runtime"
     ],
     "actions": [
@@ -15474,6 +15943,42 @@
               "type": "array",
               "minItems": 1,
               "maxItems": 2
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "id": "snapshots:deleteMany",
+        "handler": "snapshots:deleteMany",
+        "permission": "write",
+        "projectRequired": true,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "items": [
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 10000,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                {
+                  "type": "string"
+                }
+              ]
             }
           },
           "required": [
@@ -15779,11 +16284,24 @@
               "enum": [
                 "status",
                 "diff",
-                "remotes"
+                "remotes",
+                "snapshots"
               ]
             },
             "path": {
               "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
             }
           },
           "required": [
@@ -15813,7 +16331,8 @@
                 "pull",
                 "push",
                 "merge",
-                "rebase"
+                "rebase",
+                "deleteSnapshots"
               ]
             },
             "commit": {
@@ -15827,6 +16346,20 @@
             },
             "branch": {
               "type": "string"
+            },
+            "ids": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            },
+            "confirmed": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -15840,12 +16373,12 @@
       {
         "name": "modmind_version_query",
         "action": "query",
-        "description": "Read the current project Git status, diff or remote list using the version-management service."
+        "description": "Read the current project Git status, diff or remote list using the version-management service. Use operation=snapshots to list/search current-project snapshot summaries with query/offset/limit; follow nextOffset."
       },
       {
         "name": "modmind_version_manage",
         "action": "manage",
-        "description": "Perform version-management commands in the current project: initialize, commit, createBranch, fetch, pull, push, merge or rebase. Use operation-specific fields and review project status before changes."
+        "description": "Perform version-management commands in the current project: initialize, commit, createBranch, fetch, pull, push, merge or rebase. Use operation-specific fields and review project status before changes. deleteSnapshots permanently removes the explicit ids after the user confirms (confirmed=true). Migration and active AI recovery backups remain protected. Returns deletedIds, per-item failures, and remainingCount; never imply failed items were removed."
       }
     ]
   }

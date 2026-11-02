@@ -49,11 +49,37 @@ async function capture(name, width = 1280, dark = false) {
   if (bounds) assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height + 1, `Popover fits desktop viewport ${viewport.width}x${viewport.height}`)
   await page.screenshot({ path: path.join(output, `${name}.png`) })
 }
+async function advanceMoko() {
+  const hint = page.locator('.moko-continue-hint')
+  if ((await hint.innerText()).includes('显示全文')) await page.mouse.click(800, 220)
+  await page.mouse.click(800, 220)
+}
+async function startMoko() {
+  await page.locator('[data-moko-step="hello"]').waitFor()
+  await advanceMoko()
+  await page.getByRole('button', { name: '是呀，第一次来', exact: true }).click()
+  await advanceMoko()
+  await page.locator('[data-moko-step="account"]').waitFor()
+  const skipLogin = page.getByRole('button', { name: '稍后登录', exact: true })
+  // QA profiles have no account; a signed-in run can continue through the greeting.
+  if (await page.locator('[data-moko-pure="false"][data-moko-step="account"]').count()) await skipLogin.click()
+  else await advanceMoko()
+  await advanceMoko()
+  await phase('goal')
+}
+async function chooseMokoTask(goal, task) {
+  await page.getByRole('button', { name: goal === '制作 Mod' ? '制作模组' : goal, exact: false }).click()
+  const reveal = page.getByRole('button', { name: '显示全文', exact: true })
+  if (await reveal.isVisible()) await reveal.click()
+  await page.getByRole('button', { name: '就选这个', exact: true }).click()
+  await page.getByRole('button', { name: task, exact: false }).click()
+  if (await reveal.isVisible()) await reveal.click()
+  await page.getByRole('button', { name: '准备工具', exact: true }).click()
+}
 async function choose(goal, task) {
   await page.getByRole('button', { name: '新手教程', exact: true }).click()
-  await page.getByRole('button', { name: '我是新手，带我开始', exact: false }).click()
-  await page.getByRole('button', { name: goal, exact: false }).click()
-  await page.getByRole('button', { name: task, exact: false }).click()
+  await startMoko()
+  await chooseMokoTask(goal, task)
 }
 async function activeClick() {
   const active = page.locator('.driver-active-element')
@@ -193,7 +219,7 @@ try {
   const changelog = page.getByRole('button', { name: '关闭更新日志', exact: true })
   if (await changelog.isVisible().catch(() => false)) await changelog.click()
   // Simple mode retains its original interface, with no tutorial or added menu items.
-  assert.equal(await page.locator('.onboarding-question,[data-onboarding-popover]').count(), 0)
+  assert.equal(await page.locator('.onboarding-question,.moko-onboarding,[data-onboarding-popover]').count(), 0)
   assert.equal(await page.locator('[data-onboarding="tutorial-help"]').count(), 0)
   assert.equal(await page.locator('#main-sidebar').isVisible(), false)
   await page.getByRole('button', { name: '更多操作', exact: true }).click()
@@ -203,11 +229,11 @@ try {
   await page.getByRole('button', { name: '更多操作', exact: true }).click()
   await page.locator('.expert-mode-toggle').click()
   checks.push('simple mode has no tutorial, no new menu items and unchanged hidden sidebar; professional mode activates first-run choice')
-  await page.getByRole('button', { name: '我是老手，直接进入', exact: false }).waitFor()
+  await page.locator('.moko-onboarding').waitFor()
   await capture('experience-light'); await capture('experience-dark-desktop-minimum', 'minimum', true)
-  await page.getByRole('button', { name: '我是老手，直接进入', exact: false }).click()
+  await page.getByRole('button', { name: '直接进入工作台', exact: true }).click()
   await page.reload(); await page.locator('#app-loading').waitFor({ state: 'hidden' })
-  assert.equal(await page.locator('.onboarding-question').count(), 0)
+  assert.equal(await page.locator('.onboarding-question,.moko-onboarding').count(), 0)
   checks.push('first-run novice/expert choice, skip persistence, light/dark and actual desktop minimum size'); console.log('PASS first-run choice and skip')
 
   if (helpOnly) {
@@ -221,20 +247,19 @@ try {
     await help.click()
     assert.equal(await page.locator('.titlebar-menu').count(), 0)
     await phase('experience')
-    await page.getByRole('button', { name: '我是新手，带我开始', exact: false }).click()
+    await startMoko()
     await phase('goal')
     await page.keyboard.press('Escape')
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('modmind-onboarding:v1')).status), 'paused')
     await help.click()
     await phase('experience')
-    await page.getByRole('button', { name: '我是老手，直接进入', exact: false }).click()
+    await page.getByRole('button', { name: '直接进入工作台', exact: true }).click()
     await page.evaluate(key => { const state = JSON.parse(localStorage.getItem(key)); localStorage.setItem(key, JSON.stringify({ ...state, status: 'done' })) }, key)
     await page.reload(); await page.locator('#app-loading').waitFor({ state: 'hidden' })
     await help.click()
     await phase('experience')
-    await page.getByRole('button', { name: '我是新手，带我开始', exact: false }).click()
-    await page.getByRole('button', { name: '制作 Mod', exact: false }).click()
-    await page.getByRole('button', { name: '准备制作第一个物品', exact: false }).click()
+    await startMoko()
+    await chooseMokoTask('制作 Mod', '准备制作第一个物品')
     await enterFeatures()
     await capture('titlebar-help-replayed-tour', 'minimum', true)
     await page.keyboard.press('Escape')
@@ -325,9 +350,8 @@ try {
   await page.getByRole('button', { name: '稍后继续', exact: true }).click()
   await page.evaluate(key => { localStorage.removeItem(key) }, key)
   await page.reload(); await page.locator('#app-loading').waitFor({ state: 'hidden' })
-  await page.getByRole('button', { name: '我是新手，带我开始', exact: false }).click()
-  await page.getByRole('button', { name: '开发服务端插件', exact: false }).click()
-  await page.getByRole('button', { name: '让 AI 帮我制作一条指令', exact: false }).click()
+  await startMoko()
+  await chooseMokoTask('开发服务端插件', '让 AI 帮我制作一条指令')
   await prepareResources(); await create('Tutorial Offline Server', 'minecraft-server-plugin'); await finish()
   checks.push('offline tutorial and local server-plugin creation; no forced AI execution or runtime downloads')
   }

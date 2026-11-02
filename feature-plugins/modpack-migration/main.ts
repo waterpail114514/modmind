@@ -1,3 +1,5 @@
+import { diagnosticIpcOperations } from '../../src/main/diagnosticOperations'
+import { diagnosticArguments } from '../../src/main/diagnosticContext'
 import { promises as fs, readFileSync, createReadStream } from "node:fs"
 import path from "node:path"
 import { modpackModsRoot, modpackOverridesRoot } from "../../src/main/modpackPaths"
@@ -263,7 +265,7 @@ async function applyModpackMigrationForAgent(project: ProjectInfo, input: Record
     return result;
 }
 const actions: Record<string, (input: Record<string, unknown>, context: FeaturePluginInvocationContext) => unknown> = {}
-const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input) => handler(host.event(), ...(input.args as any[])) }
+const diagnosticHandle = (channel: string, handler: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => unknown): void => { actions[channel] = (input, context) => diagnosticIpcOperations.run('feature-ipc', channel, { input: diagnosticArguments(channel, input.args as unknown[]), projectPath: context.projectPath, pluginId: "modpack-migration" }, () => handler(host.event(), ...(input.args as any[]))) }
 diagnosticHandle('modpack:previewMigration', async (event, input: unknown) => {
     const project = host.requireProject();
     if (!isModpackProject(project))

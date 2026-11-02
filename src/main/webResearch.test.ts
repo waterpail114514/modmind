@@ -71,6 +71,18 @@ describe('read-only web research', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['198.18.0.210', '198.19.255.254', 'fdfe:dcba:9876::ca', '192.0.2.1', '198.51.100.2', '203.0.113.2', '2001:db8::1'])('explains DNS rejection without requesting reserved address %s', async address => {
+    vi.mocked(lookup).mockResolvedValue([{ address, family: address.includes(':') ? 6 : 4 }] as never)
+    await expect(readWebPage({ url: 'https://example.org' })).rejects.toThrow(/DNS.*fake-IP.*redir-host/)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reports the DNS remedy for search providers and rejects mixed public/private answers', async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: '93.184.216.34', family: 4 }, { address: '198.18.0.1', family: 4 }] as never)
+    await expect(searchWeb({ query: 'test' })).rejects.toThrow('fake-IP')
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('rejects binaries and oversized streamed pages', async () => {
     vi.mocked(request).mockResolvedValueOnce(response('binary', 'application/octet-stream'))
     await expect(readWebPage({ url: 'https://example.org/file' })).rejects.toThrow('不是可读取的文本网页')

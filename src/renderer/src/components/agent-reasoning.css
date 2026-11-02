@@ -1,0 +1,7 @@
+.agent-reasoning .agent-disclosure-body { white-space: normal; }
+.agent-reasoning-content + .agent-reasoning-content { margin-top: 12px; }
+.agent-reasoning-content > summary { cursor: pointer; color: var(--agent-text-3); font-size: 12px; }
+.agent-reasoning-label { color: var(--theme-muted); font-size: 12px; margin-bottom: 5px; }
+.agent-reasoning-content .agent-markdown, .agent-reasoning-content .markdown-message { font-size: inherit; }
+.inspiration-reasoning-row { width: min(860px, calc(100% - 64px)); margin: 18px auto; }
+.agent-workbench .agent-reasoning :focus-visible, .inspiration-page .agent-reasoning :focus-visible { outline: 2px solid var(--theme-accent); outline-offset: 2px; }

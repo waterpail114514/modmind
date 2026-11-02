@@ -1,5 +1,14 @@
+import { diagnosticIpcOperations } from './diagnosticOperations'
+import { diagnosticValue } from './diagnosticContext'
 import { isFeaturePluginFile as allowedFile, validateFeaturePluginFiles as validate, validateFeaturePluginInput as validateInput, type PreparedPlugin } from './featurePluginPackage'
 export { prepareFeaturePlugin, type PreparedPlugin } from './featurePluginPackage'
+
+/** Local imports share the same transactional install/update and trust boundary. */
+export async function importLocalFeaturePlugin(service: FeaturePluginService, prepared: PreparedPlugin, expectedId?: string): Promise<FeaturePluginRecord[]> {
+  if (expectedId !== undefined && (!/^[a-z][a-z0-9-]{0,63}$/.test(expectedId) || prepared.manifest.id !== expectedId)) throw new Error('所选安装包不是当前功能，请选择相同功能 ID 的更新包')
+  if (expectedId !== undefined && !service.list().some(record => record.id === expectedId)) throw new Error('此功能已被卸载，请使用导入功能包重新安装')
+  return service.list().some(record => record.id === prepared.manifest.id) ? service.update(prepared) : service.install(prepared)
+}
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -47,7 +56,8 @@ export class FeaturePluginService {
   private directory(id: string): string { return this.builtinDirectories.get(id) ?? path.join(this.root, id) }
   private assertMutable(id: string): void { if (this.builtinDirectories.has(id)) throw new Error('内置工作台随软件更新，不能停用、替换或卸载') }
   constructor(private readonly root: string, private readonly host: FeaturePluginHost) {}
-  list(): FeaturePluginRecord[] { return [...this.records.values()].map(record => structuredClone(record)) }
+  list(): FeaturePluginRecord[] { return [...this.records.values()].map(record => ({ ...structuredClone(record), contentHash: this.fingerprint(record.id) })) }
+  canChange(): boolean { return !this.changing && !this.activeCalls && !this.host.busy() && !this.hasBusyRuntime() }
   activeService<T extends object>(id: string): T | undefined { return this.enabled(id) ? this.services.get(id) as T | undefined : undefined }
   fingerprint(id: string): string | undefined { const manifest = this.manifests.get(id); return manifest ? hash(Buffer.from(JSON.stringify(manifest))) : undefined }
   manifest(id: string): FeaturePluginDefinition | undefined { const manifest = this.manifests.get(id); return manifest ? definition(manifest) : undefined }
@@ -119,7 +129,7 @@ export class FeaturePluginService {
       const latestProject = this.host.projectRoot?.() ?? null
       if (this.host.projectRoot && latestProject !== currentProject && (!latestProject || !currentProject || !sameProjectPath(latestProject, currentProject))) throw new Error('FEATURE_PLUGIN_PROJECT_MISMATCH: 项目已切换')
       if (!featureActionApplies(this.manifests.get(id)!, action, this.host.project?.())) throw new Error('FEATURE_PLUGIN_STUDIO_MISMATCH: 此工具不适用于当前工作台')
-      return await handler.call(runtime, checkedInput, invocation)
+      return await diagnosticIpcOperations.run('feature-plugin', actionId, { pluginId: id, projectPath: invocation.projectPath, input: diagnosticValue(checkedInput) }, () => handler.call(runtime, checkedInput, invocation))
     } finally { this.activeCalls-- }
   }
   async initialize(builtins: Array<{ id: string; directory: string }> = []): Promise<void> {
@@ -224,7 +234,7 @@ export class FeaturePluginService {
     return this.services.get(id) as T
   }
   private async change(action: () => Promise<void>, additiveAgentInstall = false): Promise<FeaturePluginRecord[]> {
-    if (this.changing || this.activeCalls || (!additiveAgentInstall && this.host.busy())) throw new Error('请等待当前插件任务或工作台任务完成后再更改插件')
+    if (this.changing || this.activeCalls || (!additiveAgentInstall && (this.host.busy() || this.hasBusyRuntime()))) throw new Error('请等待当前插件任务或工作台任务完成后再更改插件')
     this.changing = true
     try { await action(); this.revision++; this.host.changed(); return this.list() } finally { this.changing = false }
   }

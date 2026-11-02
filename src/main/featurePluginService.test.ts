@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { createHash } from 'node:crypto'
-import { FeaturePluginService, type FeaturePluginHost, type PreparedPlugin } from './featurePluginService'
+import { FeaturePluginService, importLocalFeaturePlugin, type FeaturePluginHost, type PreparedPlugin } from './featurePluginService'
 import type { FeaturePluginManifest } from '../shared/featurePlugins'
 
 const roots: string[] = []
@@ -21,6 +21,25 @@ async function fixture(code = 'exports.activate = () => ({ hello: () => "ready" 
   return { files, manifest }
 }
 describe('native application feature lifecycle', () => {
+  it('hides withdrawn default entries but keeps local imports manageable', async () => {
+    const { manager: service } = await manager()
+    expect(service.catalog().some(entry => ['mc-preview', 'mc-pull'].includes(entry.id))).toBe(false)
+    await service.install(await fixture(undefined, { id: 'mc-pull', name: '本地采集副本' }))
+    expect(service.catalog().find(entry => entry.id === 'mc-pull')).toMatchObject({ installed: true, available: true })
+    await service.uninstall('mc-pull')
+    expect(service.catalog().some(entry => entry.id === 'mc-pull')).toBe(false)
+  })
+  it('updates the exact local feature while keeping disabled state and rejects mismatched replacement packages', async () => {
+    const { manager: service } = await manager()
+    await importLocalFeaturePlugin(service, await fixture(undefined, {version:'1.0.0'}))
+    await service.setEnabled('image-studio', false)
+    await expect(importLocalFeaturePlugin(service, await fixture(undefined, {id:'wrong-feature',version:'1.1.0'}), 'image-studio')).rejects.toThrow('不是当前功能')
+    expect(service.list().some(entry=>entry.id==='wrong-feature')).toBe(false)
+    await importLocalFeaturePlugin(service, await fixture(undefined, {version:'1.1.0'}), 'image-studio')
+    expect(service.list().find(entry=>entry.id==='image-studio')).toMatchObject({version:'1.1.0',enabled:false})
+    await service.uninstall('image-studio')
+    await expect(importLocalFeaturePlugin(service, await fixture(undefined, {version:'1.2.0'}), 'image-studio')).rejects.toThrow('已被卸载')
+  })
   it('rejects a testingV2 update on an earlier host and keeps the previous version usable', async () => {
     const { manager: service, options } = await manager()
     await service.install(await fixture(undefined, { version: '1.0.1' }))

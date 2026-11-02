@@ -15,7 +15,8 @@ export const TAG = {
 
 class Reader {
   constructor(buf) { this.b = buf; this.p = 0; }
-  u1() { return this.b[this.p++]; }
+  ensure(n) { if(!Number.isInteger(n) || n < 0 || this.p+n > this.b.length) throw new Error('NBT 文件不完整或长度字段无效'); }
+  u1() { this.ensure(1); return this.b[this.p++]; }
   i1() { const v = this.b.readInt8(this.p); this.p += 1; return v; }
   i2() { const v = this.b.readInt16BE(this.p); this.p += 2; return v; }
   i4() { const v = this.b.readInt32BE(this.p); this.p += 4; return v; }
@@ -25,11 +26,12 @@ class Reader {
   }
   f4() { const v = this.b.readFloatBE(this.p); this.p += 4; return v; }
   f8() { const v = this.b.readDoubleBE(this.p); this.p += 8; return v; }
-  str() { const n = this.b.readUInt16BE(this.p); this.p += 2; const s = this.b.toString('utf8', this.p, this.p + n); this.p += n; return s; }
-  bytes(n) { const v = this.b.subarray(this.p, this.p + n); this.p += n; return v; }
+  str() { this.ensure(2); const n = this.b.readUInt16BE(this.p); this.p += 2;this.ensure(n); const s = this.b.toString('utf8', this.p, this.p + n); this.p += n; return s; }
+  bytes(n) { this.ensure(n);const v = this.b.subarray(this.p, this.p + n); this.p += n; return v; }
 }
 
-function readPayload(r, type) {
+function readPayload(r, type, depth = 0) {
+  if(depth>64)throw new Error('NBT 嵌套超过 64 层');
   switch (type) {
     case TAG.BYTE: return r.i1();
     case TAG.SHORT: return r.i2();
@@ -42,22 +44,23 @@ function readPayload(r, type) {
     case TAG.LIST: {
       const itemType = r.u1();
       const n = r.i4();
+      if(n < 0 || n > 8000000 || n > r.b.length-r.p || itemType===TAG.END && n)throw new Error('NBT 列表长度无效或超过限制');
       const out = new Array(n);
-      for (let i = 0; i < n; i++) out[i] = readPayload(r, itemType);
+      for (let i = 0; i < n; i++) out[i] = readPayload(r, itemType, depth+1);
       return out;
     }
     case TAG.COMPOUND: {
-      const out = {};
+      const out = Object.create(null);
       for (;;) {
         const t = r.u1();
         if (t === TAG.END) break;
         const name = r.str();
-        out[name] = readPayload(r, t);
+        out[name] = readPayload(r, t, depth+1);
       }
       return out;
     }
-    case TAG.INT_ARRAY: { const n = r.i4(); const out = new Int32Array(n); for (let i = 0; i < n; i++) out[i] = r.i4(); return out; }
-    case TAG.LONG_ARRAY: { const n = r.i4(); const out = new Array(n); for (let i = 0; i < n; i++) out[i] = r.i8(); return out; }
+    case TAG.INT_ARRAY: { const n = r.i4();r.ensure(n*4); const out = new Int32Array(n); for (let i = 0; i < n; i++) out[i] = r.i4(); return out; }
+    case TAG.LONG_ARRAY: { const n = r.i4();r.ensure(n*8); const out = new Array(n); for (let i = 0; i < n; i++) out[i] = r.i8(); return out; }
     default: throw new Error('未知的 NBT tag 类型: ' + type);
   }
 }
@@ -73,10 +76,11 @@ export function parseNbt(buf) {
 
 /** 自动识别 gzip / zlib / 裸 NBT。建筑文件基本都是 gzip。 */
 export function maybeDecompress(buf) {
-  if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) return zlib.gunzipSync(buf);
+  if (buf.length > 64*1024*1024)throw new Error('NBT 超过 64 MiB');
+  if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) return zlib.gunzipSync(buf,{maxOutputLength:64*1024*1024});
   // zlib 头：0x78 开头
   if (buf.length >= 2 && buf[0] === 0x78) {
-    try { return zlib.inflateSync(buf); } catch { /* 落到裸 NBT */ }
+    return zlib.inflateSync(buf,{maxOutputLength:64*1024*1024});
   }
   return buf;
 }

@@ -1,5 +1,7 @@
 import { WebSocket as UndiciWebSocket } from 'undici'
 import type { RemoteConnectionState } from '../shared/types'
+import { diagnosticJournal } from './diagnosticLog'
+import { diagnosticValue } from './diagnosticContext'
 
 export interface RemoteServerCommand {
   type: 'server.command'
@@ -211,6 +213,9 @@ export class RemoteClientService {
     if (Buffer.byteLength(text, 'utf8') > MAX_FRAME_BYTES) return
     let message: RemoteMessage
     try { message = JSON.parse(text) as RemoteMessage } catch { return }
+    if (['server.command', 'server.cancel', 'response.ack', 'server.error'].includes(String(message.type))) {
+      diagnosticJournal.record({ subsystem: 'remote', operation: 'message', phase: 'received', message: `Remote ${String(message.type)}`, data: { requestId: message.requestId, targetRequestId: message.targetRequestId, type: message.type, input: diagnosticValue(message) } })
+    }
     if (message.type === 'server.ready') {
       if (this.authTimer) clearTimeout(this.authTimer)
       this.authTimer = null
@@ -239,18 +244,22 @@ export class RemoteClientService {
       if (!requestId || !commandText) return
       const previousResponse = this.pendingResponses.get(requestId)
       if (previousResponse) {
+        diagnosticJournal.record({ subsystem: 'remote', operation: 'message', phase: 'deduplicated', message: 'Resending an unacknowledged result without executing again', data: { requestId } })
         this.send(previousResponse)
         return
       }
       const recentResponse = this.recentResponses.get(requestId)
       if (recentResponse) {
         if (recentResponse.expiresAt > Date.now()) {
+          diagnosticJournal.record({ subsystem: 'remote', operation: 'message', phase: 'deduplicated', message: 'Replayed completed response without executing again', data: { requestId } })
           this.send(recentResponse.payload)
           return
         }
         this.recentResponses.delete(requestId)
       }
-      if (this.currentRequestId === requestId) return
+      if (this.currentRequestId === requestId) {
+        diagnosticJournal.record({ subsystem: 'remote', operation: 'message', phase: 'deduplicated-active', message: 'Duplicate in-flight command ignored', data: { requestId } }); return
+      }
       if (this.currentRequestId) {
         this.sendResponse(requestId, { status: 'FAILED', error: '设备当前已有 Remote 任务正在运行' })
         return
@@ -318,6 +327,7 @@ export class RemoteClientService {
   }
 
   private sendResponse(requestId: string, response: RemoteResponse): void {
+    diagnosticJournal.record({ subsystem: 'remote', operation: 'message', phase: 'result', level: response.status === 'FAILED' ? 'warning' : 'info', message: 'Remote execution returned', data: { requestId, result: diagnosticValue(response) } })
     const payload = responsePayload(requestId, response)
     this.pendingResponses.set(requestId, payload)
     this.recentResponses.set(requestId, { payload, expiresAt: Date.now() + RECENT_RESPONSE_TTL_MS })
@@ -335,6 +345,7 @@ export class RemoteClientService {
     if (!serialized) return
     if (Buffer.byteLength(serialized, 'utf8') > MAX_FRAME_BYTES) return
     this.socket.send(serialized)
+    if (payload.type === 'device.response') diagnosticJournal.record({ subsystem: 'remote', operation: 'message', phase: 'sent', message: 'Remote result sent; awaiting acknowledgement', data: { requestId: payload.requestId, status: payload.status } })
   }
 
   private handleDisconnect(message: string, code: number): void {

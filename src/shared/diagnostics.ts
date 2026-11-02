@@ -18,6 +18,21 @@ export interface DiagnosticErrorPayload {
   details?: unknown
 }
 
+export interface DiagnosticAttachment { id: string; name: string; bytes: number }
+export interface DiagnosticExportOptions {
+  description?: string
+  occurredAt?: string
+  includeProjectFiles?: boolean
+  includeScreenshot?: boolean
+  includeCrashDumps?: boolean
+  attachmentIds?: string[]
+}
+
+export interface DiagnosticUiEvent {
+  operation: string
+  data?: Record<string, unknown>
+}
+
 /** Make Error's non-enumerable fields survive the renderer's structured-clone boundary. */
 export function diagnosticErrorPayload(error: unknown): DiagnosticErrorPayload {
   const seen = new WeakSet<object>()

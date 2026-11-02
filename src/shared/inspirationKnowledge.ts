@@ -21,7 +21,7 @@ export interface InspirationWorkflowRecord {
   conversationId: string
   turnId: string
   generation: number
-  status: 'pending' | 'saved' | 'undone' | 'error'
+  status: 'staged' | 'pending' | 'saved' | 'undone' | 'error'
   changes: InspirationKnowledgeChange[]
   error?: string
 }

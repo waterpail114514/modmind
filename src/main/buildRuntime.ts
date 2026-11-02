@@ -1,8 +1,13 @@
+import { gradleRepositoryArguments, isManagedRepositoryFailure } from './gradleRepositoryPolicy'
+import { prepareForgeGradleDownloads } from './forgeGradleDownloads'
+import { isForgeGradle6Project } from './forgeGradlePolicy'
+import { diagnosticJournal } from './diagnosticLog'
+import { watchGradleBuild } from './gradleDiagnostics'
 import { app } from 'electron'
 import type { ChildProcess,ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createWriteStream,promises as fs } from 'node:fs'
+import { createReadStream,createWriteStream,promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type {
@@ -17,14 +22,15 @@ import { buildBedrockAddon,buildNeteaseArchive } from './bedrockAddon'
 import { downloadActivities } from './downloadActivityService'
 import { verifiedDownload } from './downloadService'
 import { ensureGradleMavenFallback,gradleDistributionSources,type GradleDownloadSourcePreference } from './gradleDownload'
-import { isForgeJavaProvisioningFailure,isGradleBuildStarted,isGradleDistributionFailure,isGradleJavaToolchainFailure,isGradleNetworkFailure } from './gradleFailure'
+import { isForgeJavaProvisioningFailure,isGradleBuildStarted,isGradleDistributionFailure,isGradleJavaToolchainFailure,isGradleNetworkFailure,isGradleMavenDependencyFailure } from './gradleFailure'
 import { describeProcessTermination,gradleDistributionDownloadUrl,MANAGED_GRADLE_BUILD_ARGUMENTS,normalizeProcessExitCode } from './gradleProcess'
 import { javaProxyOptions } from './javaEnvironment'
+import { boundedGradleJavaOptions, GRADLE_NETWORK_TIMEOUTS } from './gradleNetworkPolicy'
 import { ensureManagedJdk,type ManagedJdkProgress } from './jdkDownload'
 import { buildJavaRangeForProject,gradleVersionForProject,javaRuntimeTargetForJavaVersion,javaRuntimeTargetForMinecraft,javaVersionForMinecraft } from './loaderCompatibility'
 import { buildMavenPlugin } from './mavenBuild'
 import { validateRuntimeModArtifact } from './modpackArtifactValidation'
-import { collectBuiltModpackModuleArtifacts,createModrinthPackArchive,readModpackManifest,readModpackModuleProject } from './modpackService'
+import { collectBuiltModpackModuleArtifacts,writeModrinthPackArchive,readModpackManifest,readModpackModuleProject } from './modpackService'
 import { getNetworkProxyUrl } from './networkRequest'
 import { spawnManaged,stopProcessTree } from './processTree'
 import { findPluginArtifact } from './serverPluginService'
@@ -81,6 +87,15 @@ export function summarizeGradleFailure(logText: string): string {
   }
   if (isGradleNetworkFailure(logText)) {
     return '项目 Gradle Wrapper 无法取得配置的 Gradle 分发包。请检查 gradle/wrapper/gradle-wrapper.properties、网络或代理设置'
+  }
+  const forgePreflight = logText.match(/Failed to validate certificate for host ['"](https:\/\/(?:maven\.minecraftforge\.net|libraries\.minecraft\.net)\/)['"]/i)
+  if (forgePreflight && !/\.java:\d+:\s*(?:error|错误):/i.test(logText)) {
+    const details = lines.filter(line => /(?:Caused by:.*(?:SSL|Certificate|PKIX)|Remote host terminated|SSL peer shut down)/i.test(line)).slice(-3)
+    return `ForgeGradle 的官网连接预检失败（${forgePreflight[1]}），尚未进入源码编译。请使用受管国内下载源重试。\n${details.join('\n')}`
+  }
+  if (!/\.java:\d+:\s*(?:error|错误):/i.test(logText) && (isGradleMavenDependencyFailure(logText) || /(?:SocketTimeoutException|Read timed out|connect timed out)/i.test(logText))) {
+    const details = lines.filter(line => /(?:https?:\/\/|Could not|timed out|SocketTimeout)/i.test(line)).slice(-8)
+    return `Gradle/ForgeGradle 下载构建依赖失败或超时。请检查网络、代理或对应 Maven 仓库后重试；这不表示源码编译错误。\n${details.join('\n')}`
   }
   const compilerErrors: string[] = []
   for (let index = 0; index < lines.length && compilerErrors.length < 12; index += 1) {
@@ -412,6 +427,8 @@ protected lastProgressAt = 0
 
 protected lastProgressStage: MinecraftRuntimeStage | '' = ''
 
+protected lastBuildEvent: MinecraftRuntimeEvent | null = null
+
 protected stateProjectPath = ''
 
 protected state: MinecraftRuntimeState = {
@@ -439,6 +456,8 @@ constructor(options: MinecraftRuntimeOptions) {
 getState(): MinecraftRuntimeState {
     return { ...this.state, ...(this.stateProjectPath ? {projectPath: this.stateProjectPath} : {}), mods: [...this.state.mods] }
   }
+
+isBusy(): boolean { return Boolean(this.process || this.preparePromise || this.buildPromise || this.buildProcess || this.verificationProcess) }
 
 async ensureJavaRuntime(
     onProgressOrSignal?: ((message: string) => void) | AbortSignal,
@@ -621,12 +640,17 @@ protected killProcessTree(child: ChildProcess): void {
     void stopProcessTree(child)
   }
 
+protected managedRepositoryOfficial = false
+
+protected managedForge6 = false
+
 protected spawnGradle(
     runtime: GradleRuntimeSelection,
     project: ProjectInfo,
     args: string[],
     env: NodeJS.ProcessEnv
   ): ChildProcessWithoutNullStreams {
+    args = [...gradleRepositoryArguments(env.GRADLE_USER_HOME!, this.managedRepositoryOfficial, this.managedForge6), ...args]
     const toolchainHomes = env.MODMIND_GRADLE_JAVA_HOMES?.trim()
     const toolchainEnvNames = env.MODMIND_GRADLE_JAVA_ENV_NAMES?.trim()
     const managedArguments = toolchainHomes
@@ -650,6 +674,10 @@ protected spawnGradle(
     })
   }
 
+protected watchGradleDiagnostics(options: Parameters<typeof watchGradleBuild>[0]): ReturnType<typeof watchGradleBuild> {
+    return watchGradleBuild(options)
+  }
+
 protected gradleEnvironment(runtime: GradleRuntimeSelection): NodeJS.ProcessEnv {
     const homes = mergeToolchainJavaHomes(this.buildToolchainHomes.values())
     const javaEnvironment = Object.fromEntries([...this.buildToolchainHomes.entries()].map(([major, home]) => [`MODMIND_JAVA_${major}`, home]))
@@ -662,7 +690,7 @@ protected gradleEnvironment(runtime: GradleRuntimeSelection): NodeJS.ProcessEnv 
       GRADLE_USER_HOME: path.join(app.getPath('userData'), 'gradle-runtime', 'cache'),
       ...(homes ? { MODMIND_GRADLE_JAVA_HOMES: homes } : {}),
       ...(javaEnvironmentNames ? { MODMIND_GRADLE_JAVA_ENV_NAMES: javaEnvironmentNames, ...javaEnvironment } : {}),
-      ...(proxy ? { JAVA_TOOL_OPTIONS: `${existingJavaOptions}${existingJavaOptions ? ' ' : ''}${proxy}` } : {})
+      JAVA_TOOL_OPTIONS: boundedGradleJavaOptions([existingJavaOptions, proxy].filter(Boolean).join(' '))
     }
   }
 
@@ -787,8 +815,24 @@ protected async ensureDetectedBuildToolchains(logText: string, project?: Project
     return changed
   }
 
+buildRecoveryState(): { status: string; canCancel: boolean; state: MinecraftRuntimeState; lastEvent?: MinecraftRuntimeEvent | null; networkTimeouts: typeof GRADLE_NETWORK_TIMEOUTS; appliesTo: string } {
+    return { status: this.buildPromise ? 'running' : 'idle', canCancel: Boolean(this.buildController), state: this.getState(), lastEvent: this.lastBuildEvent, networkTimeouts: GRADLE_NETWORK_TIMEOUTS, appliesTo: 'new-build-java-processes' }
+  }
+
+async cancelBuild() {
+    const active = this.buildPromise
+    if (!active) return { status: 'idle', state: this.getState() }
+    this.buildController?.abort()
+    if (this.buildProcess) await stopProcessTree(this.buildProcess)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try { await Promise.race([active.catch(() => undefined), new Promise<void>(resolve => { timer = setTimeout(resolve, 10_000) })]) }
+    finally { clearTimeout(timer) }
+    return { status: this.buildPromise === active ? 'cancelling' : 'cancelled', state: this.getState() }
+  }
+
 buildProject(signal?: AbortSignal): Promise<MinecraftManagedMod> {
     if (this.buildPromise) return this.buildPromise
+    this.lastBuildEvent = null
     const controller = new AbortController()
     const forwardAbort = (): void => controller.abort(signal?.reason)
     if (signal?.aborted) forwardAbort()
@@ -825,7 +869,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     if (project.kind === 'server-plugin') {
       if (!isServerPluginPlatform(project.loader)) throw new Error('插件工程平台无效')
       if (await exists(path.join(project.path, 'pom.xml')) && !await exists(path.join(project.path, 'build.gradle')) && !await exists(path.join(project.path, 'build.gradle.kts'))) {
-        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project, signal), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
+        await buildMavenPlugin(project, { javaPath: await this.ensureBuildJava(project, signal), cacheRoot: path.join(app.getPath('userData'), 'maven-runtime'), official: (await this.getGradleDownloadSource?.() ?? 'auto') === 'official', signal, onOutput: output => this.emit('building-mod', output.trim().slice(-2000)) })
       } else await this.runGradleBuild(project, signal)
       const artifact = await findPluginArtifact(project)
       this.updateState({ stage: 'idle', message: `插件构建完成：${artifact.name}`, mods: [artifact] })
@@ -849,7 +893,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
       return artifact
     }
     await this.prepareProjectDependencies?.(project, signal)
-    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleMavenFallback(project, signal, distributionRetryAttempt > 0)
     await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
@@ -864,6 +908,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     this.emit('building-mod', '正在使用项目 Gradle Wrapper 执行 gradlew build')
 
     const child = this.spawnGradle(runtime, project, [...MANAGED_GRADLE_BUILD_ARGUMENTS], gradleEnvironment)
+    const diagnostics = this.watchGradleDiagnostics({ child, projectPath: project.path, dataRoot: path.join(project.path, projectDataDirectory(project)), javaHome: runtime.javaHome, gradleUserHome: gradleEnvironment.GRADLE_USER_HOME!, logPath })
     this.buildProcess = child
     let spawnError = ''
     child.once('error', (error) => {
@@ -879,6 +924,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     const recentLines: string[] = []
     let gradleDownloadActivityId = ''
     const capture = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
+      diagnostics.output()
       const text = chunk.toString('utf8')
       log.write(text)
       const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
@@ -900,6 +946,7 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
     this.buildProcess = null
     signal?.removeEventListener('abort', abortBuild)
     await new Promise<void>((resolve) => log.end(resolve))
+    await diagnostics.finish(termination.code, aborted)
     const fullLog = gradleDownloadActivityId || termination.code !== 0 ? await fs.readFile(logPath, 'utf8').catch(() => recentLines.join('\n')) : ''
     if (gradleDownloadActivityId) {
       if (isGradleDistributionFailure(fullLog)) downloadActivities.fail(gradleDownloadActivityId, summarizeGradleFailure(fullLog))
@@ -918,9 +965,9 @@ protected async buildProjectInternal(signal?: AbortSignal, toolchainRetryAttempt
         }
       }
       const detail = summarizeGradleFailure(fullLog)
-      if (!aborted && distributionRetryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
-        this.emit('building-mod', 'Gradle 下载源暂时不可用，正在切换备用源重试', 'warning')
-        await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+      if (!aborted && distributionRetryAttempt < 2 && (isGradleNetworkFailure(fullLog) || distributionRetryAttempt === 0 && isManagedRepositoryFailure(fullLog))) {
+        this.emit('building-mod', 'Gradle 下载或依赖镜像暂时不可用，正在使用备用源与项目原仓库重试', 'warning')
+        if (isGradleNetworkFailure(fullLog)) await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
         return this.buildProjectInternal(signal, toolchainRetryAttempt, distributionRetryAttempt + 1)
       }
       throw new Error(`Gradle 构建失败（${describeProcessTermination(termination.code, termination.signal)}）${detail ? `\n${detail}` : ''}\n完整日志：${logPath}`)
@@ -945,14 +992,12 @@ protected async buildModpackInternal(project: ProjectInfo, signal?: AbortSignal)
       await this.runGradleBuild(moduleProject, signal)
     }
     const mods = await this.finishModpackBuild(project)
-    const archive = await createModrinthPackArchive(project)
     const artifactPath = path.join(project.path, projectDataDirectory(project), 'builds', `${project.namespace}.mrpack`)
-    await fs.mkdir(path.dirname(artifactPath), { recursive: true })
-    await fs.writeFile(artifactPath, archive)
+    const archive = await writeModrinthPackArchive(project, artifactPath)
     const artifact: MinecraftManagedMod = {
       name: path.basename(artifactPath),
       path: artifactPath,
-      size: archive.length,
+      size: archive.size,
       modifiedAt: new Date().toISOString(),
       projectArtifact: true
     }
@@ -968,23 +1013,31 @@ protected async prepareGradleWrapperDownload(project: ProjectInfo, attempt: numb
     const configuredUrl = content.match(/^distributionUrl\s*=\s*(.+)$/mi)?.[1]?.trim().replaceAll('\\:', ':') ?? ''
     const preference = await this.getGradleDownloadSource?.() ?? 'auto'
     const sources = gradleDistributionSources(match[1], preference, match[2].toLowerCase() as 'bin' | 'all')
-    if (project.kind === 'server-plugin') {
-      const checksum = content.match(/^distributionSha256Sum\s*=\s*([a-f0-9]{64})\s*$/mi)?.[1]
-      if (checksum && /^https:\/\//i.test(configuredUrl)) {
+    const checksum = content.match(/^distributionSha256Sum\s*=\s*([a-f0-9]{64})\s*$/mi)?.[1]
+    const property = (key: string): string => content.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'mi'))?.[1]?.trim() ?? ''
+    const defaultCache = ['distributionBase', 'zipStoreBase'].every(key => !property(key) || property(key) === 'GRADLE_USER_HOME')
+      && ['distributionPath', 'zipStorePath'].every(key => !property(key) || property(key) === 'wrapper/dists')
+    const distribution = /^https:\/\//i.test(configuredUrl) ? new URL(configuredUrl) : null
+    if (checksum && defaultCache && distribution && !distribution.username && !distribution.password && /^[\x20-\x7e]+$/.test(configuredUrl)
+      && path.posix.basename(distribution.pathname) === `gradle-${match[1]}-${match[2]}.zip`) {
         const key = BigInt(`0x${createHash('md5').update(configuredUrl).digest('hex')}`).toString(36)
         const filename = `gradle-${match[1]}-${match[2]}.zip`
         const cache = path.join(app.getPath('userData'), 'gradle-runtime/cache/wrapper/dists', filename.slice(0, -4), key)
         const archive = path.join(cache, filename)
-        if (!await exists(`${archive}.ok`) && !await exists(archive)) {
-          await verifiedDownload.download({ sources: sources.map(source => ({ ...source })), destination: archive, expectedHash: { algorithm: 'sha256', value: checksum }, signal, timeoutMs: 120_000, retriesPerSource: 1, onProgress: progress => this.emitProgress('building-mod', `正在下载 Gradle ${match[1]}：${progress.source.label}`, progress.downloaded, progress.total ?? 0) })
+        if (await exists(`${archive}.ok`)) return
+        if (await exists(archive)) {
+          const digest = createHash('sha256')
+          for await (const chunk of createReadStream(archive)) { signal?.throwIfAborted(); digest.update(chunk) }
+          if (digest.digest('hex').toLowerCase() === checksum.toLowerCase()) return
         }
+        const trustedSources = sources.some(source => source.url === configuredUrl) ? sources : [{ id: 'project', label: '项目 Gradle 源', url: configuredUrl }]
+        await verifiedDownload.download({ sources: trustedSources, destination: archive, expectedHash: { algorithm: 'sha256', value: checksum }, signal, stallTimeoutMs: 180_000, resume: true, retriesPerSource: 2, onProgress: progress => this.emitProgress('building-mod', `正在下载 Gradle ${match[1]}：${progress.source.label}`, progress.downloaded, progress.total ?? 0) })
         return
-      }
     }
     // Keep the project's original/recommended distribution on the first run.
     // Only rewrite the URL after a failed attempt, then walk every distinct
     // mirror before surfacing the original failure.
-    if (attempt === 0 && /^https:\/\//i.test(configuredUrl)) return
+    if (attempt === 0 && configuredUrl) return
     const alternatives = sources.filter((source) => source.url !== configuredUrl)
     const index = sources.findIndex(source => source.url === configuredUrl)
     const source = index >= 0 ? sources[(index + 1) % sources.length] : alternatives[0]
@@ -993,7 +1046,17 @@ protected async prepareGradleWrapperDownload(project: ProjectInfo, attempt: numb
     if (next !== content) await fs.writeFile(propertiesPath, next, 'utf8')
   }
 
-protected async prepareGradleMavenFallback(project: ProjectInfo): Promise<void> {
+protected async prepareGradleMavenFallback(project: ProjectInfo, signal?: AbortSignal, officialFallback = false): Promise<void> {
+    const preference = await this.getGradleDownloadSource?.() ?? 'auto'
+    this.managedRepositoryOfficial = officialFallback || preference === 'official'
+    this.managedForge6 = preference !== 'official' && await isForgeGradle6Project(project)
+    if (!this.managedRepositoryOfficial) {
+      try { await prepareForgeGradleDownloads(project, path.join(app.getPath('userData'), 'gradle-runtime', 'cache'), signal) }
+      catch (error) {
+        signal?.throwIfAborted()
+        this.emit('building-mod', `Forge cache preparation unavailable; retaining upstream build cache and finite HTTP timeouts: ${error instanceof Error ? error.message : String(error)}`, 'warning', false)
+      }
+    }
     if (project.loader !== 'fabric' && project.loader !== 'quilt') return
     for (const name of ['settings.gradle', 'settings.gradle.kts', 'build.gradle', 'build.gradle.kts']) {
       const target = path.join(project.path, name)
@@ -1005,7 +1068,7 @@ protected async prepareGradleMavenFallback(project: ProjectInfo): Promise<void> 
   }
 
 protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolchainRetryAttempt = 0, distributionRetryAttempt = 0): Promise<void> {
-    await this.prepareGradleMavenFallback(project)
+    await this.prepareGradleMavenFallback(project, signal, distributionRetryAttempt > 0)
     await this.prepareGradleWrapperDownload(project, 0, signal)
     const runtime = await this.gradleRuntime(project, signal)
     const logDirectory = path.join(project.path, projectDataDirectory(project), 'builds')
@@ -1018,6 +1081,7 @@ protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolc
     if (signal?.aborted) throw Object.assign(new Error('构建已取消'), { name: 'AbortError' })
     const log = createWriteStream(logPath, { flags: 'w' })
     const child = this.spawnGradle(runtime, project, [...MANAGED_GRADLE_BUILD_ARGUMENTS], gradleEnvironment)
+    const diagnostics = this.watchGradleDiagnostics({ child, projectPath: project.path, dataRoot: path.join(project.path, projectDataDirectory(project)), javaHome: runtime.javaHome, gradleUserHome: gradleEnvironment.GRADLE_USER_HOME!, logPath })
     this.buildProcess = child
     let output = ''
     let spawnError = ''
@@ -1030,6 +1094,7 @@ protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolc
     }
     signal?.addEventListener('abort', abort, { once: true })
     const capture = (chunk: Buffer, level: MinecraftRuntimeEvent['level']): void => {
+      diagnostics.output()
       const text = chunk.toString('utf8')
       output = `${output}${text}`.slice(-200_000)
       log.write(text)
@@ -1049,6 +1114,7 @@ protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolc
     this.buildProcess = null
     signal?.removeEventListener('abort', abort)
     await new Promise<void>((resolve) => log.end(resolve))
+    await diagnostics.finish(termination.code, aborted)
     const fullLog = gradleDownloadActivityId || termination.code !== 0 ? await fs.readFile(logPath, 'utf8').catch(() => output) : ''
     if (gradleDownloadActivityId) {
       if (isGradleDistributionFailure(fullLog)) downloadActivities.fail(gradleDownloadActivityId, summarizeGradleFailure(fullLog))
@@ -1066,9 +1132,9 @@ protected async runGradleBuild(project: ProjectInfo, signal?: AbortSignal, toolc
           return this.runGradleBuild(project, signal, toolchainRetryAttempt + 1, distributionRetryAttempt)
         }
       }
-      if (!aborted && distributionRetryAttempt < 2 && isGradleNetworkFailure(fullLog)) {
-        this.emit('building-mod', 'Gradle 下载源暂时不可用，正在切换备用源重试', 'warning')
-        await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
+      if (!aborted && distributionRetryAttempt < 2 && (isGradleNetworkFailure(fullLog) || distributionRetryAttempt === 0 && isManagedRepositoryFailure(fullLog))) {
+        this.emit('building-mod', 'Gradle 下载或依赖镜像暂时不可用，正在使用备用源与项目原仓库重试', 'warning')
+        if (isGradleNetworkFailure(fullLog)) await this.prepareGradleWrapperDownload(project, distributionRetryAttempt + 1, signal)
         return this.runGradleBuild(project, signal, toolchainRetryAttempt, distributionRetryAttempt + 1)
       }
       throw new Error(`自制 Mod 构建失败（${describeProcessTermination(termination.code, termination.signal)}）\n${summarizeGradleFailure(fullLog)}\n完整日志：${logPath}`)
@@ -1123,6 +1189,7 @@ protected emit(
   ): void {
     if (!message) return
     const event: MinecraftRuntimeEvent = { stage, message, level, time: new Date().toISOString(), ...(this.stateProjectPath ? {projectPath: this.stateProjectPath} : {}) }
+    if (stage === 'building-mod' || this.buildPromise) this.lastBuildEvent = event
     this.onEvent(event)
     if (updateState) this.updateState({ stage, message })
   }

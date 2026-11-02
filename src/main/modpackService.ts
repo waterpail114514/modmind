@@ -1,12 +1,17 @@
+import { withoutLockedModProjects } from './modpackLockService'
 import { serializeProjectMutation } from './projectMutation'
+import { recordDiagnosticArtifact, recordDiagnosticManifest } from './diagnosticArtifacts'
 import { assertContentTarget } from './contentInstallTransaction'
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, type Dirent } from 'node:fs'
+import { createReadStream, createWriteStream, type Dirent } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
+import { Readable } from 'node:stream'
+import { ZipFile } from 'yazl'
+import type { ModpackExportMode } from '../shared/production'
 import type { ModpackImportSource, ModpackImportStatus, ModpackLocalModule, ModpackManagedMod, ModpackManifest, ModpackModuleSide, ProjectInfo } from '../shared/types'
 import { isJavaLoader } from '../shared/projectPlatform'
-import { createStoredZip } from './bedrockAddon'
 import { MODPACK_LOCK_FILE, auditModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
 import { isSafeModJarFileName, safeModJarFileName } from './modpackFilename'
 import { isRemoteModpackContent, readManagedModpackContent, registerImportedPackContent } from './modpackContentMetadata'
@@ -111,6 +116,7 @@ export const writeModpackManifest = serializeProjectMutation(async function writ
   for (const listener of manifestListeners) {
     try { listener(project.path) } catch { /* UI notifications must not fail an already completed write. */ }
   }
+  await recordDiagnosticManifest(project, 'pack-manifest-committed', manifest)
   return manifest
 })
 
@@ -261,7 +267,7 @@ async function registerImportedModrinthFiles(project: ProjectInfo): Promise<void
     if (!mod) continue
     // Keep all bytes but avoid inventing an identity for ambiguous multi-file projects.
     if (lock.mods.some(item => item.provider === 'modrinth' && item.projectId === identity.projectId && item.fileName !== mod.fileName)) continue
-    lock.mods = lock.mods.filter(item => item.fileName.toLowerCase() !== mod.fileName.toLowerCase())
+    // The lock writer merges identities for identical bytes and rejects actual collisions.
     lock.mods.push({ provider: 'modrinth', projectId: identity.projectId, versionId: identity.versionId, versionName: identity.versionName ?? mod.fileName, fileName: mod.fileName, sha256: mod.sha256, size: mod.size, side: entry.side ?? 'both', sources: entry.downloads, installedAt: mod.addedAt })
   }
   await writeModpackLock(project, lock)
@@ -277,7 +283,7 @@ export const reconcileImportedModpack = serializeProjectMutation(async function 
   const source = { ...manifest.source, unresolvedDependencies: unresolvedDependencies || undefined }
   const lock = await readModpackLock(project)
   const importedProjects = new Set(state.files.map(item => String(item.projectID)))
-  lock.mods = lock.mods.filter(item => item.provider !== 'curseforge' || !importedProjects.has(item.projectId))
+  lock.mods = withoutLockedModProjects(lock.mods, 'curseforge', importedProjects)
   const content: Array<{ path: string; sha1: string; size: number; sourceUrl: string }> = []
   for (const entry of state.files) {
     if (entry.status !== 'installed' || !entry.file || !entry.installedPath) continue
@@ -286,11 +292,8 @@ export const reconcileImportedModpack = serializeProjectMutation(async function 
       continue
     }
     const fileName = entry.installedPath.slice(5)
-    let mod = manifest.mods.find(item => item.fileName === fileName)
-    if (!mod) {
-      mod = await fileRecord(path.join(modpackModsRoot(project, manifest), fileName), fileName, 0)
-      manifest.mods.push(mod)
-    }
+    const mod = await fileRecord(path.join(modpackModsRoot(project, manifest), fileName), fileName, 0)
+    manifest.mods = [...manifest.mods.filter(item => item.fileName !== fileName), mod]
     // A manually supplied exact replacement can have a translated filename.
     // Remove only absent duplicate records for these same bytes.
     for (const old of [...manifest.mods]) {
@@ -387,6 +390,7 @@ export const addModpackFiles = serializeProjectMutation(async function addModpac
 export const removeModpackFile = serializeProjectMutation(async function removeModpackFile(project: ProjectInfo, fileName: string): Promise<ModpackManifest> {
   if (!isSafeModJarFileName(fileName)) throw new Error('Invalid mod file name')
   const manifest = await readModpackManifest(project)
+  await recordDiagnosticManifest(project, 'pack-before-remove', manifest)
   await fs.rm(path.join(modpackModsRoot(project, manifest), fileName), { force: true })
   const nextManifest = await writeModpackManifest(project, { ...manifest, mods: manifest.mods.filter((entry) => entry.fileName !== fileName) })
   const lock = await readModpackLock(project)
@@ -525,6 +529,7 @@ export async function syncModpackOverrides(project: ProjectInfo, destinationRoot
     await fs.mkdir(path.dirname(destination), { recursive: true })
     await fs.copyFile(source, destination)
   }
+  await recordDiagnosticArtifact(project, 'pack-overrides-synced', { entries: files.flatMap(name => [{ name: `source/${name}`, path: filesByPath.get(name)! }, { name: `deployed/${name}`, path: managedDestination(destinationRoot,name) }]), metadata: { destinationPath: destinationRoot, side, removed: previous.filter(name => !current.has(name)), copied: files.length } })
   return files
 }
 
@@ -630,21 +635,24 @@ export async function collectBuiltModpackModuleArtifacts(project: ProjectInfo): 
 }
 
 const MAX_MODPACK_EXPORT_FILES = 50_000
-// Large authored packs embed gun packs, models and audio in addition to remote mods.
-const MAX_MODPACK_EXPORT_BYTES = 1024 * 1024 * 1024
 
-interface ExportBudget { files: number; bytes: number }
+type PackExportEntry = { name: string; path: string } | { name: string; data: Buffer }
+export interface ModpackExportOptions { version?: string; summary?: string; mode?: ModpackExportMode }
 
-async function readExportEntry(filePath: string, name: string, budget: ExportBudget): Promise<{ name: string; data: Buffer }> {
-  const stat = await fs.stat(filePath).catch(() => null)
-  if (!stat?.isFile()) throw new Error(`整合包导出缺少文件：${name}`)
-  if (stat.size > MAX_MODPACK_EXPORT_BYTES || budget.bytes + stat.size > MAX_MODPACK_EXPORT_BYTES) {
-    throw new Error(`整合包导出超过 ${MAX_MODPACK_EXPORT_BYTES / 1024 / 1024} MB 安全上限；请移除大型运行时文件后再导出`)
-  }
-  budget.files += 1
-  if (budget.files > MAX_MODPACK_EXPORT_FILES) throw new Error(`整合包导出文件数超过 ${MAX_MODPACK_EXPORT_FILES} 个安全上限`)
-  budget.bytes += stat.size
-  return { name, data: await fs.readFile(filePath) }
+export function modpackExportMode(value: unknown): ModpackExportMode {
+  if (value === undefined) return 'bundled'
+  if (value !== 'bundled' && value !== 'download') throw new Error('整合包导出方式无效，请选择完整包或下载包')
+  return value
+}
+
+function embeddedPrefix(side: ModpackModuleSide): string {
+  return side === 'client' || side === 'server' ? `${side}-overrides` : 'overrides'
+}
+
+function downloadUrls(values: string[]): string[] {
+  return values.filter(value => {
+    try { return new URL(value).protocol === 'https:' && !/\s/.test(value) } catch { return false }
+  })
 }
 
 function modrinthLoaderDependency(loader: ProjectInfo['loader']): string {
@@ -658,8 +666,8 @@ function modrinthEnvironment(side: 'client' | 'server' | 'both' | 'unknown'): { 
   }
 }
 
-/** Builds a Modrinth pack archive with remote file records where a locked source is available. */
-export async function createModrinthPackArchive(project: ProjectInfo, release: { version?: string; summary?: string } = {}): Promise<Buffer> {
+async function collectModrinthPackExport(project: ProjectInfo, release: ModpackExportOptions): Promise<PackExportEntry[]> {
+  const mode = modpackExportMode(release.mode)
   const manifest = await assertModpackDependenciesReady(project)
   if (await fs.access(path.join(project.path, MODPACK_LOCK_FILE)).then(() => true).catch(() => false)) {
     const lockAudit = await auditModpackLock(project)
@@ -668,13 +676,30 @@ export async function createModrinthPackArchive(project: ProjectInfo, release: {
   if (manifest.source?.unresolvedDependencies) {
     throw new Error(`当前接管的整合包仍缺少 ${manifest.source.unresolvedDependencies} 个外部 Mod 依赖；请从已安装实例补齐 JAR 后再导出`)
   }
-  const entries: Array<{ name: string; data: Buffer }> = []
-  const budget: ExportBudget = { files: 0, bytes: 0 }
+  const entries = new Map<string, PackExportEntry>()
+  const addFile = async (filePath: string, name: string, owner = project.path): Promise<void> => {
+    await assertContentTarget(owner, filePath)
+    const stat = await fs.stat(filePath).catch(() => null)
+    if (!stat?.isFile()) throw new Error(`整合包导出缺少文件：${name}`)
+    if (entries.has(name)) throw new Error(`整合包导出存在重复路径：${name}`)
+    if (entries.size >= MAX_MODPACK_EXPORT_FILES) throw new Error(`整合包导出文件数超过 ${MAX_MODPACK_EXPORT_FILES} 个安全上限`)
+    entries.set(name, { name, path: filePath })
+  }
   const lock = await readModpackLock(project)
   const lockedByFile = new Map(lock.mods.map((entry) => [entry.fileName.toLowerCase(), entry]))
   const content = await readManagedModpackContent(project)
   const remoteContent = content.items.filter(isRemoteModpackContent)
-  const remotePaths = new Set(remoteContent.map((item) => item.path))
+  const contentPaths = new Map(content.items.map(item => [item.path, item]))
+  const managedContent = (relative: string): typeof content.items[number] | undefined => {
+    let current = relative
+    while (current !== '.') {
+      const item = contentPaths.get(current)
+      if (item) return item
+      current = path.posix.dirname(current)
+    }
+    return undefined
+  }
+  const handledPaths = new Set(manifest.mods.map(mod => `mods/${mod.fileName}`))
   const files: Array<Record<string, unknown>> = []
   const index = {
     formatVersion: 1,
@@ -690,49 +715,120 @@ export async function createModrinthPackArchive(project: ProjectInfo, release: {
   }
   for (const mod of manifest.mods) {
     const source = path.join(modpackModsRoot(project, manifest), mod.fileName)
+    await assertContentTarget(project.path, source)
     const record = await fileRecord(source, mod.fileName, manifest.source ? 0 : 1_024).catch((error) => { throw new Error(`整合包清单中的 Mod ${mod.fileName} 无法读取：${error instanceof Error ? error.message : String(error)}`) })
     if (record.size !== mod.size || record.sha256 !== mod.sha256) throw new Error(`整合包清单中的 Mod ${mod.fileName} 已被修改，请重新导入或更新清单`)
     const locked = lockedByFile.get(mod.fileName.toLowerCase())
-    if (locked?.sources.length) {
+    const downloads = downloadUrls(locked?.sources ?? [])
+    if (mode === 'download' && downloads.length) {
       const hashes = await hashModrinthFile(source)
-      files.push({ path: `mods/${mod.fileName}`, hashes: { sha1: hashes.sha1, sha512: hashes.sha512 }, downloads: locked.sources, fileSize: hashes.size, env: modrinthEnvironment(locked.side) })
+      files.push({ path: `mods/${mod.fileName}`, hashes: { sha1: hashes.sha1, sha512: hashes.sha512 }, downloads, fileSize: hashes.size, env: modrinthEnvironment(locked!.side) })
     } else {
-      entries.push(await readExportEntry(source, `overrides/mods/${mod.fileName}`, budget))
+      await addFile(source, `${embeddedPrefix(locked?.side ?? 'both')}/mods/${mod.fileName}`)
+    }
+  }
+  // Include manually added JARs as well as managed mods. Never infer a download URL.
+  const modsRoot = modpackModsRoot(project, manifest)
+  if (await fs.stat(modsRoot).then(stat => stat.isDirectory()).catch(() => false)) {
+    await assertContentTarget(project.path, modsRoot)
+    for (const entry of await collectPackEntries(modsRoot, 'mods')) {
+      if (handledPaths.has(entry.name)) continue
+      await addFile(entry.path, `overrides/${entry.name}`)
+      handledPaths.add(entry.name)
     }
   }
   for (const artifact of await collectBuiltModpackModuleArtifacts(project)) {
-    entries.push(await readExportEntry(artifact.path, `overrides/mods/${artifact.fileName}`, budget))
-  }
-  for (const item of remoteContent) {
-    files.push({
-      path: item.path,
-      hashes: { sha1: item.sha1, sha512: item.sha512 },
-      downloads: [item.sourceUrl],
-      ...(item.size ? { fileSize: item.size } : {}),
-      env: modrinthEnvironment(item.scope === 'client' ? 'client' : item.scope === 'server' ? 'server' : 'both')
-    })
+    await addFile(artifact.path, `${embeddedPrefix(artifact.module.side ?? 'both')}/mods/${artifact.fileName}`, resolveModpackModuleRoot(project, artifact.module))
+    handledPaths.add(`mods/${artifact.fileName}`)
   }
   const overrides = modpackOverridesRoot(project, manifest)
+  for (const item of content.items) {
+    const source = path.join(overrides, ...item.path.split('/'))
+    await assertContentTarget(project.path, source)
+    const stat = await fs.stat(source).catch(() => null)
+    if (!stat || (item.directory ? !stat.isDirectory() : !stat.isFile())) throw new Error(`整合包导出缺少文件：${item.path}`)
+  }
+  for (const item of remoteContent) {
+    if (mode !== 'download') continue
+    const source = path.join(overrides, ...item.path.split('/'))
+    await assertContentTarget(project.path, source)
+    // Export actual authored bytes if a downloaded resource was edited locally.
+    const hashes = await hashModrinthFile(source).catch(() => null)
+    if (!hashes) throw new Error(`整合包导出缺少文件：${item.path}`)
+    if (hashes.sha1 !== item.sha1 || hashes.sha512 !== item.sha512 || !downloadUrls([item.sourceUrl!]).length) continue
+    files.push({
+      path: item.path,
+      hashes: { sha1: hashes.sha1, sha512: hashes.sha512 },
+      downloads: [item.sourceUrl],
+      fileSize: hashes.size,
+      env: modrinthEnvironment(item.scope === 'client' ? 'client' : item.scope === 'server' ? 'server' : 'both')
+    })
+    handledPaths.add(item.path)
+  }
   if (await fs.stat(overrides).then((stat) => stat.isDirectory()).catch(() => false)) {
     const include = (relative: string): boolean => {
-      if (remotePaths.has(relative)) return false
+      if (handledPaths.has(relative)) return false
+      const toolRoot = project.toolDataDirectory?.replaceAll('\\', '/').replace(/\/$/, '')
+      if (toolRoot && (relative === toolRoot || relative.startsWith(`${toolRoot}/`))) return false
       if (!excludesModsFromOverrides(manifest) || isInstanceOverride(relative)) return true
-      return content.items.some((item) => relative === item.path || relative.startsWith(`${item.path}/`))
+      return Boolean(managedContent(relative))
     }
     const overrideEntries = await collectPackEntries(overrides, 'overrides', include)
-    for (const entry of overrideEntries) entries.push(await readExportEntry(entry.path, entry.name, budget))
+    for (const entry of overrideEntries) {
+      const relative = entry.name.slice('overrides/'.length)
+      const scope = managedContent(relative)?.scope ?? 'common'
+      await addFile(entry.path, `${embeddedPrefix(scope === 'common' ? 'both' : scope)}/${relative}`)
+    }
   }
   for (const side of ['client', 'server']) {
     const prefix = `${side}-overrides`
     const root = path.join(project.path, prefix)
     await assertContentTarget(project.path, root)
     if (!await fs.stat(root).then(stat => stat.isDirectory()).catch(() => false)) continue
-    for (const entry of await collectPackEntries(root, prefix)) entries.push(await readExportEntry(entry.path, entry.name, budget))
+    for (const entry of await collectPackEntries(root, prefix)) {
+      // Side overrides intentionally replace a scoped common file.
+      entries.delete(entry.name)
+      await addFile(entry.path, entry.name)
+    }
   }
-  entries.push({ name: 'modrinth.index.json', data: Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8') })
-  const duplicateNames = entries.map((entry) => entry.name).filter((name, index, all) => all.indexOf(name) !== index)
-  if (duplicateNames.length) throw new Error(`整合包导出存在重复路径：${[...new Set(duplicateNames)].slice(0, 3).join('、')}`)
-  return createStoredZip(entries.sort((left, right) => left.name.localeCompare(right.name)))
+  entries.set('modrinth.index.json', { name: 'modrinth.index.json', data: Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8') })
+  return [...entries.values()].sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function modrinthZipStream(entries: PackExportEntry[]): Readable {
+  const zip = new ZipFile()
+  const output = zip.outputStream as Readable
+  zip.on('error', error => output.destroy(error))
+  for (const entry of entries) {
+    if ('path' in entry) zip.addFile(entry.path, entry.name)
+    else zip.addBuffer(entry.data, entry.name)
+  }
+  zip.end()
+  return output
+}
+
+/** Small in-memory callers share the same format; desktop exports use the streaming writer. */
+export async function createModrinthPackArchive(project: ProjectInfo, release: ModpackExportOptions = {}): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  for await (const chunk of modrinthZipStream(await collectModrinthPackExport(project, release))) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks)
+}
+
+/** Stream ZIP/ZIP64 to a sibling temporary file; a failed export preserves the previous archive. */
+export async function writeModrinthPackArchive(project: ProjectInfo, target: string, release: ModpackExportOptions = {}): Promise<{ path: string; size: number }> {
+  const entries = await collectModrinthPackExport(project, release)
+  const destination = path.resolve(target)
+  if (entries.some(entry => 'path' in entry && path.resolve(entry.path).toLowerCase() === destination.toLowerCase())) throw new Error('导出位置不能覆盖整合包源文件')
+  await fs.mkdir(path.dirname(destination), { recursive: true })
+  const pending = `${destination}.pending-${randomUUID()}`
+  try {
+    await pipeline(modrinthZipStream(entries), createWriteStream(pending, { flags: 'wx' }))
+    const stat = await fs.stat(pending)
+    await fs.rename(pending, destination)
+    return { path: destination, size: stat.size }
+  } finally {
+    await fs.rm(pending, { force: true }).catch(() => undefined)
+  }
 }
 
 async function hashModrinthFile(filePath: string): Promise<{ sha1: string; sha512: string; size: number }> {

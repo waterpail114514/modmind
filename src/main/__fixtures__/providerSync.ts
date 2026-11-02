@@ -15,6 +15,7 @@ export function providerFixture(paidAccount = 'secondary') {
   let now = Date.now()
   const network: Array<{ url: string; init?: RequestInit }> = []
   const flags = { busy: false, busyAccounts: [] as string[], offline: false, failWrite: false, next: snapshot, listFail: false, groupPostStatus: 200, groupPostAppliedOn409: false, crossProviderRequired: false, canSwitchProvider: true, failRecovery: false, changeUserOnRefresh: false, sessionDefaultFree: false, discoveryWriteFail: false, rotatePaidKeys: false, onGroupPost: undefined as ((group: string) => void) | undefined, sessionGate: undefined as Promise<void> | undefined, sessionWriteGate: undefined as Promise<void> | undefined, remoteRoute: undefined as { account: string; group: string | null } | undefined }
+  const catalog = { status: 200, retryAfter: '60', stale: false, onRead: undefined as ((account: string, group: string | null) => void) | undefined, unavailable: new Set<string>(), unconfigured: new Set<string>() }
   const groups: Array<Record<string, unknown>> = [{ id: 'Gemini', models: ['gemini-3.8-flash'] }]
   const providers: Array<Record<string, unknown>> = [{ account: paidAccount, label: '付费', kind: 'paid', groups }]
   const modelsByGroup: Record<string, AiModelInfo[]> = {}
@@ -30,7 +31,6 @@ export function providerFixture(paidAccount = 'secondary') {
     authorizationBusy: () => authorization.busy,
     readDiscovery: async () => discovery, writeDiscovery,
     readPreferences: async () => preferences, applyDefaults: async selection => { preferences = { ...preferences, ...selection }; return preferences }, paidBusy: account => flags.busy || flags.busyAccounts.includes(account),
-    listModels,
     fetcher: (async (url, init) => {
       network.push({ url: String(url), init }); if (flags.offline) throw new Error('offline')
       let data: unknown = {}
@@ -39,6 +39,19 @@ export function providerFixture(paidAccount = 'secondary') {
         if (flags.failRecovery) return new Response('{}',{status:503})
         if (flags.changeUserOnRefresh) owner = { ...owner, username:'bob' }
         data = flags.next
+      }
+      else if (String(url).includes('/api/device/models')) {
+        const query = new URL(String(url)).searchParams
+        const account = query.get('account') ?? flags.next.defaultAccount
+        const active = flags.next.connections.find(c => c.account === account)
+        const group = query.get('group') ?? active?.group ?? null
+        catalog.onRead?.(account, group)
+        if (catalog.unconfigured.has(account + ':' + group)) return Response.json({success:false,code:'MODEL_GROUP_NOT_CONFIGURED'}, {status:400})
+        const status = catalog.unavailable.has(account + ':' + group) ? 503 : catalog.status
+        if (status !== 200) return new Response(JSON.stringify({success:false,error:{code:'MODEL_CATALOG_NOT_READY'}}), {status, headers:{'Retry-After':catalog.retryAfter}})
+        const connection = { ...(active ?? flags.next.connections[0]), account, group } as ProviderConnection
+        const models = await listModels(connection)
+        data = { account, group, type: 'chat', models: models.map(m => m.id), version: 'fixture-version', updatedAt: new Date(now).toISOString(), stale: catalog.stale, source: active?.kind === 'free' ? 'server-config' : 'server-cache' }
       }
       else if (String(url).includes('/group')) {
         if (init?.method !== 'POST' && flags.sessionDefaultFree && new Headers(init?.headers).get('Authorization') === 'Bearer session-secret') {
@@ -60,5 +73,5 @@ export function providerFixture(paidAccount = 'secondary') {
   } satisfies ConstructorParameters<typeof ProviderSyncService>[0]
   const authorization = { busy: false }
   const service = new ProviderSyncService(deps)
-  return { service, restart: () => new ProviderSyncService(deps), authorization, flags, groups, providers, modelsByGroup, modelsByRoute, listModels, writeSession, writeDiscovery, network, writes, owner: () => owner, preferences: () => preferences, setOwner: (value: ProviderOwner) => { owner = value; flags.next = value.sync }, session: () => session, setSession: (value: RoutingSession) => { session = value }, discovery: () => discovery, setDiscovery: (value: ProviderModelDiscovery) => { discovery = value }, tick: (ms: number) => { now += ms } }
+  return { service, catalog, restart: () => new ProviderSyncService(deps), authorization, flags, groups, providers, modelsByGroup, modelsByRoute, listModels, writeSession, writeDiscovery, network, writes, owner: () => owner, preferences: () => preferences, setOwner: (value: ProviderOwner) => { owner = value; flags.next = value.sync }, session: () => session, setSession: (value: RoutingSession) => { session = value }, discovery: () => discovery, setDiscovery: (value: ProviderModelDiscovery) => { discovery = value }, tick: (ms: number) => { now += ms } }
 }

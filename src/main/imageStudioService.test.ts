@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 }))
 
 import { ImageStudioService } from '../../feature-plugins/image-studio/src/main/imageStudioService'
+import { diagnosticJournal } from './diagnosticLog'
 import type { ImageGenerationRequest } from '../shared/imageStudio'
 
 const roots: string[] = []
@@ -44,6 +45,16 @@ function settings(apiKey: string, clearApiKey = false) {
 function generationRequest(overrides: Partial<ImageGenerationRequest> = {}): ImageGenerationRequest {
   return { prompt: 'A cat', style: 'free', size: '1024x1024', quality: 'low', moderation: 'auto', count: 1, background: 'auto', backgroundColor: '#ffffff', removeBackground: false, source: 'manual', ...overrides }
 }
+
+it('records the full bounded image refusal and request ID before formatting the short error', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-image-diagnostic-')); roots.push(root)
+  const service = new ImageStudioService({ userDataDir: root, projectRoot: () => null, getHostedLease: async () => ({ baseUrl: 'https://image.test/v1', apiKey: 'image-secret-fixture', jobId: 'job', model: 'image-fixture', reservedCredits: 1 }) })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ request_id: 'provider-image-id', error: { message: 'invalid size, image-secret-fixture', param: 'size' }, diagnostic_extra: 'provider-deep-cause' }), { status: 400, headers: { 'x-request-id': 'provider-header-id' } })))
+  await expect(service.generate(generationRequest({model:'image-fixture'}))).rejects.toThrow('size')
+  const text = JSON.stringify(diagnosticJournal.snapshot().filter(event => event.operation === 'http-response'))
+  expect(text).toContain('provider-image-id'); expect(text).toContain('provider-header-id'); expect(text).toContain('provider-deep-cause')
+  expect(text).not.toContain('image-secret-fixture')
+})
 
 describe('ImageStudioService hosted credential freshness', () => {
   it('aborts the real secondary image download without creating the next billed request', async () => {

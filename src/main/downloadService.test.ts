@@ -27,6 +27,93 @@ function server(handler: http.RequestListener): Promise<{ url: string; close: ()
 }
 
 describe('verified download manager', () => {
+  it('cancels a competing resumable request while the first owner keeps downloading', async () => {
+    const bytes = Buffer.alloc(8192, 72); let hits = 0; let finish!: () => void
+    let receiving!: () => void; const progress = new Promise<void>(resolve => { receiving = resolve })
+    const source = await server((_request, response) => { hits++; response.setHeader('Content-Length', bytes.length); response.write(bytes.subarray(0, 4096)); finish = () => response.end(bytes.subarray(4096)) })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-download-lock-')); roots.push(root)
+    const request = { sources: [{ id: 'source', label: 'source', url: source.url }], destination: path.join(root, 'file'), resume: true, expectedHash: { algorithm: 'sha256' as const, value: createHash('sha256').update(bytes).digest('hex') } }
+    const first = new DownloadManager().download({ ...request, onProgress: receiving })
+    await progress
+    const controller = new AbortController()
+    const second = new DownloadManager().download({ ...request, signal: controller.signal })
+    controller.abort()
+    await expect(second).rejects.toMatchObject({ name: 'AbortError' })
+    expect(hits).toBe(1)
+    finish(); await first
+    expect(await fs.readdir(root)).toEqual(['file'])
+  })
+  it('keeps a continuously progressing slow transfer alive without a total deadline', async () => {
+    const bytes = Buffer.alloc(12, 65)
+    const source = await server((_request, response) => {
+      response.setHeader('Content-Length', bytes.length)
+      let sent = 0
+      const timer = setInterval(() => { response.write(bytes.subarray(sent, ++sent)); if (sent === bytes.length) { clearInterval(timer); response.end() } }, 90)
+      response.once('close', () => clearInterval(timer))
+    })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-slow-')); roots.push(root)
+    const result = await new DownloadManager().download({ sources: [{ id: 'slow', label: 'slow', url: source.url }], destination: path.join(root, 'file'), stallTimeoutMs: 500, retriesPerSource: 1 })
+    expect(result.bytes).toBe(bytes.length)
+  })
+
+  it('resumes interrupted content using Range and If-Range, verifies it, and reuses the finished cache', async () => {
+    const bytes = Buffer.alloc(8192, 42); let hits = 0; const ranges: Array<string | undefined> = []; const validators: Array<string | undefined> = []
+    const source = await server((request, response) => {
+      hits++; ranges.push(request.headers.range); validators.push(request.headers['if-range'] as string | undefined)
+      response.setHeader('ETag', '"fixture-v1"')
+      const offset = Number(request.headers.range?.match(/bytes=(\d+)-/)?.[1] ?? 0)
+      response.setHeader('Content-Length', bytes.length - offset)
+      if (offset) { response.statusCode = 206; response.setHeader('Content-Range', `bytes ${offset}-${bytes.length - 1}/${bytes.length}`); response.end(bytes.subarray(offset)) }
+      else { response.write(bytes.subarray(0, 4096)); setTimeout(() => response.destroy(), 70) }
+    })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-resume-')); roots.push(root)
+    const request = { sources: [{ id: 'source', label: 'source', url: source.url }], destination: path.join(root, 'file'), resume: true, expectedHash: { algorithm: 'sha256' as const, value: createHash('sha256').update(bytes).digest('hex') }, retriesPerSource: 2 }
+    const manager = new DownloadManager()
+    expect(await manager.download(request)).toMatchObject({ bytes: bytes.length, attempts: 2 })
+    expect(ranges).toEqual([undefined, 'bytes=4096-']); expect(validators[1]).toBe('"fixture-v1"')
+    expect(await fs.readFile(request.destination)).toEqual(bytes)
+    expect(await manager.download(request)).toMatchObject({ attempts: 0 }); expect(hits).toBe(2)
+    expect(await fs.readdir(root)).toEqual(['file'])
+  })
+
+  it('aborts a stalled body and preserves only a resumable partial, never a destination', async () => {
+    const source = await server((_request, response) => { response.writeHead(200, { 'Content-Length': '8192' }); response.write(Buffer.alloc(4096)); })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-stalled-')); roots.push(root)
+    const destination = path.join(root, 'file')
+    await expect(new DownloadManager().download({ sources: [{ id: 'stalled', label: 'stalled', url: source.url }], destination, stallTimeoutMs: 250, retriesPerSource: 1, resume: true, expectedHash: { algorithm: 'sha256', value: '0'.repeat(64) } })).rejects.toThrow()
+    await expect(fs.access(destination)).rejects.toThrow()
+    expect((await fs.readdir(root)).some(name => name.startsWith('file.partial-'))).toBe(true)
+  })
+
+  it('overwrites a partial safely when If-Range returns a changed resource as HTTP 200', async () => {
+    const bytes = Buffer.alloc(8192, 99); let hits = 0
+    const source = await server((request, response) => {
+      hits++; response.setHeader('Content-Length', bytes.length)
+      if (hits === 1) { response.setHeader('ETag', '"old"'); response.write(Buffer.alloc(4096, 11)); setTimeout(() => response.destroy(), 40) }
+      else { expect(request.headers.range).toBe('bytes=4096-'); expect(request.headers['if-range']).toBe('"old"'); response.setHeader('ETag', '"new"'); response.end(bytes) }
+    })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-if-range-')); roots.push(root)
+    const destination = path.join(root, 'file')
+    await new DownloadManager().download({ sources: [{ id: 'source', label: 'source', url: source.url }], destination, expectedHash: { algorithm: 'sha256', value: createHash('sha256').update(bytes).digest('hex') }, resume: true, retriesPerSource: 2 })
+    expect(await fs.readFile(destination)).toEqual(bytes)
+  })
+
+  it('retains a cancelled partial across managers and resumes it on the next user attempt', async () => {
+    const bytes = Buffer.alloc(8192, 51); let hits = 0
+    const source = await server((request, response) => {
+      hits++; const offset = Number(request.headers.range?.match(/bytes=(\d+)-/)?.[1] ?? 0)
+      response.setHeader('Content-Length', bytes.length - offset)
+      if (offset) { response.statusCode = 206; response.setHeader('Content-Range', `bytes ${offset}-${bytes.length - 1}/${bytes.length}`); response.end(bytes.subarray(offset)) }
+      else response.write(bytes.subarray(0, 4096))
+    })
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-cancel-resume-')); roots.push(root)
+    const request = { sources: [{ id: 'source', label: 'source', url: source.url }], destination: path.join(root, 'file'), expectedHash: { algorithm: 'sha256' as const, value: createHash('sha256').update(bytes).digest('hex') }, resume: true, retriesPerSource: 1 }
+    const owner = new AbortController()
+    const first = new DownloadManager().download({ ...request, signal: owner.signal, onProgress: () => { setTimeout(() => owner.abort(), 50) } })
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    expect(await new DownloadManager().download(request)).toMatchObject({ bytes: bytes.length })
+    expect(hits).toBe(2); expect(await fs.readFile(request.destination)).toEqual(bytes)
+  })
   it('skips missing sources without repeated requests', async () => {
     let hits = 0
     const bad = await server((_request, response) => { hits++; response.writeHead(404); response.end('missing') })

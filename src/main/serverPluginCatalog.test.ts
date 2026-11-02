@@ -30,6 +30,19 @@ it('rejects HTML and metadata for another artifact', () => {
   expect(() => parsePluginMetadata('paper', xml('spigot', ['1.21.1-R0.1-SNAPSHOT']))).toThrow('坐标')
 })
 
+it('resolves published 26.3 APIs online and from the offline snapshot', async () => {
+  const catalog = new ServerPluginCatalog(await directory())
+  for (const [platform, apiVersion] of [['paper', '26.3.build.205-stable'], ['folia', '26.3.build.3-alpha'], ['spigot', '26.3-R0.1-SNAPSHOT']] as const) {
+    vi.mocked(fetchTextWithRetry).mockResolvedValueOnce(xml(platform, [apiVersion, '26.4-pre-1.build.0-alpha']))
+    expect(await catalog.resolve(platform, '26.3')).toMatchObject({ minecraftVersion: '26.3', apiVersion, javaVersion: 25 })
+    vi.mocked(fetchTextWithRetry).mockRejectedValueOnce(new Error('offline'))
+    expect(await new ServerPluginCatalog(await directory()).resolve(platform, '26.3')).toMatchObject({ apiVersion, javaVersion: 25 })
+    const files = pluginTemplateFiles({ name: 'Test', namespace: 'test', path: '', kind: 'server-plugin', loader: platform, minecraftVersion: '26.3', apiVersion, createdAt: '' })
+    expect(files['build.gradle']).toContain(apiVersion)
+    expect(files['src/main/resources/plugin.yml']).toContain('api-version: "26.3"')
+  }
+})
+
 it('refreshes an older cache revision when supported versions expand', async () => {
   const root = await directory()
   await fs.writeFile(path.join(root, 'spigot.json'), JSON.stringify({ at: Date.now(), options: [{ loader: 'spigot', minecraftVersion: '1.21.1', apiVersion: '1.21.1-R0.1-SNAPSHOT' }] }))

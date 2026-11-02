@@ -120,7 +120,7 @@ async function installCurseForgePackInternal(root: string, contentRoot: string, 
             await verifiedDownload.download({
               sources: file.downloads.map((url, i) => ({ id: `curseforge-${i}`, label: `CurseForge ${i + 1}`, url })),
               destination: cached, expectedHash: { algorithm: 'sha1', value: file.sha1 }, maxBytes: file.size,
-              retriesPerSource: 1, timeoutMs: 180_000, signal: options.signal, trackActivity: options.trackDownloadActivities !== false,
+              retriesPerSource: 1, stallTimeoutMs: 180_000, resume: true, signal: options.signal, trackActivity: options.trackDownloadActivities !== false,
               onAttempt: ({ source, attempt, attemptsPerSource }) => options.onProgress?.({ path: file.path, fileIndex: index + 1, fileCount: state.files.length, phase: 'downloading', sourceLabel: source.label, attempt, attemptsPerSource })
             })
             if (!await matches(cached, file)) throw new Error(`下载文件大小或 SHA-1 不符：${file.path}`)

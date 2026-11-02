@@ -28,7 +28,7 @@ function harness() {
   const sessions = { read: vi.fn(async () => session), clear: vi.fn(async () => {}) }
   const sandbox = {
     Date, Map, Promise, AbortController, controller, DeviceApiError, providerOwnerKey, reconcileProviderSync, normalizeQuotaModelPreferences,
-    deviceAuthorizationController: controller as AbortController | null,
+    deviceAuthorizationController: controller as AbortController | null, providerCatalogRevision: 0,
     waitForDevicePoll: vi.fn(async (_ms: number, signal: AbortSignal) => signal.throwIfAborted()),
     pollDeviceCode: vi.fn(async () => ({ status: 'ok', sync: next, username: 'alice', balanceCents: '10', apiKey: next.connections[0].apiKey, baseUrl: next.connections[0].inferenceBaseUrl, account: next.defaultAccount, group: next.connections[0].group })),
     throwIfAborted: (signal: AbortSignal) => signal.throwIfAborted(),
@@ -63,10 +63,12 @@ describe('website device sync production polling', () => {
     h.next.defaultAccount = 'secondary'
     Object.assign(h.next.connections[0], { account: 'secondary', group: 'another-group', apiKey: 'new-paid-key' })
     await h.run()
-    expect(h.current().sync.defaults).toMatchObject({ account: 'ls', group: 'gpt-pro（混池）', model: 'gpt-6-astra' })
-    expect(h.current().sync.bindings?.workspace).toMatchObject({ account: 'ls', group: 'gpt-pro（混池）', model: 'gpt-6-luna' })
+    expect(h.current().sync).toEqual(h.initial)
     expect(h.current().sync.bindings?.inspiration).toEqual(h.initial.bindings?.inspiration)
-    expect(h.current().sync.connections[0]).toMatchObject({ account: 'secondary', apiKey: 'new-paid-key' })
+    expect(h.current().sync.connections[0]).toMatchObject({ account: 'ls', apiKey: 'paid-secret' })
+    expect(h.current()).toMatchObject({ apiKey: 'new-paid-key', refreshBeforeSelection: true })
+    expect(h.sandbox.providerSyncService.invalidate).not.toHaveBeenCalled()
+    expect(h.sandbox.fetchAvailableModels).not.toHaveBeenCalled()
     expect(h.sandbox.writeStoredBeginnerAiPreferences).not.toHaveBeenCalled()
     expect(h.sandbox.emitAiPreferences).not.toHaveBeenCalled()
     expect(h.sessions.clear).not.toHaveBeenCalled()
@@ -75,14 +77,24 @@ describe('website device sync production polling', () => {
     expect(h.initializeSession).toHaveBeenCalledTimes(1)
   })
 
-  it('does not overwrite current credentials with a stale one-time website snapshot', async () => {
-    const h = harness(), original = structuredClone(h.current())
+  it('accepts reauthorization without comparing unrelated website and client route revisions', async () => {
+    const h = harness(), original = structuredClone(h.current().sync)
     h.next.selectionRevision = h.initial.selectionRevision - 1
     await h.run()
-    expect(h.current()).toEqual(original)
-    expect(h.sandbox.writeDeviceCredentialsUnlocked).not.toHaveBeenCalled()
-    expect(h.sandbox.deviceAuthorizationFailure).toHaveBeenCalledWith(expect.stringContaining('已过期'))
+    expect(h.current().sync).toEqual(original)
+    expect(h.sandbox.writeDeviceCredentialsUnlocked).toHaveBeenCalledOnce()
+    expect(h.sandbox.deviceAuthorizationFailure).not.toHaveBeenCalled()
+    expect(h.sandbox.providerSyncService.invalidate).not.toHaveBeenCalled()
     expect(h.sandbox.pollDeviceCode).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not shrink a client free catalog when website authorization supplies fewer free platforms', async () => {
+    const h = harness()
+    h.next.connections = h.next.connections.filter(connection => connection.kind === 'paid')
+    await h.run()
+    expect(h.current().sync).toEqual(h.initial)
+    expect(h.current().sync.connections.filter(connection => connection.kind === 'free')).toHaveLength(2)
+    expect(h.sandbox.providerSyncService.invalidate).not.toHaveBeenCalled()
   })
 
   it('does not carry the old users bindings or routing session into a new login', async () => {

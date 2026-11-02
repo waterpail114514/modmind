@@ -20,6 +20,7 @@ export async function prepareLoaderInstaller(options: {
   loader: 'forge' | 'neoforge'
   minecraftVersion: string
   version: string
+  installerUrl?: string
   resourceRoot: string
   signal?: AbortSignal
   onProgress?: DownloadRequest['onProgress']
@@ -30,9 +31,10 @@ export async function prepareLoaderInstaller(options: {
   const installOptions = { mavenHost: hosts, libraryHost: loaderLibraryHost(hosts) }
   const forgeVersion = `${options.minecraftVersion}-${options.version}${/^1\.(?:7|8)\./.test(options.minecraftVersion) ? `-${options.minecraftVersion}` : ''}`
   const request = options.loader === 'forge'
-    ? new ForgeInstaller(forgeVersion, undefined, folder, installOptions, legacy).request
+    ? new ForgeInstaller(forgeVersion, options.installerUrl ? { path: options.installerUrl } : undefined, folder, installOptions, legacy).request
     : new NeoForgeInstaller(options.minecraftVersion === '1.20.1' ? 'forge' : 'neoforge', options.version, folder, installOptions).request
-  const urls = typeof request.url === 'string' ? [request.url] : request.url
+  const resolvedUrls = typeof request.url === 'string' ? [request.url] : request.url
+  const urls = options.installerUrl ? [...new Set([options.installerUrl, ...resolvedUrls])] : resolvedUrls
   const validate = async (file: string): Promise<void> => {
     await validateJavaArchive(file, { installer: !legacy })
   }
@@ -49,7 +51,7 @@ export async function prepareLoaderInstaller(options: {
     diagnosticJournal.record({ subsystem: 'minecraft-download', operation: 'installer-checksum', phase: 'unavailable', level: 'warning', message: 'Installer checksum unavailable; requiring JAR content validation', error })
   }
   await verifiedDownload.download({
-    sources: urls.map((url, index) => ({ id: `loader-${index}`, label: index === 0 ? 'BMCLAPI' : `${options.loader} 官方源`, url })),
+    sources: urls.map((url, index) => ({ id: `loader-${index}`, label: url.startsWith(`${BMCLAPI_BASE_URL}/`) ? 'BMCLAPI' : `${options.loader} 官方源`, url })),
     destination: request.destination, expectedHash, validate, maxBytes: 128 * 1024 * 1024,
     retriesPerSource: 2, signal: options.signal, trackActivity: false, onProgress: options.onProgress
   })

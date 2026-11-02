@@ -2,19 +2,6 @@ name: Build Windows and Linux
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "src/**"
-      - "resources/**"
-      - "vendor/**"
-      - "scripts/**"
-      - "package.json"
-      - "package-lock.json"
-      - "electron.vite.config.ts"
-      - "tsconfig*.json"
-      - ".github/workflows/build-windows-linux.yml"
 
 permissions:
   contents: read

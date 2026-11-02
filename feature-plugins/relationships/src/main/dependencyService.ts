@@ -172,49 +172,146 @@ function gradleLine(project: ProjectInfo, dependency: ManagedDependency, kotlin:
   return `    ${project.loader === 'fabric' || project.loader === 'quilt' ? 'modImplementation' : 'implementation'} files('${relative}')`
 }
 
-function matchingBrace(source: string, opening: number): number {
-  let depth = 0
-  let quote = ''
-  let escaped = false
-  for (let index = opening; index < source.length; index += 1) {
-    const character = source[index]
-    if (quote) {
-      if (escaped) escaped = false
-      else if (character === '\\') escaped = true
-      else if (character === quote) quote = ''
-      continue
+function gradleBlockClosing(source: string, name: 'dependencies' | 'repositories', kotlin: boolean): number | null {
+  const invalid = (): Error => new Error(`无法安全更新 Gradle ${name} 块`)
+
+  function stringEnd(start: number, delimiter: string): number {
+    const closing = delimiter === '$/' ? '/$' : delimiter
+    const slashy = delimiter === '/' || delimiter === '$/'
+    const raw = kotlin && delimiter === '"""'
+    const interpolated = delimiter.startsWith('"') || slashy
+    for (let index = start + delimiter.length; index < source.length;) {
+      if (source.startsWith(closing, index)) return index + closing.length
+      if (interpolated && source.startsWith('${', index)) {
+        // An interpolation may itself contain quoted strings and closures.
+        const expression = tokens(index + 2, true)
+        let token = expression.next()
+        while (!token.done) token = expression.next()
+        index = token.value
+      } else if (delimiter === '$/' && source[index] === '$' && /[$/]/.test(source[index + 1] ?? '')) {
+        index += 2
+      } else if (source[index] === '\\' && !raw && delimiter !== '$/' && (!slashy || source[index + 1] === '/')) {
+        index += source[index + 1] === '\r' && source[index + 2] === '\n' ? 3 : 2
+      } else {
+        if (!slashy && delimiter.length === 1 && /[\r\n]/.test(source[index])) throw invalid()
+        index += 1
+      }
     }
-    if (character === '"' || character === "'") quote = character
-    else if (character === '{') depth += 1
-    else if (character === '}' && --depth === 0) return index
+    throw invalid()
   }
-  return -1
+
+  function* tokens(start = 0, interpolation = false): Generator<{ value: string; offset: number }, number> {
+    const pattern = /[\p{ID_Start}_$][\p{ID_Continue}$]*|\d[\w.]*|\+\+|--|[^\s]/uy
+    let braces = 1
+    let expressionNesting = 0
+    let slashyAllowed = true
+    for (let index = start; index < source.length;) {
+      const character = source[index]
+      if (/\s/.test(character)) {
+        if (/[\r\n]/.test(character) && expressionNesting === 0) slashyAllowed = true
+        index += 1
+        continue
+      }
+      if (source.startsWith('//', index)) {
+        while (index < source.length && !/[\r\n]/.test(source[index])) index += 1
+        continue
+      }
+      if (source.startsWith('/*', index)) {
+        let depth = 1
+        index += 2
+        while (index < source.length && depth) {
+          if (kotlin && source.startsWith('/*', index)) { depth += 1; index += 2 }
+          else if (source.startsWith('*/', index)) { depth -= 1; index += 2 }
+          else index += 1
+        }
+        if (depth) throw invalid()
+        continue
+      }
+      let delimiter = ''
+      if (character === '"' || character === "'") {
+        delimiter = (!kotlin || character === '"') && source.startsWith(character.repeat(3), index) ? character.repeat(3) : character
+      } else if (kotlin && character === '`') delimiter = character
+      else if (!kotlin && source.startsWith('$/', index)) delimiter = '$/'
+      else if (!kotlin && character === '/' && slashyAllowed) delimiter = '/'
+      if (delimiter) {
+        const end = stringEnd(index, delimiter)
+        // Keep a token so dependencies "text" { cannot become dependencies {.
+        yield { value: '', offset: index }
+        slashyAllowed = false
+        index = end
+        continue
+      }
+      pattern.lastIndex = index
+      const value = pattern.exec(source)![0]
+      const offset = index
+      index += value.length
+      if (interpolation) {
+        if (value === '{') braces += 1
+        else if (value === '}' && --braces === 0) return index
+      }
+      if (value === '(' || value === '[') expressionNesting += 1
+      else if (value === ')' || value === ']') expressionNesting -= 1
+      slashyAllowed = !/^(?:[\p{ID_Start}_$]|\d)/u.test(value) && ![')', ']', '}', '++', '--'].includes(value)
+        || /^(?:return|throw|case|assert|in|instanceof|else|yield)$/.test(value)
+      yield { value, offset }
+    }
+    if (interpolation) throw invalid()
+    return source.length
+  }
+
+  const stack: Array<{ closing: string; target: boolean }> = []
+  const closingFor: Record<string, string> = { '{': '}', '(': ')', '[': ']' }
+  let candidate = false
+  let previous = ''
+  let closing: number | null = null
+  for (const token of tokens()) {
+    const value = token.value
+    if (value === '{' || value === '(' || value === '[') {
+      stack.push({ closing: closingFor[value], target: value === '{' && candidate && stack.length === 0 })
+    } else if (['}', ')', ']'].includes(value)) {
+      const opening = stack.pop()
+      if (opening?.closing !== value) throw invalid()
+      if (opening.target && closing === null) closing = token.offset
+    }
+    // Only the project's block is eligible, not buildscript/plugin closures
+    // or a qualified call such as anotherProject.dependencies { ... }.
+    candidate = stack.length === 0 && value === name && previous !== '.'
+    previous = value
+  }
+  if (stack.length) throw invalid()
+  return closing
+}
+
+function gradleNewline(source: string): string {
+  return source.includes('\r\n') ? '\r\n' : '\n'
+}
+
+function removeManagedGradleBlock(source: string, start: string, end: string): string {
+  return source.replace(new RegExp(`(?:\\r?\\n)?${start}[\\s\\S]*?${end}(?:\\r?\\n)?`, 'g'), gradleNewline(source))
+}
+
+function insertManagedGradleBlock(source: string, name: 'dependencies' | 'repositories', block: string, kotlin: boolean): string {
+  const closing = gradleBlockClosing(source, name, kotlin)
+  const newline = gradleNewline(source)
+  if (closing === null) return `${source.trimEnd()}${newline}${newline}${name} {${newline}${block}${newline}}${newline}`
+  const prefix = source.slice(0, closing)
+  return `${prefix}${prefix.endsWith('\n') ? '' : newline}${block}${newline}${source.slice(closing)}`
 }
 
 export function updateManagedGradleDependencies(source: string, project: ProjectInfo, dependencies: ManagedDependency[], kotlin: boolean): string {
-  const withoutManaged = source.replace(new RegExp(`\\n?${START_MARKER}[\\s\\S]*?${END_MARKER}\\n?`, 'g'), '\n')
+  const withoutManaged = removeManagedGradleBlock(source, START_MARKER, END_MARKER)
   if (!dependencies.length) return withoutManaged
-  const block = [START_MARKER, ...dependencies.map((entry) => gradleLine(project, entry, kotlin)), END_MARKER].join('\n')
-  const match = /\bdependencies\s*\{/.exec(withoutManaged)
-  if (!match) return `${withoutManaged.trimEnd()}\n\ndependencies {\n${block}\n}\n`
-  const opening = withoutManaged.indexOf('{', match.index)
-  const closing = matchingBrace(withoutManaged, opening)
-  if (closing < 0) throw new Error('无法安全更新 Gradle dependencies 块')
-  return `${withoutManaged.slice(0, closing)}\n${block}\n${withoutManaged.slice(closing)}`
+  const block = [START_MARKER, ...dependencies.map((entry) => gradleLine(project, entry, kotlin)), END_MARKER].join(gradleNewline(source))
+  return insertManagedGradleBlock(withoutManaged, 'dependencies', block, kotlin)
 }
 
 function updateManagedGradleRepositories(source: string, dependencies: ManagedDependency[], kotlin: boolean): string {
-  const withoutManaged = source.replace(new RegExp(`\\n?${REPOSITORY_START_MARKER}[\\s\\S]*?${REPOSITORY_END_MARKER}\\n?`, 'g'), '\n')
+  const withoutManaged = removeManagedGradleBlock(source, REPOSITORY_START_MARKER, REPOSITORY_END_MARKER)
   const repositories = [...new Set(dependencies.filter((entry) => entry.source === 'maven').map((entry) => entry.repository).filter((value): value is string => Boolean(value)))]
   if (!repositories.length) return withoutManaged
   const lines = repositories.map((url) => kotlin ? `    maven(${JSON.stringify(url)})` : `    maven { url = '${groovySingleQuoted(url)}' }`)
-  const block = [REPOSITORY_START_MARKER, ...lines, REPOSITORY_END_MARKER].join('\n')
-  const match = /\brepositories\s*\{/.exec(withoutManaged)
-  if (!match) return `${withoutManaged.trimEnd()}\n\nrepositories {\n${block}\n}\n`
-  const opening = withoutManaged.indexOf('{', match.index)
-  const closing = matchingBrace(withoutManaged, opening)
-  if (closing < 0) throw new Error('无法安全更新 Gradle repositories 块')
-  return `${withoutManaged.slice(0, closing)}\n${block}\n${withoutManaged.slice(closing)}`
+  const block = [REPOSITORY_START_MARKER, ...lines, REPOSITORY_END_MARKER].join(gradleNewline(source))
+  return insertManagedGradleBlock(withoutManaged, 'repositories', block, kotlin)
 }
 
 async function gradleFile(project: ProjectInfo): Promise<{ target: string; source: string; kotlin: boolean }> {
@@ -318,9 +415,9 @@ export class DependencyService {
       destination: temporary,
       ...(expectedHash ? { expectedHash } : {}),
       maxBytes: MAX_DOWNLOAD_BYTES,
-      timeoutMs: 120_000,
-      retriesPerSource: 2,
-      signal: AbortSignal.timeout(120_000)
+      stallTimeoutMs: 180_000,
+      resume: true,
+      retriesPerSource: 2
     })
 
     const manifest = await readManifest(project)

@@ -557,8 +557,7 @@ base {
 
 ${javaConfiguration(javaVersion)}
 minecraft {
-    mappings channel: 'official', version: project.minecraft_version
-    runs {
+${project.minecraftVersion === '26.3' ? '' : "    mappings channel: 'official', version: project.minecraft_version\n"}    runs {
 ${runs}
     }
 }

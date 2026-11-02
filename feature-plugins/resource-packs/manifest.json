@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "resource-packs",
   "name": "资源包",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -13,7 +13,7 @@
       "id": "modpack-resourcepacks",
       "label": "资源包",
       "component": "modpack-resourcepacks",
-      "icon": "Image",
+      "icon": "Package",
       "group": "资源",
       "order": 40
     }
@@ -34,5 +34,8 @@
     "quilt",
     "forge",
     "neoforge"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

@@ -1,5 +1,24 @@
+import { fetchDeviceModelCatalog } from './deviceModelCatalogApi'
+import { manageModpackLock } from './modpackLockService'
+import { installEditContextMenu } from './editContextMenu'
+import { collectDiagnosticEvidence } from './diagnosticEvidence'
+import { diagnosticValue } from './diagnosticContext'
+import { installNetworkDiagnostics } from './networkDiagnostics'
+import { readDiagnosticState, setContributionDiagnosticProvider } from './diagnosticState'
+import { ContributionService } from './contributionService'
+import { verifiedDiagnosticWrite } from './diagnosticFiles'
+import { osCrashEvidence } from './osCrashEvidence'
+import { DiagnosticAttachments, diagnosticExportOptions, exportRecoveryDiagnostics, writeDiagnosticArchive } from './diagnosticDelivery'
+import type { DiagnosticExportOptions } from '../shared/diagnostics'
+import { crashReporter } from 'electron'
+import { pluginDiagnosticSnapshot } from './pluginBridgeIntegration'
+import { deleteSnapshotSelection, snapshotListPage } from './snapshotBatchDelete'
+import type { SnapshotBatchDeleteResult } from '../shared/types'
+import { collectBuildDiagnostics, gradleDiagnosticState } from './gradleDiagnostics'
 import { developerHostConfig } from './developer/hostEnvironment'
 import { configureDeveloperHost } from './developer/hostRuntime'
+import { featureDevelopment } from './featureDevelopmentEnvironment'
+import { FeatureDevelopmentLoader } from './featureDevelopment'
 import { is,optimizer } from '@electron-toolkit/utils'
 import { app,BrowserWindow,dialog,ipcMain,Menu,nativeImage,Notification,protocol,safeStorage,screen,shell,Tray } from 'electron'
 import extractZip from './safeExtractZip'
@@ -15,6 +34,7 @@ import { normalizeAgentApprovalMode } from '../shared/agentApproval'
 import { scopedFilePath } from './scopedFilePath'
 import { InspirationWorkflowStore, type InspirationWorkflowIdentity } from './inspirationWorkflowStore'
 import { inspirationWorkflowInstruction, parseInspirationWorkflow } from '../shared/inspirationWorkflow'
+import { mokoInspirationSystemPrompt } from '../shared/mokoInspiration'
 import type { AiAttachmentSource } from '../shared/aiAttachments'
 import { normalizeAppearance } from '../shared/appTheme'
 import { mergeAgentSettingsPatch, type AgentSettingsPatch } from '../shared/agentSettingsPatch'
@@ -38,6 +58,8 @@ import { verifiedDownload } from './downloadService'
 import { featureHostRuntime } from './featureHostRuntime'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 import { delegateModpackModule,ModpackModuleTasks } from './modpackModuleDelegation'
+import { ManagedBuildTasks } from './managedBuildTasks'
+import { AbortableResourceQueue } from './abortableResourceQueue'
 import { inspectModpackModules,resolveAgentModpackModule } from './modpackModuleTools'
 import { cleanupTerminalScripts } from './nativeTerminal'
 import { nativeToolDiagnostics } from './nativeToolDiagnostics'
@@ -50,6 +72,8 @@ import { assignDefaultProjectNamespace,projectNamespacePrompt } from './projectN
 import { projectSearchFiles,searchProjectText } from './projectSearch'
 import { readProjectTextFile } from './projectTextRead'
 import { WorkbenchApprovals } from './workbenchApprovals'
+import { WorkbenchQuestions } from './workbenchQuestions'
+import type { WorkbenchQuestionContext } from '../shared/agentQuestion'
 import { workbenchSkillNames } from './workbenchSkillPolicy'
 import { UserSkillStore } from './userSkillStore'
 
@@ -273,10 +297,10 @@ SnapshotInfo,
 SnapshotRestoreResult,
 SnapshotStorageInfo
 } from '../shared/types'
-import { FeaturePluginService,prepareFeaturePlugin } from './featurePluginService'
+import { FeaturePluginService,prepareFeaturePlugin,importLocalFeaturePlugin } from './featurePluginService'
 import { FeatureStoreService } from './featureStoreService'
 import { inspectExternalModpack,materializeExternalModpack } from './modpackImportService'
-import { addModpackModule,adoptExternalModpack,auditImportedPackArtifacts,createModrinthPackArchive,isModpackProject,onModpackManifestChanged,readModpackManifest,readModpackImportStatus } from './modpackService'
+import { addModpackModule,adoptExternalModpack,auditImportedPackArtifacts,writeModrinthPackArchive,isModpackProject,onModpackManifestChanged,readModpackManifest,readModpackImportStatus } from './modpackService'
 import { configureNativeFeatureServices } from './nativeFeatureServices'
 const curseForgePackResolver: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").curseForgePackResolver = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').curseForgePackResolver(...args)
 const installCurseForgePack: typeof import("../../feature-plugins/modpack-mods/src/main/curseForgePackService").installCurseForgePack = (...args) => featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-mods/main').activate>>('modpack-mods').installCurseForgePack(...args)
@@ -359,6 +383,8 @@ if (process.argv.includes('--macos-smoke-check') && process.env.MODMIND_SMOKE_RO
   app.setPath('userData', path.join(process.env.MODMIND_SMOKE_ROOT, 'userData'))
 }
 
+const diagnosticRecoveryTarget = process.argv.find(argument => argument.startsWith('--export-diagnostics='))?.slice('--export-diagnostics='.length)
+const diagnosticAttachments = new DiagnosticAttachments()
 configureAgentProtection([
   app.getAppPath(), app.getPath('userData'), app.getPath('logs'),
   ...(app.isPackaged ? [path.dirname(process.execPath), process.resourcesPath] : []),
@@ -374,9 +400,15 @@ function sendDecompileEvent(signal: AbortSignal | undefined, event: { jarSha256:
 async function readDecompileProvenanceForExport(decompileCacheRoot: string, sourceSha256: string): Promise<DecompileProvenance> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/decompile/main').activate>>('decompile').readDecompileProvenanceForExport(decompileCacheRoot, sourceSha256) }
 
 
+const aiRuntimeActivityContext = new AsyncLocalStorage<(event: MinecraftRuntimeEvent) => void>()
 const workbenchApprovals = new WorkbenchApprovals(owner => {
   const window = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.webContents.id === owner)
   if (window && !window.webContents.isDestroyed()) window.webContents.send('ai:approvalsChanged')
+})
+const questionOwners = new Set<number>()
+const workbenchQuestions = new WorkbenchQuestions(owner => {
+  const window = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.webContents.id === owner)
+  if (window && !window.webContents.isDestroyed()) window.webContents.send('ai:questionsChanged')
 })
 
 let mainWindow: BrowserWindow | null = null
@@ -446,13 +478,11 @@ const pluginChatBridge = new PluginChatBridge(() => {
   return { id: mainWindow.webContents.id, send: (request) => mainWindow!.webContents.send('plugins:workbenchRequest', request) }
 })
 
-diagnosticJournal.configure(app.getPath('logs'), () => currentProject ? {
-  name: currentProject.name,
-  namespace: currentProject.namespace,
-  kind: currentProject.kind ?? 'mod',
-  loader: currentProject.loader,
-  minecraftVersion: currentProject.minecraftVersion
-} : undefined)
+diagnosticJournal.configure(app.getPath('logs'), () => {
+  const project = aiProjectContext.getStore() ?? currentProject
+  return project ? { path: project.path, name: project.name, namespace: project.namespace, kind: project.kind ?? 'mod', loader: project.loader, minecraftVersion: project.minecraftVersion } : undefined
+}, !diagnosticRecoveryTarget)
+installNetworkDiagnostics()
 const userSkillStore = new UserSkillStore(path.join(app.getPath('userData'), 'workbench-skills'))
 const workbenchDataStore = new WorkbenchDataStore(app.getPath('userData'), (entry) => {
   diagnosticJournal.record({
@@ -527,8 +557,10 @@ let forwardMinecraftEventsToServerPanel = false
 let loaderCatalog: LoaderCatalog | null = null
 let giteeBuildService: GiteeBuildService | null = null
 let featurePluginService: FeaturePluginService
+let featureDevelopmentLoader: FeatureDevelopmentLoader | undefined
 let featureStoreService: FeatureStoreService
 let remoteClient: RemoteClientService | null = null
+let contributionService: ContributionService | undefined
 let remoteDeviceId: string | null = null
 let modProviderRegistry: ModProviderRegistry | null = null
 const mcmodService = new McmodService()
@@ -543,8 +575,14 @@ let mcpBridgePreferenceEnabled = false
 const chatCompletionsAdapter = new ChatCompletionsAdapter()
 let publicMcpIntent: 'engineering' | 'informational' = 'informational'
 let curseForgeProviderKey = process.env.MODMIND_CURSEFORGE_API_KEY ?? '$2a$10$BB17.sSejQebcTN01XAqmeXbucdfzq/nIKXylaKLpQHtHLrREVPku'
-const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const hasSingleInstanceLock = !diagnosticRecoveryTarget && app.requestSingleInstanceLock()
 const diagnosticSession = hasSingleInstanceLock ? new DiagnosticSession(app.getPath('logs'), diagnosticJournal) : undefined
+if (hasSingleInstanceLock) {
+  try {
+    crashReporter.start({ uploadToServer: false, compress: true, extra: { modmind_version: app.getVersion() } })
+    diagnosticJournal.recordCritical({ subsystem: 'process', operation: 'crash-reporter', phase: 'ready', message: 'Local native crash collection enabled; automatic upload disabled', data: { directory: app.getPath('crashDumps') } })
+  } catch (error) { diagnosticJournal.recordCritical({ subsystem: 'process', operation: 'crash-reporter', phase: 'error', message: 'Local native crash collection unavailable', error }) }
+}
 diagnosticSession?.startHeartbeat()
 app.on('quit', (_event, exitCode) => {
   if (exitCode === 0 && shutdownComplete) diagnosticSession?.finish()
@@ -667,6 +705,7 @@ function trackMinecraftDownloadEvent(event: MinecraftRuntimeEvent, projectPath: 
 }
 
 function forwardMinecraftRuntimeEvent(event: MinecraftRuntimeEvent): void {
+  aiRuntimeActivityContext.getStore()?.(event)
   const projectPath = event.projectPath ?? aiProjectContext.getStore()?.path ?? currentProject?.path
   const routedEvent = projectPath ? {...event, projectPath} : event
   trackMinecraftDownloadEvent(event, projectPath ?? 'global')
@@ -690,8 +729,8 @@ function requireModProviderRegistry(): ModProviderRegistry {
   return modProviderRegistry
 }
 
-if (!hasSingleInstanceLock) app.quit()
-else if (!app.getVersion().endsWith('-plugintest')) {
+if (!hasSingleInstanceLock && !diagnosticRecoveryTarget) app.quit()
+else if (!diagnosticRecoveryTarget && !app.getVersion().endsWith('-plugintest')) {
   if (process.defaultApp && process.argv[1]) app.setAsDefaultProtocolClient('mcdev', process.execPath, [path.resolve(process.argv[1])])
   else app.setAsDefaultProtocolClient('mcdev')
 }
@@ -749,9 +788,11 @@ function shutdownApplication(): Promise<void> {
   resolveCloseChoice = null
   beginProcessShutdown()
   verifiedDownload.beginShutdown()
+  const contributionShutdown = contributionService?.shutdown().catch(() => undefined)
   deviceAuthorizationController?.abort()
   for (const controller of aiAbortControllers.values()) controller.abort()
   featureStoreService?.shutdown()
+  featureDevelopmentLoader?.stop()
   for (const active of activeAiBackendSwitches.values()) active.controller.abort()
   const timeout = setTimeout(() => {
     diagnosticJournal.recordCritical({ subsystem: 'app', operation: 'shutdown', phase: 'timeout', message: 'Shutdown exceeded 20 seconds' })
@@ -763,6 +804,7 @@ function shutdownApplication(): Promise<void> {
     await optionalTestingService()?.localTestService?.stop().catch(error => console.warn('本机测试停止失败', error))
     await optionalTestingService()?.localServerManager?.stop().catch(error => diagnosticJournal.recordCritical({ subsystem: 'local-server', operation: 'shutdown', phase: 'error', message: '服务端正常停止失败', error }))
     const results = await Promise.allSettled([
+      contributionShutdown,
       Promise.resolve().then(() => shutdownPlugins()),
       Promise.resolve().then(() => featurePluginService?.shutdown()),
       Promise.resolve().then(() => chatCompletionsAdapter.close()),
@@ -951,6 +993,7 @@ interface StoredDeviceCredentials {
   model?: string
   imageApi?: { baseUrl: string; model: string; encryptedApiKey: string } | null
   encryptedConnections?: string
+  refreshBeforeSelection?: boolean
 }
 
 interface DeviceCredentials extends Omit<StoredDeviceCredentials, 'encryptedApiKey'> {
@@ -975,16 +1018,17 @@ const scannedModelCapabilities = new Map<string, { checkedAt: number; models: Ai
 let quotaModelRouter: QuotaModelRouting | undefined
 let quotaModelSwitchInProgress = false
 let providerSyncService: ProviderSyncService | undefined
+let providerCatalogRevision = 0
 let legacyProviderUpgrade: { owner: string; at: number; task: Promise<void> } | undefined
 function providerSync(): ProviderSyncService {
   return providerSyncService ??= new ProviderSyncService({
     authorizationBusy: () => Boolean(deviceAuthorizationController),
-    read: async () => { const c = await readDeviceCredentials(); return c?.sync ? { siteUrl: c.siteUrl, username: c.username, sync: c.sync } : null },
+    read: async () => { const c = await readDeviceCredentials(); return c?.sync ? { siteUrl: c.siteUrl, username: c.username, sync: c.sync, authorizationKey: c.apiKey, refreshBeforeSelection: c.refreshBeforeSelection } : null },
     write: (previous, next) => deviceStateWrites.run(async () => {
       const c = await readDeviceCredentials()
       if (!c?.sync || providerOwnerKey(c) !== providerOwnerKey(previous) || JSON.stringify(c.sync) !== JSON.stringify(previous.sync)) throw new Error('账号或连接已更新，请重试')
       const current = next.connections.find(x => x.account === next.defaultAccount)!
-      const saved = await writeDeviceCredentialsUnlocked({ ...c, sync: next, account: current.account, group: current.group, node: current.node ?? undefined, baseUrl: current.inferenceBaseUrl, apiKey: current.apiKey })
+      const saved = await writeDeviceCredentialsUnlocked({ ...c, sync: next, refreshBeforeSelection: undefined, account: current.account, group: current.group, node: current.node ?? undefined, baseUrl: current.inferenceBaseUrl, apiKey: current.apiKey })
       quotaModelAvailabilityCache.clear(); scannedModelCapabilities.clear()
       if (c.sync.selectionRevision !== next.selectionRevision || c.sync.defaultAccount !== next.defaultAccount || JSON.stringify(c.sync.connections) !== JSON.stringify(next.connections)) emitProviderConnectionsChanged(saved)
       for (const surface of ['workspace', 'inspiration'] as const) {
@@ -1017,7 +1061,6 @@ function providerSync(): ProviderSyncService {
         await fs.rename(temporary, target)
       } finally { await fs.rm(temporary, { force: true }).catch(() => undefined) }
     }),
-    listModels: c => fetchAvailableModels(c.inferenceBaseUrl, c.apiKey, '无法读取供应商模型列表'),
     readPreferences: readBeginnerAiPreferences,
     applyDefaults: async (selection, previous) => {
       const c = await readDeviceCredentials(); if (!c?.sync) throw new Error('账号已切换')
@@ -1045,6 +1088,7 @@ function emitAiSelection(surface: 'workspace' | 'inspiration', selection?: AiMod
   for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('device:aiSelection', { surface, ...(selection ? { selection } : {}) })
 }
 function emitProviderConnectionsChanged(credentials: DeviceCredentials): void {
+  providerCatalogRevision++
   if (deviceAuthorizationController) return
   transientDeviceState = null
   // Existing renderer state listeners reload their catalogs without resetting
@@ -1110,10 +1154,15 @@ function quotaRouter(): QuotaModelRouting {
     }
   })
 }
-async function getQuotaModelCatalog(force = false): Promise<QuotaModelCatalog> {
+async function getQuotaModelCatalog(force = false, cached = false): Promise<QuotaModelCatalog> {
   // Existing desktop sessions can read the full provider snapshot without a new login.
   // Migrate local storage once, while keeping running requests on their captured tuple.
   const previous = await readDeviceCredentials()
+  if (cached) {
+    if (previous?.sync) return providerSync().catalog(false, true)
+    const preferences = await readBeginnerAiPreferences()
+    return { models: [], currentModel: preferences.model, currentOptionKey: '', connected: Boolean(previous), canSwitch: false, stale: true, checkedAt: null, billing: previous?.provider === 'custom' ? 'custom' : 'quota', recoveryRequired: false }
+  }
   if (previous && !previous.sync && previous.provider !== 'custom' && !quotaModelSwitchInProgress && ![...activeAiRuns.values()].some(run => run.backend === 'quota')) {
     const session = await quotaSessionStore().read().catch(() => null)
     const owner = providerOwnerKey(previous)
@@ -1140,8 +1189,7 @@ async function getQuotaModelCatalog(force = false): Promise<QuotaModelCatalog> {
     ...(running && !catalog.message ? { message: 'AI 任务正在运行，完成后即可切换模型' } : {}) }
 }
 async function discoverQuotaModels(): Promise<QuotaModelCatalog> {
-  // Legacy connections may be upgraded by a read. Scanning always remains an
-  // explicit action because discovering a paid group temporarily changes it.
+  // Legacy connections may be upgraded by a read; all model directories come from the website cache.
   await getQuotaModelCatalog()
   const credentials = await readDeviceCredentials()
   if (!credentials?.sync) throw new Error('请先重新同步供应商连接，再读取全部线路模型')
@@ -1239,7 +1287,9 @@ async function quotaModelsForCredentials(credentials: DeviceCredentials, force =
   if (!force && cached && Date.now() - cached.checkedAt <= QUOTA_MODEL_MAX_AGE_MS) {
     return cached.models
   }
-  const models = await fetchAvailableModels(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
+  const models = credentials.provider === 'custom'
+    ? await fetchAvailableModels(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
+    : (await fetchDeviceModelCatalog(credentials.siteUrl, credentials.apiKey, credentials.account ?? undefined)).models
   if (revision !== quotaConfiguration.current()) throw new Error('线路已更新，请重新读取模型列表')
   quotaModelAvailabilityCache.set(key, { checkedAt: Date.now(), models })
   return models
@@ -1387,13 +1437,14 @@ async function removeCurrentDeviceCredentials(credentials: DeviceCredentials): P
 function publicDeviceState(credentials: DeviceCredentials): DeviceConnectionState {
   if (credentials.provider === 'custom') return {
     status: 'connected', configured: true, siteUrl: credentials.siteUrl,
-    username: credentials.username, provider: 'custom', providerId: credentials.providerId, model: credentials.model, billing: 'custom'
+    username: credentials.username, provider: 'custom', providerId: credentials.providerId, model: credentials.model, billing: 'custom', modelCatalogRevision: providerCatalogRevision
   }
   return {
     status: 'connected',
     configured: true,
     siteUrl: credentials.siteUrl,
     username: credentials.username,
+    modelCatalogRevision: providerCatalogRevision,
     account: credentials.sync?.defaults?.account ?? credentials.sync?.defaultAccount ?? credentials.account,
     billing: isFreeDeviceAccount(credentials) ? 'free' : 'quota',
     balanceCents: credentials.usage?.balanceCents ?? credentials.balanceCents,
@@ -1410,6 +1461,8 @@ async function readDeviceState(): Promise<DeviceConnectionState> {
 }
 
 function emitDeviceState(state: DeviceConnectionState): void {
+  if (state.status === 'connected') contributionService?.setUsername(state.username)
+  else if (state.status === 'disconnected') contributionService?.setUsername(undefined)
   diagnosticJournal.record({
     subsystem: 'device',
     operation: 'state',
@@ -1483,11 +1536,13 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
         if (!v2 && Boolean(customApi) !== ('provider' in result)) throw new Error('授权模式与同步结果不匹配')
         throwIfAborted(controller.signal)
         let initialV2Model: string | undefined
+        let preserveClientCatalog = false
+        let syncedCatalogChanged = false
         if (v2) {
           const previous = await readDeviceCredentials()
           if (!previous?.sync || previous.username !== result.username || previous.siteUrl !== siteUrl) {
             const c = v2.connections.find(c => c.account === v2.defaultAccount)!
-            const models = c.models ?? (await fetchAvailableModels(c.inferenceBaseUrl, c.apiKey, '模型列表暂不可用').catch(() => [] as AiModelInfo[])).map(m => m.id)
+            const models = c.modelsReady === false ? [] : c.models ?? (await fetchDeviceModelCatalog(siteUrl, c.apiKey, c.account).catch(() => ({ models: [] as AiModelInfo[] }))).models.map(m => m.id)
             initialV2Model = c.model ?? models[0]
           }
         }
@@ -1497,10 +1552,12 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           throwIfAborted(controller.signal)
           const previous = await readDeviceCredentials()
           const sameOwner = previous?.siteUrl === siteUrl && previous.username === result.username
+          preserveClientCatalog = Boolean(v2 && sameOwner && previous?.sync)
           if (!sameOwner) for (const run of activeAiRuns.values()) if (run.backend === 'quota') aiAbortControllers.get(run.id)?.abort()
           const synced = v2 ? sameOwner && previous?.sync
             ? reconcileProviderSync(previous.sync, result.sync!, activeQuotaModelPreferences(await readStoredBeginnerAiPreferences(), deviceProfileKey(previous)))
             : result.sync! : undefined
+          syncedCatalogChanged = Boolean(synced && previous?.sync && JSON.stringify(synced.connections) !== JSON.stringify(previous.sync.connections))
           const saved = await writeDeviceCredentialsUnlocked({
             siteUrl,
             baseUrl: v2 ? result.baseUrl : customApi?.baseUrl ?? ('baseUrl' in result ? result.baseUrl : ''),
@@ -1509,6 +1566,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
             balanceCents: 'balanceCents' in result ? result.balanceCents : '0',
             ...('account' in result ? { account: result.account, group: result.group, node: result.node } : {}),
             connectedAt: new Date().toISOString(),
+            ...(preserveClientCatalog ? { refreshBeforeSelection: true } : {}),
             ...(synced ? { sync: synced } : customApi ? { provider: 'custom' as const, providerId: customApi.providerId, model: customApi.model, localImageApi: customApi.imageApi } : {})
           })
           if (synced && (!sameOwner || !previous?.sync)) {
@@ -1531,7 +1589,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
           const session = await quotaSessionStore().read().catch(() => null)
           if (session?.owner !== providerOwnerKey(credentials)) await quotaSessionStore().clear()
         }
-        providerSyncService?.invalidate()
+        if (!preserveClientCatalog || syncedCatalogChanged) { providerCatalogRevision++; providerSyncService?.invalidate() }
         if (credentials.sync) {
           await providerSync().initializeSession()
         } else if (!customApi) await reconcileQuotaModelPreferences(credentials, true).catch((error) => {
@@ -1659,10 +1717,30 @@ async function disconnectDeviceLocally(): Promise<DeviceConnectionState> {
   return updateDeviceState(disconnectedDeviceState('已从本机移除接入凭证'))
 }
 
-async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
-  if (quotaModelSwitchInProgress || await quotaRouter().recoveryRequired()) return readDeviceState()
+async function refreshDeviceUsage(options?: { force?: boolean; account?: string }): Promise<DeviceConnectionState> {
+  if (quotaModelSwitchInProgress || await quotaRouter().recoveryRequired()) {
+    if (options?.force === true) throw new Error('模型连接正在更新，请稍后刷新余额。')
+    return readDeviceState()
+  }
   const credentials = await readDeviceCredentials()
   if (!credentials) return updateDeviceState(disconnectedDeviceState('请先连接 ModMind 账号'))
+  if (options?.force === true && credentials.provider !== 'custom') {
+    // A free default must not hide the paid balance the user is about to use.
+    const paid = credentials.sync?.connections.find(connection => connection.kind === 'paid' && (!options.account || connection.account === options.account))
+    if (credentials.sync && !paid || !credentials.sync && options.account && options.account !== credentials.account) throw new Error('这条付费线路已变化，请刷新连接后再试。')
+    if (!paid && isFreeDeviceAccount(credentials)) throw new Error('请先同步可用的付费线路。')
+    const apiKey = paid?.apiKey ?? credentials.apiKey
+    const usage = await queryDeviceUsage(credentials.siteUrl, apiKey, AbortSignal.timeout(20_000))
+    const current = await readDeviceCredentials()
+    if (!sameDeviceCredentials(current, credentials) || paid && !current?.sync?.connections.some(connection => connection.account === paid.account && connection.apiKey === paid.apiKey)) throw new Error('账号或连接已更新，请重新刷新余额。')
+    if (apiKey === credentials.apiKey) {
+      const updated = await updateCurrentDeviceUsage(credentials, usage)
+      if (!updated) throw new Error('账号连接已变化，请重新刷新余额。')
+      return updateDeviceState(publicDeviceState(updated))
+    }
+    // Keep another provider's usage out of the active provider's stored snapshot.
+    return { ...publicDeviceState(current!), balanceCents: usage.balanceCents, checkedAt: usage.checkedAt }
+  }
   if (credentials.provider === 'custom' || isFreeDeviceAccount(credentials)) return updateDeviceState(publicDeviceState(credentials))
   const checkedAt = credentials.usage ? Date.parse(credentials.usage.checkedAt) : Number.NaN
   if (credentials.usage && Number.isFinite(checkedAt) && Date.now() - checkedAt < QUOTA_USAGE_MAX_AGE_MS) {
@@ -1678,11 +1756,9 @@ async function refreshDeviceUsage(): Promise<DeviceConnectionState> {
       if (credentials.sync) {
         const before = await readDeviceCredentials()
         if (!sameDeviceCredentials(before, credentials) || JSON.stringify(before?.sync) !== JSON.stringify(credentials.sync)) return readDeviceState()
-        let refreshed = false
-        try { await providerSync().refresh(); refreshed = true } catch { /* Keep every connection and its last usage snapshot when discovery is unavailable. */ }
         const current = await readDeviceCredentials()
         if (!current?.sync || providerOwnerKey(current) !== providerOwnerKey(credentials)) return readDeviceState()
-        return updateDeviceState({ ...publicDeviceState(current), message: refreshed ? '连接已刷新，用量暂不可用' : '用量暂不可用，已保留现有连接；请刷新连接或重新授权' })
+        return updateDeviceState({ ...publicDeviceState(current), message: '用量暂不可用，已保留现有连接；请手动刷新连接' })
       }
       if (!await removeCurrentDeviceCredentials(credentials)) return readDeviceState()
       return updateDeviceState(disconnectedDeviceState('接入 Key 已失效，请重新连接账号'))
@@ -1889,7 +1965,7 @@ function emitProjectChanged(): void {
   })
   // 插件注册表随项目切换刷新（项目级插件目录变化）
   void refreshPluginRegistry().then((snapshot) => broadcastPluginSnapshot(snapshot)).catch(() => undefined)
-  if (publicMcpBridge && currentProject && !sameProjectPath(publicMcpBridgeProjectPath, currentProject.path)) {
+  if (publicMcpBridge && (!currentProject || !sameProjectPath(publicMcpBridgeProjectPath, currentProject.path))) {
     void stopPublicMcpBridge().then(() => {
       // 桥接跟随当前项目：项目切换后按用户偏好自动重启
       if (mcpBridgePreferenceEnabled && currentProject) {
@@ -2740,6 +2816,7 @@ function createPluginOverlayWindow(pluginId: string): BrowserWindow {
       nodeIntegration: false
     }
   })
+  installEditContextMenu(window)
   pluginOverlayWindows.set(pluginId, window)
   window.setMenuBarVisibility(false)
   if (overlay.alwaysOnTop) window.setAlwaysOnTop(true, 'floating')
@@ -3048,20 +3125,13 @@ function runtimeOptions(): import('./buildRuntime').MinecraftRuntimeOptions { re
 } }
 
 
-let minecraftResourceTail = Promise.resolve()
+const minecraftResourceQueue = new AbortableResourceQueue()
 const minecraftResourceContext = new AsyncLocalStorage<boolean>()
 
-async function withMinecraftResourceLock<T>(operation: () => Promise<T>): Promise<T> {
+async function withMinecraftResourceLock<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal) throwIfAborted(signal, '构建已取消')
   if (minecraftResourceContext.getStore()) return operation()
-  const previous = minecraftResourceTail
-  let release!: () => void
-  minecraftResourceTail = new Promise<void>((resolve) => { release = resolve })
-  await previous
-  try {
-    return await minecraftResourceContext.run(true, operation)
-  } finally {
-    release()
-  }
+  return minecraftResourceQueue.run(() => minecraftResourceContext.run(true, operation), signal)
 }
 
 function buildProjectWithLock(signal?: AbortSignal): Promise<MinecraftManagedMod> {
@@ -3088,7 +3158,7 @@ function buildProjectWithLock(signal?: AbortSignal): Promise<MinecraftManagedMod
         if (text) await feedback.evidence(text, 'managed-build').catch(error => console.warn('构建日志归档失败', error))
       }
     }
-  })
+  }, signal)
 }
 
 
@@ -4097,7 +4167,9 @@ function publicAgentSettings(settings: AgentSettings): AgentSettings {
   return {...settings, externalAgents}
 }
 
-async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []): Promise<string | null> {
+async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = [], exportInput?: DiagnosticExportOptions, owner = mainWindow?.webContents.id ?? 0): Promise<string | null> {
+  const options = diagnosticExportOptions(exportInput)
+  const exportProject = currentProject
   const result = await dialog.showSaveDialog(mainWindow!, {
     title: '导出 ModMind 诊断日志',
     defaultPath: path.join(app.getPath('downloads'), `ModMind-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`),
@@ -4115,15 +4187,34 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
     await collector.addFile(path.join(app.getPath('logs'), name), `app-logs/${name}`)
   }
   collector.addJson('diagnostic-operations-pending.json', diagnosticIpcOperations.snapshot())
+  collector.addJson('support-request.json', { ...options, attachmentIds: undefined, exportedAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+  collector.addJson('plugins/diagnostics.json', pluginDiagnosticSnapshot())
+  collector.addJson('downloads/state.json', downloadActivities.snapshot())
+  collector.addJson('app-runtime/update-state.json', appUpdateService?.snapshot() ?? null)
+  await diagnosticAttachments.collect(collector, owner, options.attachmentIds ?? [])
+  await collector.addDirectory(path.join(app.getPath('logs'), 'diagnostic-history'), 'incident-history', { maxEntries: 40 })
 
-  const project = currentProject
+  const project = exportProject
   const runtimeState = optionalTestingService()?.minecraftRuntime?.getState()
   const userData = app.getPath('userData')
+  await collectDiagnosticEvidence(collector, { projectPath: project?.path, userData, dataDirectory: project ? projectDataDirectory(project) : undefined, includeProjectFiles: options.includeProjectFiles })
+  if (diagnosticSession?.previous.outcome === 'unconfirmed-exit') collector.addJson('native-crashes/os-events.json', await osCrashEvidence(process.execPath))
+  collector.addJson('native-crashes/index.json', await summarizeDiagnosticDirectory(app.getPath('crashDumps'), 1000))
+  if (options.includeCrashDumps) await collector.addDirectory(app.getPath('crashDumps'), 'native-crashes/dumps', { include: file => /\.dmp$/i.test(file), maxEntries: 100, maxBinaryBytes: 128 * 1024 * 1024 })
+  if (options.includeScreenshot && mainWindow && !mainWindow.isDestroyed()) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const screenshot = await Promise.race([mainWindow.webContents.capturePage(), new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 5000) })]).finally(() => clearTimeout(timer))
+    if (screenshot) collector.addBuffer('pages/current-window.png', screenshot.toPNG())
+    else collector.addJson('pages/screenshot-status.json', { status: 'timeout', message: 'The unresponsive renderer did not provide a screenshot in 5 seconds.' })
+  }
+  await collectBuildDiagnostics(collector, { projectPath: project?.path, dataRoot: project ? path.join(project.path, projectDataDirectory(project)) : undefined, gradleUserHome: path.join(userData, 'gradle-runtime', 'cache') }).catch(error => {
+    diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'build-evidence', phase: 'error', level: 'warning', message: 'Unable to collect build evidence', error })
+  })
   const appSettings = await readSettings().catch((error) => {
     diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'settings-summary', phase: 'error', level: 'warning', message: 'Unable to read settings for diagnostics', error })
     return null
   })
-  const imageSettings = featurePluginService.enabled('image-studio') ? await requireImageStudio().getSettings().catch(() => null) : null
+  const imageSettings = !featurePluginService.enabled('image-studio') ? null : await requireImageStudio().getSettings().catch(() => null)
   const disk = await fs.statfs(userData).catch(() => null)
   const summary = {
     exportedAt,
@@ -4144,11 +4235,12 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
       httpsProxyConfigured: Boolean(process.env.HTTPS_PROXY || process.env.https_proxy),
       noProxyConfigured: Boolean(process.env.NO_PROXY || process.env.no_proxy)
     },
+    settingsState: diagnosticValue(appSettings),
     settings: appSettings ? {
       codingBackend: appSettings.codingBackend,
       gradleDownloadSource: appSettings.gradleDownloadSource,
       preferLocalGradle: appSettings.preferLocalGradle,
-      externalAgents: Object.fromEntries(Object.entries(appSettings.externalAgents ?? {}).map(([kind, value]) => [kind, value ? { configured: true, model: value.model, executableConfigured: Boolean(value.executable), baseUrlConfigured: Boolean(value.baseUrl), hasApiKey: Boolean(value.apiKey || value.hasStoredKey) } : { configured: false }])),
+      externalAgents: Object.fromEntries(Object.entries(appSettings.externalAgents ?? {}).map(([kind, value]) => [kind, value ? { configured: true, model: value.model, executableConfigured: Boolean(value.executable), baseUrl: diagnosticValue(value.baseUrl, 'baseUrl'), executable: value.executable, hasApiKey: Boolean(value.apiKey || value.hasStoredKey) } : { configured: false }])),
       imageService: imageSettings ? { baseUrl: imageSettings.baseUrl, model: imageSettings.model, hasApiKey: imageSettings.hasStoredKey } : null
     } : null,
     diagnosticJournal: diagnosticJournal.status(),
@@ -4191,6 +4283,7 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
     pageNames.add(view)
     pageManifest.push({ view, title: typeof page.title === 'string' ? page.title.slice(0, 200) : '', url: typeof page.url === 'string' ? page.url.slice(0, 2_000) : '', capturedAt: typeof page.capturedAt === 'string' ? page.capturedAt : '', archiveName })
     collector.addBuffer(archiveName, Buffer.from(html, 'utf8'), true)
+    if (page.state) collector.addJson(`pages/${view}.state.json`, page.state)
   }
   if (pageManifest.length) {
     collector.addBuffer('pages/index.html', Buffer.from(`<!doctype html><meta charset="utf-8"><title>ModMind page snapshots</title><h1>ModMind page snapshots</h1><ul>${pageManifest.map((page) => `<li><a href="${escapeHtml(page.archiveName.slice('pages/'.length))}">${escapeHtml(page.view)}</a> <small>${escapeHtml(page.title)}</small></li>`).join('')}</ul>`, 'utf8'), true)
@@ -4247,9 +4340,9 @@ async function exportDiagnosticLogs(pageSnapshots: DiagnosticPageSnapshot[] = []
   collector.addJson('app-runtime/minecraft-cache-summary.json', await summarizeDiagnosticDirectory(path.join(userData, 'minecraft-runtime')))
   collector.addJson('app-runtime/server-pack-creator-summary.json', await summarizeDiagnosticDirectory(path.join(userData, 'server-pack-creator')))
   await collector.addDirectory(path.join(userData, 'server-pack-creator'), 'app-runtime/server-pack-creator', { include: (relative) => /\.(?:log|json)$/i.test(relative) })
-  await collector.addDirectory(app.getPath('logs'), 'app-logs', { include: relative => !/^diagnostic-(?:session\.json|(?:critical|events)(?:\.previous)?\.jsonl)$/.test(relative) })
+  await collector.addDirectory(app.getPath('logs'), 'app-logs', { include: relative => !/^diagnostic-(?:session\.json|(?:critical|events)(?:\.previous)?\.jsonl)$/.test(relative) && !relative.startsWith('diagnostic-history/'), descend: relative => relative !== 'diagnostic-history' })
   const entries = collector.finalize({ journal: diagnosticJournal.status() })
-  await fs.writeFile(result.filePath, createStoredZip(entries))
+  await writeDiagnosticArchive(result.filePath, entries)
   diagnosticJournal.record({ subsystem: 'diagnostics', operation: 'export', phase: 'success', message: `Diagnostic archive exported with ${entries.length} files`, data: { target: result.filePath, entries: entries.length } })
   return result.filePath
   } catch (error) {
@@ -4357,6 +4450,27 @@ async function rememberRecentProject(project: ProjectInfo): Promise<void> {
   const recent = await readRecentProjects()
   const key = path.resolve(project.path).toLowerCase()
   await writeRecentProjects([project, ...recent.filter((entry) => path.resolve(entry.path).toLowerCase() !== key)].slice(0, 12))
+}
+
+async function removeProjectAssociation(projectPath: string): Promise<ProjectInfo[]> {
+  if (typeof projectPath !== 'string' || !projectPath.trim()) throw new Error('项目路径无效')
+  const resolved = path.resolve(projectPath)
+  assertProjectMutationAllowed(resolved, '移除关联')
+  const active = currentProject && sameProjectPath(currentProject.path, resolved)
+  if (active) {
+    assertProjectSwitchAllowed()
+    if (optionalTestingService()?.minecraftRuntime?.getState().running) throw new Error('Minecraft 测试实例正在运行，请先停止后再移除关联')
+  }
+  // Stop accepting external operations without removing bridge files in the
+  // user's original instance. A future open replaces its stale bridge config.
+  if (publicMcpBridge && sameProjectPath(publicMcpBridgeProjectPath, resolved)) await stopPublicMcpBridge(true)
+  const remaining = (await readRecentProjects()).filter(entry => !sameProjectPath(entry.path, resolved))
+  await writeRecentProjects(remaining)
+  if (currentProject && sameProjectPath(currentProject.path, resolved)) {
+    currentProject = null
+    emitProjectChanged()
+  }
+  return remaining
 }
 
 async function deleteProjectDirectory(projectPath: string): Promise<ProjectInfo[]> {
@@ -4610,7 +4724,7 @@ async function permanentlyDeleteProjectDirectory(projectPath: string): Promise<P
 async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
   const revision = quotaConfiguration.current()
   const credentials = await readDeviceCredentials()
-  if (!credentials) throw new Error('请先连接账号后扫描模型')
+  if (!credentials) throw new Error('请先连接账号后读取模型')
   if (credentials.sync) return (await providerSync().catalog(force)).models
   await modelReasoningCatalog.refresh(force)
   let models: AiModelInfo[]
@@ -4649,7 +4763,16 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
           headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
           signal: AbortSignal.timeout(20_000)
         })
-      } catch { throw new Error(errorMessage) }
+      } catch (error) {
+        const failure = error as { name?: string; code?: string; cause?: { code?: string } } | null
+        const code = failure?.cause?.code ?? failure?.code ?? ''
+        const reason = failure?.name === 'TimeoutError' || /^(?:ETIMEDOUT|UND_ERR_(?:CONNECT|HEADERS|BODY)_TIMEOUT)$/.test(code)
+          ? '网络请求超时'
+          : /^(?:ENOTFOUND|EAI_AGAIN)$/.test(code) ? '无法解析供应商地址'
+          : /^(?:CERT_|ERR_TLS_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) ? '供应商证书校验失败'
+          : '网络连接失败'
+        throw new Error(`${errorMessage}（${reason}），请检查网络后重试`)
+      }
       if (!response.ok) {
         if (response.status === 404 || response.status === 405) continue
         // Authentication, quota and server failures are not missing route errors.
@@ -4666,7 +4789,7 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
     }
   }
   if (empty) return empty
-  throw new Error(invalidPayload ? '模型服务返回了无效数据' : errorMessage)
+  throw new Error(invalidPayload ? `${errorMessage}（模型服务返回了无效数据）` : `${errorMessage}（模型列表接口不存在或不支持访问），请检查供应商 API 地址或重新同步连接`)
 }
 
 async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
@@ -5107,7 +5230,7 @@ function sendAiOutput(
   sessionId?: string,
   projectPath?: string,
   runId?: string,
-  options?: Pick<AiOutputEvent, 'terminal' | 'recoverable' | 'usage' | 'backend' | 'itemId' | 'streamId' | 'notice'>
+  options?: Pick<AiOutputEvent, 'terminal' | 'recoverable' | 'usage' | 'backend' | 'itemId' | 'streamId' | 'notice' | 'reasoning' | 'activity' | 'inspirationArtifact'>
 ): void {
   const time = new Date().toISOString()
   const safeContent = kind === 'error' ? describeAiFailureForUser(content) : sanitizeAiUserText(content)
@@ -5116,7 +5239,11 @@ function sendAiOutput(
   const terminalError = kind === 'error' && options?.terminal !== false
   const notice = options?.notice ?? ((kind === 'error' || kind === 'warning') && options?.terminal === true ? aiNoticeDetails(kind, safeContent) : undefined)
   const payload: AiOutputEvent = { ...(run?.surface === 'inspiration' ? { inspirationFeatures: run.inspirationFeatures } : {}), kind, content: safeContent, time, ...(sessionId ? { sessionId } : {}), ...(projectPath ? { projectPath } : {}), ...(runId ? { runId } : {}), ...(actualBackend ? { backend: actualBackend } : {}), ...(run?.conversationId ? { conversationId: run.conversationId } : {}), ...(run?.generation !== undefined ? { generation: run.generation } : {}), ...(run?.turnId ? { turnId: run.turnId } : {}), ...(options?.itemId ? { itemId: options.itemId } : {}), ...(options?.streamId ? { streamId: options.streamId } : {}), ...(options?.usage ? { usage: options.usage } : {}), ...(options?.terminal !== undefined ? { terminal: options.terminal } : {}), ...(options?.recoverable !== undefined ? { recoverable: options.recoverable } : {}) }
-  if (kind !== 'delta') {
+  if (options?.inspirationArtifact) payload.inspirationArtifact = options.inspirationArtifact
+  if (options?.reasoning) payload.reasoning = options.reasoning
+  if (options?.activity) payload.activity = options.activity
+  const streaming = kind === 'delta' || kind === 'reasoning' && options?.reasoning?.phase === 'delta'
+  if (!streaming) {
     if (notice) payload.notice = notice
     diagnosticJournal.record({
       subsystem: 'ai',
@@ -5127,7 +5254,7 @@ function sendAiOutput(
       data: { kind, sessionId, runId, itemId: options?.itemId, streamId: options?.streamId, projectPath, contentLength: content.length, contentLog: 'ai-output-events.jsonl', ...(kind === 'error' || kind === 'warning' ? { originalContent: content } : {}) }
     })
   }
-  if (kind !== 'delta') {
+  if (!streaming) {
     const logPayload = { ...payload, content: safeContent.slice(-64_000) }
     aiOutputLogWrite = aiOutputLogWrite.then(async () => {
       await fs.mkdir(app.getPath('logs'), { recursive: true })
@@ -5416,7 +5543,7 @@ async function startRemoteClientIfPossible(force = false): Promise<RemoteConnect
   )
   remoteClient = new RemoteClientService(endpoint, deviceId, os.hostname().slice(0, 100), app.getVersion(), {
     getCredential: async () => (await readDeviceCredentials())?.apiKey ?? null,
-    onCommand: (command, context) => controller.handle(command.text, { signal: context.signal, onActivity: context.activity }),
+    onCommand: (command, context) => diagnosticIpcOperations.run('remote', 'command', { remoteRequestId: command.requestId, input: diagnosticValue(command) }, () => controller.handle(command.text, { signal: context.signal, onActivity: context.activity })),
     onCancel: async (_message: RemoteServerCancel) => {
       for (const run of activeAiRuns.values()) if (run.senderId === REMOTE_SENDER_ID) aiAbortControllers.get(run.id)?.abort()
       return '取消请求已处理'
@@ -5462,15 +5589,15 @@ interface SnapshotManifest extends SnapshotInfo {
 
 async function prepareConversationRequest(project: ProjectInfo, prompt: string, surface: AiSurface, options: AiCreateCodeOptions, recovery?: ActiveAiTask): Promise<{ options: AiCreateCodeOptions; document: Awaited<ReturnType<typeof conversationStore.read> >; turnId: string }> {
   const conversationId = options.conversationId?.trim() || recovery?.conversationId || `${surface === 'workspace' ? 'ws' : 'idea'}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
-  const created = await conversationStore.create(project.path, { id: conversationId, surface, agentMode: options.agentMode ?? recovery?.agentMode })
+  const created = await conversationStore.readContext(project.path, conversationId) ?? await conversationStore.create(project.path, { id: conversationId, surface, agentMode: options.agentMode ?? recovery?.agentMode })
   const generation = options.generation ?? created.generation
   const turnId = options.turnId?.trim() || `turn-${randomUUID()}`
   const nextOptions = { ...options, ...(created.agentMode ? { agentMode: created.agentMode } : {}), conversationId, generation, turnId }
   // The user turn is the recovery boundary. Native provider output is appended
   // later, but the request itself is durable before the provider is spawned.
-  const existing = created.events.some((event) => event.turnId === turnId && event.kind === 'user')
+  const existing = Boolean(options.turnId) && await conversationStore.hasUserTurn(project.path, conversationId, generation, turnId)
   if (!existing) await conversationStore.appendUser(project.path, conversationId, generation, turnId, { prompt }, options.runId)
-  return { options: nextOptions, document: await conversationStore.read(project.path, conversationId), turnId }
+  return { options: nextOptions, document: await conversationStore.readContext(project.path, conversationId), turnId }
 }
 
 type AiWorkflowStage = 'project_info' | 'intent' | 'plan' | 'implementation' | 'validate' | 'build' | 'runtime_test' | 'managed_download' | 'todo_complete'
@@ -5716,24 +5843,32 @@ async function applyModpackMigrationInPlace(
 async function undoModpackMigration(project: ProjectInfo, migrationId: string): Promise<ModpackMigrationUndoResult> { return featurePluginService.service<ReturnType<typeof import('../../feature-plugins/modpack-migration/main').activate>>('modpack-migration').undoModpackMigration(project, migrationId) }
 
 
-async function deleteProjectSnapshot(id: string, projectPath?: string): Promise<SnapshotInfo[]> {
+async function deleteProjectSnapshots(ids: unknown, projectPath?: string): Promise<SnapshotBatchDeleteResult> {
   const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
   if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
   return withProjectMutation(project.path, async () => {
     assertProjectMutationAllowed(project.path, '删除快照')
-    const selected = await readSnapshotManifest(project, id)
-    const migration = (await listModpackMigrationRecords(project)).find((record) =>
-      (record.status !== 'undone' && record.sourceSnapshotId === selected.manifest.id)
-      || record.preUndoSnapshotId === selected.manifest.id)
-    if (migration) throw new Error(`该快照是迁移 ${migration.id} 的恢复依据，不能从普通快照列表删除`)
+    const migrations = await listModpackMigrationRecords(project)
     const active = await readActiveAiTask(project)
-    if (active?.snapshotId === selected.manifest.id) throw new Error('不能删除当前 AI 恢复任务依赖的快照')
-    await fs.rm(path.dirname(selected.root), { recursive: true, force: true })
-    invalidateSnapshotCatalog(project.path, selected.manifest.id)
-    invalidateSnapshotStorage(project.path, selected.manifest.id)
-    void publishSnapshotStorage(project.path).catch(() => undefined)
-    return listSnapshotSummaries(project.path)
+    const result = await deleteSnapshotSelection(project.path, ids, {
+      read: async id => { const selected = await readSnapshotManifest(project, id); return { id: selected.manifest.id, directory: path.dirname(selected.root) } },
+      protectedReason: id => {
+        const migration = migrations.find(record => (record.status !== 'undone' && record.sourceSnapshotId === id) || record.preUndoSnapshotId === id)
+        if (migration) return '该快照是迁移 ' + migration.id + ' 的恢复依据，不能从普通快照列表删除'
+        if (active?.snapshotId === id) return '不能删除当前 AI 恢复任务依赖的快照'
+        return undefined
+      },
+      onDeleted: id => { invalidateSnapshotCatalog(project.path, id); invalidateSnapshotStorage(project.path, id) }
+    })
+    if (result.deletedIds.length) void publishSnapshotStorage(project.path).catch(() => undefined)
+    return { ...result, snapshots: await listSnapshotSummaries(project.path) }
   })
+}
+
+async function deleteProjectSnapshot(id: string, projectPath?: string): Promise<SnapshotInfo[]> {
+  const result = await deleteProjectSnapshots([id], projectPath)
+  if (result.failed.length) throw new Error(result.failed[0].message)
+  return result.snapshots
 }
 
 
@@ -5812,6 +5947,12 @@ function featureAgentHandlers(project: ProjectInfo, signal: AbortSignal, event?:
 
 async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: AbortSignal): Promise<ExternalAgentBridgeHandlers> {
   const moduleTasks = new ModpackModuleTasks(signal, async (input, childSignal) => runModpackModuleWorkbench(project, input, (await readSettings()).codingBackend, childSignal))
+  const testOwnerSignal = signal
+  const buildTasks = new ManagedBuildTasks(signal, async buildSignal => {
+    moduleTasks.assertCollected()
+    const artifact = await aiProjectContext.run(project, () => buildProjectWithLock(buildSignal))
+    return { success: true, artifact }
+  }, () => ({ ...requireMinecraftRuntime().buildRecoveryState(), buildDiagnostics: gradleDiagnosticState(project.path) }))
   const localReviewConfig: AiReviewerConfig = {
     reviewMode: 'codex-auto',
     codexExecutable: managedCodexExecutablePath(app.getPath('userData')),
@@ -5826,6 +5967,8 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
     serverOperation: input => localServerAgentOperation(project, input, signal),
     creationContext: input => creationContextOperation(project, input),
     projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
+    snapshotQuery: async input => snapshotListPage(project.path, await listSnapshotSummaries(project.path), input),
+    snapshotDelete: async input => { if (input.operation !== 'deleteSnapshots' || input.confirmed !== true || Object.keys(input).some(key => !['operation', 'ids', 'confirmed'].includes(key))) throw new Error('请确认删除所选快照'); const result = await deleteProjectSnapshots(input.ids, project.path); return { projectPath: project.path, deletedIds: result.deletedIds, failed: result.failed, remainingCount: result.snapshots.length } },
     projectKnowledgeSave: input => projectKnowledgeStore().save(project.path, input),
     playerTest: (category, input) => requireTestingService().playerTestService.execute(project, category, input, signal),
     projectSearch: (query, limit) => searchProjectText(project, query, limit),
@@ -5875,20 +6018,25 @@ async function createPublicMcpBridgeHandlers(project: ProjectInfo, signal: Abort
       const tasks = publicMcpTodoTasks(values)
       return { success: true, tasks, intent: publicMcpIntent }
     },
-    testMatrix: (targets) => { moduleTasks.assertCollected(); return runProjectTestMatrix(targets.filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target)), signal) },
-    testRendered: () => { moduleTasks.assertCollected(); return runManagedRenderedTest(project, signal) },
-    build: async () => { moduleTasks.assertCollected(); const artifact = await buildProjectWithLock(signal); return { success: true, artifact } },
-    testMinecraft: async () => {
+    testOwnerSignal,
+    testMatrix: (targets, taskSignal) => { moduleTasks.assertCollected(); buildTasks.assertCollected(); return runProjectTestMatrix(targets.filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target)), taskSignal ? AbortSignal.any([signal, taskSignal]) : signal) },
+    testRendered: (taskSignal) => { moduleTasks.assertCollected(); buildTasks.assertCollected(); return runManagedRenderedTest(project, taskSignal ? AbortSignal.any([signal, taskSignal]) : signal) },
+    build: input => buildTasks.invoke(input),
+    testMinecraft: async (taskSignal) => {
+          const signal = taskSignal ? AbortSignal.any([taskSignal, testOwnerSignal]) : testOwnerSignal
       moduleTasks.assertCollected()
+      buildTasks.assertCollected()
       if (project.kind === 'server-plugin') return localServerAgentOperation(project, { operation: 'start' }, signal)
       const result = await runHeadlessMinecraftSmoke(project, signal, { stableWindowMs: 20_000, offline: true })
       if (!result.success) throw new Error(result.message || 'HeadlessMC smoke test failed')
       return result
     },
-    runtimeState: async () => ({ ...requireMinecraftRuntime().getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
+    runtimeState: async () => ({ buildDiagnostics: gradleDiagnosticState(project.path), ...requireMinecraftRuntime().getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
     javaHomeScan: () => scanConfiguredJavaHomes(),
     javaHomeProbe: (home) => probeJavaHomeInfo(home),
     appSettingsRead: async () => publicAgentSettings(await readSettings()),
+        diagnosticsRead: input => Promise.resolve(readDiagnosticState(project.path, input)),
+        modpackLock: input => manageModpackLock(project, input),
     quotaModelsRead: (force) => getQuotaModelCatalog(force),
     quotaModelsDiscover: () => {
       if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
@@ -5977,7 +6125,7 @@ async function startPublicMcpBridge(projectPath?: string): Promise<{ projectPath
   }
 }
 
-async function stopPublicMcpBridge(): Promise<void> {
+async function stopPublicMcpBridge(preserveFiles = false): Promise<void> {
   const bridge = publicMcpBridge
   const projectPath = publicMcpBridgeProjectPath
   const wasRunning = Boolean(bridge)
@@ -5990,8 +6138,8 @@ async function stopPublicMcpBridge(): Promise<void> {
   publicMcpBridgeAbort = null
   if (wasRunning) broadcastMcpBridgeState()
   if (!bridge) return
-  await bridge.stop()
-  if (projectPath) {
+  await bridge.stop(preserveFiles)
+  if (projectPath && !preserveFiles) {
     const project = currentProject && sameProjectPath(currentProject.path, projectPath) ? currentProject : await readProjectInfo(projectPath)
     if (project) await fs.rm(path.join(project.path, project.toolDataDirectory ?? '.modmind', 'external-agents', 'mcp-bridge.json'), { force: true }).catch(() => undefined)
   }
@@ -6365,7 +6513,7 @@ async function runExternalCodingAgent(
   if (project.draft && !isInspiration && !beginnerAgent) throw new Error('当前项目仅用于对话，请先补齐版本和平台信息，再开始制作')
   const recoveryBackend = recovery?.backend
   const backendChanged = Boolean(recoveryBackend && recoveryBackend !== backend)
-  const storedConversation = context.conversationId ? await conversationStore.read(project.path, context.conversationId).catch(() => null) : null
+  const storedConversation = context.conversationId ? await conversationStore.readContext(project.path, context.conversationId).catch(() => null) : null
   const nativeSessionId = (recovery?.nativeSessions?.[backend]
     ?? (!backendChanged && recoveryBackend === backend ? recovery?.sessionId : undefined)
     ?? storedConversation?.native[backend]?.sessionId)
@@ -6391,6 +6539,33 @@ async function runExternalCodingAgent(
   const sendCodingProgress = (item: PipelineEvent): void => {
     sendAiProgress(event, item, sessionId, project.path, context.runId)
     lifecycle.onProgress?.(item)
+  }
+  const activitySnapshots = new Map<string, { activity: import('../shared/aiActivity').AiActivity; identity: { itemId: string; streamId: string } }>()
+  const publishActivity: NonNullable<ExternalAgentRunOptions['onActivity']> = (activity, identity) => {
+    if (signal.aborted) return
+    const previous = activitySnapshots.get(identity.streamId)?.activity
+    const merged = { ...activity, ...(previous?.output && !activity.output ? { output: previous.output } : {}), ...(previous?.detail && !activity.detail ? { detail: previous.detail } : {}) }
+    activitySnapshots.set(identity.streamId, { activity: merged, identity })
+    if (activitySnapshots.size > 512) {
+      const oldest = [...activitySnapshots].find(([, entry]) => entry.activity.status !== 'running')
+      if (oldest) activitySnapshots.delete(oldest[0])
+    }
+    sendAiOutput(event, 'tool', merged.title, sessionId, project.path, context.runId, { ...identity, activity: merged })
+  }
+  let lastRuntimeActivityAt = 0
+  const reportRuntimeActivity = (runtimeEvent: MinecraftRuntimeEvent): void => {
+    if (signal.aborted || runtimeEvent.projectPath && !sameProjectPath(runtimeEvent.projectPath, project.path)) return
+    const candidates = [...activitySnapshots.values()].reverse().filter(entry => entry.activity.status === 'running')
+    const active = candidates.find(entry => ['build', 'test'].includes(entry.activity.kind)) ?? candidates.find(entry => entry.activity.kind === 'tool')
+    if (!active) return
+    const message = runtimeEvent.message.replace(/\u001b\[[0-9;]*m/g, '').trim()
+    const snapshot = { ...active.activity, detail: message.slice(-1000), output: `${active.activity.output ?? ''}${message}\n`.slice(-12000),
+      progress: runtimeEvent.total && runtimeEvent.progress !== undefined ? { current: runtimeEvent.progress, total: runtimeEvent.total } : undefined }
+    activitySnapshots.set(active.identity.streamId, { ...active, activity: snapshot })
+    if (Date.now() - lastRuntimeActivityAt >= 180 || runtimeEvent.level === 'error') {
+      lastRuntimeActivityAt = Date.now()
+      publishActivity(snapshot, active.identity)
+    }
   }
   const inspirationFeatures = surface === 'inspiration' ? normalizeInspirationFeatures(context.inspirationFeatures) : undefined
   const inspirationKnowledgeBaseline = inspirationFeatures?.knowledgeOrganization ? await projectKnowledgeStore().read(project.path) : []
@@ -6585,6 +6760,24 @@ async function runExternalCodingAgent(
     beforeRun: async module => { await creation.target(creationTaskId, module.path) },
     onActivity: text => sendCodingProgress(pipelineEvent('writing', '自制模组工作台正在处理委派', text, 'running'))
   }))
+  const testOwnerSignal = signal
+  const buildTasks = new ManagedBuildTasks(signal, async buildSignal => {
+    moduleTasks.assertCollected()
+    buildCount += 1
+    activeTask.state.buildCount = buildCount
+    await writeTask()
+    buildUsed = false
+    runtimeUsed = false
+    lastBuildHashes = null
+    activeTask.state.lastBuildSucceeded = false
+    const artifact = await aiProjectContext.run(project, () => buildProjectWithLock(buildSignal))
+    buildUsed = await creation.verifyLatestBuild()
+    recordWorkflow('build', 'modmind_build_project completed successfully')
+    lastBuildHashes = await managedCodingHashes(project)
+    activeTask.state.lastBuildSucceeded = buildUsed
+    await writeTask()
+    return { success: true, artifact }
+  }, () => ({ ...requireMinecraftRuntime().buildRecoveryState(), buildDiagnostics: gradleDiagnosticState(project.path) }))
   try {
     let managedExternalEnvironment = usesQuota
       ? codexSetup?.environment
@@ -6611,6 +6804,18 @@ async function runExternalCodingAgent(
       workbenchFeatures,
       kind: externalBackend,
       approvalMode: isInspiration ? 'yolo' : normalizeAgentApprovalMode(settings.codexApprovalMode),
+      onReasoning: (reasoning, content, identity) => sendAiOutput(event, 'reasoning', content, sessionId, project.path, activeTask.runId, { ...identity, reasoning }),
+      onUserInput: (questions, signal, interaction) => {
+        if (isInspiration && !inspirationFeatures?.autoQuestions) return false
+        const sender = event.sender.id === REMOTE_SENDER_ID ? mainWindow?.webContents : event.sender
+        if (!sender || sender.isDestroyed()) return false
+        const owner = sender.id
+        if (!questionOwners.has(owner)) {
+          questionOwners.add(owner)
+          sender.once('destroyed', () => { questionOwners.delete(owner); workbenchQuestions.cancelOwner(owner) })
+        }
+        return workbenchQuestions.add(owner, { projectPath: project.path, conversationId: activeTask.conversationId, runId: activeTask.runId ?? sessionId ?? randomUUID(), surface: isInspiration ? 'inspiration' : 'workspace' }, questions, signal, interaction)
+      },
       ...(!isInspiration ? { onApproval: async (request, approvalSignal) => {
         const sender = event.sender.id === REMOTE_SENDER_ID ? mainWindow?.webContents : event.sender
         if (!sender || sender.isDestroyed()) return 'deny' as const
@@ -6661,7 +6866,7 @@ async function runExternalCodingAgent(
       userSkillStore: isInspiration ? undefined : userSkillStore,
       pluginTarget: createPluginBridgeTarget(project.path),
       systemPrompt: isInspiration
-        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures, featurePluginService.enabled('image-studio')) + '\n' + inspirationWorkflowInstruction(`${context.turnId}:user`) : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
+        ? `你处于灵感台讨论与研究模式，使用本次对话选择的模型及推理设置。不得修改项目源码、安装项目依赖、构建或测试。${context.onboarding === 'moko-inspiration' ? mokoInspirationSystemPrompt(codexSetup?.model ?? runExternalConfiguration.model ?? '') : ''}${inspirationFeatures ? inspirationFeaturePrompt(inspirationFeatures, featurePluginService.enabled('image-studio')) + '\n' + inspirationWorkflowInstruction() : ''}${project.draft ? `\n${draftProjectContext(project)}` : ''}`
         : `${WORKBENCH_REQUEST_GUIDANCE}\n\n${beginnerAgent ? BEGINNER_AGENT_WORKFLOW_GUIDANCE : ''}\n\n${project.draft ? `当前工程尚未创建。已记录的选择：${JSON.stringify(project.draft.target)}。结合本次对话补齐必要信息后使用 modmind_project_setup；不要手写模板或修改占位项目配置。` : codingWorkflowPrompt(project)}`,
       sessionScope,
       sessionLane: backend,
@@ -6739,6 +6944,10 @@ async function runExternalCodingAgent(
           sendAiOutput(event, 'warning', `已阻止绕过 ModMind 的已覆盖下载：${command}\n请先使用对应的 ModMind 下载工具；只有工具实际失败后才允许原生回退。`, sessionId, project.path, context.runId)
         }
         return fallbackAllowed
+      },
+      onActivity: (activity, identity) => {
+        flushBufferedProgress()
+        publishActivity(activity, identity)
       },
       onOutput: (kind, content, identity) => {
         if (kind === 'response') {
@@ -6834,7 +7043,24 @@ async function runExternalCodingAgent(
         serverOperation: input => localServerAgentOperation(project, input, signal),
         creationContext: input => creationContextOperation(project, input),
         projectKnowledgeRead: () => projectKnowledgeStore().read(project.path),
+        snapshotQuery: async input => snapshotListPage(project.path, await listSnapshotSummaries(project.path), input),
+        snapshotDelete: async input => { if (input.operation !== 'deleteSnapshots' || input.confirmed !== true || Object.keys(input).some(key => !['operation', 'ids', 'confirmed'].includes(key))) throw new Error('请确认删除所选快照'); const result = await deleteProjectSnapshots(input.ids, project.path); return { projectPath: project.path, deletedIds: result.deletedIds, failed: result.failed, remainingCount: result.snapshots.length } },
         projectKnowledgeSave: input => projectKnowledgeStore().save(project.path, input),
+        ...(isInspiration && inspirationFeatures && context.conversationId && context.turnId ? {
+          inspirationSubmit: async (input: Record<string, unknown>) => {
+            throwIfAborted(signal, '灵感任务已停止')
+            const current = await conversationStore.readContext(project.path, context.conversationId!)
+            if (current?.surface !== 'inspiration' || current.generation !== (context.generation ?? 0)) throw new Error('灵感会话版本已变化，请重新提交')
+            const record = await projectInspirationWorkflowStore().submit(project.path,
+              { conversationId: context.conversationId!, turnId: context.turnId!, generation: context.generation ?? 0 },
+              input, inspirationFeatures, context.inspirationQuestion ?? '', inspirationKnowledgeBaseline, signal)
+            sendAiOutput(event, 'tool', '', sessionId, project.path, context.runId, {
+              inspirationArtifact: { workflow: record.workflow!, finalized: record.status !== 'staged' }
+            })
+            return { status: record.status, promptState: record.workflow?.prompt?.state ?? null, knowledgeCount: record.changes.length,
+              guidance: record.status === 'staged' ? '产物已登记为草稿；正常完成本轮后，宿主按设置保存或等待用户确认。不要宣称已经保存。' : '本轮产物已定稿，请勿重复提交。' }
+          }
+        } : {}),
         playerTest: (category, input) => requireTestingService().playerTestService.execute(project, category, input, signal),
         projectSearch: (query, limit) => searchProjectText(project, query, limit),
         projectFiles: async () => {
@@ -6949,7 +7175,7 @@ async function runExternalCodingAgent(
           const javaPath = await runtime.ensureJavaRuntime()
           const port = typeof input.port === 'number' ? input.port : 25565
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-pack')
-          const result = await withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
+          const result = await withMinecraftResourceLock(() => managedServerJoin({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, headless: requireHeadlessMc(), gameDirectory: path.join(project.path, projectDataDirectory(project), 'headlessmc', 'server-join'), onEvent: forwardMinecraftRuntimeEvent }))
            runtimeUsed = result.success
            if (result.success) lastRuntimeHashes = await managedCodingHashes(project)
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_verify_server_join completed successfully')
@@ -6969,18 +7195,21 @@ async function runExternalCodingAgent(
           })
           const port = typeof input.port === 'number' ? input.port : 25565
           const outputDirectory = typeof input.outputDirectory === 'string' && input.outputDirectory.trim() ? input.outputDirectory : path.join(project.path, projectDataDirectory(project), 'server-scenario')
-          const result = await withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: (value) => mainWindow?.webContents.send('minecraft:event', value) }))
+          const result = await withMinecraftResourceLock(() => managedServerScenario({ project, outputDirectory, port, acceptEula: true, onlineMode: input.onlineMode === true, javaPath, steps, onEvent: forwardMinecraftRuntimeEvent }))
            runtimeUsed = result.success
            if (result.success) lastRuntimeHashes = await managedCodingHashes(project)
            if (result.success) recordWorkflow('runtime_test', 'modmind_modpack_run_server_scenario completed successfully')
            return result
         },
-        testMatrix: async (targets) => {
+        testOwnerSignal,
+    testMatrix: async (targets, taskSignal) => {
+          const signal = taskSignal ? AbortSignal.any([taskSignal, testOwnerSignal]) : testOwnerSignal
           moduleTasks.assertCollected()
+          buildTasks.assertCollected()
           const selected = [...new Set(targets)].filter((target): target is TestTarget => ['build', 'client', 'server', 'gametest'].includes(target))
           if (selected.includes('build') || selected.includes('client')) { buildUsed = false; lastBuildHashes = null; activeTask.state.lastBuildSucceeded = false }
           if (selected.some(target => target !== 'build')) { runtimeUsed = false; lastRuntimeHashes = null }
-          const matrix = await runProjectTestMatrix(selected, signal)
+          const matrix = await runProjectTestMatrix(selected, signal, (target, completed, total) => reportRuntimeActivity({ stage: 'building-mod', message: `测试 ${target} · 已完成 ${completed}/${total} 项`, progress: completed, total, time: new Date().toISOString(), level: 'info', projectPath: project.path }))
           if (selected.includes('build') || selected.includes('client')) {
             buildUsed = matrix.results.some((result) => (result.target === 'build' || result.target === 'client') && result.status === 'passed')
             if (buildUsed) {
@@ -6999,25 +7228,11 @@ async function runExternalCodingAgent(
           await writeTask()
           return matrix
         },
-        build: async () => {
+        build: input => buildTasks.invoke(input),
+        testRendered: async (taskSignal) => {
+          const signal = taskSignal ? AbortSignal.any([taskSignal, testOwnerSignal]) : testOwnerSignal
           moduleTasks.assertCollected()
-          buildCount += 1
-          activeTask.state.buildCount = buildCount
-          await writeTask()
-          buildUsed = false
-          runtimeUsed = false
-          lastBuildHashes = null
-          activeTask.state.lastBuildSucceeded = false
-          const artifact = await buildProjectWithLock(signal)
-          buildUsed = await creation.verifyLatestBuild()
-          recordWorkflow('build', 'modmind_build_project completed successfully')
-          lastBuildHashes = await managedCodingHashes(project)
-          activeTask.state.lastBuildSucceeded = buildUsed
-          await writeTask()
-          return { success: true, artifact }
-        },
-        testRendered: async () => {
-          moduleTasks.assertCollected()
+          buildTasks.assertCollected()
           const result = await runManagedRenderedTest(project, signal)
           buildUsed = await creation.verifyLatestBuild()
           if (buildUsed) { lastBuildHashes = await managedCodingHashes(project); recordWorkflow('build', 'Visible client test completed the managed build') }
@@ -7027,8 +7242,10 @@ async function runExternalCodingAgent(
           await writeTask()
           return result
         },
-        testMinecraft: async () => {
+        testMinecraft: async (taskSignal) => {
+          const signal = taskSignal ? AbortSignal.any([taskSignal, testOwnerSignal]) : testOwnerSignal
           moduleTasks.assertCollected()
+          buildTasks.assertCollected()
           runtimeUsed = false
           lastRuntimeHashes = null
           if (project.kind === 'server-plugin') return localServerAgentOperation(project, { operation: 'start' }, signal)
@@ -7056,10 +7273,12 @@ async function runExternalCodingAgent(
           lastRuntimeHashes = await managedCodingHashes(project)
           return smoke
         },
-        runtimeState: async () => ({ ...runtime.getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
+        runtimeState: async () => ({ buildDiagnostics: gradleDiagnosticState(project.path), ...runtime.getState(), ...(isModpackProject(project) ? { modpackImport: await readModpackImportStatus(project) } : {}) }),
         javaHomeScan: () => scanConfiguredJavaHomes(),
         javaHomeProbe: (home) => probeJavaHomeInfo(home),
         appSettingsRead: async () => publicAgentSettings(await readSettings()),
+        diagnosticsRead: input => Promise.resolve(readDiagnosticState(project.path, input)),
+        modpackLock: input => manageModpackLock(project, input),
         quotaModelsRead: (force) => getQuotaModelCatalog(force),
         quotaModelsDiscover: () => {
           if (!currentProject || !sameProjectPath(currentProject.path, project.path)) throw new Error('项目已切换，请从当前项目重新操作')
@@ -7082,11 +7301,13 @@ async function runExternalCodingAgent(
     }
     const completedAnswer = (candidate: Awaited<ReturnType<typeof runExternalAgent>>): string => candidate.finalAnswer?.text
       ?? selectFinalAiAnswer(bufferedFinalResponse, candidate.summary, deliveredResponseContents)
-    const result = await runExternalAgent(externalRunOptions)
+    const result = await aiRuntimeActivityContext.run(reportRuntimeActivity, () => runExternalAgent(externalRunOptions))
     if (!completedAnswer(result)) {
       throw Object.assign(new Error('本轮已结束，但未收到完整回复。已保留当前修改和会话，请检查后再继续。'), { name: 'ExternalAgentOutputError' })
     }
     moduleTasks.assertCollected()
+    buildTasks.assertCollected()
+    optionalTestingService()?.playerTestService?.assertReadyForSignal(signal)
     const targetChanges = isInspiration ? [] : await creation.finishTargets(creationTaskId)
     if (!isInspiration) await creation.mutate(state => {
       const task = state.tasks.find(item => item.id === creationTaskId)
@@ -7110,22 +7331,28 @@ async function runExternalCodingAgent(
     activeTask.changedFiles = changedFiles
     const finalResponse = completedAnswer(result).slice(-120_000)
     if (surface === 'inspiration' && inspirationFeatures && context.conversationId && context.turnId) {
-      // Only the host's terminal answer may commit knowledge. Streaming/replay have no side effects.
-      const parsed = parseInspirationWorkflow(finalResponse, inspirationFeatures)
-      if (!parsed.complete) activeTask.state.warnings.push(parsed.error ?? '灵感回答未按结构化格式完成，不能交接或自动保存')
-      else {
-        try {
-          throwIfAborted(signal, '灵感任务已停止')
-          const currentConversation = await conversationStore.read(project.path, context.conversationId)
-          if (currentConversation?.generation !== (context.generation ?? 0)) throw new Error('对话已回退或删除，知识变更未保存')
-          await projectInspirationWorkflowStore().register(project.path, { conversationId: context.conversationId, turnId: context.turnId, generation: context.generation ?? 0 },
+      try {
+        throwIfAborted(signal, '灵感任务已停止')
+        const currentConversation = await conversationStore.readContext(project.path, context.conversationId)
+        if (currentConversation?.generation !== (context.generation ?? 0)) throw new Error('对话已回退或删除，知识变更未保存')
+        const identity = { conversationId: context.conversationId, turnId: context.turnId, generation: context.generation ?? 0 }
+        const record = await projectInspirationWorkflowStore().finalize(project.path, identity, signal)
+        if (record?.workflow) sendAiOutput(event, 'tool', '', sessionId, project.path, context.runId, {
+          inspirationArtifact: { workflow: record.workflow, finalized: true }
+        })
+        else {
+          // Old native threads may still emit the legacy envelope. Ordinary Markdown is valid.
+          const parsed = parseInspirationWorkflow(finalResponse, inspirationFeatures)
+          if (parsed.complete) await projectInspirationWorkflowStore().register(project.path, identity,
             finalResponse, inspirationFeatures, context.inspirationQuestion ?? '', inspirationKnowledgeBaseline, signal)
-        } catch (error) {
-          if (signal?.aborted) throw error
-          activeTask.state.warnings.push(`项目知识未同步：${error instanceof Error ? error.message : String(error)}`)
+          else if (parsed.protocol) activeTask.state.warnings.push(parsed.error ?? '旧格式回答未完整生成，请重新整理')
         }
+      } catch (error) {
+        if (signal?.aborted) throw error
+        activeTask.state.warnings.push('灵感产物未完成同步：' + (error instanceof Error ? error.message : String(error)))
       }
     }
+
     const summary = finalResponse.slice(0, 4_000)
     const tests = [
       ...(buildUsed ? ['已使用 ModMind 托管构建'] : []),
@@ -7190,7 +7417,8 @@ async function runExternalCodingAgent(
     }
   } catch (error) {
     await workflowWrite.catch(() => undefined)
-    // Stop delegated writers before hashing the parent's failure checkpoint.
+    // Stop managed writers before hashing the parent's failure checkpoint.
+    await buildTasks.close()
     await moduleTasks.close()
     if (!isInspiration) {
       const message = error instanceof Error ? error.message : String(error)
@@ -7215,6 +7443,7 @@ async function runExternalCodingAgent(
     flushBufferedProgress()
     throw error
   } finally {
+    await buildTasks.close()
     await moduleTasks.close()
     await optionalTestingService()?.playerTestService?.stopNativeForSignal(signal)
     await featurePluginService.stopForSignal(signal)
@@ -7383,6 +7612,20 @@ async function runAutomatedE2E(): Promise<void> {
 }
 
 function registerIpc(): void {
+  const contributionFor = (sender: Electron.WebContents): ContributionService => {
+    if (sender !== mainWindow?.webContents || !contributionService) throw new Error('请在 ModMind 主窗口的设置中操作。')
+    return contributionService
+  }
+  ipcMain.handle('contributions:getState', async event => {
+    const service = contributionFor(event.sender)
+    const account = await readDeviceCredentials()
+    service.setUsername(account?.username)
+    return service.state()
+  })
+  ipcMain.handle('contributions:beginConsent', event => contributionFor(event.sender).challenge(event.sender.id))
+  ipcMain.handle('contributions:enable', (event, token: unknown, version: unknown) => contributionFor(event.sender).enable(event.sender.id, token, version))
+  ipcMain.handle('contributions:disable', event => contributionFor(event.sender).disable())
+  ipcMain.handle('contributions:preview', event => contributionFor(event.sender).preview())
   registerDeveloperIpc({ appearance: async () => normalizeAppearance(await readSettings()), run: async (options, backend, sender, selection) => {
     const settings = settingsForAiSelection(await readSettings(), backend, normalizeAiModelSelection(selection))
     const scope = options.sessionScope!, configured = settings.externalAgents?.codex ?? {}
@@ -7468,11 +7711,11 @@ function registerIpc(): void {
   diagnosticHandle('device:authorize', () => beginDeviceAuthorization())
   diagnosticHandle('device:cancelAuthorization', () => cancelDeviceAuthorization())
   diagnosticHandle('device:disconnectLocal', () => disconnectDeviceLocally())
-  diagnosticHandle('device:refreshUsage', () => refreshDeviceUsage())
+  diagnosticHandle('device:refreshUsage', (_event, options?: { force?: boolean; account?: string }) => refreshDeviceUsage(options))
   diagnosticHandle('device:getAiPreferences', () => readBeginnerAiPreferences())
   diagnosticHandle('device:saveAiPreferences', (_event, preferences: BeginnerAiPreferences) => saveBeginnerAiPreferences(preferences))
   diagnosticHandle('device:listModels', (_event, force?: boolean) => listBeginnerModels(force === true))
-  diagnosticHandle('device:getModelCatalog', (_event, force?: boolean) => getQuotaModelCatalog(force === true))
+  diagnosticHandle('device:getModelCatalog', (_event, force?: boolean, cached?: boolean) => getQuotaModelCatalog(force === true, cached === true))
   diagnosticHandle('device:discoverModels', () => discoverQuotaModels())
   diagnosticHandle('device:refreshConnections', async () => {
     await providerSync().refresh()
@@ -7516,16 +7759,18 @@ function registerIpc(): void {
     if (typeof id !== 'string' || typeof action !== 'string' || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('功能插件调用参数无效')
     return nativeFeatureEvent.run(event, () => featurePluginService.invoke(id, action, input as Record<string, unknown>, { projectPath: currentProject?.path, windowId: window.id }))
   })
-  diagnosticHandle('feature-plugins:install', async (event) => {
+  diagnosticHandle('feature-plugins:install', async (event, expectedId?: unknown) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('请在主窗口安装应用功能插件')
+    if (expectedId !== undefined && (typeof expectedId !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(expectedId))) throw new Error('待更新的功能标识无效')
     const selected = await dialog.showOpenDialog(mainWindow!, { title: '安装工作台或功能组件', properties: ['openFile'], filters: [{ name: 'ModMind 工作台与功能组件', extensions: ['mmstudio', 'mmfeature'] }] })
     if (selected.canceled || !selected.filePaths[0]) return null
     const prepared = await prepareFeaturePlugin(selected.filePaths[0])
+    if (expectedId !== undefined && prepared.manifest.id !== expectedId) throw new Error('所选安装包不是当前功能，请选择相同功能 ID 的更新包')
     const trusted = await requestWindowConfirmation(event.sender, randomUUID(), {
       name: prepared.manifest.name, version: prepared.manifest.version, fileName: path.basename(selected.filePaths[0])
     }, 'feature-plugins:installPreview', 'feature-plugins:confirmInstall')
     if (!trusted) return null
-    return featurePluginService.list().some(record => record.id === prepared.manifest.id) ? featurePluginService.update(prepared) : featurePluginService.install(prepared)
+    return importLocalFeaturePlugin(featurePluginService, prepared, expectedId as string | undefined)
   })
   diagnosticHandle('feature-plugins:setEnabled', (event, id: unknown, enabled: unknown) => {
     if (event.sender !== mainWindow?.webContents || typeof id !== 'string' || typeof enabled !== 'boolean') throw new Error('插件参数或窗口无效')
@@ -7726,12 +7971,7 @@ function registerIpc(): void {
   })
 
   diagnosticHandle('project:listRecent', () => readRecentProjects())
-  diagnosticHandle('project:removeRecent', async (_event, projectPath: string) => {
-    const key = path.resolve(projectPath).toLowerCase()
-    const recent = (await readRecentProjects()).filter((entry) => path.resolve(entry.path).toLowerCase() !== key)
-    await writeRecentProjects(recent)
-    return recent
-  })
+  diagnosticHandle('project:removeRecent', (_event, projectPath: string) => removeProjectAssociation(projectPath))
   diagnosticHandle('project:delete', (_event, projectPath: string) => deleteProjectDirectory(projectPath))
   diagnosticHandle('project:deletePermanent', (_event, projectPath: string) => permanentlyDeleteProjectDirectory(projectPath))
 
@@ -7823,6 +8063,23 @@ function registerIpc(): void {
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
     return conversationStore.readProjection(project.path, conversationId)
   })
+  diagnosticHandle('conversations:historyPage', async (_event, projectPath: string, conversationId: string, input?: import('../shared/types').ConversationHistoryPageInput) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    return conversationStore.historyPage(project.path, conversationId, input)
+  })
+  diagnosticHandle('conversations:saveHistoryWindow', async (_event, projectPath: string, conversationId: string, generation: number, token: string, start: number, items: unknown[]) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    if (!Array.isArray(items) || typeof token !== 'string' || !Number.isSafeInteger(start) || start < 0) throw new Error('历史保存范围无效')
+    return conversationStore.saveHistoryWindow(project.path, conversationId, generation, token, start, items)
+  })
+  diagnosticHandle('conversations:deleteHistoryItem', async (_event, projectPath: string, conversationId: string, generation: number, itemId: string) => {
+    const project = await readProjectInfo(path.resolve(projectPath))
+    if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
+    if (runsForProject(project.path).some(run => run.conversationId === conversationId)) throw new Error('请先停止当前任务，再删除对话内容')
+    return conversationStore.deleteHistoryItem(project.path, conversationId, generation, itemId)
+  })
   diagnosticHandle('conversations:ensureProjection', async (_event, projectPath: string, input) => {
     const project = await readProjectInfo(path.resolve(projectPath))
     if (!project) throw new Error('项目不存在或不是有效的 ModMind 项目')
@@ -7904,7 +8161,7 @@ function registerIpc(): void {
     const normalized = normalizeCodingPath(relativePath, true, true, project)
     const target = await resolveSafeCodingTarget(normalized, project)
     await fs.mkdir(path.dirname(target), { recursive: true })
-    await fs.writeFile(target, content, 'utf8')
+    await verifiedDiagnosticWrite(project.path, normalized, target, content)
   })
   diagnosticHandle('project:captureIdea', async (_event, prompt: string, projectPath?: string) => {
     const project = projectPath?.trim() ? await readProjectInfo(path.resolve(projectPath)) : requireProject()
@@ -8020,16 +8277,16 @@ function registerIpc(): void {
       return result.filePath
     }
     if (isModpackProject(project)) {
-      const release = featurePluginService.enabled('publishing') ? await requireReleaseService().prepareExport() : { version: '1.0.0', summary: '' }
+      const releaseService = featurePluginService.enabled('publishing') ? requireReleaseService() : null
+      const release = releaseService ? await releaseService.prepareExport(project) : { version: '1.0.0', summary: '', modpackExportMode: 'bundled' as const }
       const result = await dialog.showSaveDialog(mainWindow!, {
         title: '导出 Modrinth 整合包',
         defaultPath: path.join(app.getPath('downloads'), `${project.namespace}-${release.version}.mrpack`),
         filters: [{ name: 'Modrinth Modpack', extensions: ['mrpack'] }]
       })
       if (result.canceled || !result.filePath) return null
-      const archive = await createModrinthPackArchive(project, { version: release.version, summary: release.summary })
-      await fs.writeFile(result.filePath, archive)
-      if (featurePluginService.enabled('publishing')) await requireReleaseService().markExported()
+      await writeModrinthPackArchive(project, result.filePath, { version: release.version, summary: release.summary, mode: release.modpackExportMode })
+      if (releaseService) await releaseService.markExported(project)
       return result.filePath
     }
     if (!isJavaLoader(project.loader)) {
@@ -8262,13 +8519,24 @@ function registerIpc(): void {
       level,
       message,
       ...(typeof value.durationMs === 'number' ? { durationMs: value.durationMs } : {}),
-      data: { detail: value.data, webContentsId: _event.sender.id, osProcessId: _event.sender.getOSProcessId() },
+      data: { detail: value.data, ...(value.data && typeof value.data === 'object' && 'projectPath' in value.data && typeof value.data.projectPath === 'string' ? { projectPath: value.data.projectPath } : {}), webContentsId: _event.sender.id, osProcessId: _event.sender.getOSProcessId() },
       ...(rendererError ? { error: rendererError } : {})
     })
   })
-  diagnosticHandle('diagnostics:exportLogs', (_event, input: unknown) => {
+  diagnosticHandle('modpack:manageLock', async (_event, input: Record<string, unknown>, expectedProjectPath: unknown) => {
+    const project = requireProject()
+    if (typeof expectedProjectPath !== 'string' || !sameProjectPath(project.path, expectedProjectPath)) throw new Error('当前项目已切换，请重新打开模组列表')
+    if (input?.operation === 'repair') assertProjectMutationAllowed(project.path, '修复模组锁')
+    return manageModpackLock(project, input)
+  })
+  diagnosticHandle('diagnostics:readState', (_event, limit: unknown) => readDiagnosticState(currentProject?.path, { limit }))
+  diagnosticHandle('diagnostics:pickAttachments', async event => {
+    const selected = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender) ?? mainWindow!, { title: '选择日志、账单或现场附件', properties: ['openFile', 'multiSelections'] })
+    return selected.canceled ? [] : diagnosticAttachments.register(event.sender.id, selected.filePaths)
+  })
+  diagnosticHandle('diagnostics:exportLogs', (event, input: unknown, options: unknown) => {
     const pages = Array.isArray(input) ? input as DiagnosticPageSnapshot[] : []
-    return exportDiagnosticLogs(pages)
+    return exportDiagnosticLogs(pages, diagnosticExportOptions(options), event.sender.id)
   })
   diagnosticHandle('remote-build:gitee:getSettings', () => readGiteeBuildSettings().then((settings) => ({ ...settings, token: '' })))
   diagnosticHandle('remote-build:gitee:saveSettings', (_event, settings: GiteeBuildSettings) => saveGiteeBuildSettings(settings))
@@ -8320,14 +8588,15 @@ function registerIpc(): void {
       : configured.executable
     await launchExternalAgent(kind, project, executable, env, undefined, featurePluginService.enabled('image-studio'))
   })
-  diagnosticHandle('beginner-codex:prepare', async (event, projectPath?: string) => {
+  diagnosticHandle('beginner-codex:prepare', async (event, projectPath?: string, selection?: AiModelSelection) => {
     const routedProjectPath = typeof projectPath === 'string' && projectPath.trim() ? path.resolve(projectPath) : undefined
     const project = routedProjectPath ? await readProjectInfo(routedProjectPath) : currentProject
     if (!project) throw new Error('请先创建或打开项目')
     try {
+      const serverConfig = await readBeginnerAgentServerConfig(normalizeAiModelSelection(selection))
       const result = await prepareQuotaCodex(project, 'workspace', (progress) => {
         if (!event.sender.isDestroyed()) event.sender.send('beginner-codex:progress', {...progress, ...(routedProjectPath ? {projectPath: routedProjectPath} : {})})
-      })
+      }, undefined, serverConfig)
       return {
         ready: true,
         version: result.version,
@@ -8351,6 +8620,9 @@ function registerIpc(): void {
     }
   })
   diagnosticHandle('ai:listApprovals', event => workbenchApprovals.list(event.sender.id))
+  diagnosticHandle('ai:listQuestions', event => workbenchQuestions.list(event.sender.id))
+  diagnosticHandle('ai:answerQuestion', (event, context: WorkbenchQuestionContext, answers: unknown) => workbenchQuestions.answer(event.sender.id, context, answers))
+  diagnosticHandle('ai:dismissQuestion', (event, context: WorkbenchQuestionContext) => workbenchQuestions.dismiss(event.sender.id, context))
   diagnosticHandle('ai:respondApproval', (event, id: string, decision: unknown) => workbenchApprovals.respond(event.sender.id, id, decision))
   diagnosticHandle('ai:pickAttachments', (_event, kind: AiAttachmentSelectionKind, projectPath?: string) => {
     if (kind !== 'files' && kind !== 'directory') throw new Error('附件选择类型无效')
@@ -8497,7 +8769,7 @@ function registerIpc(): void {
     if (conversationId !== undefined && aiConversationIdForSession(recovery) !== conversationId) throw new Error('该未完成任务属于另一个对话，请切换到原对话继续')
     const executionProfile = recovery.executionProfile === 'beginner-unlimited' ? 'beginner-unlimited' : 'standard'
     const backend = recovery.backend === 'quota' || recovery.backend === 'codex' ? recovery.backend : 'codex'
-    const recoveryConversation = recovery.conversationId ? await conversationStore.read(project.path, recovery.conversationId).catch(() => null) : null
+    const recoveryConversation = recovery.conversationId ? await conversationStore.readContext(project.path, recovery.conversationId).catch(() => null) : null
     const recoveryTurnId = `turn-${recovery.taskId}`
     const run: ActiveAiRun = { id: aiRunId(event.sender.id, project.path, recovery.sessionId), senderId: event.sender.id, startedAt: recovery.startedAt, sessionId: recovery.sessionId, sessionScope: recovery.sessionScope, projectPath: project.path, executionProfile, backend, surface: 'workspace', ...(recovery.conversationId ? { conversationId: recovery.conversationId } : {}), ...(recoveryConversation ? { generation: recoveryConversation.generation } : {}), turnId: recoveryTurnId }
     const controller = new AbortController()
@@ -8572,7 +8844,7 @@ function registerIpc(): void {
         return { status: 'idle', backend: requestedBackend }
       }
       const scope = sessionScope?.trim() || recovery.sessionScope
-      const recoveryConversation = recovery.conversationId ? await conversationStore.read(project.path, recovery.conversationId).catch(() => null) : null
+      const recoveryConversation = recovery.conversationId ? await conversationStore.readContext(project.path, recovery.conversationId).catch(() => null) : null
       const recoveryTurnId = `turn-${recovery.taskId}`
       run = {
         id: aiRunId(event.sender.id, project.path, recovery.sessionId ?? `switch-${generation}`),
@@ -8760,13 +9032,28 @@ function registerIpc(): void {
 protocol.registerSchemesAsPrivileged([{ scheme: 'modmind-feature', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }, { scheme: 'modmind-dev-preview', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 app.whenReady().then(async () => {
+  if (diagnosticRecoveryTarget) {
+    try { await exportRecoveryDiagnostics({ logs: app.getPath('logs'), userData: app.getPath('userData'), target: diagnosticRecoveryTarget }); app.exit(0) }
+    catch (error) { console.error('诊断恢复导出失败', error); app.exit(1) }
+    return
+  }
   if (!hasSingleInstanceLock) return
+  contributionService = new ContributionService(path.join(app.getPath('userData'), 'contributions.json'), {
+    appVersion: app.getVersion(), platform: process.platform, arch: process.arch,
+    fetch: (url, options) => networkFetch(url, options)
+  })
+  const contributionAccount = await readDeviceCredentials()
+  contributionService.setUsername(contributionAccount?.username)
+  await contributionService.initialize()
+  diagnosticIpcOperations.subscribeMetrics(metric => contributionService?.recordOperation(metric))
+  setContributionDiagnosticProvider(() => ({ state: contributionService?.state(), preview: contributionService?.preview(),
+    controlPolicy: '只读；开启须由用户在设置中阅读条例并等待 3 秒确认，AI 无法代为同意。' }))
   featurePluginService = new FeaturePluginService(path.join(app.getPath('userData'), 'feature-plugins'), {
     requireFrom: path.join(app.getAppPath(), 'package.json'),
     projectRoot: () => (aiProjectContext.getStore() ?? currentProject)?.path ?? null,
     project: () => aiProjectContext.getStore() ?? currentProject,
-    capabilities: { downloadActivities, runtime: featureHostRuntime, testingV1: true, testingV2: true, studioV1: true },
-    busy: () => activeAiRuns.size > 0 || Boolean(optionalTestingService()?.isBusy()),
+    capabilities: { downloadActivities, runtime: featureHostRuntime, diagnosticsV1: true, testingV1: true, testingV2: true, studioV1: true, modpackExportV2: true, snapshotBatchDeleteV1: true },
+    busy: () => activeAiRuns.size > 0 || Boolean(buildRuntime?.isBusy() || optionalTestingService()?.isBusy()),
     changed: () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('feature-plugins:changed'); featureStoreService?.publish() },
     event: (id, event, value, windowId) => {
       for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && (window === mainWindow || isDetachedWindow(window)) && (windowId === undefined || window.id === windowId)) window.webContents.send('feature-plugins:event', id, event, value)
@@ -8791,6 +9078,11 @@ app.whenReady().then(async () => {
   await featurePluginService.initialize(await builtinStudioDirectories(
     app.isPackaged ? path.join(process.resourcesPath, 'bundled-studios') : path.join(app.getAppPath(), 'resources', 'bundled-studios')
   ).then(entries => entries.filter(entry => entry.id !== developerHostConfig?.pluginId)))
+  if (featureDevelopment) {
+    featureDevelopmentLoader = new FeatureDevelopmentLoader(featureDevelopment.root, featurePluginService)
+    await featureDevelopmentLoader.start()
+    app.once('quit', () => featureDevelopmentLoader?.stop())
+  }
   configureStudios(new StudioRegistry(() => featurePluginService.catalog(), id => featurePluginService.service(id), (id, group) => featurePluginService.assetDirectory(id, group), (id, action, input, context) => featurePluginService.invoke(id, action, input, context)))
   if (developerHostConfig) {
     configureNativeFeatureServices(id => featurePluginService.service<Record<string, unknown>>(id))
@@ -8831,7 +9123,7 @@ app.whenReady().then(async () => {
     message: `ModMind ${app.getVersion()} is starting`,
     data: { platform: process.platform, arch: process.arch, packaged: app.isPackaged, electron: process.versions.electron, node: process.versions.node }
   })
-  const providerSecrets = await readReleaseSecrets()
+  const providerSecrets = await diagnosticIpcOperations.run('startup', 'release-credentials', {}, () => readReleaseSecrets())
   curseForgeProviderKey = providerSecrets.curseForgeToken || curseForgeProviderKey
   modProviderRegistry = null
   setNetworkProxy((await readSettings().catch(() => null))?.networkProxyUrl ?? '')
@@ -8864,7 +9156,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') app.setAppUserModelId(applicationUserModelId())
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   registerIpc()
-  await cleanupTerminalScripts(path.join(app.getPath('userData'), 'terminal-sessions'))
+  await diagnosticIpcOperations.run('startup', 'terminal-session-cleanup', {}, () => cleanupTerminalScripts(path.join(app.getPath('userData'), 'terminal-sessions')))
   installApplicationMenu(() => { showMainWindow(); mainWindow?.webContents.send('app:openSettings') }, is.dev)
   // 用户插件系统初始化（零插件时无副作用）
   initializePlugins({
@@ -8913,7 +9205,7 @@ app.whenReady().then(async () => {
     },
     onDiagnosticsChanged: broadcastPluginDiagnostics
   })
-  const initialPluginRegistry = refreshPluginRegistry()
+  const initialPluginRegistry = diagnosticIpcOperations.run('startup', 'plugin-registry', {}, () => refreshPluginRegistry())
   createWindow()
   void initialPluginRegistry.then((snapshot) => {
     reconcilePluginOverlayWindows(snapshot)
@@ -8988,6 +9280,8 @@ get currentProject() { return currentProject }, set currentProject(value: typeof
 get currentProjectManifest() { return currentProjectManifest },
 get curseForgeProviderKey() { return curseForgeProviderKey }, set curseForgeProviderKey(value: typeof curseForgeProviderKey) { curseForgeProviderKey = value },
 get deleteProjectSnapshot() { return deleteProjectSnapshot },
+get deleteProjectSnapshots() { return deleteProjectSnapshots },
+get snapshotListPage() { return snapshotListPage },
 get describeRuntimeError() { return describeRuntimeError },
 get emitProjectChanged() { return emitProjectChanged },
 get featurePluginService() { return featurePluginService },

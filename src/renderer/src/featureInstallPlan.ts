@@ -1,8 +1,8 @@
 import type { FeatureStoreEntry } from '../../shared/featureStore'
 
 export const featureBundles = [
-  { id: 'mod', name: '制作模组', studioId: 'minecraft-mod', ids: ['item-editor', 'mappings', 'relationships', 'versions', 'testing'] },
-  { id: 'modpack', name: '制作整合包', studioId: 'minecraft-modpack', ids: ['modpack-mods', 'modpack-content', 'modpack-automation', 'ftb-quests', 'versions', 'testing'] },
+  { id: 'mod', name: '制作模组', studioId: 'minecraft-mod', ids: ['item-editor', 'data-packs', 'mappings', 'relationships', 'versions', 'testing'] },
+  { id: 'modpack', name: '制作整合包', studioId: 'minecraft-modpack', ids: ['modpack-mods', 'modpack-content', 'data-packs', 'modpack-automation', 'ftb-quests', 'versions', 'testing'] },
   { id: 'server', name: '开发服务端插件', studioId: 'minecraft-server-plugin', ids: ['relationships', 'versions', 'testing'] },
   { id: 'assets', name: '制作素材', studioId: 'minecraft-mod', ids: ['image-studio', 'model-studio', 'resource-packs', 'sound-studio'] },
   { id: 'shader', name: '制作光影', studioId: 'minecraft-shader', ids: ['shader-source', 'shader-options', 'shader-preview', 'shader-testing', 'shader-export'] }
@@ -14,6 +14,10 @@ export function isStudioEntry(entry: FeatureStoreEntry): boolean {
 
 export function isSupportEntry(entry: FeatureStoreEntry): boolean {
   return !isStudioEntry(entry) && entry.groups.includes('支持组件')
+}
+
+export function isLocalFeatureEntry(entry: FeatureStoreEntry): boolean {
+  return entry.installed && !entry.builtin && (entry.installationSource === 'local' || !entry.installationSource && !entry.release)
 }
 
 export function canSelectFeature(entry: FeatureStoreEntry): boolean {

@@ -324,6 +324,8 @@ export interface TestMatrixResult {
   results: TestTargetResult[]
 }
 
+export type ModpackExportMode = 'bundled' | 'download'
+
 export interface ReleaseSettings {
   version: string
   displayName: string
@@ -331,6 +333,7 @@ export interface ReleaseSettings {
   changelog: string
   autoBump?: boolean
   bumpMode?: 'patch' | 'minor' | 'major'
+  modpackExportMode?: ModpackExportMode
   channel: 'release' | 'beta' | 'alpha'
   modrinthProjectId: string
   curseForgeProjectId: string

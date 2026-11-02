@@ -2,15 +2,18 @@ import { normalizeAiTurnReplay, replayUserText } from '../../shared/aiReplay'
 import { contextTokens, latestContextUsage, mergeContextUsage } from '../../shared/contextUsage'
 import { presentLegacyAiNotice } from '../../shared/aiNotice'
 import { ReplayTextBuffer } from './replayTextBuffer'
+import { mergeAgentReasoning } from './agentReasoning'
 import type { AiNotice, AiOutputEvent, AiTokenUsage, AiTurnReplay, ConversationEventRecord, PipelineEvent } from '../../shared/types'
 
 export type WorkbenchTimelineDiff = { path: string; added: number; removed: number; additions: string[]; removals: string[] }
 
 export type WorkbenchTimelineItem = {
+  activity?: import('../../shared/aiActivity').AiActivity
   changedFiles?: string[]
   notice?: AiNotice
   id: string
-  kind: 'user' | 'answer' | 'response' | 'thinking' | 'tool' | 'diff' | 'warning' | 'error' | 'start' | 'retry' | 'history' | 'status'
+  kind: 'user' | 'answer' | 'response' | 'thinking' | 'reasoning' | 'tool' | 'diff' | 'warning' | 'error' | 'start' | 'retry' | 'history' | 'status'
+  reasoning?: { summary: string[]; text: string[] }
   content: string
   time: string
   runId?: string
@@ -21,6 +24,7 @@ export type WorkbenchTimelineItem = {
   stage?: string
   connectionActivity?: string
   sequence?: number
+  activityOrder?: number
   status?: 'running' | 'done' | 'warning' | 'error'
   terminal?: boolean
   recoverable?: boolean
@@ -87,8 +91,8 @@ function uniqueTimelineId(items: WorkbenchTimelineItem[], base: string): string 
 /** Sequence is authoritative for replay. The index fallback keeps legacy items stable. */
 function orderTimeline(items: WorkbenchTimelineItem[]): WorkbenchTimelineItem[] {
   return items.map((item, index) => ({ item, index })).sort((left, right) => {
-    const a = Number.isSafeInteger(left.item.sequence) ? left.item.sequence! : Number.MAX_SAFE_INTEGER
-    const b = Number.isSafeInteger(right.item.sequence) ? right.item.sequence! : Number.MAX_SAFE_INTEGER
+    const a = left.item.activityOrder ?? (Number.isSafeInteger(left.item.sequence) ? left.item.sequence! : Number.MAX_SAFE_INTEGER)
+    const b = right.item.activityOrder ?? (Number.isSafeInteger(right.item.sequence) ? right.item.sequence! : Number.MAX_SAFE_INTEGER)
     const at = Date.parse(left.item.time)
     const bt = Date.parse(right.item.time)
     if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt
@@ -138,7 +142,7 @@ function mergeConnectionActivity(previous: WorkbenchTimelineItem, incoming: Work
   return { ...previous, ...incoming, id: previous.id, time: previous.time }
 }
 
-function mergeStreamingText(current: string, incoming: string): string {
+export function mergeStreamingText(current: string, incoming: string): string {
   if (!incoming) return current
   if (!current || incoming.startsWith(current)) return incoming
   if (current.endsWith(incoming)) return current
@@ -150,13 +154,22 @@ export function settleWorkbenchActivity(items: WorkbenchTimelineItem[], thinking
   const next = items.map((item) => {
     if (item.status !== 'running' || (thinkingOnly && item.kind !== 'thinking')) return item
     changed = true
-    return { ...item, status: 'done' as const }
+    return item.activity?.status === 'running'
+      ? { ...item, status: 'warning' as const, activity: { ...item.activity, status: 'interrupted' as const } }
+      : { ...item, status: 'done' as const }
   })
   return changed ? next : items
 }
 
 export function appendUserTurn(items: WorkbenchTimelineItem[], text: string, runId: string, time = new Date().toISOString(), replay?: AiTurnReplay): WorkbenchTimelineItem[] {
   return bounded([...items, { id: `${runId}:user`, kind: 'user', content: text, time, runId, turnId: `turn-${runId}`, status: 'done', ...(replay ? { replay } : {}) }])
+}
+
+/** IPC can fail before the backend emits any output. Keep that failure in the conversation. */
+export function appendWorkbenchFailure(items: WorkbenchTimelineItem[], content: string, sessionId: string, time = new Date().toISOString()): WorkbenchTimelineItem[] {
+  const turnId = `turn-${sessionId}`
+  if (items.some(item => item.kind === 'error' && item.terminal === true && (item.turnId === turnId || item.runId === sessionId))) return settleWorkbenchActivity(items)
+  return reduceWorkbenchOutput(items, { kind: 'error', content, sessionId, runId: sessionId, turnId, eventId: `failure-${sessionId}`, time, terminal: true })
 }
 
 function legacyReduceWorkbenchOutput(
@@ -226,6 +239,37 @@ function legacyReduceWorkbenchOutput(
   }])
 }
 
+function reasoningIdentity(event: AiOutputEvent): string {
+  return `reasoning:${JSON.stringify([event.turnId ?? event.runId ?? event.sessionId, streamIdentity(event)])}`
+}
+
+function activityIdentity(event: AiOutputEvent): string {
+  return `activity:${JSON.stringify([event.turnId ?? event.runId ?? event.sessionId, streamIdentity(event)])}`
+}
+
+function activityItem(previous: WorkbenchTimelineItem | undefined, event: AiOutputEvent): WorkbenchTimelineItem | undefined {
+  if (!event.activity || previous?.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return previous
+  if (previous?.activity?.status !== 'running' && previous?.activity?.completedAt && event.activity.status === 'running') return previous
+  const activity = event.activity
+  return { ...previous, id: activityIdentity(event), kind: 'tool', activity, content: activity.title,
+    activityOrder: previous?.activityOrder ?? event.sequence,
+    time: previous?.time ?? event.time, runId: event.runId ?? event.sessionId, turnId: event.turnId, itemId: event.itemId, streamId: event.streamId,
+    sequence: event.sequence, eventId: event.eventId, status: activity.status === 'running' ? 'running' : activity.status === 'failed' ? 'error' : activity.status === 'cancelled' || activity.status === 'interrupted' ? 'warning' : 'done' }
+}
+
+/** Native completion snapshots are authoritative; summary and raw text never mix with the answer. */
+function reasoningItem(previous: WorkbenchTimelineItem | undefined, event: AiOutputEvent): WorkbenchTimelineItem | undefined {
+  const update = event.reasoning
+  if (!update || previous?.sequence !== undefined && event.sequence !== undefined && previous.sequence >= event.sequence) return previous
+  if (previous?.status === 'done' && update.phase !== 'completed') return previous
+  const reasoning = mergeAgentReasoning(previous?.reasoning, event)
+  if (!reasoning) return previous
+  return { ...previous, id: previous?.id ?? reasoningIdentity(event), kind: 'reasoning', reasoning,
+    content: [...reasoning.summary, ...reasoning.text].filter(Boolean).join('\n\n'), time: previous?.time ?? event.time,
+    runId: event.runId ?? event.sessionId, turnId: event.turnId, itemId: event.itemId, streamId: event.streamId,
+    sequence: event.sequence, eventId: event.eventId, status: update.phase === 'completed' ? 'done' : 'running' }
+}
+
 export function reduceWorkbenchOutput(
   items: WorkbenchTimelineItem[],
   event: AiOutputEvent,
@@ -243,6 +287,20 @@ export function reduceWorkbenchOutput(
     event.eventId && item.eventId === event.eventId
     || event.sequence !== undefined && item.sequence === event.sequence
   ))) return items
+  if (event.kind === 'reasoning') {
+    const index = items.findIndex(item => item.id === reasoningIdentity(event))
+    const previous = index < 0 ? undefined : items[index]
+    const item = reasoningItem(previous, event)
+    if (!item || item === previous) return items
+    return index < 0 ? [...items, item] : items.map((row, i) => i === index ? item : row)
+  }
+  if (event.activity) {
+    const index = items.findIndex(item => item.id === activityIdentity(event))
+    const previous = index < 0 ? undefined : items[index]
+    const item = activityItem(previous, event)
+    if (!item || item === previous) return items
+    return index < 0 ? bounded([...items, item]) : items.map((row, i) => i === index ? item : row)
+  }
   const content = normalize(event.content)
   const current = event.kind === 'answer' || ((event.kind === 'error' || event.kind === 'warning') && event.terminal === true)
     ? settleWorkbenchActivity(items)
@@ -432,6 +490,22 @@ export function replayWorkbenchEvents(
   return step.value
 }
 
+/** Polling clients can replay the durable journal while its latest turn is live. */
+export function replayLiveWorkbenchEvents(view: WorkbenchTimelineItem[], events: ConversationEventRecord[]): WorkbenchTimelineItem[] {
+  const replay = replayWorkbenchSteps(view, events, value => value, value => value, true)
+  let step = replay.next()
+  while (!step.done) step = replay.next()
+  return step.value
+}
+
+/** Apply only events newer than a durable projection without discarding its earlier rows. */
+export function replayWorkbenchTail(view: WorkbenchTimelineItem[], events: ConversationEventRecord[], normalizeActivity: (value: string) => string = value => value, normalizeOutput: (value: string) => string = value => value): WorkbenchTimelineItem[] {
+  const replay = replayWorkbenchSteps(view, events, normalizeActivity, normalizeOutput, false, true)
+  let step = replay.next()
+  while (!step.done) step = replay.next()
+  return step.value
+}
+
 /** Restore long histories without monopolizing the renderer's event loop. */
 export async function replayWorkbenchEventsAsync(
   view: WorkbenchTimelineItem[],
@@ -588,6 +662,10 @@ class WorkbenchReplayProjection {
     this.replace(row, { ...row.item, content: text.value() })
   }
 
+  flushStreamingText(): void {
+    for (const row of this.rows) this.flushText(row)
+  }
+
   latestUsage(): AiTokenUsage | undefined {
     if (this.usageDirty) {
       const rows = [...this.usageRows].sort(compareReplayRows)
@@ -608,6 +686,24 @@ class WorkbenchReplayProjection {
     }
     if (event.kind === 'warning' || event.kind === 'error') event = { ...event, content: presentLegacyAiNotice(event.content, event.kind === 'warning') }
     if (event.eventId && this.get('event', [turn, event.eventId]) || event.sequence !== undefined && this.get('sequence', [turn, event.sequence])) return
+    if (event.kind === 'reasoning') {
+      const row = this.get('id', [reasoningIdentity(event)])
+      const item = reasoningItem(row?.item, event)
+      if (item && item !== row?.item) {
+        if (row) this.replace(row, item)
+        else this.add(item)
+      }
+      return
+    }
+    if (event.activity) {
+      const row = this.get('id', [activityIdentity(event)])
+      const item = activityItem(row?.item, event)
+      if (item && item !== row?.item) {
+        if (row) this.replace(row, item)
+        else this.add(item)
+      }
+      return
+    }
     const content = normalize(event.content)
     // An unkeyed final answer matches the response that was running before
     // settling; this is the same pre-settlement check as the live reducer.
@@ -720,7 +816,8 @@ function* replayWorkbenchLegacySteps(
   view: WorkbenchTimelineItem[],
   events: ConversationEventRecord[],
   normalizeActivity: (value: string) => string = (value) => value,
-  normalizeOutput: (value: string) => string = (value) => value
+  normalizeOutput: (value: string) => string = (value) => value,
+  preserveRunning = false
 ): Generator<void, WorkbenchTimelineItem[], void> {
   if (!events.length) return normalizeWorkbenchTimeline(view)
   const replayedTurns = new Set(events.filter((event) => event.kind === 'output' || event.kind === 'progress').map((event) => event.turnId))
@@ -755,7 +852,8 @@ function* replayWorkbenchLegacySteps(
       result = reduceWorkbenchOutput(result, workbenchRecordPayload<AiOutputEvent>(record), normalizeOutput)
     }
   }
-  return settleWorkbenchActivity(orderTimeline(result))
+  const ordered = orderTimeline(result)
+  return preserveRunning ? ordered : settleWorkbenchActivity(ordered)
 }
 
 /** Journal envelopes are authoritative fallbacks for older sparse payloads. */
@@ -769,7 +867,9 @@ function* replayWorkbenchSteps(
   view: WorkbenchTimelineItem[],
   events: ConversationEventRecord[],
   normalizeActivity: (value: string) => string,
-  normalizeOutput: (value: string) => string
+  normalizeOutput: (value: string) => string,
+  preserveRunning = false,
+  incremental = false
 ): Generator<void, WorkbenchTimelineItem[], void> {
   if (!events.length) return normalizeWorkbenchTimeline(view)
   // The historical comparator deliberately preserves invalid legacy dates.
@@ -782,7 +882,7 @@ function* replayWorkbenchSteps(
     const time = record.kind === 'output' || record.kind === 'progress'
       ? (record.payload as { time?: string } | undefined)?.time ?? record.time : record.time
     if (!Number.isFinite(Date.parse(time ?? '')) || sequences.has(record.sequence)) {
-      return yield* replayWorkbenchLegacySteps(view, events, normalizeActivity, normalizeOutput)
+      return yield* replayWorkbenchLegacySteps(view, events, normalizeActivity, normalizeOutput, preserveRunning)
     }
     sequences.add(record.sequence)
     if (record.kind === 'output' || record.kind === 'progress') turns.add(record.turnId)
@@ -791,9 +891,10 @@ function* replayWorkbenchSteps(
   const knownUsers = new Map<string, ReplayRow>()
   for (const item of view) {
     yield
-    if (!Number.isFinite(Date.parse(item.time))) return yield* replayWorkbenchLegacySteps(view, events, normalizeActivity, normalizeOutput)
-    if (item.kind === 'user' ? isWorkbenchInternalPrompt(item.content) : turns.has(item.turnId ?? `turn-${item.runId}`)) continue
-    const row = projection.add({ ...item })
+    if (!Number.isFinite(Date.parse(item.time))) return yield* replayWorkbenchLegacySteps(view, events, normalizeActivity, normalizeOutput, preserveRunning)
+    if (item.kind === 'user' ? isWorkbenchInternalPrompt(item.content) : !incremental && turns.has(item.turnId ?? `turn-${item.runId}`)) continue
+    const continues = incremental && item.kind === 'response' && events.some(record => record.kind === 'output' && record.turnId === item.turnId && (record.payload as AiOutputEvent)?.kind === 'delta' && ((record.payload as AiOutputEvent)?.streamId ?? (record.payload as AiOutputEvent)?.itemId) === (item.streamId ?? item.itemId) && record.sequence > (item.sequence ?? 0))
+    const row = projection.add({ ...item, ...(continues ? { status: 'running' as const } : {}) })
     if (item.kind === 'user' && item.turnId) knownUsers.set(item.turnId, row)
   }
   const seen = new Set<string>()
@@ -812,26 +913,31 @@ function* replayWorkbenchSteps(
       else if (record.kind === 'progress') projection.progress(workbenchRecordPayload<PipelineEvent>(record), normalizeActivity)
     }
   }
-  projection.settle()
+  if (!preserveRunning) projection.settle()
+  else projection.flushStreamingText()
   return projection.rows.sort(compareReplayRows).map(row => row.item)
 }
 
 export function normalizeStoredWorkbenchTimeline(item: WorkbenchTimelineItem): WorkbenchTimelineItem {
+  if (item.kind === 'reasoning') {
+    const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((part): part is string => typeof part === 'string') : []
+    return { ...item, reasoning: { summary: strings(item.reasoning?.summary), text: strings(item.reasoning?.text) }, status: 'done' }
+  }
   if (item.kind === 'warning' || item.kind === 'error') item = { ...item, content: presentLegacyAiNotice(item.content, item.kind === 'warning') }
   const replay = normalizeAiTurnReplay(item.replay)
   const normalized = replay ? { ...item, replay } : item.replay ? { ...item, replay: undefined } : item
   if (normalized.kind === 'warning' || normalized.kind === 'retry') return { ...normalized, status: 'warning', terminal: false, recoverable: true }
   if (normalized.kind !== 'error') return normalized
-  if (/(?:warning|warn|deprecated|deprecation|警告|重试|重新连接)/i.test(normalized.content)) return { ...normalized, kind: 'warning', status: 'warning', terminal: false, recoverable: true }
   // Earlier builds guessed terminal=true from error text and persisted that
   // guess. Only the new explicit pair is authoritative across restarts.
   if (normalized.terminal === true && normalized.recoverable === false) return normalized
+  if (/(?:warning|warn|deprecated|deprecation|警告|重试|重新连接)/i.test(normalized.content)) return { ...normalized, kind: 'warning', status: 'warning', terminal: false, recoverable: true }
   if (/(?:error|fatal|exception|failed|forbidden|unauthori[sz]ed|timed out|timeout|错误|失败|异常|无法|超时|退出码|拒绝)/i.test(normalized.content)) return { ...normalized, terminal: false, recoverable: true }
   return { ...normalized, kind: 'tool', status: 'done', terminal: false, recoverable: true }
 }
 
 export function timelineToPlainText(items: WorkbenchTimelineItem[]): string {
-  const labels: Partial<Record<WorkbenchTimelineItem['kind'], string>> = { history: '已恢复上下文', start: '任务开始', retry: '重试', tool: '工具结果', warning: '警告', error: '错误', diff: '代码修改', status: '状态', user: '你' }
+  const labels: Partial<Record<WorkbenchTimelineItem['kind'], string>> = { history: '已恢复上下文', start: '任务开始', retry: '重试', tool: '工具结果', warning: '警告', error: '错误', diff: '代码修改', status: '状态', user: '你', reasoning: '思考' }
   return items.map((item) => `${labels[item.kind] ? `[${labels[item.kind]}]\n` : ''}${item.content}`).join('\n\n')
 }
 

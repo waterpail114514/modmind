@@ -12,9 +12,13 @@ import type {
 } from '../../../../src/shared/production'
 import type { ProjectInfo } from '../../../../src/shared/types'
 import { isJavaLoader, platformLabel } from '../../../../src/shared/projectPlatform'
-import { createModrinthPackArchive, isModpackProject, readModpackManifest } from '../../../../src/main/modpackService'
+import { writeModrinthPackArchive, modpackExportMode, isModpackProject, readModpackManifest } from '../../../../src/main/modpackService'
+import { assertContentTarget } from '../../../../src/main/contentInstallTransaction'
 import { listModpackContent } from '../../../modpack-content/src/main/modpackContentInventoryService'
 import { readAddonRelationships } from '../../../relationships/src/main/addonRelationshipService'
+import { recordDiagnosticArtifact } from '../../../../src/main/diagnosticArtifacts'
+import { readDiagnosticResponse } from '../../../../src/main/networkDiagnostics'
+import { diagnosticJournal } from '../../../../src/main/diagnosticLog'
 
 export interface ReleaseSecrets {
   modrinthToken: string
@@ -29,6 +33,7 @@ const defaults = (project: ProjectInfo): ReleaseSettings => ({
   changelog: '',
   autoBump: true,
   bumpMode: 'patch',
+  modpackExportMode: 'bundled',
   channel: 'release',
   modrinthProjectId: '',
   curseForgeProjectId: '',
@@ -79,6 +84,7 @@ function cleanSettings(project: ProjectInfo, input: ReleaseSettings): ReleaseSet
     changelog: input.changelog.slice(0, 100_000),
     autoBump: input.autoBump !== false,
     bumpMode: input.bumpMode === 'minor' || input.bumpMode === 'major' ? input.bumpMode : 'patch',
+    modpackExportMode: modpackExportMode(input.modpackExportMode),
     channel: input.channel === 'alpha' || input.channel === 'beta' ? input.channel : 'release',
     modrinthProjectId: input.modrinthProjectId.trim().slice(0, 160),
     curseForgeProjectId: input.curseForgeProjectId.trim().slice(0, 40),
@@ -172,18 +178,10 @@ async function latestProjectInputMtime(project: ProjectInfo): Promise<number> {
 }
 
 async function createModpackReleaseArtifact(project: ProjectInfo, settings: ReleaseSettings): Promise<{ path: string; size: number }> {
-  const archive = await createModrinthPackArchive(project, { version: settings.version, summary: settings.summary })
   const directory = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'builds')
   const artifactPath = path.join(directory, `${project.namespace}-${settings.version}.mrpack`)
-  const pending = `${artifactPath}.pending`
-  await fs.mkdir(directory, { recursive: true })
-  await fs.writeFile(pending, archive)
-  try {
-    await fs.rename(pending, artifactPath)
-  } finally {
-    await fs.rm(pending, { force: true }).catch(() => undefined)
-  }
-  return { path: artifactPath, size: archive.length }
+  await assertContentTarget(project.path, artifactPath)
+  return writeModrinthPackArchive(project, artifactPath, { version: settings.version, summary: settings.summary, mode: modpackExportMode(settings.modpackExportMode) })
 }
 
 function artifactMediaType(artifactPath: string): string {
@@ -193,8 +191,11 @@ function artifactMediaType(artifactPath: string): string {
 async function checkedFetch(url: string, init: RequestInit, label: string): Promise<Response> {
   const response = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(120_000) })
   if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    throw new Error(`${label}失败：HTTP ${response.status}${body ? ` - ${body.slice(0, 1_000)}` : ''}`)
+    let body = await readDiagnosticResponse(response).catch(() => '')
+    for (const [name,value] of new Headers(init.headers)) { if(!/authorization|token|api-key/i.test(name))continue;const token=value.replace(/^Bearer\s+/i,''); if(token.length>6)body=body.replaceAll(token,'[REDACTED]') }
+    const error = Object.assign(new Error(`${label}失败：HTTP ${response.status}${body ? ` - ${body.slice(0, 1_000)}` : ''}`),{status:response.status,responseBody:body,requestId:response.headers.get('x-request-id')??response.headers.get('request-id')})
+    diagnosticJournal.record({subsystem:'release',operation:'http-request',phase:'error',level:'error',message:label,error})
+    throw error
   }
   return response
 }
@@ -231,15 +232,13 @@ export class ReleaseService {
     return this.getSettings(project)
   }
 
-  async prepareExport(): Promise<ReleaseSettings> {
-    const project = this.getProject()
+  async prepareExport(project = this.getProject()): Promise<ReleaseSettings> {
     const settings = await this.getSettings(project)
     await writeModVersion(project, settings.version)
     return settings
   }
 
-  async markExported(): Promise<ReleaseSettings> {
-    const project = this.getProject()
+  async markExported(project = this.getProject()): Promise<ReleaseSettings> {
     const settings = await this.getSettings(project)
     if (!settings.autoBump) return settings
     const next = nextVersion(settings.version, settings.bumpMode ?? 'patch')
@@ -249,6 +248,19 @@ export class ReleaseService {
       version: next,
       displayName: displayNameForVersion(project, settings.version, next, settings.displayName)
     }, project)
+  }
+
+  /** Workbench export is confined to the captured project's managed exports folder. */
+  async exportModpack(input: Record<string, unknown>, project = this.getProject()): Promise<{ success: true; path: string; size: number; mode: 'bundled' | 'download'; version: string }> {
+    if (!isModpackProject(project)) throw new Error('当前项目不是整合包')
+    if (!input || Array.isArray(input) || typeof input !== 'object' || Object.keys(input).some(key => key !== 'mode')) throw new Error('整合包导出参数无效；仅支持 mode')
+    const settings = await this.getSettings(project)
+    const mode = modpackExportMode(input.mode === undefined ? settings.modpackExportMode : input.mode)
+    const target = path.join(project.path, project.toolDataDirectory ?? '.modmind', 'exports', `${project.namespace}-${settings.version}-${mode}.mrpack`)
+    await assertContentTarget(project.path, target)
+    const artifact = await writeModrinthPackArchive(project, target, { version: settings.version, summary: settings.summary, mode })
+    await this.markExported(project)
+    return { success: true, ...artifact, mode, version: settings.version }
   }
 
   async suggestSummary(): Promise<ReleaseSummaryDraft> {
@@ -379,6 +391,7 @@ export class ReleaseService {
       method: 'POST', headers: { Authorization: secrets.modrinthToken, 'User-Agent': `ModMind/${this.productVersion} (publisher)` }, body: form
     }, 'Modrinth 发布')
     const value = await response.json() as { id?: string }
+    await recordDiagnosticArtifact(project,'publish-modrinth-receipt',{outputPath:artifactPath,metadata:{projectId:settings.modrinthProjectId,version:settings.version,response:value}})
     return { target: 'modrinth', success: true, url: `https://modrinth.com/mod/${settings.modrinthProjectId}/version/${value.id ?? ''}`, detail: `已发布 ${settings.version}` }
   }
 
@@ -402,10 +415,11 @@ export class ReleaseService {
       method: 'POST', headers: { 'X-Api-Token': secrets.curseForgeToken }, body: form
     }, 'CurseForge 发布')
     const value = await response.json().catch(() => ({})) as { id?: number }
+    await recordDiagnosticArtifact(project,'publish-curseforge-receipt',{outputPath:artifactPath,metadata:{projectId:settings.curseForgeProjectId,version:settings.version,response:value}})
     return { target: 'curseforge', success: true, url: `https://www.curseforge.com/minecraft/mc-mods/${settings.curseForgeProjectId}/files/${value.id ?? ''}`, detail: `已上传 ${settings.version}` }
   }
 
-  private async publishGithub(settings: ReleaseSettings, secrets: ReleaseSecrets, artifactPath: string): Promise<ReleasePublishResult> {
+  private async publishGithub(project: ProjectInfo, settings: ReleaseSettings, secrets: ReleaseSecrets, artifactPath: string): Promise<ReleasePublishResult> {
     if (!settings.githubRepository || !secrets.githubToken) throw new Error('GitHub 仓库或令牌未配置')
     const headers = { Authorization: `Bearer ${secrets.githubToken}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
     const response = await checkedFetch(`https://api.github.com/repos/${settings.githubRepository}/releases`, {
@@ -413,10 +427,12 @@ export class ReleaseService {
       body: JSON.stringify({ tag_name: `v${settings.version}`, name: settings.displayName, body: settings.changelog, prerelease: settings.channel !== 'release' })
     }, 'GitHub Release 创建')
     const release = await response.json() as { upload_url?: string; html_url?: string }
+    await recordDiagnosticArtifact(project,'publish-github-release-created',{outputPath:artifactPath,metadata:{repository:settings.githubRepository,version:settings.version,response:release,nextPhase:'asset-upload-pending'}})
     if (!release.upload_url) throw new Error('GitHub 没有返回资源上传地址')
     const bytes = await fs.readFile(artifactPath)
     const uploadUrl = `${release.upload_url.replace(/\{.*$/, '')}?name=${encodeURIComponent(path.basename(artifactPath))}`
     await checkedFetch(uploadUrl, { method: 'POST', headers: { ...headers, 'Content-Type': artifactMediaType(artifactPath) }, body: new Uint8Array(bytes) }, 'GitHub 资源上传')
+    await recordDiagnosticArtifact(project,'publish-github-asset-uploaded',{outputPath:artifactPath,output:bytes,metadata:{repository:settings.githubRepository,version:settings.version,url:release.html_url,remoteContentVerified:false}})
     return { target: 'github', success: true, url: release.html_url, detail: `已创建 v${settings.version}` }
   }
 
@@ -432,15 +448,19 @@ export class ReleaseService {
     const secrets = await this.readSecrets()
     const results: ReleasePublishResult[] = []
     for (const target of targets) {
+      await recordDiagnosticArtifact(project,'publish-target-start',{outputPath:preflight.artifactPath,metadata:{target,settings}})
       try {
         const result = target === 'modrinth'
           ? await this.publishModrinth(project, settings, secrets, preflight.artifactPath)
           : target === 'curseforge'
             ? await this.publishCurseForge(project, settings, secrets, preflight.artifactPath)
-            : await this.publishGithub(settings, secrets, preflight.artifactPath)
+            : await this.publishGithub(project, settings, secrets, preflight.artifactPath)
         results.push(result)
+        await recordDiagnosticArtifact(project,'publish-target-complete',{outputPath:preflight.artifactPath,metadata:{target,result,version:settings.version}})
       } catch (error) {
+        diagnosticJournal.record({subsystem:'release',operation:'publish',phase:'error',level:'error',message:'Publish target failed',data:{target,projectPath:project.path},error})
         results.push({ target, success: false, detail: error instanceof Error ? error.message : String(error) })
+        await recordDiagnosticArtifact(project,'publish-target-failed',{outputPath:preflight.artifactPath,metadata:{target,version:settings.version,error:error instanceof Error?error.message:String(error),retrySafety:'Inspect prior platform receipts; a failed response is not proof no remote object was created.'}})
       }
     }
     return results

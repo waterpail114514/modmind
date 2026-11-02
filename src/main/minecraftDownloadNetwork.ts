@@ -1,3 +1,4 @@
+import { ensureXmclUndiciCompatibility } from './xmclUndiciCompatibility'
 import { session } from 'electron'
 import { Agent, Dispatcher, ProxyAgent, interceptors } from 'undici'
 import { resolveNetworkProxyUrl } from './networkRequest'
@@ -54,8 +55,12 @@ class MinecraftDownloadAgent extends Dispatcher {
 }
 
 export function minecraftDownloadDispatcher(): Dispatcher.ComposedDispatcher {
+  ensureXmclUndiciCompatibility()
   return new MinecraftDownloadAgent().compose(
     interceptors.retry({ maxRetries: 3 }),
-    interceptors.redirect({ maxRedirections: 5 })
+    interceptors.redirect({ maxRedirections: 5 }),
+    // Reject HTTP failures before XMCL's stream factory tries to construct the
+    // ResponseStatusCodeError removed in Undici 7. Preserve normal source fallback.
+    interceptors.responseError()
   )
 }

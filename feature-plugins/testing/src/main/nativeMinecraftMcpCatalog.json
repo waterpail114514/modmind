@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/langyo/minecraft-mod-mcp",
   "release": "v0.3.0",
-  "checkedAt": "2026-09-21",
+  "checkedAt": "2026-10-19",
   "entries": [
     {
       "minecraft": "1.10.2",
@@ -542,6 +542,30 @@
       "loader": "neoforge",
       "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.3.0/minecraft-mcp-26.2-neoforge-v0.3.0.jar",
       "sha256": "ce890e0679f1d243caa818e136c4fdc1417e5a1980d4b43d7ec41e330d580d82"
+    },
+    {
+      "minecraft": "26.3",
+      "loader": "fabric",
+      "release": "v0.4.8",
+      "adapter": "minecraft-26.3",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.4.8/minecraft-mcp-26.3-fabric-v0.4.8.jar",
+      "sha256": "1b72f1f0fd945e5671663325572936647f20d86bb592765e5ce7a9ef4bd01d82"
+    },
+    {
+      "minecraft": "26.3",
+      "loader": "forge",
+      "release": "v0.4.8",
+      "adapter": "minecraft-26.3",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.4.8/minecraft-mcp-26.3-forge-v0.4.8.jar",
+      "sha256": "e94e8a9b693ebeebd18f87c267b65ff4b163400e497fff83e5e3160f385a4d4d"
+    },
+    {
+      "minecraft": "26.3",
+      "loader": "neoforge",
+      "release": "v0.4.8",
+      "adapter": "minecraft-26.3",
+      "url": "https://github.com/langyo/minecraft-mod-mcp/releases/download/v0.4.8/minecraft-mcp-26.3-neoforge-v0.4.8.jar",
+      "sha256": "f0d311e51ff5ef76c87f671c575ec817d814b7b9c7d0b40844dc9238f16da992"
     }
   ],
   "license": "MIT License\n\nCopyright (c) 2025 langyo\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"

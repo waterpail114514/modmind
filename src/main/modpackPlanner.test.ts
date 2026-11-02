@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ProjectInfo } from '../shared/types'
 import { addModpackFiles, createModpackTemplate, readModpackManifest } from './modpackService'
-import { createEmptyModpackLock, readModpackLock, writeModpackLock } from './modpackLockService'
+import { createEmptyModpackLock, matchesLockedMod, readModpackLock, writeModpackLock } from './modpackLockService'
 import { applyModpackPlan, planModpack } from '../../feature-plugins/modpack-mods/src/main/modpackPlanner'
 import type { ModFile, ModProviderRegistry } from './modProviderService'
 
@@ -20,6 +20,53 @@ afterEach(async () => {
 function project(root: string): ProjectInfo { return { kind: 'modpack', name: 'Planner', path: root, loader: 'fabric', minecraftVersion: '1.21.1', namespace: 'planner', createdAt: new Date().toISOString() } }
 
 describe('modpack planner', () => {
+  it.each([
+    { existing: true, identical: true }, { existing: true, identical: false },
+    { existing: false, identical: true }, { existing: false, identical: false }
+  ])('handles same-name provider files with existing=$existing identical=$identical transactionally', async ({ existing, identical }) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-plan-providers-'))
+    roots.push(root)
+    const pack = project(root)
+    await createModpackTemplate(pack)
+    const original = Buffer.alloc(2048, 1)
+    const other = identical ? original : Buffer.alloc(2048, 2)
+    const file = (provider: 'modrinth' | 'curseforge'): ModFile => ({ provider, projectId: provider, versionId: 'v1', versionName: '1', filename: 'same.jar', primary: true, side: 'both', sources: [{ id: provider, label: provider, url: `https://example.test/${provider}.jar` }] })
+    if (existing) {
+      await fs.writeFile(path.join(root, 'mods/same.jar'), original)
+      await addModpackFiles(pack, [path.join(root, 'mods/same.jar')])
+      await writeModpackLock(pack, { ...createEmptyModpackLock(pack), mods: [{ provider: 'modrinth', projectId: 'modrinth', versionId: 'v1', versionName: '1', fileName: 'same.jar', sha256: createHash('sha256').update(original).digest('hex'), size: original.length, side: 'both', sources: ['https://example.test/modrinth.jar'], installedAt: '' }] })
+    }
+    const beforeLock = await fs.readFile(path.join(root, 'modmind.modpack.lock.json'), 'utf8').catch(() => null)
+    const beforeManifest = await fs.readFile(path.join(root, 'modmind.pack.json'), 'utf8')
+    let downloads = 0
+    const registry = { versions: async (provider: 'modrinth' | 'curseforge') => [file(provider)], install: async (selected: ModFile, target: string) => {
+      downloads++
+      const contents = selected.provider === 'modrinth' ? original : other
+      await fs.writeFile(target, contents)
+      return { path: target, sha256: createHash('sha256').update(contents).digest('hex'), size: contents.length }
+    } } as unknown as ModProviderRegistry
+    const plan = await planModpack(registry, pack, { required: [], requiredProjects: (existing ? [file('curseforge')] : [file('modrinth'), file('curseforge')]).map(({ provider, projectId }) => ({ provider, projectId })) })
+    expect(plan.success).toBe(true)
+    if (identical) {
+      const result = await applyModpackPlan(registry, pack, plan)
+      expect(result.audit.success).toBe(true)
+      expect(result.installed).toEqual(['same.jar'])
+      expect(result.lock.mods).toHaveLength(1)
+      expect(matchesLockedMod(result.lock.mods[0], file('modrinth'))).toBe(true)
+      expect(matchesLockedMod(result.lock.mods[0], file('curseforge'))).toBe(true)
+      const previousDownloads = downloads
+      await applyModpackPlan(registry, pack, plan)
+      expect(downloads).toBe(previousDownloads)
+      expect(await fs.readFile(path.join(root, 'mods/same.jar'))).toEqual(original)
+    } else {
+      await expect(applyModpackPlan(registry, pack, plan)).rejects.toThrow(/same.jar.*内容不同/)
+      expect(await fs.readFile(path.join(root, 'modmind.modpack.lock.json'), 'utf8').catch(() => null)).toBe(beforeLock)
+      expect(await fs.readFile(path.join(root, 'modmind.pack.json'), 'utf8')).toBe(beforeManifest)
+      if (existing) expect(await fs.readFile(path.join(root, 'mods/same.jar'))).toEqual(original)
+      else await expect(fs.access(path.join(root, 'mods/same.jar'))).rejects.toThrow()
+    }
+  })
+
   it('reports unresolved required requests instead of silently selecting an incompatible result', async () => {
     const registry = { search: async () => [{ provider: 'modrinth', total: 0, hits: [] }], versions: async () => [], install: async () => { throw new Error('not called') } } as unknown as ModProviderRegistry
     const result = await planModpack(registry, project('/tmp/pack'), { required: ['missing'], optional: ['also missing'] })

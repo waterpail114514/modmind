@@ -4,6 +4,7 @@ import { deflateRawSync } from 'node:zlib'
 import type { ProjectInfo } from '../shared/types'
 import { inspectNeteaseEntrypoints } from './neteaseEntrypoints'
 import { scopedFilePath } from './scopedFilePath'
+import { recordDiagnosticArtifact } from './diagnosticArtifacts'
 
 const PACK_DIRECTORIES = ['behavior_pack', 'resource_pack'] as const
 
@@ -183,14 +184,18 @@ export async function buildBedrockAddon(project: ProjectInfo): Promise<string> {
   await fs.mkdir(output, { recursive: true })
   const packs: Array<{ name: string; data: Buffer }> = []
   for (const directory of PACK_DIRECTORIES) {
-    const data = createStoredZip(await packEntries(path.join(project.path, directory)))
+    const entries = await packEntries(path.join(project.path, directory))
+    const data = createStoredZip(entries)
     const kind = directory === 'behavior_pack' ? 'behavior' : 'resources'
     const fileName = `${project.namespace}-${kind}.mcpack`
     await fs.writeFile(await scopedFilePath(output, fileName), data)
+    await recordDiagnosticArtifact(project, 'bedrock-pack-written', { output: data, outputPath: path.join(output, fileName), entries, metadata: { directory, loader: project.loader } })
     packs.push({ name: fileName, data })
   }
   const addonPath = await scopedFilePath(output, `${project.namespace}.mcaddon`)
-  await fs.writeFile(addonPath, createStoredZip(packs))
+  const addon = createStoredZip(packs)
+  await fs.writeFile(addonPath, addon)
+  await recordDiagnosticArtifact(project, 'bedrock-addon-written', { output: addon, outputPath: addonPath, entries: packs, metadata: { loader: project.loader, minecraftVersion: project.minecraftVersion } })
   return addonPath
 }
 
@@ -233,6 +238,8 @@ export async function buildNeteaseArchive(project: ProjectInfo): Promise<string>
   const output = await scopedFilePath(project.path, 'build')
   await fs.mkdir(output, { recursive: true })
   const target = await scopedFilePath(output, `${project.namespace}-netease-${project.loader === 'netease-mobile' ? 'mobile' : 'pc'}.zip`)
-  await fs.writeFile(target, createStoredZip(entries, true))
+  const outputBytes = createStoredZip(entries, true)
+  await fs.writeFile(target, outputBytes)
+  await recordDiagnosticArtifact(project, 'netease-archive-written', { output: outputBytes, outputPath: target, entries, metadata: { loader: project.loader, minecraftVersion: project.minecraftVersion } })
   return target
 }

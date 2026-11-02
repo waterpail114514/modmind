@@ -3,7 +3,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ServerProcess, serverModRetryAdvice } from "../../feature-plugins/testing/src/main/serverVerificationService"
+import { ServerProcess, serverModRetryAdvice } from '../../feature-plugins/testing/src/main/serverVerificationService'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))) })
@@ -20,6 +20,20 @@ function freePort(): Promise<number> {
 }
 
 describe('server process orchestration', () => {
+  it('keeps parsing scenario evidence after the saved transcript budget is exhausted', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-log-budget-')); roots.push(root)
+    const port = await freePort(); const events: string[] = []
+    const script = "require('net').createServer().listen(Number(process.argv[1]),'127.0.0.1');console.log('x'.repeat(2048)+'\\nDone (1s)!');process.stdin.on('data',()=>console.log('PASS after limit'));setInterval(()=>{},1000)"
+    const server = new ServerProcess()
+    try {
+      const result = await server.start({ pack: { root, copiedMods: [], skippedClientMods: [], warnings: [], manifestPath: '' }, runtime: { launchCommand: [process.execPath, '-e', script, String(port)], loader: 'fabric', loaderVersion: 'test' }, port, maxLogBytes: 128, onEvent: event => events.push(event.message) })
+      expect(server.isRunning()).toBe(true)
+      expect(await server.runScenario([{ command: 'check', expect: ['PASS after limit'] }])).toMatchObject({ success: true })
+      await server.stop(0)
+      expect(await fs.readFile(result.logPath, 'utf8')).toContain('transcript limit reached')
+      expect(events.some(value => value.includes('日志已达到保存上限'))).toBe(true)
+    } finally { await server.stop(0) }
+  })
   it('suggests removing a mod only when the log identifies it as the load failure', () => {
     expect(serverModRetryAdvice('Failed to load mod file C:\\pack\\mods\\broken-addon-1.2.0.jar', ['broken-addon-1.2.0.jar'])).toBe('试试删除《broken-addon-1.2.0.jar》再重试')
     expect(serverModRetryAdvice("Mod 'client_tweaks' (client_tweaks) requires version 2.0.0", [])).toBe('试试删除《client_tweaks》再重试')

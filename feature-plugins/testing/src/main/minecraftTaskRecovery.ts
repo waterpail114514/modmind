@@ -45,17 +45,19 @@ export async function runMinecraftTaskWithRecovery<T>(options: MinecraftTaskReco
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (options.signal?.aborted) throw abortError()
     const task = options.createTask(attempt)
-    let lastActivityAt = Date.now()
+    const downloads = new Map<Task<unknown>, number>()
+    // XMCL installer download leaves use these names; processors/extraction do not.
+    const isDownload = (active?: Task<unknown>): boolean => Boolean(active && /^(?:download.*|json|jar|assetIndex|library|libraries|asset)$/.test(active.name))
     let stalled = false
     let cancelPromise: Promise<void> | null = null
-    const touch = (): void => { lastActivityAt = Date.now() }
+    const touch = (active: Task<unknown>): void => { if (isDownload(active)) downloads.set(active, Date.now()) }
     const cancel = (): void => {
       cancelPromise ??= task.cancel(5_000).catch(() => undefined)
     }
     const onAbort = (): void => cancel()
     options.signal?.addEventListener('abort', onAbort, { once: true })
     const watchdog = setInterval(() => {
-      if (!task.isRunning || Date.now() - lastActivityAt < stallTimeoutMs) return
+      if (!task.isRunning || ![...downloads.values()].some(time => Date.now() - time >= stallTimeoutMs)) return
       stalled = true
       cancel()
     }, checkIntervalMs)
@@ -65,10 +67,12 @@ export async function runMinecraftTaskWithRecovery<T>(options: MinecraftTaskReco
       return await task.startAndWait({
         onStart: touch,
         onUpdate: (active, chunkSize) => {
-          if (chunkSize > 0) touch()
+          if (chunkSize > 0) touch(active)
           options.onUpdate?.(task, active, chunkSize)
         },
-        onSucceed: touch
+        onSucceed: active => { downloads.delete(active) },
+        onFailed: active => { downloads.delete(active) },
+        onCancelled: active => { downloads.delete(active) }
       })
     } catch (error) {
       if (cancelPromise) await cancelPromise

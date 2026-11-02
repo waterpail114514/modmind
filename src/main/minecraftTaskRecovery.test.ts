@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Task, TaskContext } from '@xmcl/task'
-import { runMinecraftTaskWithRecovery, minecraftDownloadRecoveryOptions } from "../../feature-plugins/testing/src/main/minecraftTaskRecovery"
+import { runMinecraftTaskWithRecovery, minecraftDownloadRecoveryOptions } from '../../feature-plugins/testing/src/main/minecraftTaskRecovery'
 
-function mockTask(run: (context?: TaskContext) => Promise<string>): Task<string> {
+function mockTask(run: (context?: TaskContext) => Promise<string>, name = 'download'): Task<string> {
   let running = false
   let rejectCurrent: ((error: Error) => void) | undefined
-  return {
+  const task = {
     id: 0,
-    name: 'mock',
+    name,
     param: {},
     progress: 0,
     total: 100,
@@ -31,7 +31,7 @@ function mockTask(run: (context?: TaskContext) => Promise<string>): Task<string>
     wait: async () => '',
     startAndWait: async (context?: TaskContext) => {
       running = true
-      context?.onStart?.(undefined as never)
+      context?.onStart?.(task)
       try {
         return await Promise.race([
           run(context),
@@ -44,6 +44,7 @@ function mockTask(run: (context?: TaskContext) => Promise<string>): Task<string>
     onChildUpdate: () => undefined,
     map: () => undefined as never
   } as unknown as Task<string>
+  return task
 }
 
 describe('Minecraft task stall recovery', () => {
@@ -115,19 +116,29 @@ describe('Minecraft task stall recovery', () => {
 
   it('treats received chunks as activity', async () => {
     vi.useFakeTimers()
+    let active: Task<string>
     const resultPromise = runMinecraftTaskWithRecovery({
       stallTimeoutMs: 1_000,
       checkIntervalMs: 100,
-      createTask: () => mockTask(async (context) => {
+      createTask: () => (active = mockTask(async (context) => {
         await new Promise<void>((resolve) => setTimeout(resolve, 700))
-        context?.onUpdate?.(undefined as never, 32)
+        context?.onUpdate?.(active, 32)
         await new Promise<void>((resolve) => setTimeout(resolve, 700))
         return 'done'
-      })
+      }))
     })
 
     await vi.advanceTimersByTimeAsync(1_500)
     await expect(resultPromise).resolves.toBe('done')
+    vi.useRealTimers()
+  })
+
+  it('does not classify a CPU processor with no byte updates as a stalled download', async () => {
+    vi.useFakeTimers()
+    const result = runMinecraftTaskWithRecovery({ stallTimeoutMs: 1000, checkIntervalMs: 100,
+      createTask: () => mockTask(async () => { await new Promise(resolve => setTimeout(resolve, 3000)); return 'computed' }, 'postProcessing') })
+    await vi.advanceTimersByTimeAsync(3100)
+    await expect(result).resolves.toBe('computed')
     vi.useRealTimers()
   })
 

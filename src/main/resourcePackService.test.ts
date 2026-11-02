@@ -13,6 +13,22 @@ const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
 async function project(): Promise<ProjectInfo> { const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'resource-pack-'))); roots.push(root); return { name: 'Test', path: root, namespace: 'test', loader: 'fabric', minecraftVersion: '1.21.1', createdAt: '' } }
 
+it('creates, validates, exports and reimports a 26.3 pack with the exact format range', async () => {
+  const p = { ...await project(), minecraftVersion: '26.3' }
+  const pack = await createResourcePack(p, { name: 'modern', description: '', packFormat: 97 })
+  expect(pack.packFormat).toBe(97)
+  expect(JSON.parse((await readResourcePackFile(p, pack.id, 'pack.mcmeta')).text!).pack).toMatchObject({ min_format: [97, 1], max_format: [97, 1] })
+  expect((await validateResourcePack(p, pack.id)).issues).toEqual([])
+  const zip = path.join(p.path, 'modern.zip')
+  await fs.writeFile(zip, await resourcePackArchive(p, pack.id))
+  const imported = await importResourcePack(p, zip)
+  expect(imported.packFormat).toBe(97)
+  expect((await validateResourcePack(p, imported.id)).success).toBe(true)
+  const original = await readResourcePackFile(p, pack.id, 'pack.mcmeta')
+  await writeResourcePackFile(p, pack.id, 'pack.mcmeta', JSON.stringify({ pack: { description: '', pack_format: 97 } }), original.baseline)
+  expect((await validateResourcePack(p, pack.id)).issues.some(issue => issue.severity === 'error' && issue.message.includes('min_format'))).toBe(true)
+})
+
 it('creates and exports a pack with pack.mcmeta at archive root', async () => {
   const p = await project()
   const pack = await createResourcePack(p, { name: 'test-pack', description: 'Test pack', packFormat: 34 })

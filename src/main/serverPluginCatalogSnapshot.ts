@@ -2,6 +2,10 @@ import type { ServerPluginPlatform } from '../shared/types'
 
 // Official Maven metadata observed 2026-09-12. Availability only; no runtime certification.
 export const PLUGIN_CATALOG_SNAPSHOT: Array<[ServerPluginPlatform, string, string]> = [
+  // 26.3 coordinates observed from official Maven metadata on 2026-10-19.
+  ["paper", "26.3", "26.3.build.205-stable"],
+  ["folia", "26.3", "26.3.build.3-alpha"],
+  ["spigot", "26.3", "26.3-R0.1-SNAPSHOT"],
   ["spigot", "1.8.8", "1.8.8-R0.1-SNAPSHOT"],
   ["spigot", "1.12.2", "1.12.2-R0.1-SNAPSHOT"],
   ["spigot", "1.16.5", "1.16.5-R0.1-SNAPSHOT"],

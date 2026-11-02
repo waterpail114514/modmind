@@ -1,0 +1,344 @@
+{
+  "version": "v27.07",
+  "snapshotDate": "2026-10-30",
+  "scope": "new-canvas-only",
+  "note": "Hashes describe the current repository snapshot and the publicly adapted copy. upstream/UPSTREAM.json describes the original upstream import, not the current adapted files.",
+  "files": [
+    {
+      "path": "components/open-canvas/canvas-command-menu.tsx",
+      "sourceSha256": "243ce6d4bb8be3661c560dc3a3dfec9ee2e10b590f6029c7d026c295f9f57df4",
+      "publicSha256": "243ce6d4bb8be3661c560dc3a3dfec9ee2e10b590f6029c7d026c295f9f57df4",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/canvas-minimap.tsx",
+      "sourceSha256": "f9c4669cdede9cc92e6e67aa1b3dae6186a331016a85147a133183cff0586062",
+      "publicSha256": "f9c4669cdede9cc92e6e67aa1b3dae6186a331016a85147a133183cff0586062",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/canvas-popover.tsx",
+      "sourceSha256": "a197a03792c05a46b00017a49d5fd072405ede71bbfb241e43e1ee0a4b3baf02",
+      "publicSha256": "a197a03792c05a46b00017a49d5fd072405ede71bbfb241e43e1ee0a4b3baf02",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/image-composer.tsx",
+      "sourceSha256": "a5329343748cf29890b0b0acb5de0cad7d42aa9804fa2edde9c69e88a58c3cce",
+      "publicSha256": "a5329343748cf29890b0b0acb5de0cad7d42aa9804fa2edde9c69e88a58c3cce",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/media-library.tsx",
+      "sourceSha256": "9625317cb6d4c0120afdf0b58d5c374d44b813f77573aa21803ddfe45e77dc39",
+      "publicSha256": "9625317cb6d4c0120afdf0b58d5c374d44b813f77573aa21803ddfe45e77dc39",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/node-search.tsx",
+      "sourceSha256": "f6f0c4c135f4c686da022de42dce88bba0c45b04ced7ec99e41dd5387d55a46c",
+      "publicSha256": "f6f0c4c135f4c686da022de42dce88bba0c45b04ced7ec99e41dd5387d55a46c",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/preferences.ts",
+      "sourceSha256": "718d80d1dec0997b131448e41eed64b34198d19b3dd3cc551f6293f535589b18",
+      "publicSha256": "718d80d1dec0997b131448e41eed64b34198d19b3dd3cc551f6293f535589b18",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/provider-settings.tsx",
+      "sourceSha256": "aead1dd559fae75c8d7a97953c60c442022312d1940f024b061ff1f9c718ac39",
+      "publicSha256": "d783630a791951db1f1aacd03fa8133615e9fb549f99b23ab6af97e7959296c2",
+      "publicAdaptation": true
+    },
+    {
+      "path": "components/open-canvas/studio-controls.tsx",
+      "sourceSha256": "7529ec03b8a562b3c3a00ecf28c000c56474705ecb03a022ec80f833474f851d",
+      "publicSha256": "7529ec03b8a562b3c3a00ecf28c000c56474705ecb03a022ec80f833474f851d",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/config/locale/messages/zh/pages/canvas.json",
+      "sourceSha256": "ca3b0236d2c5f7f9ff3b14c60273ce09eab6fa544e7948a0f3f87fcba033d1f8",
+      "publicSha256": "ca3b0236d2c5f7f9ff3b14c60273ce09eab6fa544e7948a0f3f87fcba033d1f8",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/extensions/ai/types.ts",
+      "sourceSha256": "d0a3cbe25b221013025ccf4e9aad29aba4c39a7e80e201662adf2c45891910ee",
+      "publicSha256": "d0a3cbe25b221013025ccf4e9aad29aba4c39a7e80e201662adf2c45891910ee",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/LICENSE",
+      "sourceSha256": "39f44e589235f753fd4dc15cafc6f62965d81ee61839f7f5b66c8dcb5f173e82",
+      "publicSha256": "39f44e589235f753fd4dc15cafc6f62965d81ee61839f7f5b66c8dcb5f173e82",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/blocks/canvas/canvas-media-control.tsx",
+      "sourceSha256": "83448c818cc583743d2a0ab5e3cf273d3ce78bdaa1fb6caae9dd6a3c9184e45c",
+      "publicSha256": "83448c818cc583743d2a0ab5e3cf273d3ce78bdaa1fb6caae9dd6a3c9184e45c",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/blocks/canvas/canvas-studio-shell.tsx",
+      "sourceSha256": "63c73d213eed56849dbfddbce6a5f9a40cdc6d7e57e00532614489945b89820d",
+      "publicSha256": "63c73d213eed56849dbfddbce6a5f9a40cdc6d7e57e00532614489945b89820d",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/blocks/common/asset-picker-dialog.tsx",
+      "sourceSha256": "47ff38bb2227bdc353b775acab1b377f8e5f4bf143a716e90e677f7e19435790",
+      "publicSha256": "47ff38bb2227bdc353b775acab1b377f8e5f4bf143a716e90e677f7e19435790",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/blocks/common/lazy-video.tsx",
+      "sourceSha256": "e38b4c1772fca3ba49c7edbf59b47407069dd7e649973fff7d2e187c0af2604a",
+      "publicSha256": "e38b4c1772fca3ba49c7edbf59b47407069dd7e649973fff7d2e187c0af2604a",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/blocks/generator/model-select-option.tsx",
+      "sourceSha256": "6531222484abb3046a664d819354108f6888610a5ff0248deb99a2e75e6a6d89",
+      "publicSha256": "6531222484abb3046a664d819354108f6888610a5ff0248deb99a2e75e6a6d89",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/badge.tsx",
+      "sourceSha256": "30e000da5a331904d42125532221eb2a6854e93e8c25266f63bbc444c4b10571",
+      "publicSha256": "30e000da5a331904d42125532221eb2a6854e93e8c25266f63bbc444c4b10571",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/button.tsx",
+      "sourceSha256": "7a20800d71e3b8999898810c21bd35dd1f1c69ffe60157cab0d8dc9e6acdf9f4",
+      "publicSha256": "7a20800d71e3b8999898810c21bd35dd1f1c69ffe60157cab0d8dc9e6acdf9f4",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/dialog.tsx",
+      "sourceSha256": "7619e9f01a404b44c4992bbd2e53aa61a8f187497bc4de63517425f6d307c2bc",
+      "publicSha256": "7619e9f01a404b44c4992bbd2e53aa61a8f187497bc4de63517425f6d307c2bc",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/dropdown-menu.tsx",
+      "sourceSha256": "2c2cc4925354378c2d6318f871d083021b3ffa4af92d78f7a59010885609c95a",
+      "publicSha256": "2c2cc4925354378c2d6318f871d083021b3ffa4af92d78f7a59010885609c95a",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/hover-card.tsx",
+      "sourceSha256": "bdf891d1b342293c3002ebdc9f893c849ae92758beaf7373740912cb71d48182",
+      "publicSha256": "bdf891d1b342293c3002ebdc9f893c849ae92758beaf7373740912cb71d48182",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/input.tsx",
+      "sourceSha256": "27ab536cabede75eeffaf10b62a708698517df95955484933683f63a249ec3af",
+      "publicSha256": "27ab536cabede75eeffaf10b62a708698517df95955484933683f63a249ec3af",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/label.tsx",
+      "sourceSha256": "e8fe45de2bebe91f967154ba65c41987bc9ac72d17689a0b9ffb04326f6f51d6",
+      "publicSha256": "e8fe45de2bebe91f967154ba65c41987bc9ac72d17689a0b9ffb04326f6f51d6",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/progress.tsx",
+      "sourceSha256": "a98b955de1209bfbfecb03b9656023456f9689c8b5477de11871e31d4eaef6c6",
+      "publicSha256": "a98b955de1209bfbfecb03b9656023456f9689c8b5477de11871e31d4eaef6c6",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/select.tsx",
+      "sourceSha256": "d97785063e1380997791ac959f0d4d7032eb2fb404d02ae21f93b556991fd2d8",
+      "publicSha256": "d97785063e1380997791ac959f0d4d7032eb2fb404d02ae21f93b556991fd2d8",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/tabs.tsx",
+      "sourceSha256": "00f61e415c6ae63c922ddb55ee1262566f62e5e28782de07c60d89cf3e53e903",
+      "publicSha256": "00f61e415c6ae63c922ddb55ee1262566f62e5e28782de07c60d89cf3e53e903",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/components/ui/textarea.tsx",
+      "sourceSha256": "a0a01991f560e0069651d71dc503570fef419f6abee24777a6bc437fe2fcea51",
+      "publicSha256": "a0a01991f560e0069651d71dc503570fef419f6abee24777a6bc437fe2fcea51",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/contexts/app.tsx",
+      "sourceSha256": "c6155964e44f4a322015fa4ec3f4949376b46339d85e48275b73d137eb149276",
+      "publicSha256": "c6155964e44f4a322015fa4ec3f4949376b46339d85e48275b73d137eb149276",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/ai-credit-rules.ts",
+      "sourceSha256": "b84829c413e86a574fb60364428b09ba9a36af59cfd01e2cc47904708a407f66",
+      "publicSha256": "b84829c413e86a574fb60364428b09ba9a36af59cfd01e2cc47904708a407f66",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/copy.ts",
+      "sourceSha256": "81d2fe16e4737e43838a083c233053892914f1a56cdc5678e448f843d8b2e8f5",
+      "publicSha256": "81d2fe16e4737e43838a083c233053892914f1a56cdc5678e448f843d8b2e8f5",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/execution.ts",
+      "sourceSha256": "27fc7dd904ed38ac2e8bb7ccb6299497254379d6a57b34e036420b5c1eb58ea5",
+      "publicSha256": "27fc7dd904ed38ac2e8bb7ccb6299497254379d6a57b34e036420b5c1eb58ea5",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/i18n.ts",
+      "sourceSha256": "b4348fc41753986798f49d8bb1d414b9d72621f44ea23380dcc7af3b291b2339",
+      "publicSha256": "b4348fc41753986798f49d8bb1d414b9d72621f44ea23380dcc7af3b291b2339",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/messages.en.json",
+      "sourceSha256": "bcae364cbb5e2e360bcd6950008eeeef39cce586e9550247e4473cc83d46bce6",
+      "publicSha256": "bcae364cbb5e2e360bcd6950008eeeef39cce586e9550247e4473cc83d46bce6",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/model-options.ts",
+      "sourceSha256": "354ef074ed5776effe34f6fd529fb777a28b9216af234a6f6368294ffa83af9e",
+      "publicSha256": "354ef074ed5776effe34f6fd529fb777a28b9216af234a6f6368294ffa83af9e",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/serialization.ts",
+      "sourceSha256": "3594852d16abf0cc1a12366b114583b4a7802643222c60ab2533853222fb5429",
+      "publicSha256": "3594852d16abf0cc1a12366b114583b4a7802643222c60ab2533853222fb5429",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/types.ts",
+      "sourceSha256": "77ce5d65f84aa3960ea498c660214431086e9959570fa8363c7811c2d6ffa305",
+      "publicSha256": "77ce5d65f84aa3960ea498c660214431086e9959570fa8363c7811c2d6ffa305",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/use-canvas-translations.ts",
+      "sourceSha256": "5edb7da6724c9ad85b881fbaa2b9e523ced1df1ab6380e4cd9ee1df7a3585169",
+      "publicSha256": "5edb7da6724c9ad85b881fbaa2b9e523ced1df1ab6380e4cd9ee1df7a3585169",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/canvas/validation.ts",
+      "sourceSha256": "0f5f78bef54c468fff2cf93b9ebbd3cd95631c66394906b9fb483302c962dbfc",
+      "publicSha256": "0f5f78bef54c468fff2cf93b9ebbd3cd95631c66394906b9fb483302c962dbfc",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/media-url.ts",
+      "sourceSha256": "a2a629c8ede37abd3e78f0052286a77afbd0f55c50d7c31805fc23bbdf03e4fa",
+      "publicSha256": "a2a629c8ede37abd3e78f0052286a77afbd0f55c50d7c31805fc23bbdf03e4fa",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/model-preferences.ts",
+      "sourceSha256": "4ee046dc0acda0b3dad83c556aba477f0af96c474ba4ef3792c84190bd14a6f0",
+      "publicSha256": "4ee046dc0acda0b3dad83c556aba477f0af96c474ba4ef3792c84190bd14a6f0",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/resp.ts",
+      "sourceSha256": "3456009a01d9c46f5c8581db484c0a7b0cff0ff33c001ed8397dadb5b4b15b8a",
+      "publicSha256": "3456009a01d9c46f5c8581db484c0a7b0cff0ff33c001ed8397dadb5b4b15b8a",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/lib/utils.ts",
+      "sourceSha256": "9304a861c8673bee09e0f12de31773abbde503b02e59dfd74763ddec2e37cf05",
+      "publicSha256": "9304a861c8673bee09e0f12de31773abbde503b02e59dfd74763ddec2e37cf05",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/services/public-ai-models.ts",
+      "sourceSha256": "1c9fbe995ec42229c985edf9f83fe8f7b26582f8d1449656ddaab5af8b801fff",
+      "publicSha256": "1c9fbe995ec42229c985edf9f83fe8f7b26582f8d1449656ddaab5af8b801fff",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/stores/canvas-history.ts",
+      "sourceSha256": "1c5c07cdbcf9bde30bd1eddd8f0ffd0fbdfbef3c896432e7ffcb3c9ec46e0990",
+      "publicSha256": "1c5c07cdbcf9bde30bd1eddd8f0ffd0fbdfbef3c896432e7ffcb3c9ec46e0990",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/shared/stores/canvas-store.ts",
+      "sourceSha256": "35f3961cb6b5482dd51b40888094ee86e83b5b9177b797ffe53c642ba9ecede1",
+      "publicSha256": "35f3961cb6b5482dd51b40888094ee86e83b5b9177b797ffe53c642ba9ecede1",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/upstream/UPSTREAM.json",
+      "sourceSha256": "0622f64c02677886274bc0a5d83fe4f0e062a6175b533cf2366ab6663b75ab3c",
+      "publicSha256": "0622f64c02677886274bc0a5d83fe4f0e062a6175b533cf2366ab6663b75ab3c",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/workspace.css",
+      "sourceSha256": "856209ca5ff8f0df1c1b5522d540f7be9b388ece3081b98119b849d8d485c0b9",
+      "publicSha256": "856209ca5ff8f0df1c1b5522d540f7be9b388ece3081b98119b849d8d485c0b9",
+      "publicAdaptation": false
+    },
+    {
+      "path": "components/open-canvas/workspace.tsx",
+      "sourceSha256": "c588a94e8977e88086db493fc48765bda04a1bf7b6e7d1b6842c2daea87da961",
+      "publicSha256": "32bb7daa6241af20c2784bc3f2927d9b2b11d5bba59eb91f5e40ee2ef3624e4f",
+      "publicAdaptation": true
+    },
+    {
+      "path": "lib/open-canvas/catalog.ts",
+      "sourceSha256": "1e414f5e139bb17080e1d8ed592f3880561a0ca4984017965e4e51015c4d5ce4",
+      "publicSha256": "1e414f5e139bb17080e1d8ed592f3880561a0ca4984017965e4e51015c4d5ce4",
+      "publicAdaptation": false
+    },
+    {
+      "path": "lib/open-canvas/document.ts",
+      "sourceSha256": "922271f1cf9c59517537879bad9dcf4abf85ecd33f33a4d3a741d7713ad5f22f",
+      "publicSha256": "0b0e1f621daa666177e386082a9fe74617031818ad73fe1cf104d2a1ec3256ca",
+      "publicAdaptation": true
+    },
+    {
+      "path": "lib/open-canvas/identity.ts",
+      "sourceSha256": "af86895a7d400c5514f4b1d8b3d9480d8f9baecf3cdd4c937343046ec66ee04a",
+      "publicSha256": "af86895a7d400c5514f4b1d8b3d9480d8f9baecf3cdd4c937343046ec66ee04a",
+      "publicAdaptation": false
+    },
+    {
+      "path": "lib/open-canvas/runtime.ts",
+      "sourceSha256": "d61f0874e1843affcfc0abe088f52736505c3dbc09f9f668ebf649058d2195e7",
+      "publicSha256": "d61f0874e1843affcfc0abe088f52736505c3dbc09f9f668ebf649058d2195e7",
+      "publicAdaptation": false
+    },
+    {
+      "path": "lib/open-canvas/settings.ts",
+      "sourceSha256": "1a98cb760e75bb7b06f477fd1866a0e1f511a68ef7405972ed0a24736a979224",
+      "publicSha256": "ae756bbd46c44d1a7bb72b8802eb74b247ec4b10119fa57e28e5fe7ab34ec371",
+      "publicAdaptation": true
+    },
+    {
+      "path": "lib/open-canvas/storage.ts",
+      "sourceSha256": "0c7c9d02941508ceea501ef907ef69c278cf55355e6ebf5520eacf54d4447249",
+      "publicSha256": "0c7c9d02941508ceea501ef907ef69c278cf55355e6ebf5520eacf54d4447249",
+      "publicAdaptation": false
+    },
+    {
+      "path": "lib/open-canvas/transport.ts",
+      "sourceSha256": "02651ce803ba14c9c92abd9b12cac8ab94f863e6e0297bb3ef897aba9703fb17",
+      "publicSha256": "02651ce803ba14c9c92abd9b12cac8ab94f863e6e0297bb3ef897aba9703fb17",
+      "publicAdaptation": false
+    }
+  ]
+}

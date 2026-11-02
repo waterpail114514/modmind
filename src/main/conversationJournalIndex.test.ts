@@ -8,14 +8,23 @@ it('shares cold replica parsing only after independently matching all bytes', as
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-journal-replicas-'))
   const targets = ['a', 'b', 'c'].map(name => path.join(root, `${name}.jsonl`)), index = new ConversationJournalIndex()
   const event = { eventId: 'one', conversationId: 'ws-replicas', generation: 0, sequence: 1, turnId: 'turn', kind: 'system', time: 'T', payload: 'a' }
-  const build = vi.spyOn(index as unknown as { build: (...args: unknown[]) => Promise<unknown> }, 'build')
+  const internal = index as unknown as { build: (...args: unknown[]) => Promise<unknown>; buildShared: (...args: unknown[]) => Promise<unknown> }
+  const originalBuild = internal.build.bind(index), originalShared = internal.buildShared.bind(index)
+  let entered = 0, release!: () => void, started!: () => void
+  const overlapping = new Promise<void>(resolve => { release = resolve })
+  const firstStarted = new Promise<void>(resolve => { started = resolve })
+  // The contract concerns overlapping cold reads, so control the overlap
+  // instead of relying on three filesystem callbacks being scheduled together.
+  const shared = vi.spyOn(internal, 'buildShared').mockImplementation((...args) => { if (++entered === targets.length) release(); return originalShared(...args) })
+  const build = vi.spyOn(internal, 'build').mockImplementation(async (...args) => { started(); await overlapping; return originalBuild(...args) })
   try {
     await Promise.all(targets.map((target, offset) => fs.writeFile(target, JSON.stringify({ ...event, payload: offset === 2 ? 'b' : 'a' }) + '\n')))
-    await Promise.all(targets.map(target => index.get(target)))
+    const first = index.get(targets[0]); await firstStarted
+    await Promise.all([first, ...targets.slice(1).map(target => index.get(target))])
     expect(build).toHaveBeenCalledTimes(2)
     expect((await index.page(targets[0], 'ws-replicas', 0, 0, 1))[0].payload).toBe('a')
     expect((await index.page(targets[2], 'ws-replicas', 0, 0, 1))[0].payload).toBe('b')
-  } finally { build.mockRestore(); await fs.rm(root, { recursive: true, force: true }) }
+  } finally { build.mockRestore(); shared.mockRestore(); await fs.rm(root, { recursive: true, force: true }) }
 })
 
 it('reads adjacent blocks for a 5,000-event page in one range', async () => {

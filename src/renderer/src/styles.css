@@ -298,6 +298,10 @@
 .app-shell.dark-mode .keybind-recording, .app-shell.dark-mode .keybind-notice { border-color: var(--theme-line); color: var(--theme-accent); background: var(--theme-selected); }
 .app-shell.dark-mode .keybind-recording small { color: var(--theme-accent); }
 .modpack-release-form { margin-top: 18px; }
+.modpack-release-form label.check-row { grid-column: 1 / -1; flex-direction: row; align-items: center; min-height: 24px; cursor: pointer; }
+.modpack-release-form .check-row input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; flex: 0 0 16px; }
+.modpack-export-choice { grid-column: 1 / -1; }
+.modpack-export-hint { grid-column: 1 / -1; min-height: 3em; margin: 0; color: var(--theme-muted); font-size: var(--type-support); line-height: 1.5; }
 .modpack-delivery-actions { justify-content: flex-end; margin-top: 14px; }
 .app-shell.dark-mode .pack-content-toolbar { background: var(--theme-surface); }
 .app-shell.dark-mode .pack-content-control { background: var(--theme-surface); }
@@ -1263,6 +1267,12 @@ button { color: inherit; }
 .recent-project-meta { padding-left: 14px; color: var(--theme-muted); font-size: 10px; text-transform: capitalize; white-space: nowrap; }
 .recent-project-remove { width: 42px; border: 0; background: transparent; display: grid; place-items: center; color: var(--theme-muted); cursor: pointer; }
 .recent-project-remove:hover { color: var(--theme-danger); background: var(--theme-panel); }
+.recent-project-unlink:hover { color: var(--theme-accent); background: var(--theme-panel); }
+.recent-project-more:hover { color: var(--theme-accent); }
+.project-launcher .recent-project-unlink:focus-visible,
+.project-launcher .recent-project-more:focus-visible { outline: 2px solid var(--theme-accent); outline-offset: -4px; border-radius: 6px; }
+.project-context-menu button.project-menu-delete,
+.app-shell.dark-mode .project-context-menu button.project-menu-delete { color: var(--theme-danger); }
 
 .adopt-dialog { width: min(620px, calc(100vw - 36px)); }
 .adopt-dialog > .dialog-header { min-width: 0; }
@@ -1596,7 +1606,7 @@ button { color: inherit; }
 .agent-picker-menu button { width: 100%; min-height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 6px; color: var(--agent-text-2); background: transparent; cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
 .agent-picker-menu button:hover, .agent-picker-menu button.active { color: var(--agent-text-1); background: var(--agent-fill-2); }
 .agent-picker-menu button svg:last-child:not(:first-child) { margin-left: auto; color: var(--agent-primary); }
-.agent-recovery-banner { margin: 8px auto 0; width: calc(100% - clamp(80px, 10%, 240px)); box-sizing: border-box; padding: 9px 12px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--theme-line); border-radius: 8px; color: var(--theme-accent); background: var(--theme-panel); }
+.agent-recovery-banner { margin: 8px auto 0; width: min(800px, calc(100% - clamp(80px, 10%, 240px))); box-sizing: border-box; padding: 9px 12px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--theme-line); border-radius: 8px; color: var(--theme-accent); background: var(--theme-panel); }
 .agent-recovery-banner > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .agent-recovery-banner strong { font-size: 12px; }
 .agent-recovery-banner span { color: var(--theme-accent); font-size: 11px; }
@@ -1606,8 +1616,8 @@ button { color: inherit; }
 .agent-scroll-latest { position: absolute; bottom: 12px; right: 24px; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--agent-fill-3); border-radius: 50%; color: var(--agent-text-1); background: var(--agent-surface); box-shadow: 0 2px 8px color-mix(in srgb, var(--theme-shadow) 7.06%, transparent); cursor: pointer; z-index: 2; }
 .agent-scroll-latest:hover { background: var(--agent-fill-2); }
 .agent-scroll-latest:focus-visible { outline: none; outline-offset: 0; }
-.agent-conversation-surface { width: calc(100% - clamp(80px, 10%, 240px)); min-height: 100%; box-sizing: border-box; margin: 0 auto; padding: 6px 8px 22px; display: flex; flex-direction: column; }
-.agent-conversation-row { display: flow-root; min-height: 1px; width: calc(100% - clamp(80px, 10%, 240px)); box-sizing: border-box; margin: 0 auto; padding: 0 8px; }
+.agent-conversation-surface { width: min(800px, calc(100% - clamp(80px, 10%, 240px))); min-height: 100%; box-sizing: border-box; margin: 0 auto; padding: 6px 8px 22px; display: flex; flex-direction: column; }
+.agent-conversation-row { display: flow-root; min-height: 1px; width: min(800px, calc(100% - clamp(80px, 10%, 240px))); box-sizing: border-box; margin: 0 auto; padding: 0 8px; }
 .agent-message-row, .agent-thinking, .agent-tool-group, .agent-diff-card, .agent-notice, .agent-event-muted, .agent-result-summary { width: 100%; min-width: 0; box-sizing: border-box; margin-top: 10px; }
 .agent-message-row { display: flex; flex-direction: column; align-items: flex-start; }
 .agent-message-row.user { align-items: flex-end; }
@@ -1691,7 +1701,7 @@ button { color: inherit; }
 .agent-secondary-button { border: 1px solid var(--agent-fill-3); color: var(--agent-text-2); background: var(--theme-surface); }
 .agent-primary-button { border: 1px solid var(--agent-primary); color: var(--theme-on-action); background: var(--agent-primary); }
 .agent-text-button { padding: 0; border: 0; color: var(--agent-primary); background: transparent; cursor: pointer; font: inherit; font-size: 11px; }
-.agent-composer-stack { position: relative; z-index: 3; width: calc(100% - clamp(80px, 10%, 240px)); flex: 0 0 auto; margin: 0 auto 16px; }
+.agent-composer-stack { position: relative; z-index: 3; width: min(800px, calc(100% - clamp(80px, 10%, 240px))); flex: 0 0 auto; margin: 0 auto 16px; }
 .agent-plan-bar { padding: 6px 0; border-top: 1px solid var(--agent-fill-3); background: var(--theme-surface); }
 .agent-plan-heading { width: 100%; padding: 0 8px; display: flex; align-items: center; gap: 8px; border: 0; color: var(--agent-text-3); background: transparent; cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
 .agent-plan-badge { padding: 2px 7px; border-radius: 999px; color: var(--agent-text-2); background: var(--agent-fill-2); }
@@ -2934,6 +2944,13 @@ textarea:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
   outline: 0;
+}
+
+/* Keep editable controls free of extra focus frames, including in lazy-loaded pages and detached dialogs. */
+:is(input, textarea, select, [contenteditable]:not([contenteditable="false"])):is(:focus, :focus-visible) {
+  outline: none !important;
+  outline-offset: 0;
+  box-shadow: none !important;
 }
 
 .primary-button,
@@ -4770,7 +4787,7 @@ body {
 .ftb-quest-node-tooltip { z-index: 20; }
 
 /* Quiet starting points for making and exploring. */
-.chat-welcome { flex: 1; min-height: 0; width: calc(100% - clamp(80px, 10%, 240px)); margin: 0 auto; padding: 0 0 22px; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; }
+.chat-welcome { flex: 1; min-height: 0; width: min(800px, calc(100% - clamp(80px, 10%, 240px))); margin: 0 auto; padding: 0 0 22px; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; }
 .chat-welcome-greeting { flex: 1; min-height: 160px; display: flex; align-items: center; justify-content: center; padding: 32px 0; }
 .chat-welcome h2 { max-width: 100%; margin: 0; color: var(--welcome-text); font-size: clamp(20px, 2.2vw, 29px); font-weight: 500; letter-spacing: -.035em; line-height: 1.6; text-wrap: balance; text-align: center; }
 .chat-welcome-recommendations { flex: 0 0 auto; }
@@ -4837,7 +4854,7 @@ body {
 .inspiration-minimal .inspiration-message.user > div > p { width: fit-content; max-width: 100%; margin-left: auto; padding: 10px 14px; border-radius: 12px; background: var(--surface-alt); }
 .inspiration-minimal .inspiration-message.user .inspiration-message-actions { position: static; justify-content: flex-end; margin-top: 4px; }
 .inspiration-minimal .inspiration-message.user > div > strong { display: none; }
-.inspiration-compose-area { flex: 0 0 auto; width: min(860px, calc(100% - 64px)); margin: 0 auto 16px; }
+.inspiration-compose-area { flex: 0 0 auto; width: min(800px, calc(100% - clamp(80px, 10%, 240px))); margin: 0 auto 16px; }
 .inspiration-minimal .inspiration-composer { width: 100%; box-sizing: border-box; margin: 0; padding: 14px 16px; flex-direction: column; align-items: stretch; border: 1px solid var(--line); border-radius: 14px; box-shadow: none; background: var(--surface); }
 .inspiration-minimal .inspiration-composer textarea { width: 100%; box-sizing: border-box; min-height: 52px; padding: 0; resize: none; color: var(--inspiration-text); font-size: 14px; }
 .inspiration-minimal .inspiration-composer textarea::placeholder { color: var(--muted); }
@@ -5193,3 +5210,7 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
   .project-launcher .recent-project-main > .recent-project-meta { display: none; }
   .project-launcher .recent-project-remove { width: 26px; flex: 0 0 26px; margin-right: 0; }
 }
+
+/* Shared chat body: inspiration artifacts keep their own controls. */
+.inspiration-minimal .agent-conversation { min-width: 0; padding: 0; }
+.inspiration-minimal .agent-conversation-region .inspiration-thinking-status { width: min(800px, calc(100% - clamp(80px, 10%, 240px))); }

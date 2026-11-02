@@ -234,7 +234,7 @@ export const downloadModpackContent = serializeProjectMutation(async function do
       destination: downloaded,
       maxBytes: MAX_CONTENT_FILE_BYTES,
       retriesPerSource: 2,
-      timeoutMs: 120_000,
+      stallTimeoutMs: 180_000, resume: true,
       signal
     })
     signal?.throwIfAborted()

@@ -18,8 +18,8 @@ function reconcile(definition: StudioDefinition, values: Record<string, string>,
   return next
 }
 
-export function StudioFields({ definition, values, onChange, disabled = false, lockedBindings = [], versionCandidates }: {
-  definition: StudioDefinition; values: Record<string, string>; onChange: (values: Record<string, string>) => void; disabled?: boolean; lockedBindings?: Array<NonNullable<StudioFormField['bind']>>; versionCandidates?: string[]
+export function StudioFields({ definition, values, onChange, disabled = false, lockedBindings = [], versionCandidates, fieldId }: {
+  definition: StudioDefinition; values: Record<string, string>; onChange: (values: Record<string, string>) => void; disabled?: boolean; lockedBindings?: Array<NonNullable<StudioFormField['bind']>>; versionCandidates?: string[]; fieldId?: string
 }): React.JSX.Element {
   const [manualVersion, setManualVersion] = useState(false)
   const dynamic = Boolean(definition.creation?.fields.some(field => field.source))
@@ -42,7 +42,7 @@ export function StudioFields({ definition, values, onChange, disabled = false, l
   }, [definition, values, catalog, onChange])
   const change = (id: string, value: string): void => onChange(reconcile(definition, { ...values, [id]: value }, catalog))
   return <div className="studio-declared-fields">
-    {(definition.creation?.fields ?? []).filter(field => studioFieldVisible(field.when, values)).map(field => {
+    {(definition.creation?.fields ?? []).filter(field => studioFieldVisible(field.when, values) && (!fieldId || field.id === fieldId)).map(field => {
       const options = fieldOptions(field, values, catalog)
       const fieldDisabled = disabled || field.readOnly || Boolean(field.bind && lockedBindings.includes(field.bind))
       return <div className="field-label studio-declared-field" key={field.id} data-onboarding-field={field.id} data-onboarding-bind={field.bind} data-onboarding-readonly={Boolean(fieldDisabled)}>

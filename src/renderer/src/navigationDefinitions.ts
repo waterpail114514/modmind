@@ -1,4 +1,4 @@
-import { Code2, FolderOpen, Hammer, LayoutGrid, Lightbulb, MessageSquareText, Puzzle, Settings, type LucideIcon } from 'lucide-react'
+import { Code2, FileOutput, FolderOpen, Hammer, LayoutGrid, Lightbulb, MessageSquareText, Puzzle, Settings, type LucideIcon } from 'lucide-react'
 import type { ProjectInfo, SidebarViewId, UiMode } from '../../shared/types'
 import type { PluginRecord } from '../../shared/plugins'
 import { isJavaLoader } from '../../shared/projectPlatform'
@@ -40,7 +40,8 @@ export function buildNavigationDefinitions({ project, uiMode, plugins, featurePa
       group = { label: page.group, items: [] }
       groups.splice(Math.max(1, groups.length - 1), 0, group)
     }
-    group.items.push({ id: page.id as SidebarViewId, label: page.label, icon: page.icon })
+    const localExport = page.id === 'production' && project?.kind === 'modpack'
+    group.items.push({ id: page.id as SidebarViewId, label: localExport ? '版本与导出' : page.label, icon: localExport ? FileOutput : page.icon })
   }
   groups.push({ label: '插件', items: [
     ...plugins.filter(plugin => plugin.enabled && !plugin.error && plugin.manifest.panel).map(plugin => ({ id: `plugin:${plugin.manifest.id}` as SidebarViewId, label: plugin.manifest.name, icon: Puzzle })),

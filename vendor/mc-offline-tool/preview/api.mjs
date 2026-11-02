@@ -170,7 +170,7 @@ export function writeSchem(payload) {
 
   const root = nCompound({
     Version: nInt(2),
-    DataVersion: nInt(DATA_VERSION),
+    DataVersion: nInt(payload.dataVersion || DATA_VERSION),
     Width: nShort(sx),
     Height: nShort(sy),
     Length: nShort(sz),
@@ -252,7 +252,7 @@ export function writeLitematic(payload) {
   });
 
   const root = nCompound({
-    MinecraftDataVersion: nInt(DATA_VERSION),
+    MinecraftDataVersion: nInt(payload.dataVersion || DATA_VERSION),
     Version: nInt(6),
     TotalBlocks: nInt(volume),
     TotalVolume: nInt(volume),

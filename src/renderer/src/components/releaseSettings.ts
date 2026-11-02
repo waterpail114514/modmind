@@ -8,6 +8,7 @@ export const defaultRelease = (project: ProjectInfo): ReleaseSettings => ({
   changelog: '',
   autoBump: true,
   bumpMode: 'patch',
+  modpackExportMode: 'bundled',
   channel: 'release',
   modrinthProjectId: '',
   curseForgeProjectId: '',

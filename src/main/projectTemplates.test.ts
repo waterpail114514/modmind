@@ -24,12 +24,12 @@ function project(loader: LoaderKind, minecraftVersion: string, loaderVersion = '
 }
 
 describe('Minecraft loader templates', () => {
-  it('bundles all 47 stable Fabric game versions for offline creation', () => {
+  it('bundles all 48 stable Fabric game versions for offline creation', () => {
     const fabric = bundledLoaderCatalog().filter((option) => option.loader === 'fabric')
-    expect(fabric).toHaveLength(47)
+    expect(fabric).toHaveLength(48)
     expect(fabric.every((option) => Boolean(option.apiVersion))).toBe(true)
     expect(fabric.at(-1)?.minecraftVersion).toBe('1.14')
-    expect(fabric[0]?.minecraftVersion).toBe('26.2')
+    expect(fabric[0]).toMatchObject({ minecraftVersion: '26.3', loaderVersion: '0.19.5', apiVersion: '0.164.0+26.3', javaVersion: 25 })
   })
   it('selects Java versions across Minecraft toolchain boundaries', () => {
     expect(javaVersionForMinecraft('1.16.5')).toBe(8)
@@ -65,6 +65,24 @@ describe('Minecraft loader templates', () => {
     expect(files['build.gradle']).not.toContain('fabric-api:')
     expect(files['gradle.properties']).not.toContain('fabric_api_version')
     expect(JSON.parse(files['src/main/resources/fabric.mod.json']).depends['fabric-api']).toBeUndefined()
+  })
+
+  it('generates 26.3 templates with each official toolchain and exact game dependency', () => {
+    for (const option of bundledLoaderCatalog().filter(option => option.minecraftVersion === '26.3')) {
+      const files = projectTemplateFiles({ ...project(option.loader, '26.3'), ...option })
+      expect(files['gradle.properties']).toContain('java_version=25')
+      expect(files['gradle.properties']).toContain('minecraft_version=26.3')
+      if (option.loader === 'fabric') {
+        expect(files['build.gradle']).toContain("id 'net.fabricmc.fabric-loom' version '1.17.21'")
+        expect(files['build.gradle']).not.toContain('mappings')
+        expect(JSON.parse(files[descriptorPath(option.loader, '26.3')]).depends.minecraft).toBe('26.3')
+      } else if (option.loader === 'forge') {
+        expect(files['build.gradle']).not.toContain('mappings channel:')
+        expect(files['build.gradle']).toContain('minecraft.dependency(')
+      } else {
+        expect(files['build.gradle']).toContain("id 'net.neoforged.moddev' version '2.0.148'")
+      }
+    }
   })
 
   it('creates a Quilt Loom project with a Quilt descriptor and runtime API', () => {
@@ -166,7 +184,10 @@ describe('Minecraft loader templates', () => {
         expect(entries.length).toBeGreaterThan(0)
         expect(entries.every((option) => supportsProjectCreation(loader, option.minecraftVersion))).toBe(true)
       }
-      expect(options.filter((option) => option.loader === 'fabric')).toHaveLength(47)
+      expect(options.filter((option) => option.loader === 'fabric')).toHaveLength(48)
+      for (const loader of ['fabric', 'forge', 'neoforge'] as const) {
+        expect(options.find(option => option.loader === loader && option.minecraftVersion === '26.3')).toMatchObject({ javaVersion: 25 })
+      }
       expect(options.some((option) => option.loader === 'neoforge' && option.minecraftVersion === '1.0')).toBe(false)
       expect(options.some((option) => option.loader === 'forge' && option.minecraftVersion === '1.12.2')).toBe(true)
     } finally {

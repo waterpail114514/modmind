@@ -1,0 +1,512 @@
+{
+  "format": "modmind-feature",
+  "apiVersion": 2,
+  "hostVersion": "1.5.0-plugintest",
+  "id": "data-packs",
+  "name": "数据包",
+  "version": "1.0.0",
+  "description": "创建、导入、图形编辑、校验和导出 Minecraft 数据包；支持模组与整合包项目，按需使用本地游戏资源。",
+  "main": "main.cjs",
+  "renderer": "renderer.js",
+  "style": "renderer.css",
+  "dependencies": [],
+  "studioIds": [
+    "minecraft-mod",
+    "minecraft-modpack"
+  ],
+  "loaders": [
+    "fabric",
+    "quilt",
+    "forge",
+    "neoforge"
+  ],
+  "hostCapabilities": [
+    "runtime",
+    "diagnosticsV1"
+  ],
+  "views": [
+    {
+      "label": "数据包",
+      "icon": "FileJson",
+      "group": "内容",
+      "component": "modpack-datapacks",
+      "id": "modpack-datapacks",
+      "order": 40
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "数据包",
+      "id": "data-packs",
+      "description": "配方、标签与简单掉落的图形编辑，完整源码回读、保存冲突保护与ZIP导出。复杂内容保留源码，校验不代替游戏验证。"
+    }
+  ],
+  "actions": [
+    {
+      "permission": "read",
+      "inputSchema": {
+        "properties": {
+          "root": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "files",
+              "read",
+              "validate",
+              "history"
+            ]
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "handler": "query",
+      "projectRequired": true,
+      "id": "query",
+      "surfaces": [
+        "workbench"
+      ]
+    },
+    {
+      "permission": "write",
+      "inputSchema": {
+        "properties": {
+          "root": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "save",
+              "create",
+              "create-pack",
+              "remove",
+              "export",
+              "restore"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1048576
+          },
+          "baseline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "recipe-shaped",
+              "recipe-shapeless",
+              "item-tag",
+              "block-tag",
+              "loot-block",
+              "advancement",
+              "predicate",
+              "function",
+              "json"
+            ]
+          },
+          "namespace": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "historyId": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "handler": "write",
+      "projectRequired": true,
+      "id": "write",
+      "surfaces": [
+        "workbench"
+      ]
+    },
+    {
+      "permission": "write",
+      "inputSchema": {
+        "properties": {
+          "root": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "handler": "import",
+      "projectRequired": true,
+      "id": "import",
+      "surfaces": [
+        "workbench"
+      ]
+    },
+    {
+      "permission": "read",
+      "inputSchema": {
+        "properties": {
+          "root": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "handler": "catalog",
+      "projectRequired": true,
+      "id": "catalog",
+      "surfaces": [
+        "workbench"
+      ]
+    },
+    {
+      "id": "source:run",
+      "handler": "pull_run",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "maxIcons": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "source:importProbe",
+      "handler": "pull_import_probe",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "instanceDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "probeDir": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "outPx": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "source:select",
+      "handler": "pull_select",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "source:clear",
+      "handler": "pull_clear",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "source:exportPack",
+      "handler": "pull_export_pack",
+      "permission": "write",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_一-鿿][A-Za-z0-9_.一-鿿-]{0,127}$"
+          }
+        }
+      }
+    },
+    {
+      "id": "source:chooseInstance",
+      "handler": "pull_choose_instance",
+      "permission": "read",
+      "projectRequired": true,
+      "surfaces": [
+        "workbench"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    {
+      "permission": "read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object",
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "handler": "pull_sources",
+      "surfaces": [
+        "workbench"
+      ],
+      "id": "source:sources",
+      "projectRequired": true
+    },
+    {
+      "permission": "read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object",
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      },
+      "handler": "pull_choose_probe",
+      "surfaces": [
+        "workbench"
+      ],
+      "id": "source:chooseProbe",
+      "projectRequired": true
+    },
+    {
+      "handler": "pull_icons",
+      "id": "source:icons",
+      "surfaces": [
+        "workbench"
+      ],
+      "permission": "read",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "projectPath": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "projectRequired": true
+    }
+  ],
+  "tools": [
+    {
+      "name": "modmind_data_pack_query",
+      "description": "List project data packs, paginate files, read exact source and baseline, validate a pack, or list recoverable history (operation history). Validation is scoped static validation, not proof of in-game behavior.",
+      "action": "query"
+    },
+    {
+      "name": "modmind_data_pack_write",
+      "description": "Create a pack or entry, save exact JSON/function source with baseline conflict protection (null for new files), remove with recovery copy, export a validated ZIP inside the project, or restore a historyId with the baseline returned by query/history. Operations create-pack/create/save/remove/export/restore.",
+      "action": "write"
+    },
+    {
+      "name": "modmind_data_pack_items",
+      "description": "Search paginated vanilla and selected local-instance item IDs and names for data pack authoring; does not download resources or start Minecraft.",
+      "action": "catalog"
+    }
+  ]
+}

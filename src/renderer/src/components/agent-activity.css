@@ -1,0 +1,34 @@
+.agent-activity-list { min-width: 0; margin: 10px 0 14px; color: var(--agent-text-3, var(--theme-muted)); font-size: 13px; line-height: 1.55; }
+.agent-activity-heading { display: flex; align-items: center; gap: 7px; max-width: 100%; min-height: 26px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.agent-activity-heading span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-activity-heading svg, .agent-activity-line > svg, .agent-activity-file > svg { flex-shrink: 0; }
+.agent-activity-chevron { opacity: 0; }
+.agent-activity-heading[aria-expanded="true"] > .agent-activity-chevron, .agent-activity-heading:focus-visible > .agent-activity-chevron, .agent-activity-line[aria-expanded="true"] > .agent-activity-chevron, .agent-activity-line:focus-visible > .agent-activity-chevron { opacity: 1; }
+.agent-activity-scroll { max-height: 242px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 2px 3px 6px 0; }
+.agent-activity-item { min-width: 0; }
+.agent-activity-line { display: flex; width: 100%; min-width: 0; min-height: 25px; gap: 7px; align-items: center; padding: 1px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.agent-activity-line:disabled { opacity: 1; cursor: default; }
+.agent-activity-label { flex-shrink: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-activity-context { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-activity-meta { flex-shrink: 0; margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; }
+.agent-activity-meta + .agent-activity-meta { margin-left: 0; }
+.agent-activity-line > svg:last-child { margin-left: auto; }
+.agent-activity-line > svg.expanded { transform: rotate(90deg); }
+.agent-activity-file-disclosure { display: inline-flex; flex-shrink: 0; align-items: center; padding: 3px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.agent-activity-file-disclosure svg.expanded { transform: rotate(90deg); }
+.agent-activity-file { display: flex; align-items: center; min-width: 0; min-height: 25px; gap: 6px; }
+.agent-activity-file > span { flex-shrink: 0; }
+.agent-activity-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.agent-activity-path:disabled { cursor: default; opacity: 1; }
+.agent-activity-added, .agent-activity-removed { font-size: 12px; font-variant-numeric: tabular-nums; }
+.agent-activity-pending { width: 5px; height: 5px; border-radius: 50%; background: var(--theme-accent); }
+.agent-activity-detail { margin: 3px 0 7px 20px; padding: 7px 10px; border-left: 1px solid var(--theme-line); color: var(--agent-text-2, var(--theme-text)); }
+.agent-activity-detail code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.agent-activity-detail pre { margin: 4px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.agent-activity-collapsed { margin: 2px 0 0 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-activity-item.is-running { color: var(--agent-text-2, var(--theme-text)); }
+.agent-activity-item.is-failed { color: var(--theme-danger); }
+.agent-activity-heading:focus-visible, .agent-activity-line:focus-visible, .agent-activity-path:focus-visible, .agent-activity-file-disclosure:focus-visible { outline: 2px solid var(--theme-accent); outline-offset: 2px; border-radius: 3px; }
+@media (hover: hover) and (pointer: fine) { .agent-activity-heading:hover, .agent-activity-line:not(:disabled):hover, .agent-activity-path:not(:disabled):hover { color: var(--agent-text-1, var(--theme-text)); } .agent-activity-heading:hover > .agent-activity-chevron, .agent-activity-line:hover > .agent-activity-chevron { opacity: 1; } }
+@media (hover: none) { .agent-activity-chevron { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .agent-activity-list .spin { animation: none; } }

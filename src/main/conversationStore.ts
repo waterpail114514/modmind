@@ -11,6 +11,8 @@ import type {
   PipelineEvent
 } from '../shared/types'
 import { WorkbenchDataStore } from './workbenchDataStore'
+import { ConversationProjectionPages } from './conversationProjectionPages'
+import type { ConversationHistoryPage, ConversationHistoryPageInput } from '../shared/types'
 
 const INDEX_KEY = '.modmind/conversations-v2/index.json'
 const INDEX_CHECKPOINT_KEY = '.modmind/conversations-index-v1.json'
@@ -139,7 +141,74 @@ export class ConversationStore {
     items: Array<{ turnId: string; kind: ConversationEventRecord['kind']; payload: unknown; runId?: string; resolve: (event: ConversationEventRecord) => void; reject: (error: unknown) => void }>
     timer: ReturnType<typeof setTimeout>
   }>()
-  constructor(private readonly data: WorkbenchDataStore) {}
+  private readonly projectionPages: ConversationProjectionPages
+  constructor(private readonly data: WorkbenchDataStore) { this.projectionPages = new ConversationProjectionPages(data, data.conversationProjectionCacheDirectory()) }
+
+  /** Native resume only needs metadata; it must not allocate the saved view/journal. */
+  async readContext(projectPath: string, conversationId: string): Promise<ConversationDocument | null> {
+    if (!validId(conversationId)) throw new Error('对话标识无效')
+    return this.enqueue(projectPath, conversationId, async () => {
+      const snapshot = await this.projectionPages.snapshot(projectPath, conversationId)
+      return snapshot ? snapshot.document : null
+    })
+  }
+
+  hasUserTurn(projectPath: string, id: string, generation: number, turnId: string): Promise<boolean> {
+    return this.enqueue(projectPath, id, async () => {
+      let snapshot = await this.projectionPages.snapshot(projectPath, id)
+      if (snapshot?.embeddedEvents) { await this.readProjectionUnlocked(projectPath, id); snapshot = await this.projectionPages.snapshot(projectPath, id) }
+      if (!snapshot || snapshot.document.generation !== generation) return false
+      // An optimistic renderer row has no event sequence yet and still needs its journal boundary.
+      for await (const { item } of this.projectionPages.items(snapshot)) if (item.kind === 'user' && item.turnId === turnId && Number.isSafeInteger(item.sequence)) return true
+      let after = 0
+      while (true) {
+        const events = await this.data.conversationJournalPage(projectPath, journalKey(id), id, generation, after, 100)
+        if (events.some(event => event.kind === 'user' && event.turnId === turnId)) return true
+        if (!events.length || events.at(-1)!.sequence <= after) return false
+        after = events.at(-1)!.sequence
+      }
+    })
+  }
+
+  saveHistoryWindow(projectPath: string, conversationId: string, generation: number, token: string, start: number, items: unknown[]): Promise<ConversationHistoryPage | null> {
+    if (!validId(conversationId)) throw new Error('对话标识无效')
+    return this.enqueue(projectPath, conversationId, async () => {
+      const snapshot = await this.projectionPages.snapshot(projectPath, conversationId)
+      if (!snapshot || snapshot.document.generation !== generation || snapshot.token !== token) throw new Error('对话已变化，未覆盖旧历史，请重新载入')
+      const field = snapshot.document.surface === 'workspace' ? 'timeline' : 'messages'
+      const state = await this.data.conversationJournalState(projectPath, journalKey(conversationId), conversationId, generation)
+      const current = { ...snapshot.document, lastSequence: Math.max(state.lastSequence, snapshot.document.lastSequence) }
+      const document = checkpointView(current, generation, { [field]: items })
+      const writeResult = await this.projectionPages.write(projectPath, conversationId, snapshot, document, { start, items })
+      this.forgetDocument(this.laneKey(projectPath, conversationId))
+      await this.writeIndexChange(projectPath, conversationId, summaryOf(document))
+      const updated = await this.projectionPages.snapshot(projectPath, conversationId)
+      if (!updated) throw new Error('对话保存后无法回读')
+      return { document: updated.document, items: [], start, end: updated.rows.length, total: updated.rows.length, token: updated.token, nextBefore: start > 0 ? start : null, writeResult, dialoguePrefix: await this.projectionPages.dialoguePrefix(updated, start) }
+    })
+  }
+
+  async historyPage(projectPath: string, conversationId: string, input: ConversationHistoryPageInput = {}): Promise<ConversationHistoryPage | null> {
+    if (!validId(conversationId)) throw new Error('对话标识无效')
+    if (input.before !== undefined && (!Number.isSafeInteger(input.before) || input.before < 0)) throw new Error('历史位置无效')
+    if (input.after !== undefined && (!Number.isSafeInteger(input.after) || input.after < 0 || input.before !== undefined)) throw new Error('历史位置无效')
+    return this.enqueue(projectPath, conversationId, async () => {
+      let snapshot = await this.projectionPages.snapshot(projectPath, conversationId)
+      if (!snapshot) return null
+      if (snapshot.embeddedEvents) {
+        // One-time legacy migration retains the existing authoritative-event behavior.
+        await this.readProjectionUnlocked(projectPath, conversationId)
+        snapshot = await this.projectionPages.snapshot(projectPath, conversationId)
+        if (!snapshot) return null
+      }
+      if (input.token && input.token !== snapshot.token || input.generation !== undefined && input.generation !== snapshot.document.generation) throw new Error('对话已更新，请重新载入历史')
+      const page = await this.projectionPages.page(snapshot, input.before, input.limit, input.after)
+      const state = await this.data.conversationJournalState(projectPath, journalKey(conversationId), conversationId, snapshot.document.generation)
+      return { document: { ...snapshot.document, lastSequence: Math.max(snapshot.document.lastSequence, state.lastSequence) },
+        items: page.items, start: page.start, end: page.end, total: snapshot.rows.length, token: snapshot.token, nextBefore: page.start > 0 ? page.start : null,
+        ...(input.before === undefined && input.after === undefined ? { dialoguePrefix: await this.projectionPages.dialoguePrefix(snapshot, page.start) } : {}) }
+    })
+  }
 
   async list(projectPath: string, surface?: Surface, includeArchived = false): Promise<ConversationSummary[]> {
     await this.wait(projectPath, '$conversation-index')
@@ -277,7 +346,9 @@ export class ConversationStore {
 
   eventsSince(projectPath: string, conversationId: string, generation: number, afterSequence = 0, limit = PAGE_LIMIT): Promise<ConversationEventsPage> {
     return this.enqueue(projectPath, conversationId, async () => {
-      const document = await this.readProjectionUnlocked(projectPath, conversationId)
+      let snapshot = await this.projectionPages.snapshot(projectPath, conversationId)
+      if (snapshot?.embeddedEvents) { await this.readProjectionUnlocked(projectPath, conversationId); snapshot = await this.projectionPages.snapshot(projectPath, conversationId) }
+      const document = snapshot?.document
       if (!document) return { conversationId, generation, checkpointSequence: 0, events: [], nextSequence: null }
       if (document.generation !== generation) throw new Error('对话已更新，请重新载入历史')
       const bounded = Math.min(10_000, Math.max(1, Math.floor(limit)))
@@ -288,7 +359,66 @@ export class ConversationStore {
   }
 
   async fork(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
+    if (input.historyItemId) return this.forkPagedHistory(projectPath, input)
     return this.enqueue(projectPath, '$conversation-lifecycle', () => this.forkUnlocked(projectPath, input))
+  }
+
+  deleteHistoryItem(projectPath: string, id: string, generation: number, itemId: string): Promise<ConversationDocument> {
+    if (!validId(id)) return Promise.reject(new Error('对话标识无效'))
+    return this.enqueue(projectPath, id, async () => {
+      const snapshot = await this.projectionPages.snapshot(projectPath, id)
+      if (!snapshot || snapshot.document.generation !== generation) throw new Error('对话已更新，请重新载入后再删除')
+      const state = await this.data.conversationJournalState(projectPath, journalKey(id), id, generation)
+      if (state.lastSequence > snapshot.document.checkpointSequence || snapshot.embeddedEvents) throw new Error('最新消息尚未保存，请重新载入后再删除')
+      let start = -1, end = -1, lastUser = -1, found = false
+      for await (const { index, item } of this.projectionPages.items(snapshot)) {
+        if (found && item.kind === 'user') { end = index; break }
+        if (item.id === itemId) {
+          found = true
+          if (item.kind === 'user') { start = index; end = snapshot.rows.length }
+          else { start = lastUser + 1; end = index + 1; break }
+        }
+        if (item.kind === 'user') lastUser = index
+      }
+      if (!found) throw new Error('这条消息尚未保存，请稍后重试')
+      const document: ConversationDocument = { ...snapshot.document, generation: generation + 1, updatedAt: new Date().toISOString(), lastSequence: 0, checkpointSequence: 0, events: [], view: {}, native: {}, nativeTurns: {}, nativeTurnStarts: {}, nativeForkPending: false, parent: undefined }
+      await this.projectionPages.write(projectPath, id, snapshot, document, undefined, (item, index) => {
+        if (index >= start && index < end) return null
+        const { sequence: _sequence, ...rest } = item; return rest
+      })
+      await this.data.deleteJournal(projectPath, journalKey(id)); this.forgetDocument(this.laneKey(projectPath, id))
+      await this.writeIndexChange(projectPath, id, summaryOf(document))
+      return document
+    })
+  }
+
+  private forkPagedHistory(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
+    if (!validId(input.sourceConversationId)) return Promise.reject(new Error('对话标识无效'))
+    return this.enqueue(projectPath, '$conversation-lifecycle', () => this.enqueue(projectPath, input.sourceConversationId, async () => {
+      const snapshot = await this.projectionPages.snapshot(projectPath, input.sourceConversationId)
+      if (!snapshot || snapshot.document.surface !== 'workspace') throw new Error('原对话不存在')
+      const source = snapshot.document, id = input.id?.trim() || newId(source.surface)
+      if (!validId(id) || await this.projectionPages.snapshot(projectPath, id)) throw new Error('分支对话标识无效或已存在')
+      const retained = new Set<string>(); let end = -1, selected: Record<string, unknown> | undefined
+      for await (const { index, item } of this.projectionPages.items(snapshot)) {
+        if (item.id === input.historyItemId) { selected = item; end = item.kind === 'user' ? index : index + 1; if (item.kind !== 'user' && typeof item.turnId === 'string') retained.add(item.turnId); break }
+        if (typeof item.turnId === 'string') retained.add(item.turnId)
+      }
+      if (!selected || end < 0) throw new Error('分支边界消息尚未保存，请稍后重试')
+      const turnId = typeof selected.turnId === 'string' ? selected.turnId : undefined
+      const before = selected.kind === 'user', native = input.backend ? source.native[input.backend] : undefined
+      const nativeTurn = input.backend && turnId ? (before ? source.nativeTurnStarts?.[turnId]?.[input.backend] : undefined) ?? source.nativeTurns[turnId]?.[input.backend] : undefined
+      const nativeMode = native?.sessionId && nativeTurn ? 'native' : 'visible-history-rebuild'
+      const document: ConversationDocument = { schemaVersion: 2, id, surface: source.surface, ...(source.agentMode ? { agentMode: source.agentMode } : {}), title: input.title?.trim() || `${source.title}（分支）`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), generation: source.generation + 1, lastSequence: 0, checkpointSequence: 0, events: [], view: {},
+        native: nativeMode === 'native' && input.backend ? { [input.backend]: { ...native!, lastTurnId: nativeTurn } } : {},
+        nativeTurns: nativeMode === 'native' ? Object.fromEntries(Object.entries(source.nativeTurns).filter(([turn]) => retained.has(turn))) : {},
+        nativeTurnStarts: nativeMode === 'native' ? Object.fromEntries(Object.entries(source.nativeTurnStarts ?? {}).filter(([turn]) => retained.has(turn))) : {},
+        ...(nativeMode === 'native' ? { nativeForkPending: true } : {}),
+        parent: { conversationId: source.id, generation: source.generation, ...(turnId ? { turnId } : {}), ...(nativeTurn ? { nativeTurnId: nativeTurn, boundary: before ? 'before' as const : 'through' as const } : {}), nativeMode } }
+      await this.projectionPages.write(projectPath, id, snapshot, document, { start: end, items: [] }, item => { const { sequence: _sequence, ...rest } = item; return rest })
+      await this.writeIndexChange(projectPath, id, summaryOf(document))
+      return document
+    }))
   }
 
   private async forkUnlocked(projectPath: string, input: ConversationForkInput): Promise<ConversationDocument> {
@@ -379,7 +509,7 @@ export class ConversationStore {
         && candidate.sessionHome === state.sessionHome))))
   }
   setNativeState(projectPath: string, conversationId: string, generation: number, backend: CodingBackend, sessionId: string, lastTurnId?: string, modmindTurnId?: string, sessionHome?: string): Promise<ConversationDocument> {
-    return this.update(projectPath, conversationId, (document) => {
+    return this.updateContext(projectPath, conversationId, (document) => {
       if (document.generation !== generation) return document
       const prior = document.native[backend]
       const changedThread = Boolean(prior && prior.sessionId !== sessionId && !document.nativeForkPending)
@@ -404,6 +534,26 @@ export class ConversationStore {
       }
     })
   }
+
+  private updateContext(projectPath: string, id: string, update: (document: ConversationDocument) => ConversationDocument): Promise<ConversationDocument> {
+    return this.enqueue(projectPath, id, async () => {
+      const snapshot = await this.projectionPages.snapshot(projectPath, id)
+      if (!snapshot) throw new Error('对话不存在')
+      if (snapshot.embeddedEvents) {
+        const document = await this.readProjectionUnlocked(projectPath, id)
+        if (!document) throw new Error('对话不存在')
+        const next = update(document); if (next !== document) await this.writeDocumentUnlocked(projectPath, next)
+        return next
+      }
+      const next = update(snapshot.document)
+      if (next !== snapshot.document) {
+        await this.projectionPages.write(projectPath, id, snapshot, next)
+        this.forgetDocument(this.laneKey(projectPath, id))
+        await this.writeIndexChange(projectPath, id, summaryOf(next))
+      }
+      return next
+    })
+  }
   async flush(): Promise<void> {
     await Promise.allSettled([...this.eventBatches.keys()].map((key) => this.flushEventBatch(key)))
     await Promise.allSettled([...this.lanes.values()])
@@ -413,7 +563,7 @@ export class ConversationStore {
   private async appendRouted(projectPath: string, kind: 'progress' | 'output', value: PipelineEvent | AiOutputEvent): Promise<PipelineEvent | AiOutputEvent> {
     if (!value.conversationId || !value.turnId || !Number.isSafeInteger(value.generation)) return value
     const immediate = kind === 'output'
-      ? (value as AiOutputEvent).kind !== 'delta'
+      ? (value as AiOutputEvent).kind !== 'delta' && !((value as AiOutputEvent).kind === 'reasoning' && (value as AiOutputEvent).reasoning?.phase === 'delta')
       : (value as PipelineEvent).stage === 'complete' || (value as PipelineEvent).stage === 'error'
     const record = await this.appendEvent(projectPath, value.conversationId, Number(value.generation), value.turnId, kind, value, value.runId, immediate)
     return { ...value, sequence: record.sequence, eventId: record.eventId }
@@ -443,10 +593,11 @@ export class ConversationStore {
     const appended: ConversationEventRecord[] = []
     try {
       await this.enqueue(batch.projectPath, batch.conversationId, async () => {
-        const document = await this.readProjectionUnlocked(batch.projectPath, batch.conversationId)
+        const snapshot = await this.projectionPages.snapshot(batch.projectPath, batch.conversationId)
+        const document = snapshot?.embeddedEvents ? await this.readProjectionUnlocked(batch.projectPath, batch.conversationId) : snapshot?.document
         if (!document) throw new Error('对话不存在')
         if (document.generation !== batch.generation) throw new Error('事件属于旧对话分支，已拒绝写入')
-        let sequence = Math.max(0, document.lastSequence)
+        let sequence = Math.max(0, document.lastSequence, await this.data.conversationJournalTail(batch.projectPath, journalKey(batch.conversationId), batch.conversationId, batch.generation))
         for (const item of batch.items) {
           sequence += 1
           const record: ConversationEventRecord = { eventId: randomUUID(), conversationId: batch.conversationId, generation: batch.generation, turnId: item.turnId, ...(item.runId ? { runId: item.runId } : {}), sequence, kind: item.kind, time: new Date().toISOString(), payload: item.payload }
@@ -538,7 +689,7 @@ export class ConversationStore {
     const events = [...merged.values()].sort((left, right) => left.sequence - right.sequence || left.eventId.localeCompare(right.eventId))
     const updatedAt = events.reduce((latest, event) => {
       const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : {}
-      const terminal = event.kind === 'user' || (event.kind === 'output' && payload.kind !== 'delta') || (event.kind === 'progress' && (payload.stage === 'complete' || payload.stage === 'error'))
+      const terminal = event.kind === 'user' || (event.kind === 'output' && payload.kind !== 'delta' && !(payload.kind === 'reasoning' && (payload as Partial<AiOutputEvent>).reasoning?.phase === 'delta')) || (event.kind === 'progress' && (payload.stage === 'complete' || payload.stage === 'error'))
       return terminal && Date.parse(event.time) > Date.parse(latest) ? event.time : latest
     }, document.updatedAt)
     return { ...document, events, updatedAt, lastSequence: events.reduce((maximum, event) => Math.max(maximum, event.sequence), Math.max(0, document.lastSequence)) }

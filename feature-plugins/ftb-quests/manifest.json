@@ -4,7 +4,7 @@
   "hostVersion": "1.5.0-plugintest",
   "id": "ftb-quests",
   "name": "FTB 任务书",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "main": "main.cjs",
   "renderer": "renderer.js",
   "style": "renderer.css",
@@ -33,5 +33,8 @@
     "quilt",
     "forge",
     "neoforge"
+  ],
+  "hostCapabilities": [
+    "diagnosticsV1"
   ]
 }

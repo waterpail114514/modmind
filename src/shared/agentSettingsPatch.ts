@@ -27,7 +27,7 @@ export function mergeAgentSettingsPatch(current: AgentSettings, patch: AgentSett
   if (!record(patch)) throw new Error('配置修改需要对象值')
   const allowed = new Set(['codingBackend', 'allowLongerContext', 'codexApprovalMode', 'externalAgents',
     'allowBuildScriptChanges', 'preferLocalGradle', 'gradleExecutable', 'gradleDownloadSource', 'networkProxyUrl',
-    'javaPreferences', 'darkMode', 'themePreset', 'customThemeColors', 'background', 'closeBehavior', 'notificationsEnabled'])
+    'javaPreferences', 'darkMode', 'themePreset', 'fontScale', 'customThemeColors', 'background', 'closeBehavior', 'notificationsEnabled'])
   for (const key of Object.keys(patch)) if (!allowed.has(key)) throw new Error(`不支持的配置字段：${key}`)
   return merge(current, patch) as AgentSettings
 }

@@ -12,7 +12,7 @@ export type ThemeMode = 'light' | 'dark'
 export type CustomThemeColors = Partial<Record<ThemeMode, { canvas: string; accent: string }>>
 export type BackgroundMedia = { file: string; name: string; kind: 'image' | 'video' }
 export type AppBackground = { media: BackgroundMedia | null; opacity: number; blur: number; fit: 'cover' | 'contain'; paused: boolean }
-export type AppAppearance = { darkMode: boolean; themePreset: ThemePreset; customThemeColors?: CustomThemeColors; background?: AppBackground }
+export type AppAppearance = { darkMode: boolean; themePreset: ThemePreset; fontScale?: number; customThemeColors?: CustomThemeColors; background?: AppBackground }
 export const defaultBackground: AppBackground = { media: null, opacity: 0.3, blur: 0, fit: 'cover', paused: false }
 export function isBackgroundMediaFile(value: unknown): value is string {
   return typeof value === 'string' && /^(?:[a-f0-9-]{36}|[a-f0-9]{64})\.(png|jpg|jpeg|webp|gif|mp4|webm)$/i.test(value)
@@ -40,8 +40,9 @@ export function normalizeBackground(value: unknown): AppBackground {
 export function normalizeThemePreset(value: unknown): ThemePreset {
   return themePresets.some(preset => preset.id === value) ? value as ThemePreset : 'neutral'
 }
-export function normalizeAppearance(value: { darkMode?: unknown; themePreset?: unknown; customThemeColors?: unknown; background?: unknown }): AppAppearance {
-  return { darkMode: value.darkMode === true, themePreset: normalizeThemePreset(value.themePreset), customThemeColors: normalizeCustomThemeColors(value.customThemeColors), background: normalizeBackground(value.background) }
+export function normalizeAppearance(value: { darkMode?: unknown; themePreset?: unknown; fontScale?: unknown; customThemeColors?: unknown; background?: unknown }): AppAppearance {
+  const fontScale = typeof value.fontScale === 'number' && Number.isFinite(value.fontScale) ? Math.max(80, Math.min(125, Math.round(value.fontScale / 5) * 5)) : 100
+  return { darkMode: value.darkMode === true, themePreset: normalizeThemePreset(value.themePreset), fontScale, customThemeColors: normalizeCustomThemeColors(value.customThemeColors), background: normalizeBackground(value.background) }
 }
 
 const neutral = {

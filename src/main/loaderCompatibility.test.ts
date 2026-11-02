@@ -10,6 +10,11 @@ import {
 
 describe('loader build compatibility', () => {
   it('enforces official template support boundaries', () => {
+    for (const loader of ['fabric', 'forge', 'neoforge', 'paper', 'spigot', 'folia'] as const) {
+      expect(supportsProjectCreation(loader, '26.3')).toBe(true)
+      expect(supportsProjectCreation(loader, '26.4')).toBe(false)
+    }
+    expect(supportsProjectCreation('quilt', '26.3')).toBe(false)
     expect(supportsProjectCreation('fabric', '1.20.1')).toBe(true)
     expect(supportsProjectCreation('quilt', '1.21.1')).toBe(false)
     expect(supportsProjectCreation('forge', '1.12.2')).toBe(true)
@@ -27,6 +32,10 @@ describe('loader build compatibility', () => {
   })
 
   it('pins official Gradle/plugin generations and distribution checksums', () => {
+    expect(loaderBuildCompatibility('fabric', '26.3')).toMatchObject({ javaVersion: 25, gradleVersion: '9.6.0', pluginVersion: '1.17.21' })
+    expect(loaderBuildCompatibility('forge', '26.3')).toMatchObject({ javaVersion: 25, gradleVersion: '9.7.1' })
+    expect(loaderBuildCompatibility('neoforge', '26.3')).toMatchObject({ javaVersion: 25, gradleVersion: '9.2.1', pluginVersion: '2.0.148' })
+    expect(javaRuntimeTargetForMinecraft('26.3')).toBe('java-runtime-epsilon')
     expect(loaderBuildCompatibility('fabric', '1.21.11')).toMatchObject({ gradleVersion: '9.5.1', pluginVersion: '1.17.17' })
     expect(loaderBuildCompatibility('quilt', '1.21')).toMatchObject({ gradleVersion: '8.9', pluginVersion: '1.7.4' })
     expect(loaderBuildCompatibility('forge', '1.20.1')).toMatchObject({ gradleVersion: '8.12.1', pluginVersion: '6.0.54' })

@@ -40,6 +40,7 @@ function harness(usage?: DeviceUsage) {
   }
   const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ success: true, data: usage ?? zeroUsage() })))
   const sandbox = {
+    providerCatalogRevision: 0,
     ensureQuotaRoutingReady: vi.fn(async () => {}),
     isFreeDeviceAccount: () => false,
     AbortSignal, DeviceApiError, QUOTA_USAGE_MAX_AGE_MS: 120_000,

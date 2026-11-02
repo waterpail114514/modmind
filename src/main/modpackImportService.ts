@@ -425,7 +425,7 @@ async function downloadRemoteFile(
     expectedHash,
     maxBytes: Math.min(MAX_REMOTE_FILE_BYTES, remaining),
     retriesPerSource: 2,
-    timeoutMs: 120_000,
+    stallTimeoutMs: 180_000, resume: true,
     signal: options.signal,
     trackActivity: options.trackDownloadActivities !== false,
     onAttempt: ({ source, attempt, attemptsPerSource }) => options.onProgress?.({

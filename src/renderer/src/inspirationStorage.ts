@@ -1,7 +1,7 @@
 import { reportClientFailure } from './lib/clientFailure'
 import type { InspirationChatMessage } from '../../shared/types'
 import { normalizeAiTurnReplay } from '../../shared/aiReplay'
-import { isAiOperationalStatusText } from '../../shared/aiOutput'
+import { isAiOperationalStatusText, isAiLifecycleStatusText } from '../../shared/aiOutput'
 import { titleFromUserText } from './workbenchConversations'
 import { presentLegacyAiNotice } from '../../shared/aiNotice'
 
@@ -53,8 +53,8 @@ export const MAX_INSPIRATION_STORAGE_BYTES = 512 * 1024
 export function boundInspirationMessages(messages: InspirationChatMessage[], maxMessages = MAX_MESSAGES_PER_CONVERSATION): InspirationChatMessage[] {
   if (messages.length <= maxMessages) return messages
   const maxTools = Math.min(30, Math.floor(maxMessages / 2))
-  const toolIndexes = messages.map((message, index) => message.kind === 'tool' ? index : -1).filter((index) => index >= 0).slice(-maxTools)
-  const nonToolIndexes = messages.map((message, index) => message.kind !== 'tool' ? index : -1).filter((index) => index >= 0).slice(-(maxMessages - toolIndexes.length))
+  const toolIndexes = messages.map((message, index) => message.kind ? index : -1).filter((index) => index >= 0).slice(-maxTools)
+  const nonToolIndexes = messages.map((message, index) => !message.kind ? index : -1).filter((index) => index >= 0).slice(-(maxMessages - toolIndexes.length))
   const selected = new Set([...toolIndexes, ...nonToolIndexes])
   return messages.filter((_message, index) => selected.has(index))
 }
@@ -67,32 +67,44 @@ export function normalizeStoredInspirationMessages(messages: InspirationChatMess
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message.role === 'user') nextUser = index
-    else if (message.role === 'assistant' && message.kind !== 'tool') {
+    else if (message.role === 'assistant' && !message.kind && message.phase !== 'commentary') {
       if (nextAssistant < 0 || (nextUser >= 0 && nextAssistant > nextUser)) lastAssistantInTurn.add(index)
       nextAssistant = index
     }
   }
   return messages.map((message, index) => {
+    if (message.onboarding) return { ...message, status: 'completed', isFinal: false }
     if (message.role !== 'assistant') {
       const replay = normalizeAiTurnReplay(message.replay)
       return replay ? { ...message, replay } : message.replay ? { ...message, replay: undefined } : message
     }
+    if (message.activity?.status === 'running') message = { ...message, status: 'warning', activity: { ...message.activity, status: 'interrupted' } }
+    if (message.kind === 'reasoning') {
+      const strings = (value: unknown): string[] => Array.isArray(value) ? value.slice(0, 256).map(part => typeof part === 'string' ? part : '') : []
+      return { ...message, status: 'completed', isFinal: false, reasoningCompleted: message.reasoningCompleted ?? message.status === 'completed',
+        reasoning: { summary: strings(message.reasoning?.summary), text: strings(message.reasoning?.text) } }
+    }
     if (message.kind === 'tool' || message.status === 'error' || message.status === 'warning') {
       message = { ...message, content: presentLegacyAiNotice(message.content, message.status === 'warning') }
     }
-    if (message.kind === 'tool') return message.status === 'streaming' ? { ...message, status: 'completed' } : message
+    if (message.kind === 'tool') {
+      if (message.notice?.key === 'retry') return { ...message, status: 'warning' }
+      return message.status === 'streaming' ? { ...message, status: 'completed' } : message
+    }
     if (message.status === 'streaming') {
       return {
         ...message,
         role: 'assistant',
-        content: message.content.trimStart().startsWith('<modmind-inspiration>') ? message.content : '上次灵感回答在完成前中断，请重新发送问题。',
+        content: message.inspirationArtifact || message.content.trimStart().startsWith('<modmind-inspiration>') ? message.content : '上次灵感回答在完成前中断，请重新发送问题。',
         status: 'error',
         isFinal: true,
         ...(message.sessionId ? { sessionId: message.sessionId } : {})
       }
     }
-    if (isAiOperationalStatusText(message.content)) {
-      return { ...message, kind: 'tool', status: 'completed', isFinal: false }
+    if (message.phase === 'final_answer' || message.isFinal === true) return message
+    if (message.phase !== 'commentary' && isAiLifecycleStatusText(message.content)) return { ...message, kind: 'tool', status: 'completed', isFinal: false }
+    if (message.phase === 'commentary' || isAiOperationalStatusText(message.content)) {
+      return { ...message, phase: 'commentary', status: 'completed', isFinal: false }
     }
     if (message.isFinal !== undefined) return message
     return { ...message, isFinal: lastAssistantInTurn.has(index) && message.status === 'completed' }
@@ -106,9 +118,10 @@ function estimatedStorageBytes(value: string): number {
 
 function compactMessage(message: InspirationChatMessage, contentLimit = MAX_MESSAGE_CONTENT_CHARS): InspirationChatMessage | null {
   const content = typeof message.content === 'string' ? message.content : ''
-  const limit = message.kind === 'tool' ? Math.min(contentLimit, MAX_TOOL_CONTENT_CHARS) : contentLimit
+  const limit = message.kind ? Math.min(contentLimit, MAX_TOOL_CONTENT_CHARS) : contentLimit
   return {
     ...message,
+    ...(message.reasoning ? { reasoning: { summary: message.reasoning.summary.map(part => part.slice(0, limit)).slice(0, 8), text: message.reasoning.text.map(part => part.slice(0, limit)).slice(0, 8) } } : {}),
     content: content.length > limit ? `${content.slice(0, limit)}\n\n[历史内容已截断]` : content
   }
 }

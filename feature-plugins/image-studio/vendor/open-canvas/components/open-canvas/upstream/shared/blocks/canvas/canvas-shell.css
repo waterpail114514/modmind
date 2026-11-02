@@ -1,0 +1,97 @@
+
+        .canvas-studio,
+        .canvas-studio * {
+          color-scheme: dark;
+        }
+
+        .canvas-studio .react-flow__pane {
+          cursor: pointer;
+        }
+
+        .canvas-studio .react-flow__selectionpane {
+          cursor: pointer;
+        }
+
+        .canvas-studio.is-panning .react-flow__pane {
+          cursor: pointer;
+        }
+
+        .canvas-studio .react-flow__node {
+          cursor: grab;
+        }
+
+        .canvas-studio .react-flow__node.dragging {
+          cursor: grabbing;
+        }
+
+        .canvas-studio .react-flow__handle {
+          cursor: crosshair;
+        }
+
+        .canvas-studio .react-flow__node .nodrag,
+        .canvas-studio .react-flow__node button {
+          cursor: inherit;
+        }
+
+        .canvas-studio .react-flow__node button.cursor-text {
+          cursor: text;
+        }
+
+        .canvas-studio .react-flow__node input,
+        .canvas-studio .react-flow__node textarea {
+          cursor: text;
+        }
+
+        .canvas-studio .react-flow__node .cursor-grab {
+          cursor: grab;
+        }
+
+        .canvas-studio .canvas-node-handle {
+          width: 16px !important;
+          height: 16px !important;
+          opacity: 1 !important;
+          border-width: 2px !important;
+          border-color: color-mix(in srgb,var(--theme-line) 58%,transparent) !important;
+          background: var(--theme-surface) !important;
+          box-shadow: 0 0 0 4px color-mix(in srgb,var(--theme-shadow) 26%,transparent);
+          transition:
+            transform 150ms ease,
+            border-color 150ms ease,
+            background-color 150ms ease,
+            box-shadow 150ms ease;
+        }
+
+        .canvas-studio .react-flow__node:hover .canvas-node-handle,
+        .canvas-studio .react-flow__node.selected .canvas-node-handle,
+        .canvas-studio .canvas-node-handle:hover {
+          border-color: color-mix(in srgb,var(--theme-line) 96%,transparent) !important;
+          background: var(--theme-surface) !important;
+          box-shadow:
+            0 0 0 4px color-mix(in srgb,var(--theme-shadow) 32%,transparent),
+            0 0 20px color-mix(in srgb,var(--theme-shadow) 16%,transparent);
+        }
+
+        .canvas-studio .react-flow__handle-left.canvas-node-handle:hover,
+        .canvas-studio
+          .react-flow__node:hover
+          .react-flow__handle-left.canvas-node-handle,
+        .canvas-studio
+          .react-flow__node.selected
+          .react-flow__handle-left.canvas-node-handle {
+          transform: translate(-50%, -50%) scale(1.12);
+        }
+
+        .canvas-studio .react-flow__handle-right.canvas-node-handle:hover,
+        .canvas-studio
+          .react-flow__node:hover
+          .react-flow__handle-right.canvas-node-handle,
+        .canvas-studio
+          .react-flow__node.selected
+          .react-flow__handle-right.canvas-node-handle {
+          transform: translate(50%, -50%) scale(1.12);
+        }
+
+        .canvas-studio .react-flow__edge-interaction {
+          cursor: pointer;
+        }
+      

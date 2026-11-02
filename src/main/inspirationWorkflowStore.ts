@@ -3,13 +3,14 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { InspirationFeatures } from '../shared/inspirationFeatures'
 import type { InspirationNote, InspirationWorkflowRecord } from '../shared/inspirationKnowledge'
-import { parseInspirationWorkflow } from '../shared/inspirationWorkflow'
+import { parseInspirationWorkflow, type InspirationWorkflow } from '../shared/inspirationWorkflow'
+import { normalizeInspirationSubmission } from '../shared/inspirationSubmission'
 import { InspirationKnowledgeStore } from './inspirationKnowledgeStore'
 
 export interface InspirationWorkflowIdentity { conversationId: string; turnId: string; generation: number }
-interface StoredRecord extends InspirationWorkflowRecord { response: string; features: InspirationFeatures }
+interface StoredRecord extends InspirationWorkflowRecord { response: string; features: InspirationFeatures; workflow?: InspirationWorkflow }
 
-/** Host-owned final-answer registration; replay reads records but never reapplies them. */
+/** Host-owned artifact registration; replay reads records but never reapplies them. */
 export class InspirationWorkflowStore {
   private queues = new Map<string, Promise<unknown>>()
   constructor(private readonly root: string, private readonly knowledge: InspirationKnowledgeStore) {}
@@ -48,14 +49,27 @@ export class InspirationWorkflowStore {
     question: string, baseline: InspirationNote[], signal?: AbortSignal): Promise<InspirationWorkflowRecord | null> {
     const parsed = parseInspirationWorkflow(response, features)
     if (!parsed.complete || !parsed.value) return null
+    return this.registerValue(projectPath, identity, parsed.value, features, question, baseline, response, false, signal)
+  }
+  async submit(projectPath: string, identity: InspirationWorkflowIdentity, input: unknown, features: InspirationFeatures,
+    question: string, baseline: InspirationNote[], signal?: AbortSignal): Promise<StoredRecord> {
+    const value = normalizeInspirationSubmission(input, `${identity.turnId}:user`, question, features)
+    return this.registerValue(projectPath, identity, value, features, question, baseline, '', true, signal)
+  }
+  private async registerValue(projectPath: string, identity: InspirationWorkflowIdentity, value: InspirationWorkflow, features: InspirationFeatures,
+    question: string, baseline: InspirationNote[], response: string, staged: boolean, signal?: AbortSignal): Promise<StoredRecord> {
     const file = this.file(projectPath, identity)
     return this.queued(file, async () => {
+      signal?.throwIfAborted()
       const previous = await this.read(projectPath, identity)
-      if (previous) return previous
-      const record: StoredRecord = { ...identity, id: path.basename(file, '.json'), response, features, status: 'pending', changes: [] }
+      if (previous && previous.status !== 'staged') {
+        if (staged && JSON.stringify(previous.workflow) !== JSON.stringify(value)) throw new Error('本轮结果已定稿，请在下一轮提出修改')
+        return previous
+      }
+      const record: StoredRecord = { ...identity, id: path.basename(file, '.json'), response, features, workflow: value, status: staged ? 'staged' : 'pending', changes: [] }
       const sourceId = `${identity.turnId}:user`
       try {
-        for (const [index, candidate] of parsed.value!.knowledgeCandidates.entries()) {
+        for (const [index, candidate] of value.knowledgeCandidates.entries()) {
           if (candidate.sourceMessageIds.length !== 1 || candidate.sourceMessageIds[0] !== sourceId || !question.includes(candidate.sourceQuote)) {
             throw new Error('知识来源无法核对，请重新整理或手动编辑项目知识')
           }
@@ -69,12 +83,38 @@ export class InspirationWorkflowStore {
         }
         if (new Set(record.changes.map(c => c.id)).size !== record.changes.length
           || new Set(record.changes.map(c => `${c.scope}:${c.title}`)).size !== record.changes.length) throw new Error('知识候选重复，请重新整理')
-      } catch (error) { record.status = 'error'; record.error = error instanceof Error ? error.message : String(error); record.changes = [] }
+      } catch (error) {
+        if (staged) throw error
+        record.status = 'error'; record.error = error instanceof Error ? error.message : String(error); record.changes = []
+      }
       signal?.throwIfAborted()
       // Durable intent precedes the atomic knowledge transaction; deterministic IDs make retry safe.
       await this.persist(file, record)
       await this.prune(path.dirname(file), file).catch(() => undefined)
-      if (record.status !== 'error' && features.knowledgeOrganization && features.autoSaveKnowledge && record.changes.length) {
+      if (!staged && record.status !== 'error' && features.knowledgeOrganization && features.autoSaveKnowledge && record.changes.length) {
+        try { signal?.throwIfAborted(); await this.knowledge.applyChanges(projectPath, record.changes, record.id); record.status = 'saved' }
+        catch (error) { record.status = 'error'; record.error = error instanceof Error ? error.message : String(error) }
+        await this.persist(file, record)
+      }
+      return record
+    })
+  }
+  /** Completion, not tool invocation or history replay, authorizes automatic knowledge writes. */
+  async finalize(projectPath: string, identity: InspirationWorkflowIdentity, signal?: AbortSignal): Promise<StoredRecord | null> {
+    const file = this.file(projectPath, identity)
+    return this.queued(file, async () => {
+      signal?.throwIfAborted()
+      const record = await this.read(projectPath, identity)
+      signal?.throwIfAborted()
+      if (!record || record.status !== 'staged') return record
+      record.status = 'pending'
+      await this.persist(file, record)
+      if (signal?.aborted) {
+        record.status = 'staged'
+        await this.persist(file, record)
+        signal.throwIfAborted()
+      }
+      if (record.features.knowledgeOrganization && record.features.autoSaveKnowledge && record.changes.length) {
         try { signal?.throwIfAborted(); await this.knowledge.applyChanges(projectPath, record.changes, record.id); record.status = 'saved' }
         catch (error) { record.status = 'error'; record.error = error instanceof Error ? error.message : String(error) }
         await this.persist(file, record)
@@ -87,6 +127,7 @@ export class InspirationWorkflowStore {
     return this.queued(file, async () => {
       const record = await this.read(projectPath, identity)
       if (!record) throw new Error('未找到完整的知识预览，请重新整理')
+      if (record.status === 'staged') throw new Error('本轮尚未完成，知识草稿未保存')
       if (undo) {
         if (record.status === 'undone') return record
         if (record.status !== 'saved') throw new Error('当前变更尚未保存')
@@ -96,7 +137,7 @@ export class InspirationWorkflowStore {
         if (record.status === 'saved') return record
         if (record.status === 'undone') throw new Error('此版本已撤销，请重新整理')
         if (!record.features.knowledgeOrganization || !record.changes.length) throw new Error('没有可保存的知识变更')
-        if (!edits.length || edits.length > 8 || new Set(edits.map(e => e.index)).size !== edits.length) throw new Error('请选择有效知识变更')
+        if (!edits.length || edits.length > record.changes.length || new Set(edits.map(e => e.index)).size !== edits.length) throw new Error('请选择有效知识变更')
         const changes = edits.map(edit => {
           const original = record.changes[edit.index]
           if (!original || !Number.isInteger(edit.index) || typeof edit.title !== 'string' || typeof edit.content !== 'string') throw new Error('知识变更参数无效')
