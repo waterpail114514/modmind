@@ -19,7 +19,7 @@ import { runSoundFfmpeg } from '../../feature-plugins/sound-studio/src/main/soun
 import type { ProjectInfo } from '../shared/types'
 
 const roots:string[]=[]
-async function project():Promise<ProjectInfo>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'modmind-artifact-diagnostic-'));roots.push(root);return {path:root,name:'Fixture',namespace:'fixture',loader:'fabric',minecraftVersion:'1.21.1',createdAt:''}}
+async function project():Promise<ProjectInfo>{const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'modmind-artifact-diagnostic-')));roots.push(root);return {path:root,name:'Fixture',namespace:'fixture',loader:'fabric',minecraftVersion:'1.21.1',createdAt:''}}
 async function records(info:ProjectInfo):Promise<any[]>{const root=path.join(info.path,'.modmind/diagnostic-artifacts');return Promise.all((await fs.readdir(root)).filter(file=>file.endsWith('.json')&&file!=='retention.json').map(async file=>JSON.parse(await fs.readFile(path.join(root,file),'utf8'))))}
 afterEach(async()=>{vi.unstubAllGlobals();vi.restoreAllMocks();await diagnosticJournal.flush();await Promise.all(roots.splice(0).map(root=>fs.rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:50})))})
 
