@@ -6,7 +6,7 @@
 
 AI 辅助开发 · 模组与整合包 · 资源创作 · 游戏测试
 
-**[官网与客户端下载](https://ether-studio.top/)** · **[GitHub 最新版](https://github.com/waterpail114514/modmind/releases/latest)** · **[更新日志](https://github.com/waterpail114514/modmind/releases)**
+**[官网与客户端下载](https://ether-studio.top/)** · **[GitHub 2.0 预览版](https://github.com/waterpail114514/modmind/releases/tag/2.0.0-preview.1)** · **[更新日志](https://github.com/waterpail114514/modmind/releases)**
 
 [功能一览](#功能一览) · [开始使用](#开始使用) · [本地开发](#本地开发) · [文档与社区](#文档与社区)
 
@@ -36,7 +36,7 @@ ModMind 是面向 Minecraft 创作者的桌面工作台。你可以先在灵感�
 
 **[访问官网 ether-studio.top](https://ether-studio.top/)** 即可下载客户端，查看使用流程，并使用账号管理、桌面授权、模型服务接入、额度与用量查询、兑换充值等功能。官网不只是下载页，更多功能可在登录后查看。
 
-也可以从 **[GitHub Releases](https://github.com/waterpail114514/modmind/releases/latest)** 下载。具体版本与更新内容以发布页为准，仓库中的开发版本可能领先于正式版。
+也可以从 **[GitHub Releases](https://github.com/waterpail114514/modmind/releases/tag/2.0.0-preview.1)** 下载。具体版本与更新内容以发布页为准，仓库中的开发版本可能领先于正式版。
 
 | 你的设备 | 选择的安装包 |
 | --- | --- |
