@@ -26,6 +26,7 @@ function merge(current: unknown, patch: unknown): unknown {
 export function mergeAgentSettingsPatch(current: AgentSettings, patch: AgentSettingsPatch): AgentSettings {
   if (!record(patch)) throw new Error('配置修改需要对象值')
   const allowed = new Set(['codingBackend', 'allowLongerContext', 'codexApprovalMode', 'externalAgents',
+    'codexProfiles', 'activeCodexProfileId',
     'allowBuildScriptChanges', 'preferLocalGradle', 'gradleExecutable', 'gradleDownloadSource', 'networkProxyUrl',
     'javaPreferences', 'darkMode', 'themePreset', 'fontScale', 'customThemeColors', 'background', 'closeBehavior', 'notificationsEnabled'])
   for (const key of Object.keys(patch)) if (!allowed.has(key)) throw new Error(`不支持的配置字段：${key}`)

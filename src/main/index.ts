@@ -265,6 +265,10 @@ AiRecoveryInfo,
 AiSurface,
 AppVersionCheckResult,
 BeginnerAiPreferences,
+CodexConnectionTestResult,
+CodexProfile,
+CodexProfileInput,
+CodexProfileSummary,
 CodingResult,
 DetachedWindowTarget,
 DeviceConnectionState,
@@ -4076,6 +4080,9 @@ async function writeAgentSettingsAtomically(stored: Record<string, unknown>): Pr
   await writeSettingsFile(settingsFile(), stored)
 }
 
+/** Stable id for the profile seeded from a pre-multi-slot `externalAgents.codex`. */
+const LEGACY_CODEX_PROFILE_ID = 'legacy-codex'
+
 async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSettings) => AgentSettings), validatePreferences = true): Promise<AgentSettings> {
   let resolveWrite!: (settings: AgentSettings) => void
   let rejectWrite!: (error: unknown) => void
@@ -4105,10 +4112,14 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
   }
   let existingAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
   let existingAgentEntries: AgentSettings['externalAgents'] = {}
+  let existingProfiles: CodexProfile[] = []
+  let existingActiveProfileId: string | null = null
   try {
-    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { externalAgents?: AgentSettings['externalAgents']; encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>> }
+    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { externalAgents?: AgentSettings['externalAgents']; encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>>; codexProfiles?: CodexProfile[]; activeCodexProfileId?: string | null }
     existingAgentEntries = existing.externalAgents ?? {}
     existingAgentKeys = existing.encryptedAgentKeys ?? {}
+    existingProfiles = Array.isArray(existing.codexProfiles) ? existing.codexProfiles : []
+    existingActiveProfileId = typeof existing.activeCodexProfileId === 'string' ? existing.activeCodexProfileId : null
     if (existing.encryptedKey && existing.externalAgentProvider && !existingAgentKeys[existing.externalAgentProvider]) {
       existingAgentKeys[existing.externalAgentProvider] = existing.encryptedKey
     }
@@ -4116,7 +4127,7 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('原配置当前无法读取，已保留原文件；请重试保存', { cause: error })
   }
   const agentEntries: NonNullable<AgentSettings['externalAgents']> = {}
-  const encryptedAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
+  const encryptedAgentKeys: Record<string, string> = { ...(existingAgentKeys as Record<string, string>) }
   for (const kind of kinds) {
     const entry = normalized.externalAgents?.[kind]
     if (!entry) continue
@@ -4141,7 +4152,61 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
     if (!entry.clearApiKey && entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
     else if (!entry.clearApiKey && existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
   }
-  const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries }
+  // Persist custom API connection profiles (multi-slot). Each profile keeps its own
+  // encrypted key under `codex:<id>`; the active profile also mirrors into `codex`.
+  const profileEntries: CodexProfile[] = []
+  let activeId: string | null = typeof normalized.activeCodexProfileId === 'string' ? normalized.activeCodexProfileId : null
+  if (Array.isArray(normalized.codexProfiles)) {
+    const liveProfileIds = new Set<string>()
+    for (const rawProfile of normalized.codexProfiles as Array<CodexProfileInput | undefined>) {
+      if (!rawProfile || typeof rawProfile.id !== 'string') continue
+      const id = rawProfile.id
+      liveProfileIds.add(id)
+      const profile: CodexProfile = {
+        id,
+        name: typeof rawProfile.name === 'string' ? rawProfile.name.slice(0, 256) : '未命名连接',
+        mode: rawProfile.mode === 'local' ? 'local' : 'hosted',
+        baseUrl: typeof rawProfile.baseUrl === 'string' ? rawProfile.baseUrl.trim().slice(0, 4096) : '',
+        model: typeof rawProfile.model === 'string' ? rawProfile.model.trim().slice(0, 512) : '',
+        reasoningEffortOptions: normalizeReasoningEffortOptions(rawProfile.reasoningEffortOptions),
+        modelContextWindows: normalizeModelContextWindows(rawProfile.modelContextWindows),
+        modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(rawProfile.modelAutoCompactTokenLimits),
+        reasoningEffort: rawProfile.reasoningEffort
+      }
+      if (profile.mode === 'hosted' && profile.baseUrl && profile.model) {
+        validateCodexAutoCompactTokenLimit(profile.model, { baseUrl: profile.baseUrl, contextWindow: profile.modelContextWindows?.[profile.model] }, profile.modelAutoCompactTokenLimits?.[profile.model])
+      }
+      if (rawProfile.apiKey) {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
+        encryptedAgentKeys[`codex:${id}`] = safeStorage.encryptString(rawProfile.apiKey).toString('base64')
+      }
+      profileEntries.push(profile)
+    }
+    // Drop keys for profiles that no longer exist.
+    for (const key of Object.keys(encryptedAgentKeys)) {
+      if (key.startsWith('codex:') && !liveProfileIds.has(key.slice('codex:'.length))) delete encryptedAgentKeys[key]
+    }
+    // Keep `codex` (the active mirror) aligned with the active profile, and heal a
+    // legacy profile that only ever had the shared `codex` key.
+    if (activeId && liveProfileIds.has(activeId)) {
+      const activeKey = encryptedAgentKeys[`codex:${activeId}`] ?? (activeId === LEGACY_CODEX_PROFILE_ID ? encryptedAgentKeys.codex : undefined)
+      if (activeKey) {
+        encryptedAgentKeys[`codex:${activeId}`] = activeKey
+        encryptedAgentKeys.codex = activeKey
+      } else {
+        delete encryptedAgentKeys.codex
+      }
+    } else {
+      delete encryptedAgentKeys.codex
+    }
+  }
+  let storedProfiles: CodexProfile[] = profileEntries
+  let storedActiveId: string | null = activeId ?? null
+  if (!Array.isArray(normalized.codexProfiles)) {
+    storedProfiles = existingProfiles
+    storedActiveId = existingActiveProfileId
+  }
+  const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries, codexProfiles: storedProfiles, activeCodexProfileId: storedActiveId }
   delete stored.encryptedAgentKeys
   delete stored.encryptedKey
   if (Object.keys(encryptedAgentKeys).length) stored.encryptedAgentKeys = encryptedAgentKeys
@@ -4583,6 +4648,57 @@ async function readSettings(strict = false): Promise<AgentSettings> {
         hasStoredKey: Boolean(encrypted)
       }
     }
+    // Build the saved custom API profiles (multi-slot). Each profile keeps its own
+    // encrypted key under `codex:<id>`; the active one mirrors into `externalAgents.codex`.
+    const storedProfileKeys = (stored.encryptedAgentKeys ?? {}) as Record<string, string>
+    // A missing key means "never migrated"; an empty array means the user really has
+    // no connections left. Without that distinction a deleted last profile would come
+    // back on the next read.
+    const hasPersistedProfileList = Array.isArray(stored.codexProfiles)
+    const rawProfiles = hasPersistedProfileList ? stored.codexProfiles as unknown as Array<Record<string, unknown>> : []
+    const codexProfiles: CodexProfileSummary[] = rawProfiles
+      .filter((p): p is Record<string, unknown> => Boolean(p) && typeof p === 'object')
+      .map((p) => ({
+        id: typeof p.id === 'string' ? p.id : randomUUID(),
+        name: typeof p.name === 'string' ? p.name.slice(0, 256) : '未命名连接',
+        mode: p.mode === 'local' ? 'local' : 'hosted',
+        baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl.slice(0, 4096) : '',
+        model: typeof p.model === 'string' ? p.model.slice(0, 512) : '',
+        reasoningEffortOptions: normalizeReasoningEffortOptions(p.reasoningEffortOptions),
+        modelContextWindows: normalizeModelContextWindows(p.modelContextWindows),
+        modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(p.modelAutoCompactTokenLimits),
+        hasStoredKey: false
+      }))
+    let activeCodexProfileId: string | null = typeof stored.activeCodexProfileId === 'string' ? stored.activeCodexProfileId : null
+    // Legacy migration: this settings file has never carried a profile list, but a
+    // codex connection exists -> seed one. The id is stable so repeated reads keep
+    // pointing at the same profile before the first write persists it.
+    if (!hasPersistedProfileList && codexProfiles.length === 0 && externalAgents.codex) {
+      const legacyId = LEGACY_CODEX_PROFILE_ID
+      codexProfiles.push({
+        id: legacyId,
+        name: '默认连接',
+        mode: externalAgents.codex.mode === 'local' ? 'local' : 'hosted',
+        baseUrl: externalAgents.codex.baseUrl ?? '',
+        model: externalAgents.codex.model ?? '',
+        reasoningEffortOptions: externalAgents.codex.reasoningEffortOptions,
+        modelContextWindows: externalAgents.codex.modelContextWindows,
+        modelAutoCompactTokenLimits: externalAgents.codex.modelAutoCompactTokenLimits,
+        hasStoredKey: false
+      })
+      if (storedProfileKeys.codex) storedProfileKeys[`codex:${legacyId}`] = storedProfileKeys.codex
+      activeCodexProfileId = legacyId
+    }
+    if (codexProfiles.length > 0) {
+      for (const p of codexProfiles) {
+        p.hasStoredKey = Boolean(storedProfileKeys[`codex:${p.id}`] ?? (p.id === activeCodexProfileId ? storedProfileKeys.codex : undefined))
+      }
+      if (!activeCodexProfileId || !codexProfiles.some((p) => p.id === activeCodexProfileId)) {
+        activeCodexProfileId = codexProfiles[0].id
+      }
+    } else {
+      activeCodexProfileId = null
+    }
     // Keep the former shared setting usable after the per-Agent update.
     if (!externalAgents.codex && (stored.codexExecutable || stored.externalAgentProvider === 'codex')) {
       externalAgents.codex = {executable: stored.codexExecutable, mode: 'hosted', baseUrl: stored.baseUrl, model: stored.model, reasoningEffort: storedReasoning as ExternalAgentConfiguration['reasoningEffort'], apiKey: stored.externalAgentProvider === 'codex' ? legacyApiKey : '', hasStoredKey: stored.externalAgentProvider === 'codex' && Boolean(stored.encryptedKey)}
@@ -4590,6 +4706,8 @@ async function readSettings(strict = false): Promise<AgentSettings> {
     settings = {
       externalAgents,
       allowLongerContext: stored.allowLongerContext === true,
+      codexProfiles,
+      activeCodexProfileId,
       codexApprovalMode: normalizeAgentApprovalMode(stored.codexApprovalMode),
       codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
@@ -4794,6 +4912,55 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
 
 async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
   return (await discoverAvailableModels(baseUrl, apiKey, errorMessage)).models
+}
+
+/**
+ * Probe a custom API connection without touching the saved configuration.
+ * Unlike {@link fetchAvailableModels}, failures keep the HTTP status and a machine
+ * readable kind: the user is debugging an endpoint, so "连接失败" alone is useless.
+ */
+async function probeCodexConnection(baseUrl: string, apiKey: string): Promise<CodexConnectionTestResult> {
+  const endpoints = [`${baseUrl}/models`, `${baseUrl}/model`]
+  const started = Date.now()
+  const elapsed = (): number => Date.now() - started
+  for (const [index, endpoint] of endpoints.entries()) {
+    let response: Response
+    try {
+      response = await fetch(endpoint, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        signal: AbortSignal.timeout(20_000)
+      })
+    } catch (error) {
+      const name = (error as Error)?.name
+      const timedOut = name === 'TimeoutError' || name === 'AbortError'
+      const cause = (error as Error & { cause?: { code?: string } })?.cause
+      const code = typeof cause?.code === 'string' ? cause.code : ''
+      return {
+        ok: false, baseUrl, models: [], latencyMs: elapsed(),
+        failureKind: timedOut ? 'timeout' : 'network',
+        failureCode: code || undefined,
+        error: timedOut ? '连接超时' : '无法连接该地址'
+      }
+    }
+    // Some gateways expose /model instead of /models; a 404 there is not a failure yet.
+    if (response.status === 404 && index < endpoints.length - 1) continue
+    if (!response.ok) {
+      const status = response.status
+      const kind = status === 401 ? 'unauthorized'
+        : status === 403 ? 'forbidden'
+          : status === 404 ? 'not-found'
+            : status === 429 ? 'rate-limit'
+              : status >= 500 ? 'server' : 'client'
+      return { ok: false, baseUrl, models: [], latencyMs: elapsed(), httpStatus: status, failureKind: kind, error: `HTTP ${status}` }
+    }
+    let payload: unknown
+    try { payload = await response.json() as unknown } catch {
+      return { ok: false, baseUrl, models: [], latencyMs: elapsed(), httpStatus: response.status, failureKind: 'invalid-payload', error: '返回内容不是 JSON' }
+    }
+    const models = parseModelPayload(payload).map((model) => model.id)
+    return { ok: true, baseUrl, models, latencyMs: elapsed(), httpStatus: response.status }
+  }
+  return { ok: false, baseUrl, models: [], latencyMs: elapsed(), httpStatus: 404, failureKind: 'not-found', error: 'HTTP 404' }
 }
 
 function normalizeCodingPath(value: string, _allowBuildScriptChanges = true, _allowWrapperConfiguration = true, project: ProjectInfo = requireProject()): string {
@@ -8554,6 +8721,126 @@ function registerIpc(): void {
   })
   diagnosticHandle('external-agents:scanLocal', () => scanConfiguredCodex())
   diagnosticHandle('external-agents:configure', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => configureExternalAgentConnection(kind, configuration))
+  function codexProfileToConfiguration(profile: CodexProfile): ExternalAgentConfiguration {
+    return {
+      mode: profile.mode === 'local' ? 'local' : 'hosted',
+      baseUrl: profile.baseUrl,
+      model: profile.model,
+      reasoningEffortOptions: profile.reasoningEffortOptions,
+      modelContextWindows: profile.modelContextWindows,
+      modelAutoCompactTokenLimits: profile.modelAutoCompactTokenLimits,
+      reasoningEffort: profile.reasoningEffort
+    }
+  }
+
+  async function applyCodexConfiguration(configuration: ExternalAgentConfiguration): Promise<void> {
+    // Route profile switches through the same writer as a manual save, so both share
+    // the base-URL normalisation, key-reuse rule and `codingBackend` update.
+    await configureExternalAgentConnection('codex', configuration)
+  }
+
+  async function readStoredProfileApiKey(id: string): Promise<string> {
+    try {
+      const stored = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { encryptedAgentKeys?: Record<string, string>; activeCodexProfileId?: string | null }
+      const keys = stored.encryptedAgentKeys ?? {}
+      // The shared `codex` key may still back the active profile right after the
+      // single-slot migration, before its first per-profile write.
+      const legacyMirror = id === LEGACY_CODEX_PROFILE_ID || stored.activeCodexProfileId === id ? keys.codex : undefined
+      const enc = keys[`codex:${id}`] ?? legacyMirror
+      if (enc && safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(Buffer.from(enc, 'base64'))
+    } catch {
+      // Ignore an unreadable settings file.
+    }
+    return ''
+  }
+
+  async function readCodexProfiles(): Promise<CodexProfileSummary[]> {
+    // readSettings() already stamps `hasStoredKey` on every profile; the shared
+    // AgentSettings type keeps the plain shape because saves never send the flag.
+    return ((await readSettings()).codexProfiles ?? []) as CodexProfileSummary[]
+  }
+
+  diagnosticHandle('external-agents:listProfiles', async () => readCodexProfiles())
+
+  diagnosticHandle('external-agents:saveProfile', async (_event, input: CodexProfileInput) => {
+    if (!input || typeof input.id !== 'string' || !input.id) throw new Error('连接档案缺少 id')
+    const settings = await readSettings()
+    const profiles = (settings.codexProfiles ?? []).slice()
+    const idx = profiles.findIndex((p) => p.id === input.id)
+    const base: CodexProfile = {
+      id: input.id,
+      name: (input.name ?? '').trim().slice(0, 256) || '未命名连接',
+      mode: input.mode === 'local' ? 'local' : 'hosted',
+      baseUrl: (input.baseUrl ?? '').trim().slice(0, 4096),
+      model: (input.model ?? '').trim().slice(0, 512),
+      reasoningEffortOptions: normalizeReasoningEffortOptions(input.reasoningEffortOptions),
+      modelContextWindows: normalizeModelContextWindows(input.modelContextWindows),
+      modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(input.modelAutoCompactTokenLimits),
+      reasoningEffort: input.reasoningEffort
+    }
+    if (base.mode === 'hosted' && base.baseUrl && base.model) {
+      validateCodexAutoCompactTokenLimit(base.model, { baseUrl: base.baseUrl, contextWindow: base.modelContextWindows?.[base.model] }, base.modelAutoCompactTokenLimits?.[base.model])
+    }
+    if (idx >= 0) profiles[idx] = base; else profiles.push(base)
+    let activeId: string | null = settings.activeCodexProfileId ?? null
+    if (activeId === input.id || (activeId == null && idx < 0)) activeId = input.id
+    const apiKey = (input.apiKey ?? '').trim()
+    // Keys are only ever persisted encrypted, so hand the plaintext to the save path
+    // once; it writes `encryptedAgentKeys["codex:<id>"]` and drops the field itself.
+    const profilesForSave = apiKey ? profiles.map((profile) => (profile.id === input.id ? { ...profile, apiKey } : profile)) : profiles
+    const fresh = await readSettings()
+    await saveAgentSettings({ ...fresh, codexProfiles: profilesForSave, activeCodexProfileId: activeId })
+    // Keep the invariant "the active profile is the effective connection". Without this a
+    // newly added profile would claim to be active while Codex keeps running the old one.
+    if (activeId === input.id && base.mode === 'hosted' && apiKey) {
+      await applyCodexConfiguration({ ...codexProfileToConfiguration(base), apiKey })
+    }
+    return readCodexProfiles()
+  })
+
+  diagnosticHandle('external-agents:deleteProfile', async (_event, id: string) => {
+    const settings = await readSettings()
+    const profiles = (settings.codexProfiles ?? []).filter((p) => p.id !== id)
+    let activeId = settings.activeCodexProfileId ?? null
+    if (activeId === id) activeId = profiles[0]?.id ?? null
+    const nextActive = profiles.find((p) => p.id === activeId)
+    const apiKey = nextActive ? await readStoredProfileApiKey(nextActive.id) : ''
+    if (nextActive && nextActive.mode === 'hosted' && !apiKey) throw new Error('剩余连接缺少 API Key，无法切换为当前连接')
+    // Write the new list and the new active id in one go, so the mirrored `codex`
+    // credential can never linger on the deleted connection.
+    await saveAgentSettings({ ...settings, codexProfiles: profiles, activeCodexProfileId: activeId })
+    if (nextActive && activeId !== settings.activeCodexProfileId) {
+      await applyCodexConfiguration({ ...codexProfileToConfiguration(nextActive), apiKey })
+    } else if (!nextActive) {
+      const fresh = await readSettings()
+      await saveAgentSettings({ ...fresh, externalAgents: { ...fresh.externalAgents, codex: { mode: 'local', apiKey: '' } } })
+    }
+    return readCodexProfiles()
+  })
+
+  diagnosticHandle('external-agents:setActiveProfile', async (_event, id: string) => {
+    const settings = await readSettings()
+    const profile = (settings.codexProfiles ?? []).find((p) => p.id === id)
+    if (!profile) throw new Error('连接档案不存在')
+    const apiKey = await readStoredProfileApiKey(id)
+    if (profile.mode === 'hosted' && !apiKey) throw new Error('该连接缺少 API Key，请先在编辑中保存密钥')
+    // Mark the target active first so the mirrored key written below already belongs
+    // to it, then push its connection fields into the shared mirror.
+    if (settings.activeCodexProfileId !== id) await saveAgentSettings({ ...settings, activeCodexProfileId: id })
+    await applyCodexConfiguration({ ...codexProfileToConfiguration(profile), apiKey })
+    return readCodexProfiles()
+  })
+
+  diagnosticHandle('external-agents:testConnection', async (_event, input: { baseUrl: string; apiKey?: string; id?: string }) => {
+    const baseUrl = normalizeApiBaseUrl(input.baseUrl ?? '')
+    if (!baseUrl) throw new Error('请填写 Base URL')
+    let apiKey = (input.apiKey ?? '').trim()
+    if (!apiKey && input.id) apiKey = await readStoredProfileApiKey(input.id)
+    if (!apiKey) throw new Error('请填写 API Key 后再测试连接')
+    return probeCodexConnection(baseUrl, apiKey)
+  })
+
+
   diagnosticHandle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
     if (kind !== 'codex') throw new Error('不支持的外部代理')
     const project = aiProjectContext.getStore() ?? currentProject

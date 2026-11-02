@@ -853,6 +853,59 @@ export interface ExternalAgentConfiguration {
   hasStoredKey?: boolean
 }
 
+/**
+ * A saved custom API connection ("自定义 API" / Codex hosted mode).
+ * Multiple profiles can coexist; the active one is mirrored into
+ * `AgentSettings.externalAgents.codex` so existing consumers keep working.
+ */
+export interface CodexProfile {
+  id: string
+  name: string
+  mode: 'hosted' | 'local'
+  baseUrl: string
+  model: string
+  reasoningEffortOptions?: Record<string, ReasoningEffort[]>
+  modelContextWindows?: Record<string, number>
+  modelAutoCompactTokenLimits?: Record<string, number>
+  reasoningEffort?: ReasoningEffort
+}
+
+/** A profile as returned to the renderer: never includes the plaintext key. */
+export interface CodexProfileSummary extends CodexProfile {
+  hasStoredKey: boolean
+}
+
+/** A profile submitted from the renderer; `apiKey` is optional (blank = keep stored key). */
+export interface CodexProfileInput extends CodexProfile {
+  apiKey?: string
+}
+
+/** Why a connection probe failed. Kept separate from `error` because the IPC layer
+ *  rewrites `error` into a generic sentence for end users. */
+export type CodexConnectionFailureKind =
+  | 'network'
+  | 'timeout'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'not-found'
+  | 'rate-limit'
+  | 'server'
+  | 'client'
+  | 'invalid-payload'
+
+export interface CodexConnectionTestResult {
+  ok: boolean
+  baseUrl: string
+  models: string[]
+  latencyMs: number
+  /** HTTP status of the answer that ended the probe, when the host answered at all. */
+  httpStatus?: number
+  failureKind?: CodexConnectionFailureKind
+  /** Underlying network error code (ECONNREFUSED, ENOTFOUND, CERT_HAS_EXPIRED, ...). */
+  failureCode?: string
+  error?: string
+}
+
 export interface BeginnerAiPreferences {
   model: string
   account?: string
@@ -880,6 +933,10 @@ export interface AgentSettings {
   /** Historical storage key; applies to both workbench engines, never inspiration or external terminals. */
   codexApprovalMode?: import('./agentApproval').AgentApprovalMode
   externalAgents?: Partial<Record<ExternalAgentKind, ExternalAgentConfiguration>>
+  /** Saved custom API connection profiles (multi-slot). */
+  codexProfiles?: CodexProfile[]
+  /** Which profile is currently mirrored into `externalAgents.codex`. */
+  activeCodexProfileId?: string | null
   /** @deprecated Legacy storage compatibility; builds use the managed automatic policy. */
   allowBuildScriptChanges: boolean
   /** @deprecated Legacy storage compatibility; not an effective runtime preference. */
@@ -1710,6 +1767,11 @@ export interface ModMindApi {
     install: (kind: ExternalAgentKind) => Promise<ExternalAgentStatus>
     openDocs: (kind: ExternalAgentKind) => Promise<void>
     launch: (kind: ExternalAgentKind) => Promise<void>
+    listProfiles: () => Promise<CodexProfileSummary[]>
+    saveProfile: (profile: CodexProfileInput) => Promise<CodexProfileSummary[]>
+    deleteProfile: (id: string) => Promise<CodexProfileSummary[]>
+    setActiveProfile: (id: string) => Promise<CodexProfileSummary[]>
+    testConnection: (input: { baseUrl: string; apiKey?: string; id?: string }) => Promise<CodexConnectionTestResult>
   }
   blockbench: {
     show: (bounds: BlockbenchBounds) => Promise<void>
