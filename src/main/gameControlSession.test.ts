@@ -136,6 +136,8 @@ describe.skipIf(!compilerAvailable)('game control real JVM transport and transfo
     expect((await session.status()).keysDown).toEqual([])
   })
 
+  // JVM startup plus 128 sequential transport calls can exceed 15s on Intel CI.
+  // This checks eviction semantics, not throughput; retain every real action.
   it('does not repeat an action after its cached result is evicted', async () => {
     const { session } = await start(), requestId = randomUUID()
     const action = { type: 'key' as const, code: 17, state: 'down' as const, leaseMs: 100 }
@@ -144,7 +146,7 @@ describe.skipIf(!compilerAvailable)('game control real JVM transport and transfo
     const sequence = (await session.status()).actionSequence
     await expect(session.input(action, { requestId })).rejects.toThrow('expired')
     expect((await session.status()).actionSequence).toBe(sequence)
-  })
+  }, 30_000)
 
   it('rejects unauthenticated peers and endpoint PID substitution', async () => {
     const { session } = await start()
