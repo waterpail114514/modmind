@@ -3,7 +3,7 @@ import { MAX_AI_ATTACHMENTS, MAX_INLINE_ATTACHMENT_BYTES, type AiAttachmentSourc
 import { diagnosticErrorPayload } from '../shared/diagnostics'
 import { presentClientResult } from '../shared/clientResult'
 import type { AiModelSelection } from '../shared/aiSelection'
-import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, AppDialogRequest, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
+import type { AgentSettings, AiCreateCodeOptions, AiExecutionProfile, AiOutputEvent, AppDialogRequest, BeginnerAiPreferences, BeginnerCodexProgress, ConversationCreateInput, ConversationDocument, ConversationForkInput, ConversationSummary, DetectedJavaHome, DeviceConnectionState, DetachedWindowTarget, DiagnosticPageSnapshot, ExistingProjectAdoptInput, ExistingProjectInspectionProgress, ExternalAgentConfiguration, ExternalAgentKind, CodexProfileInput, JavaProbeOutcome, McpBridgeState, ModMindApi, ModpackModuleSide, PipelineEvent, ProjectCreateInput, ProjectInfo, ProjectMigrationInput, ProjectRenameInput, RemoteConnectionState, SidebarViewId, AiSurface, SnapshotStorageInfo } from '../shared/types'
 import type { ImageGenerationRequest, ImageProcessingOptions, ImageStudioSettingsInput } from '../shared/imageStudio'
 import type { BlockbenchAction, BlockbenchAssetMetadata, BlockbenchAssetSaveRequest, BlockbenchBounds, BlockbenchCaptureRequest } from '../shared/blockbench'
 import type { AssetIntentProgram, AssetRefinementProgram } from '../shared/assetIntent'
@@ -576,7 +576,12 @@ const api: ModMindApi = {
     history: (kind: ExternalAgentKind) => invoke('external-agents:history', kind),
     install: (kind: ExternalAgentKind) => invoke('external-agents:install', kind),
     openDocs: (kind: ExternalAgentKind) => invoke('external-agents:openDocs', kind),
-    launch: (kind: ExternalAgentKind) => invoke('external-agents:launch', kind)
+    launch: (kind: ExternalAgentKind) => invoke('external-agents:launch', kind),
+    listProfiles: () => invoke('external-agents:listProfiles'),
+    saveProfile: (profile: CodexProfileInput) => invoke('external-agents:saveProfile', profile),
+    deleteProfile: (id: string) => invoke('external-agents:deleteProfile', id),
+    setActiveProfile: (id: string) => invoke('external-agents:setActiveProfile', id),
+    testConnection: (input: { baseUrl: string; apiKey?: string; id?: string }) => invoke('external-agents:testConnection', input)
   },
   blockbench: {
     show: (bounds: BlockbenchBounds) => invoke('blockbench:show', bounds),
