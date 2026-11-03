@@ -4676,6 +4676,43 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
   return { kind, detail: '连接已保存到本地设置', settings: publicAgentSettings(saved) }
 }
 
+/**
+ * Persist a context window the endpoint advertises so budget resolution and the settings UI
+ * see the real capacity instead of a family estimate. A window the user typed is never replaced.
+ * Neither is a manual auto-compaction threshold: the runtime rejects a threshold above 90% of the
+ * window on every run, so an advertised window that cannot contain the saved threshold is refused
+ * rather than written. Without this guard the scan itself would fail and the model list would
+ * come back empty for a configuration that previously worked.
+ */
+async function adoptDeclaredContextWindow(
+  models: AiModelInfo[],
+  model: string | undefined,
+  saved: Record<string, number> | undefined,
+  compactLimits: Record<string, number> | undefined
+): Promise<number | undefined> {
+  const id = (model ?? '').trim()
+  if (!id) return undefined
+  const declared = models.find(entry => entry.id === id)?.declaredContextWindow
+  if (!declared) return undefined
+  const existing = saved?.[id]
+  if (existing !== undefined) return existing
+  const manualCompactLimit = compactLimits?.[id]
+  const largestAcceptedCompactLimit = Math.floor(declared * 0.9)
+  if (manualCompactLimit !== undefined && manualCompactLimit > largestAcceptedCompactLimit) return undefined
+  await saveAgentSettings(current => {
+    const codex = current.externalAgents?.codex
+    if (!codex || (codex.model ?? '').trim() !== id || codex.modelContextWindows?.[id] !== undefined) return current
+    return {
+      ...current,
+      externalAgents: {
+        ...current.externalAgents,
+        codex: { ...codex, modelContextWindows: { ...codex.modelContextWindows, [id]: declared } }
+      }
+    }
+  })
+  return declared
+}
+
 async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {
   const configured = (await readSettings()).externalAgents?.codex ?? {}
   const status = await detectInstalledCodex(configured)
@@ -4691,7 +4728,8 @@ async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCod
     if (configured.mode === 'hosted') {
       if (!configured.apiKey?.trim()) throw new Error('无法读取已保存的 API Key，请重新填写并保存')
       const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表')
-      return { ...connection, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
+      const declaredWindow = await adoptDeclaredContextWindow(discovered.models, configured.model, configured.modelContextWindows, configured.modelAutoCompactTokenLimits)
+      return { ...connection, contextWindow: connection.contextWindow ?? declaredWindow, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
     }
     const models = await listAvailableAgentModels('codex', configured)
     return { ...connection, status, models: models.map(model => model.id) }

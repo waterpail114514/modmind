@@ -12,11 +12,11 @@ for (const provider of Object.values(providers)) for (const [id, limit] of Objec
   byModel.set(id, entries)
 }
 
-export interface ModelBudgetOptions { baseUrl?: string; contextWindow?: number; allowLongerContext?: boolean }
+export interface ModelBudgetOptions { baseUrl?: string; contextWindow?: number; declaredContextWindow?: number; declaredMaxOutputTokens?: number; allowLongerContext?: boolean }
 export interface ModelContextBudget {
   contextWindow: number
   autoCompactTokenLimit: number
-  source: 'override' | 'provider' | 'registry' | 'inferred' | 'fallback'
+  source: 'override' | 'declared' | 'provider' | 'registry' | 'inferred' | 'fallback'
   /** Present only for a same-family estimate, never an advertised capacity. */
   inferredFrom?: string
   inferredProvider?: string
@@ -83,10 +83,15 @@ function limitsForProvider(model: string, baseUrl?: string): Limit[] {
 
 export function resolveModelContextBudget(model: string, options: ModelBudgetOptions = {}): ModelContextBudget {
   if (options.contextWindow !== undefined && !validModelContext(options.contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
-  const providerLimits = limitsForProvider(model, options.baseUrl)
-  let limits = providerLimits.length ? providerLimits : byModel.get(model) ?? []
+  // A capacity the endpoint advertises outranks every local guess, but never a value the user typed.
+  const declared = options.contextWindow === undefined && validModelContext(options.declaredContextWindow) ? options.declaredContextWindow : undefined
+  const declaredOutput = declared !== undefined && validModelContext(options.declaredMaxOutputTokens) ? options.declaredMaxOutputTokens : undefined
+  // Local tables describe other deployments of the same name; mixing them into an advertised
+  // window would reserve output space the endpoint never promised.
+  const providerLimits = declared === undefined ? limitsForProvider(model, options.baseUrl) : []
+  let limits = declared === undefined ? (providerLimits.length ? providerLimits : byModel.get(model) ?? []) : []
   // Resolve exact provider-qualified aliases before attempting family inference.
-  if (!limits.length && model.includes('/')) {
+  if (!limits.length && declared === undefined && model.includes('/')) {
     const slash = model.indexOf('/')
     const providerId = model.slice(0, slash)
     const provider = Object.hasOwn(providers, providerId) ? providers[providerId] : undefined
@@ -95,19 +100,20 @@ export function resolveModelContextBudget(model: string, options: ModelBudgetOpt
   }
   // Prefer explicit total-context metadata; legacy input-only records fill gaps.
   if (limits.some(limit => limit[3] === 0)) limits = limits.filter(limit => limit[3] === 0)
-  const inferred = !limits.length && options.contextWindow === undefined ? inferFamilyLimit(model, options.baseUrl) : undefined
+  const inferred = !limits.length && options.contextWindow === undefined && declared === undefined ? inferFamilyLimit(model, options.baseUrl) : undefined
   if (inferred) limits = [inferred.limit]
-  const contextWindow = options.contextWindow ?? (limits.length ? Math.min(...limits.map(limit => limit[0])) : UNKNOWN_MODEL_CONTEXT)
+  const followsAdvertisedWindow = options.contextWindow !== undefined || declared !== undefined
+  const contextWindow = options.contextWindow ?? declared ?? (limits.length ? Math.min(...limits.map(limit => limit[0])) : UNKNOWN_MODEL_CONTEXT)
   // Reserve the documented maximum output (up to half the window), plus 5% safety
   // below the runtime's effective window. Separate input ceilings are also respected.
-  const output = limits.length ? Math.max(...limits.map(limit => limit[2] ?? 8192)) : 8192
+  const output = limits.length ? Math.max(...limits.map(limit => limit[2] ?? 8192)) : declaredOutput ?? 8192
   const reserve = Math.min(output, Math.floor(contextWindow / 2))
-  const input = options.contextWindow !== undefined ? contextWindow : Math.min(contextWindow, ...limits.map(limit => limit[1] ?? limit[0]))
+  const input = followsAdvertisedWindow ? contextWindow : Math.min(contextWindow, ...limits.map(limit => limit[1] ?? limit[0]))
   const calculatedLimit = Math.max(1, Math.floor(Math.min(contextWindow * 0.9, input * 0.9, contextWindow - reserve) * 0.95))
   const autoCompactTokenLimit = options.allowLongerContext ? calculatedLimit : Math.min(calculatedLimit, STANDARD_AUTO_COMPACT_LIMIT)
   return {
     contextWindow, autoCompactTokenLimit,
-    source: options.contextWindow !== undefined ? 'override' : providerLimits.length ? 'provider' : inferred ? 'inferred' : limits.length ? 'registry' : 'fallback',
+    source: options.contextWindow !== undefined ? 'override' : declared !== undefined ? 'declared' : providerLimits.length ? 'provider' : inferred ? 'inferred' : limits.length ? 'registry' : 'fallback',
     ...(inferred ? { inferredFrom: inferred.model, inferredProvider: inferred.provider } : {})
   }
 }

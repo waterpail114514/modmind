@@ -364,6 +364,24 @@ describe('device integration protocol', () => {
     ])
   })
 
+  it('reads advertised context and output limits from provider catalogs', () => {
+    expect(parseModelPayload({ data: [
+      { id: 'vendor/openrouter-style', context_length: 200000, top_provider: { max_completion_tokens: 32000 } },
+      { id: 'vendor/vllm-style', max_model_len: 32768 },
+      { id: 'vendor/window-style', context_window: 131072, max_output_tokens: 8192 },
+      { id: 'vendor/input-only', max_input_tokens: 65536 },
+      { id: 'vendor/silent' },
+      { id: 'vendor/nonsense', context_length: 0, context_window: 1.5 }
+    ] })).toEqual([
+      { id: 'vendor/input-only', declaredContextWindow: 65536 },
+      { id: 'vendor/nonsense' },
+      { id: 'vendor/openrouter-style', declaredContextWindow: 200000, declaredMaxOutputTokens: 32000 },
+      { id: 'vendor/silent' },
+      { id: 'vendor/vllm-style', declaredContextWindow: 32768 },
+      { id: 'vendor/window-style', declaredContextWindow: 131072, declaredMaxOutputTokens: 8192 }
+    ])
+  })
+
   it('uses API error messages and accepts singular or standard model payloads', async () => {
     const fetcher = vi.fn(async () => jsonResponse({ error: '你的接入 Key 尚未签发' }, 500)) as unknown as typeof fetch
     await expect(pollDeviceCode('https://site.example.com', 'K7M3QX', new AbortController().signal, fetcher))

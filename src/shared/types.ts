@@ -956,6 +956,10 @@ export interface AiModelInfo {
   providerLabel?: string
   ownedBy?: string
   reasoning?: ModelReasoningCapabilities
+  /** Context window the provider advertises in its catalog. Absent means the provider states none. */
+  declaredContextWindow?: number
+  /** Maximum output tokens the provider advertises in its catalog. */
+  declaredMaxOutputTokens?: number
 }
 
 export interface ModelReasoningCapabilities {
