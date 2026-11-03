@@ -956,6 +956,10 @@ export interface AiModelInfo {
   providerLabel?: string
   ownedBy?: string
   reasoning?: ModelReasoningCapabilities
+  /** Explicit provider statement about function calling. Absent means the provider did not say. */
+  toolCalling?: boolean
+  /** Embedding, rerank, speech or moderation endpoints listed in a model catalog; not usable as an agent. */
+  nonChat?: boolean
 }
 
 export interface ModelReasoningCapabilities {

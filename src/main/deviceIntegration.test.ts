@@ -4,6 +4,7 @@ import * as network from './networkRequest'
 import {
   normalizeSiteUrl,
   openAiV1BaseUrl,
+  orderModelsForAgent,
   parseDeviceDeepLink,
   parseModelPayload,
   checkAppVersion,
@@ -362,6 +363,42 @@ describe('device integration protocol', () => {
     expect(parseModelPayload({ data: ['x'.repeat(257), 'invalid\nmodel', { id: 'gpt-6.1-sol', recommended: false }, { id: 'future-model', name: 'x'.repeat(300), description: 'y'.repeat(1200) }] })).toEqual([
       { id: 'future-model', name: 'x'.repeat(256), description: 'y'.repeat(1000) }, { id: 'gpt-6.1-sol', recommended: false }
     ])
+  })
+
+  it('reads tool calling and endpoint kind from provider capability fields', () => {
+    expect(parseModelPayload({ data: [
+      { id: 'vendor/agent-model', supported_parameters: ['tools', 'temperature'] },
+      { id: 'vendor/plain-model', supported_parameters: ['temperature'] },
+      { id: 'vendor/legacy-model' },
+      { id: 'vendor/nested-capability', capabilities: { tools: true } }
+    ] })).toEqual([
+      { id: 'vendor/agent-model', toolCalling: true },
+      { id: 'vendor/legacy-model' },
+      { id: 'vendor/nested-capability', toolCalling: true },
+      { id: 'vendor/plain-model', toolCalling: false }
+    ])
+  })
+
+  it('marks embedding and speech endpoints an agent cannot drive', () => {
+    expect(parseModelPayload({ data: ['baai/bge-m3', 'text-embedding-3-small', 'vendor/chat', 'vendor/whisper-large-v3'] }))
+      .toEqual([
+        { id: 'baai/bge-m3', nonChat: true },
+        { id: 'text-embedding-3-small', nonChat: true },
+        { id: 'vendor/chat' },
+        { id: 'vendor/whisper-large-v3', nonChat: true }
+      ])
+  })
+
+  it('keeps unusable catalog entries listed but out of the default slot', () => {
+    const models = [
+      { id: 'baai/bge-m3', nonChat: true },
+      { id: 'vendor/agent', toolCalling: true },
+      { id: 'vendor/unknown' },
+      { id: 'vendor/no-tools', toolCalling: false }
+    ]
+    expect(orderModelsForAgent(models).map(model => model.id))
+      .toEqual(['vendor/agent', 'vendor/unknown', 'vendor/no-tools', 'baai/bge-m3'])
+    expect(models.map(model => model.id)).toEqual(['baai/bge-m3', 'vendor/agent', 'vendor/unknown', 'vendor/no-tools'])
   })
 
   it('uses API error messages and accepts singular or standard model payloads', async () => {
