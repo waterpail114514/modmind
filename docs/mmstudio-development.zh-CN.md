@@ -249,6 +249,6 @@ npx vitest run src/shared/studios.test.ts src/main/studioRegistry.test.ts src/ma
 
 至少走通：首次离线安装/创建；表单三种控件、默认值与只读防篡改；两份 profile 和 skills；真实工程识别、接管与元数据回读；MCP 发现、调用、只读和路径越界；停用/卸载后项目恢复；深浅主题与窄窗口。结构与静态检查成功不能写成游戏或其他领域运行成功。
 
-自定义 `.mmstudio` 与功能包共用 `features:release` 和发布器流程；三个内置包被官方发布准备排除。内置模块构建用 `node scripts/prepare-bundled-studios.mjs`，输出 `resources/bundled-studios/` 和 schemaVersion 2 校验索引，随主程序 extraResources 发布；开发启动与主程序构建会自动准备它们。
+自定义 `.mmstudio` 使用功能包的本地构建、导入与安装验证流程。内置模块构建用 `node scripts/prepare-bundled-studios.mjs`，输出 `resources/bundled-studios/` 和 schemaVersion 2 校验索引，随主程序 extraResources 发布；开发启动与主程序构建会自动准备它们。
 
 应用内可使用 [ModMind 开发者工作台](developer-workbench.zh-CN.md) 编辑创建字段与 AI 上下文，通过 AI 或源码设计页面，预览、调试并导出工作台包。第一版暂不提供任意布局拖拽或自定义领域通用运行引擎。更详细的既有协议与验收证据见 [领域工作台协议](studio-protocol.zh-CN.md)，真实多包案例见 [光影工作台](shader-studio-development.zh-CN.md)。

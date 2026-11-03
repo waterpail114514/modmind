@@ -73,7 +73,7 @@ preview-image 回读已打开的当前项目 final 预览画布，返回 PNG 图
 ## 构建与验收
 
 ```powershell
-npm run features:release
+npm run features:build
 npm run typecheck
 npm run build
 npx vitest run feature-plugins/studio-shader/src/main/shaderService.test.ts src/main/shaderStudioMcp.test.ts src/main/studioRegistry.test.ts src/renderer/src/navigationDefinitions.test.ts src/main/appChangelogService.test.ts src/main/featureStoreService.test.ts
