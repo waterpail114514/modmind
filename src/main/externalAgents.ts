@@ -50,6 +50,7 @@ import { diagnosticContext, diagnosticValue } from './diagnosticContext'
 import { describeAiFailureForUser } from '../shared/aiFailure'
 import { aiNoticeDetails, describeAiNotice } from '../shared/aiNotice'
 import { AgentCompactionGuard, ExternalAgentContextStallError } from './agentCompactionGuard'
+import { ExternalAgentContextWindowError, isContextWindowFailure, parseAdvertisedContextLimit } from './agentContextWindow'
 import { AgentOutputLimitRecovery, ExternalAgentOutputLimitError, isOutputLimitFailure, looksLikeCappedReply, outputLimitContinuationPrompt } from './agentOutputLimit'
 import { AgentToolsDisconnectedError, AgentToolsNotReadyError, MCP_PROBE_MARKER, MCP_PROBE_TOOL, agentProbeResultReady, agentReportsMissingTools, agentToolInventorySummary, waitForAgentTools } from './agentToolReadiness'
 import { listProjectDirectory, readProjectTextFile } from './projectTextRead'
@@ -338,7 +339,7 @@ export const EXTERNAL_AGENT_TRANSIENT_RETRY_MAX_DELAY_MS = 60_000
  * be mistaken for status codes: only an explicit status field or a clear
  * "<status> <reason>" pattern counts.
  */
-export type AgentFailureKind = 'rate-limit' | 'server' | 'connection' | 'auth' | 'payment' | 'permission' | 'not-found' | 'invalid-request' | 'unknown'
+export type AgentFailureKind = 'rate-limit' | 'server' | 'connection' | 'auth' | 'payment' | 'permission' | 'not-found' | 'invalid-request' | 'context-window' | 'unknown'
 
 export function classifyAgentStreamFailure(message: string, codexErrorInfo?: unknown): { status: number | null; transient: boolean; reason: string; kind: AgentFailureKind } {
   // Prefer the protocol over localized/provider-specific wording. Unknown
@@ -351,7 +352,20 @@ export function classifyAgentStreamFailure(message: string, codexErrorInfo?: unk
   if (/API_KEY_DISABLED/i.test(message)) {
     return { status: 401, transient: false, kind: 'auth', reason: describeAiFailureForUser(message) }
   }
-  if (type && ['contextWindowExceeded', 'sessionBudgetExceeded', 'usageLimitExceeded', 'cyberPolicy', 'misalignmentPolicyViolation', 'threadRollbackFailed', 'sandboxError', 'activeTurnNotSteerable'].includes(type)) {
+  // An oversized prompt is the one permanent failure the user can fix from
+  // settings, so name it and the capacity the provider mentioned instead of
+  // forwarding raw text. Checked before status parsing: providers report it as a
+  // plain 400, which would otherwise read like a request-format problem.
+  // A quota code also says "too many tokens", so it keeps its own path.
+  const quotaLimited = type === 'rateLimitExceeded' || type === 'usageLimitExceeded' || type === 'sessionBudgetExceeded'
+  if (type === 'contextWindowExceeded' || (!quotaLimited && isContextWindowFailure(message))) {
+    const observed = parseAdvertisedContextLimit(message, codexErrorInfo)
+    return { status: null, transient: false, kind: 'context-window',
+      reason: observed === undefined
+        ? '模型装不下当前上下文，请调小该模型的上下文窗口后重试'
+        : `模型装不下当前上下文：模型上限约 ${observed.toLocaleString('zh-CN')} tokens，请把上下文窗口调整到该值以下` }
+  }
+  if (type && ['sessionBudgetExceeded', 'usageLimitExceeded', 'cyberPolicy', 'misalignmentPolicyViolation', 'threadRollbackFailed', 'sandboxError', 'activeTurnNotSteerable'].includes(type)) {
     return { status: null, transient: false, kind: 'unknown', reason: message }
   }
   if (type === 'unauthorized' || type === 'badRequest') return classifyAgentStreamFailure(type === 'unauthorized' ? '401 Unauthorized' : '400 Bad Request')
@@ -1093,6 +1107,8 @@ async function runCodexAppServerAttempt(options: ExternalAgentRunOptions, execut
     const classification = classifyAgentStreamFailure(terminalFailure, terminalErrorInfo)
     if (classification.transient) throw new ExternalAgentTransientFailureError(classification.reason, classification.status, undefined, { message: terminalFailure, codexErrorInfo: terminalErrorInfo })
     if (classification.kind === 'invalid-request') throw new ExternalAgentCompatibilityFailureError(classification.reason, classification.status, { message: terminalFailure, codexErrorInfo: terminalErrorInfo })
+    // Typed so the host can correct the saved window instead of only reporting it.
+    if (classification.kind === 'context-window') throw new ExternalAgentContextWindowError(options.model, undefined, parseAdvertisedContextLimit(terminalFailure, terminalErrorInfo), terminalFailure)
     throw new Error(terminalFailure)
   }
   if (completion?.status === 'interrupted') {
@@ -4069,6 +4085,7 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
     const classification = classifyAgentStreamFailure(terminalFailureMessage)
     if (classification.transient) throw new ExternalAgentTransientFailureError(classification.reason, classification.status, undefined, new Error(terminalFailureMessage))
     if (classification.kind === 'invalid-request') throw new ExternalAgentCompatibilityFailureError(classification.reason, classification.status, new Error(terminalFailureMessage))
+    if (classification.kind === 'context-window') throw new ExternalAgentContextWindowError(options.model, undefined, parseAdvertisedContextLimit(terminalFailureMessage), terminalFailureMessage)
     throw new Error(classification.status !== null || classification.kind !== 'unknown' ? classification.reason : terminalFailureMessage)
   }
   if (!completionAudit.complete) {
@@ -4079,6 +4096,7 @@ async function runExternalAgentAttempt(options: ExternalAgentRunOptions): Promis
       const classification = classifyAgentStreamFailure(streamFailureMessage)
       if (classification.transient) throw new ExternalAgentTransientFailureError(classification.reason, classification.status, undefined, new Error(streamFailureMessage))
       if (classification.kind === 'invalid-request') throw new ExternalAgentCompatibilityFailureError(classification.reason, classification.status, new Error(streamFailureMessage))
+      if (classification.kind === 'context-window') throw new ExternalAgentContextWindowError(options.model, undefined, parseAdvertisedContextLimit(streamFailureMessage), streamFailureMessage)
       throw new Error(`${historyLabel} 失败：${classification.reason}`)
     }
     // No structured failure event; keep only a short transcript tail purely as

@@ -170,6 +170,7 @@ import type { QuotaModelCatalog, QuotaModelSwitchResult } from '../shared/quotaM
 import { readLocalCodexApiKey,readLocalCodexConfig } from './localCodexConfig'
 import { sameApiBaseUrl } from '../shared/apiConnection'
 import { resolveModelContextBudget } from './modelContextRegistry'
+import { ExternalAgentContextWindowError, narrowContextWindow, narrowSavedContextWindow } from './agentContextWindow'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { createPluginBridgeTarget,getPluginRuntime,getPluginService,importPluginZipInteractive,initializePlugins,refreshPluginRegistry,registerPluginProtocolSchemeEarly,shutdownPlugins,waitForPluginRegistry } from './pluginBridgeIntegration'
 import { PluginChatBridge } from './pluginChatBridge'
@@ -4076,6 +4077,35 @@ async function writeAgentSettingsAtomically(stored: Record<string, unknown>): Pr
   await writeSettingsFile(settingsFile(), stored)
 }
 
+/**
+ * An oversized prompt is the only permanent provider failure a user can fix from
+ * settings, so correct the saved window instead of repeating a rejection that
+ * names no remedy. One step per failure converges, because the next task re-reads
+ * this value while preparing the runtime.
+ */
+async function adaptContextWindowAfterOverflow(error: unknown, model: string | undefined): Promise<unknown> {
+  if (!(error instanceof ExternalAgentContextWindowError) || !model) return error
+  const codex = (await readSettings()).externalAgents?.codex
+  if (!codex) return error
+  const configured = codex.modelContextWindows?.[model]
+  const next = narrowContextWindow(configured, error.observed)
+  if (next === undefined) return error
+  try {
+    await saveAgentSettings(current => narrowSavedContextWindow(current, model, next))
+  } catch {
+    // A failed write must not mask the provider failure the user needs to read.
+    return error
+  }
+  diagnosticJournal.record({
+    subsystem: 'ai', operation: 'context-window-recovery', phase: 'narrowed', level: 'warning',
+    message: 'Narrowed the saved context window after the provider rejected the prompt',
+    data: { model, from: configured, to: next, observed: error.observed }
+  })
+  return Object.assign(error, {
+    message: `${error.message}。已把该模型的上下文窗口从 ${configured === undefined ? '自动匹配' : configured.toLocaleString('zh-CN')} 调整为 ${next.toLocaleString('zh-CN')}，重新发送这条消息即可。`
+  })
+}
+
 async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSettings) => AgentSettings), validatePreferences = true): Promise<AgentSettings> {
   let resolveWrite!: (settings: AgentSettings) => void
   let rejectWrite!: (error: unknown) => void
@@ -7301,7 +7331,8 @@ async function runExternalCodingAgent(
     }
     const completedAnswer = (candidate: Awaited<ReturnType<typeof runExternalAgent>>): string => candidate.finalAnswer?.text
       ?? selectFinalAiAnswer(bufferedFinalResponse, candidate.summary, deliveredResponseContents)
-    const result = await aiRuntimeActivityContext.run(reportRuntimeActivity, () => runExternalAgent(externalRunOptions))
+    const result = await aiRuntimeActivityContext.run(reportRuntimeActivity, () => runExternalAgent(externalRunOptions)
+      .catch(async (error: unknown) => { throw await adaptContextWindowAfterOverflow(error, externalRunOptions.model) }))
     if (!completedAnswer(result)) {
       throw Object.assign(new Error('本轮已结束，但未收到完整回复。已保留当前修改和会话，请检查后再继续。'), { name: 'ExternalAgentOutputError' })
     }
