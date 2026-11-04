@@ -27,20 +27,23 @@ describe('provider discovery main integration', () => {
   function migration(preferences: Record<string, unknown> = { model: 'chosen-model', reasoningLevel: 'high' }) {
     const write = vi.fn(async value => value)
     const notify = vi.fn()
+    const networkFetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ success: true, data: secondary }))
     const state = production(['upgradeQuotaConnections'], {
       readDeviceCredentials: async () => legacy,
-      networkFetch: vi.fn(async () => Response.json({ success: true, data: secondary })),
+      fetch: vi.fn(), networkFetch,
       PROVIDER_SYNC_CAPABILITY_HEADERS: {}, parseProviderSnapshot,
       readBeginnerAiPreferences: async () => preferences,
       writeDeviceCredentialsUnlocked: write, emitProviderConnectionsChanged: notify,
       providerSyncService: undefined, quotaModelAvailabilityCache: new Map(), scannedModelCapabilities: new Map()
     })
-    return { state, write, notify }
+    return { state, write, notify, networkFetch }
   }
 
   it('discovers a replacement paid connection while retaining the old provider, group and model choice', async () => {
     const h = migration()
     await expect(h.state.upgradeQuotaConnections(legacy, 'routing-token')).resolves.toBe(true)
+    expect(h.networkFetch).toHaveBeenCalledTimes(1)
+    expect(String(h.networkFetch.mock.calls[0][0])).toBe('https://fixture.invalid/api/device/providers?credentials=1')
     const saved = h.write.mock.calls[0][0]
     expect(saved).toMatchObject({ account: 'secondary', apiKey: 'new-paid-key', sync: { connections: secondary.connections, defaults: { model: 'chosen-model', account: 'ls', billing: 'quota', group: 'group-a', reasoningLevel: 'high' } } })
     expect(h.notify).toHaveBeenCalledWith(saved)
@@ -130,5 +133,46 @@ describe('provider discovery main integration', () => {
     const pinned = { ...previous.sync.bindings.workspace, group: 'group-b' }
     await dependencies.write(previous, { ...previous.sync, bindings: { workspace: pinned } })
     expect(emitted).toHaveBeenCalledExactlyOnceWith('workspace', pinned)
+  })
+})
+
+describe('local disconnect main integration', () => {
+  function disconnect(options: { sync?: typeof secondary; session?: { owner: string; token: string } | null } = {}) {
+    const networkFetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 204 }))
+    const removed: string[] = []
+    const credentials = { ...legacy, ...(options.sync ? { sync: options.sync } : {}) }
+    const state = production(['disconnectDeviceLocally'], {
+      providerSyncService: { busy: false, invalidate: vi.fn() },
+      quotaModelSwitchInProgress: false,
+      deviceAuthorizationController: new AbortController(),
+      stopRemoteClient: vi.fn(async () => {}),
+      activeAiRuns: new Map(), aiAbortControllers: new Map(),
+      readDeviceCredentials: async () => credentials,
+      quotaSessionStore: () => ({ read: async () => options.session === undefined ? { owner: providerOwnerKey(credentials), token: 'session-token' } : options.session }),
+      providerOwnerKey, fetch: vi.fn(), networkFetch,
+      deviceStateWrites: { run: (call: () => unknown) => call() },
+      fs: { rm: async (target: string) => { removed.push(target) } },
+      deviceCredentialsFile: () => '/tmp/device-credentials.json',
+      quotaRouter: () => ({ reset: vi.fn(async () => {}) }),
+      quotaConfiguration: { begin: () => 1, finish: vi.fn() },
+      updateDeviceState: vi.fn(async value => value),
+      disconnectedDeviceState: (message: string) => ({ status: 'disconnected', message })
+    })
+    return { state, networkFetch, removed }
+  }
+
+  it('revokes the website session through the proxied transport', async () => {
+    const h = disconnect({ sync: secondary })
+    await expect(h.state.disconnectDeviceLocally()).resolves.toMatchObject({ status: 'disconnected' })
+    expect(h.networkFetch).toHaveBeenCalledTimes(1)
+    expect(String(h.networkFetch.mock.calls[0][0])).toBe('https://fixture.invalid/api/device/session')
+    expect(h.networkFetch.mock.calls[0][1]).toMatchObject({ method: 'DELETE', headers: { Authorization: 'Bearer session-token' } })
+    expect(h.removed).toEqual(['/tmp/device-credentials.json'])
+  })
+
+  it('skips the revoke when no website session is stored', async () => {
+    const h = disconnect({ sync: secondary, session: null })
+    await expect(h.state.disconnectDeviceLocally()).resolves.toMatchObject({ status: 'disconnected' })
+    expect(h.networkFetch).not.toHaveBeenCalled()
   })
 })

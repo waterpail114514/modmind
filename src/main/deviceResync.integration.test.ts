@@ -30,7 +30,7 @@ function harness() {
     Date, Map, Promise, AbortController, controller, DeviceApiError, providerOwnerKey, reconcileProviderSync, normalizeQuotaModelPreferences,
     deviceAuthorizationController: controller as AbortController | null, providerCatalogRevision: 0,
     waitForDevicePoll: vi.fn(async (_ms: number, signal: AbortSignal) => signal.throwIfAborted()),
-    pollDeviceCode: vi.fn(async () => ({ status: 'ok', sync: next, username: 'alice', balanceCents: '10', apiKey: next.connections[0].apiKey, baseUrl: next.connections[0].inferenceBaseUrl, account: next.defaultAccount, group: next.connections[0].group })),
+    pollDeviceCode: vi.fn(async (_site: string, _code: string, _signal: AbortSignal, _fetcher?: unknown, _customLocal?: boolean) => ({ status: 'ok', sync: next, username: 'alice', balanceCents: '10', apiKey: next.connections[0].apiKey, baseUrl: next.connections[0].inferenceBaseUrl, account: next.defaultAccount, group: next.connections[0].group })),
     throwIfAborted: (signal: AbortSignal) => signal.throwIfAborted(),
     readDeviceCredentials: vi.fn(async () => current),
     readStoredBeginnerAiPreferences: vi.fn(async () => ({ current: fixture.preferences(), profiles: {} })),
@@ -52,7 +52,7 @@ function harness() {
     deviceAuthorizationFailure: vi.fn(async () => {}),
     remoteClient: null, readRemoteEnabled: async () => false, stopRemoteClient: vi.fn(async () => {}),
     startRemoteClientIfPossible: vi.fn(), console,
-    networkFetch: vi.fn(), startDevicePolling: undefined as unknown as (site: string, code: string, expires: number, controller: AbortController) => void
+    fetch: vi.fn(), networkFetch: vi.fn(), startDevicePolling: undefined as unknown as (site: string, code: string, expires: number, controller: AbortController) => void
   }
   vm.runInNewContext(codeFor('startDevicePolling'), sandbox)
   return { sandbox, initial, next, current: () => current, initializeSession, sessions, async run() { sandbox.startDevicePolling('https://site.example', 'SYNC0001', 600, controller); await vi.waitFor(() => expect(sandbox.deviceAuthorizationController).toBeNull()) } }
@@ -75,6 +75,9 @@ describe('website device sync production polling', () => {
     expect(h.sandbox.emitAiPreferences).not.toHaveBeenCalled()
     expect(h.sessions.clear).not.toHaveBeenCalled()
     expect(h.sandbox.pollDeviceCode).toHaveBeenCalledTimes(1)
+    // The poll must go through the proxied transport, not the global fetch:
+    // the global one ignores the proxy chosen in settings.
+    expect(h.sandbox.pollDeviceCode.mock.calls[0][3]).toBe(h.sandbox.networkFetch)
     expect(h.sandbox.deviceAuthorizationFailure).not.toHaveBeenCalled()
     expect(h.initializeSession).toHaveBeenCalledTimes(1)
   })
