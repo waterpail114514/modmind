@@ -210,6 +210,7 @@ DeviceApiError,
 normalizeRelayBaseUrl,
 normalizeSiteUrl,
 openAiV1BaseUrl,
+orderModelsForAgent,
 parseDeviceDeepLink,
 parseModelPayload,
 pollDeviceCode,
@@ -4780,7 +4781,7 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
       }
       let payload: unknown
       try { payload = await response.json() as unknown } catch { invalidPayload = true; continue }
-      const models = modelReasoningCatalog.enrich(parseModelPayload(payload), candidate)
+      const models = orderModelsForAgent(modelReasoningCatalog.enrich(parseModelPayload(payload), candidate))
       if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
       for (const keyBase of new Set([normalized, candidate])) {
         if (revision === quotaConfiguration.current()) scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })

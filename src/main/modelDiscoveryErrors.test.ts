@@ -11,7 +11,8 @@ function harness() {
     normalizeApiBaseUrl: (base: string) => base.replace(/\/$/, ''),
     quotaConfiguration: { current: () => 1 }, scannedModelCapabilities: new Map(), quotaPreferenceKey: (base: string) => base,
     modelReasoningCatalog: { refresh: async () => {}, enrich: (models: unknown) => models },
-    parseModelPayload: (payload: { data: unknown[] }) => payload.data ?? []
+    parseModelPayload: (payload: { data: unknown[] }) => payload.data ?? [],
+    orderModelsForAgent: (models: unknown[]) => models
   })
   vm.runInContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context)
   return { fetch: networkFetch, run: () => context.discoverAvailableModels('https://fixture.invalid/v1', 'do-not-expose-key', '无法读取供应商模型列表') }

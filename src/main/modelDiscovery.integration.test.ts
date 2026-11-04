@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { parseModelPayload } from './deviceIntegration'
+import { orderModelsForAgent, parseModelPayload } from './deviceIntegration'
 
 function fixture(respond: (url: string) => Response) {
   const source = readFileSync('src/main/index.ts', 'utf8')
   const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
   const state = {
-    URL, Error, AbortSignal, parseModelPayload,
+    URL, Error, AbortSignal, parseModelPayload, orderModelsForAgent,
     networkFetch: vi.fn(async (url: string) => respond(url)),
     modelReasoningCatalog: { refresh: async () => {}, enrich: (models: unknown) => models },
     quotaConfiguration: { current: vi.fn(() => 0) },
