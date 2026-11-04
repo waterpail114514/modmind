@@ -1,6 +1,7 @@
 import snapshot from './modelContextRegistry.json'
 import { validModelContext } from '../shared/modelContext'
 import { compareModelVersions, parseModelFamily, type ModelFamily } from './modelFamily'
+import { modelReasoningCatalog } from './modelReasoningCatalog'
 
 type Limit = [context: number, input: number | null, output: number | null, source: number]
 interface Provider { api?: string; docs?: string; models: Record<string, Limit> }
@@ -16,7 +17,7 @@ export interface ModelBudgetOptions { baseUrl?: string; contextWindow?: number; 
 export interface ModelContextBudget {
   contextWindow: number
   autoCompactTokenLimit: number
-  source: 'override' | 'provider' | 'registry' | 'inferred' | 'fallback'
+  source: 'override' | 'catalog' | 'provider' | 'registry' | 'inferred' | 'fallback'
   /** Present only for a same-family estimate, never an advertised capacity. */
   inferredFrom?: string
   inferredProvider?: string
@@ -83,7 +84,10 @@ function limitsForProvider(model: string, baseUrl?: string): Limit[] {
 
 export function resolveModelContextBudget(model: string, options: ModelBudgetOptions = {}): ModelContextBudget {
   if (options.contextWindow !== undefined && !validModelContext(options.contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
-  const providerLimits = limitsForProvider(model, options.baseUrl)
+  // A successful refresh carries the same models.dev limits the bundled table was built from,
+  // so live data wins while the snapshot remains the offline fallback.
+  const catalogLimits = modelReasoningCatalog.resolveContextLimits(model, options.baseUrl)
+  const providerLimits = catalogLimits.length ? catalogLimits : limitsForProvider(model, options.baseUrl)
   let limits = providerLimits.length ? providerLimits : byModel.get(model) ?? []
   // Resolve exact provider-qualified aliases before attempting family inference.
   if (!limits.length && model.includes('/')) {
@@ -107,7 +111,7 @@ export function resolveModelContextBudget(model: string, options: ModelBudgetOpt
   const autoCompactTokenLimit = options.allowLongerContext ? calculatedLimit : Math.min(calculatedLimit, STANDARD_AUTO_COMPACT_LIMIT)
   return {
     contextWindow, autoCompactTokenLimit,
-    source: options.contextWindow !== undefined ? 'override' : providerLimits.length ? 'provider' : inferred ? 'inferred' : limits.length ? 'registry' : 'fallback',
+    source: options.contextWindow !== undefined ? 'override' : catalogLimits.length ? 'catalog' : providerLimits.length ? 'provider' : inferred ? 'inferred' : limits.length ? 'registry' : 'fallback',
     ...(inferred ? { inferredFrom: inferred.model, inferredProvider: inferred.provider } : {})
   }
 }

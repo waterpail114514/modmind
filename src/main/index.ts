@@ -483,6 +483,8 @@ diagnosticJournal.configure(app.getPath('logs'), () => {
   return project ? { path: project.path, name: project.name, namespace: project.namespace, kind: project.kind ?? 'mod', loader: project.loader, minecraftVersion: project.minecraftVersion } : undefined
 }, !diagnosticRecoveryTarget)
 installNetworkDiagnostics()
+// Persist the models.dev catalog so the first scan after a restart still works offline.
+modelReasoningCatalog.configureCachePath(app.getPath('userData'))
 const userSkillStore = new UserSkillStore(path.join(app.getPath('userData'), 'workbench-skills'))
 const workbenchDataStore = new WorkbenchDataStore(app.getPath('userData'), (entry) => {
   diagnosticJournal.record({

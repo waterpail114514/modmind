@@ -18,6 +18,12 @@ try {
   const registry = buildReasoningRegistry(JSON.parse(text))
   const count = Object.values(registry.providers).reduce((sum, provider) => sum + Object.keys(provider.models).length, 0)
   if (count < 1000) throw new Error(`Incomplete reasoning catalog: ${count}`)
-  await fs.writeFile(new URL('../src/main/modelReasoningRegistry.json', import.meta.url), JSON.stringify({ ...registry, sha256: createHash('sha256').update(text).digest('hex'), license: 'MIT' }) + '\n')
+  // The published snapshot carries reasoning capabilities only. Context ceilings are a runtime
+  // concern (the catalog caches them on disk); keeping them out preserves the artifact's schema.
+  const providers = Object.fromEntries(Object.entries(registry.providers).map(([id, provider]) => {
+    const { limits, ...rest } = provider
+    return [id, rest]
+  }))
+  await fs.writeFile(new URL('../src/main/modelReasoningRegistry.json', import.meta.url), JSON.stringify({ ...registry, providers, sha256: createHash('sha256').update(text).digest('hex'), license: 'MIT' }) + '\n')
   console.log(`Saved ${count} reasoning capability records`)
 } finally { await fs.rm(temporary, { recursive: true, force: true }) }

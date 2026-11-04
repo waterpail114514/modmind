@@ -43,7 +43,9 @@ export function resolveCodexAutoCompactTokenLimit(model: string, options: ModelB
 export function buildCodexModelCatalog(model: string, options: CatalogOptions = {}) {
   const budget = resolveModelContextBudget(model, options)
   const exact = builtinCatalog.models.find(entry => entry.slug === model)
-  const customizeNative = budget.source === 'override' || budget.source === 'provider' || budget.source === 'registry'
+  // Every non-fallback source reflects a published capacity, so a refreshed catalog must
+  // reach native entries too; otherwise their bundled window would silently win.
+  const customizeNative = budget.source === 'override' || budget.source === 'catalog' || budget.source === 'provider' || budget.source === 'registry'
   if (exact && !customizeNative && !options.reasoning) return undefined
 
   // Codex recognizes dated/suffixed variants by prefix. Preserve those capabilities.
