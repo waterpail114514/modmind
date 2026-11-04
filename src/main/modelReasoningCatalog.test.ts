@@ -1,5 +1,9 @@
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { ModelReasoningCatalog } from './modelReasoningCatalog'
+import { configureModelDataRoot } from './modelData'
 import { parseModelPayload } from './deviceIntegration'
 import { parseReasoningCapabilities, reasoningSelectionEffort } from '../shared/modelReasoning'
 import { buildReasoningRegistry } from '../shared/modelReasoningRegistry'
@@ -43,6 +47,22 @@ describe('reasoning capability discovery', () => {
     const catalog = new ModelReasoningCatalog(registry)
     expect(catalog.resolve('gpt-6-sol', 'https://relay.example/v1').efforts).toEqual(['high'])
     expect(catalog.resolve('gpt-6-sol', 'https://relay.example.evil/v1').efforts).toEqual(['none', 'low', 'high'])
+  })
+
+  it('reads the bundled registry on first use instead of during construction', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'modmind-reasoning-lazy-'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    configureModelDataRoot(directory)
+    try {
+      const catalog = new ModelReasoningCatalog()
+      expect(warn).not.toHaveBeenCalled()
+      expect(catalog.resolve('gpt-6-sol').source).toBe('unknown')
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      configureModelDataRoot(process.cwd())
+      warn.mockRestore()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('refreshes public capabilities without model requests, shares scans, and keeps the last good data offline', async () => {

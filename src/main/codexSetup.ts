@@ -9,8 +9,7 @@ import { diagnosticJournal } from './diagnosticLog'
 
 import { CODEX_RUNTIME_VERSION, requireCodexRuntimeTarget } from './runtimeTarget'
 import { probeCodexExecutable, validateCodexFile } from './codexExecutable'
-import { buildCodexModelCatalog, prepareCodexModelCatalog, resolveCodexAutoCompactTokenLimit, validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
-import builtinCatalog from './codexBuiltinModels.json'
+import { buildCodexModelCatalog, builtinCodexModels, resolveCodexAutoCompactTokenLimit, validateCodexAutoCompactTokenLimit, writeCodexModelCatalog, type CodexModelCatalogDocument } from './codexModelCatalog'
 import { syncWorkbenchSkills } from './workbenchSkills'
 import { validModelContext } from '../shared/modelContext'
 import { isReasoningEffort } from '../shared/modelReasoning'
@@ -186,11 +185,14 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath: string | u
   ].join('\n')
 }
 
-async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const options = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities, allowLongerContext: config.allowLongerContext }
-  const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, options)
-  const autoCompactTokenLimit = resolveCodexAutoCompactTokenLimit(config.model, options, config.autoCompactTokenLimit)
-  const desired = codexConfigText(config, catalog.path, autoCompactTokenLimit)
+interface PreparedCodexModel {
+  catalog: CodexModelCatalogDocument | undefined
+  autoCompactTokenLimit: number
+}
+
+async function writeCodexConfig(configPath: string, config: CodexServerConfig, prepared: PreparedCodexModel): Promise<boolean> {
+  const catalog = await writeCodexModelCatalog(path.dirname(configPath), prepared.catalog)
+  const desired = codexConfigText(config, catalog.path, prepared.autoCompactTokenLimit)
   const current = await fs.readFile(configPath, 'utf8').catch(() => '')
   if (current === desired) return catalog.changed
   await fs.mkdir(path.dirname(configPath), {recursive: true})
@@ -348,8 +350,15 @@ export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexS
   const home = options.homeDir ? path.resolve(options.homeDir) : path.join(options.rootDir, 'codex-home')
   const configPath = path.join(home, 'config.toml')
   const config = validateConfig(options.serverConfig)
+  const codexOptions = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities, allowLongerContext: config.allowLongerContext }
+  const codexCatalog = buildCodexModelCatalog(config.model, codexOptions)
+  const codexEntry = codexCatalog?.models.find(entry => entry.slug === config.model)
+    ?? builtinCodexModels().find(entry => entry.slug === config.model)
   progress(options, {stage: 'configuring', title: '正在检查开发工具配置', detail: '正在比对本地配置并准备项目助手', status: 'running'})
-  const configChanged = await writeCodexConfig(configPath, config)
+  const configChanged = await writeCodexConfig(configPath, config, {
+    catalog: codexCatalog,
+    autoCompactTokenLimit: resolveCodexAutoCompactTokenLimit(config.model, codexOptions, config.autoCompactTokenLimit)
+  })
   const skillsSynced = await syncBundledSkills(options.bundledSkillsDir, home, options.bundledSkillNames, options.bundledSkillDirectories)
   options.signal?.throwIfAborted()
   if (!skillsSynced && options.bundledSkillsDir) {
@@ -371,8 +380,7 @@ export async function prepareCodex(options: PrepareCodexOptions): Promise<CodexS
     executable,
     model: config.model,
     adapterRouteId: config.baseUrl.match(/\/adapter\/([a-f0-9]{32})\/v1\/?$/)?.[1],
-    contextWindow: (buildCodexModelCatalog(config.model, { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities })?.models.find(entry => entry.slug === config.model)
-      ?? builtinCatalog.models.find(entry => entry.slug === config.model))?.context_window,
+    contextWindow: codexEntry?.context_window,
     version,
     configPath,
     runtimePath,

@@ -169,6 +169,7 @@ import { validateQuotaModelSelection } from '../shared/quotaModels'
 import type { QuotaModelCatalog, QuotaModelSwitchResult } from '../shared/quotaModels'
 import { readLocalCodexApiKey,readLocalCodexConfig } from './localCodexConfig'
 import { sameApiBaseUrl } from '../shared/apiConnection'
+import { configureModelDataRoot, preloadModelData } from './modelData'
 import { resolveModelContextBudget } from './modelContextRegistry'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { createPluginBridgeTarget,getPluginRuntime,getPluginService,importPluginZipInteractive,initializePlugins,refreshPluginRegistry,registerPluginProtocolSchemeEarly,shutdownPlugins,waitForPluginRegistry } from './pluginBridgeIntegration'
@@ -9032,6 +9033,10 @@ function registerIpc(): void {
 protocol.registerSchemesAsPrivileged([{ scheme: 'modmind-feature', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }, { scheme: 'modmind-dev-preview', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 app.whenReady().then(async () => {
+  // Bundled model metadata is read from disk, so point the loader at the archive
+  // before any handler can reach it and let the reads overlap the rest of startup.
+  configureModelDataRoot(app.getAppPath())
+  preloadModelData(['src/main/modelContextRegistry.json', 'src/main/modelReasoningRegistry.json', 'src/main/codexBuiltinModels.json'])
   if (diagnosticRecoveryTarget) {
     try { await exportRecoveryDiagnostics({ logs: app.getPath('logs'), userData: app.getPath('userData'), target: diagnosticRecoveryTarget }); app.exit(0) }
     catch (error) { console.error('诊断恢复导出失败', error); app.exit(1) }

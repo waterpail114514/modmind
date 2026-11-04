@@ -29,7 +29,7 @@ describe('managed Codex model metadata', () => {
       expect(metadata).toEqual(original)
       expect(context_window).toBe(resolveModelContextBudget(native.slug).contextWindow)
       expect(max_context_window).toBe(context_window)
-      expect(auto_compact_token_limit).toBeLessThan(context_window)
+      expect(auto_compact_token_limit).toBeLessThan(context_window!)
       expect(catalog.models.find(model => model.slug === 'codex-auto-review')).toEqual(builtinCatalog.models.find(model => model.slug === 'codex-auto-review'))
     }
   })

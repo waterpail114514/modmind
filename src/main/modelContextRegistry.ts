@@ -1,16 +1,13 @@
-import snapshot from './modelContextRegistry.json'
+import { readModelDataOrEmpty } from './modelData'
 import { validModelContext } from '../shared/modelContext'
 import { compareModelVersions, parseModelFamily, type ModelFamily } from './modelFamily'
 
 type Limit = [context: number, input: number | null, output: number | null, source: number]
 interface Provider { api?: string; docs?: string; models: Record<string, Limit> }
-const providers = snapshot.providers as unknown as Record<string, Provider>
-const byModel = new Map<string, Limit[]>()
-for (const provider of Object.values(providers)) for (const [id, limit] of Object.entries(provider.models)) {
-  const entries = byModel.get(id) ?? []
-  entries.push(limit)
-  byModel.set(id, entries)
-}
+interface RegistrySnapshot { providers: Record<string, Provider> }
+
+const REGISTRY_PATH = 'src/main/modelContextRegistry.json'
+const EMPTY_SNAPSHOT: RegistrySnapshot = { providers: {} }
 
 export interface ModelBudgetOptions { baseUrl?: string; contextWindow?: number; allowLongerContext?: boolean }
 export interface ModelContextBudget {
@@ -27,31 +24,71 @@ export const UNKNOWN_MODEL_CONTEXT = 524_288
 export const STANDARD_AUTO_COMPACT_LIMIT = 256_000
 
 interface FamilyCandidate { model: string; provider: string; family: ModelFamily; limit: Limit }
-const familyCandidates = new Map<string, FamilyCandidate[]>()
-for (const [provider, record] of Object.entries(providers)) for (const [model, limit] of Object.entries(record.models)) {
-  const family = parseModelFamily(model)
-  // Input-only historical records cannot establish a total context to inherit.
-  if (!family || limit[3] !== 0) continue
-  const candidates = familyCandidates.get(family.key) ?? []
-  candidates.push({ model, provider, family, limit })
-  familyCandidates.set(family.key, candidates)
+/** A provider endpoint reduced to the two facts endpoint matching needs. */
+interface ProviderEndpoint { provider: string; prefix: string; models: Record<string, Limit> }
+
+interface RegistryIndex {
+  providers: Record<string, Provider>
+  byModel: Map<string, Limit[]>
+  familyCandidates: Map<string, FamilyCandidate[]>
+  byOrigin: Map<string, ProviderEndpoint[]>
+}
+
+let index: RegistryIndex | null = null
+
+function buildIndex(snapshot: RegistrySnapshot): RegistryIndex {
+  const providers = snapshot.providers
+  const byModel = new Map<string, Limit[]>()
+  const familyCandidates = new Map<string, FamilyCandidate[]>()
+  const byOrigin = new Map<string, ProviderEndpoint[]>()
+  for (const [provider, record] of Object.entries(providers)) {
+    for (const [id, limit] of Object.entries(record.models)) {
+      const entries = byModel.get(id) ?? []
+      entries.push(limit)
+      byModel.set(id, entries)
+    }
+    // Input-only historical records cannot establish a total context to inherit.
+    for (const [model, limit] of Object.entries(record.models)) {
+      const family = parseModelFamily(model)
+      if (!family || limit[3] !== 0) continue
+      const candidates = familyCandidates.get(family.key) ?? []
+      candidates.push({ model, provider, family, limit })
+      familyCandidates.set(family.key, candidates)
+    }
+    if (!record.api) continue
+    try {
+      const api = new URL(record.api)
+      const prefix = api.pathname.replace(/\/$/, '')
+      const endpoints = byOrigin.get(api.origin) ?? []
+      endpoints.push({ provider, prefix, models: record.models })
+      byOrigin.set(api.origin, endpoints)
+    } catch { /* Providers without a usable endpoint stay out of endpoint matching. */ }
+  }
+  return { providers, byModel, familyCandidates, byOrigin }
+}
+
+function registryIndex(): RegistryIndex {
+  if (!index) {
+    const snapshot = readModelDataOrEmpty<RegistrySnapshot>(REGISTRY_PATH, '模型上下文注册表', EMPTY_SNAPSHOT)
+    index = buildIndex(snapshot)
+  }
+  return index
 }
 
 function inferFamilyLimit(model: string, baseUrl?: string): FamilyCandidate | undefined {
   const family = parseModelFamily(model)
   if (!family) return undefined
+  const { familyCandidates, byOrigin } = registryIndex()
   const candidates = (familyCandidates.get(family.key) ?? [])
     .filter(entry => compareModelVersions(entry.family.version, family.version) <= 0)
   let matchedProviders: string[] = [], specificity = -1
   if (baseUrl) {
     try {
       const url = new URL(baseUrl)
-      for (const [id, record] of Object.entries(providers)) {
-        if (!record.api) continue
-        const api = new URL(record.api), prefix = api.pathname.replace(/\/$/, '')
-        if (url.origin !== api.origin || !(url.pathname === prefix || url.pathname.startsWith(prefix + '/'))) continue
-        if (prefix.length > specificity) { specificity = prefix.length; matchedProviders = [] }
-        if (prefix.length === specificity) matchedProviders.push(id)
+      for (const endpoint of byOrigin.get(url.origin) ?? []) {
+        if (!(url.pathname === endpoint.prefix || url.pathname.startsWith(endpoint.prefix + '/'))) continue
+        if (endpoint.prefix.length > specificity) { specificity = endpoint.prefix.length; matchedProviders = [] }
+        if (endpoint.prefix.length === specificity) matchedProviders.push(endpoint.provider)
       }
     } catch { /* An unrecognized endpoint uses manufacturer metadata. */ }
   }
@@ -68,21 +105,22 @@ function limitsForProvider(model: string, baseUrl?: string): Limit[] {
   if (!baseUrl) return []
   let url: URL
   try { url = new URL(baseUrl) } catch { return [] }
+  const endpoints = registryIndex().byOrigin.get(url.origin)
+  if (!endpoints) return []
   let specificity = -1
   let matches: Limit[] = []
-  for (const provider of Object.values(providers)) {
-    if (!provider.api || !Object.hasOwn(provider.models, model)) continue
-    const api = new URL(provider.api)
-    const prefix = api.pathname.replace(/\/$/, '')
-    if (url.origin !== api.origin || !(url.pathname === prefix || url.pathname.startsWith(prefix + '/'))) continue
-    if (prefix.length > specificity) { specificity = prefix.length; matches = [] }
-    if (prefix.length === specificity) matches.push(provider.models[model])
+  for (const endpoint of endpoints) {
+    if (!Object.hasOwn(endpoint.models, model)) continue
+    if (!(url.pathname === endpoint.prefix || url.pathname.startsWith(endpoint.prefix + '/'))) continue
+    if (endpoint.prefix.length > specificity) { specificity = endpoint.prefix.length; matches = [] }
+    if (endpoint.prefix.length === specificity) matches.push(endpoint.models[model])
   }
   return matches
 }
 
 export function resolveModelContextBudget(model: string, options: ModelBudgetOptions = {}): ModelContextBudget {
   if (options.contextWindow !== undefined && !validModelContext(options.contextWindow)) throw new Error('上下文窗口必须是 1,024–100,000,000 之间的整数')
+  const { providers, byModel } = registryIndex()
   const providerLimits = limitsForProvider(model, options.baseUrl)
   let limits = providerLimits.length ? providerLimits : byModel.get(model) ?? []
   // Resolve exact provider-qualified aliases before attempting family inference.

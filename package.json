@@ -159,6 +159,9 @@
       "README.md",
       "TRADEMARKS.md",
       "THIRD_PARTY_NOTICES.md",
+      "src/main/modelContextRegistry.json",
+      "src/main/modelReasoningRegistry.json",
+      "src/main/codexBuiltinModels.json",
       "!android-twa/**"
     ],
     "asarUnpack": [
