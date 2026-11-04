@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import type { AgentSettings, ExternalAgentConfiguration, LocalCodexScan } from '../shared/types'
+import type { AgentSettings, AiModelInfo, ExternalAgentConfiguration, LocalCodexScan } from '../shared/types'
 import { sameApiBaseUrl } from '../shared/apiConnection'
 
 // Run the same functions used by settings refresh and workbench model discovery.
@@ -24,13 +24,13 @@ function fixture(configuration: ExternalAgentConfiguration = {}) {
     listLocalCodexModels: vi.fn(async () => ['gpt-default']),
     modelReasoningCatalog: { refresh: vi.fn(), enrich: (models: unknown) => models },
     normalizeApiBaseUrl: (url: string) => new URL(url).toString().replace(/\/$/, ''),
-    fetchAvailableModels: vi.fn(async (_base?: string, _key?: string, _error?: string) => [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }]),
+    fetchAvailableModels: vi.fn(async (_base?: string, _key?: string, _error?: string): Promise<AiModelInfo[]> => [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }]),
     discoverAvailableModels: vi.fn(async (baseUrl: string, apiKey: string, error: string) => ({ baseUrl, models: await state.fetchAvailableModels(baseUrl, apiKey, error) })),
     scanConfiguredCodex: undefined as unknown as () => Promise<LocalCodexScan>,
     listAvailableAgentModels: undefined as unknown as (kind: string, input: ExternalAgentConfiguration) => Promise<unknown>,
     configureExternalAgentConnection: undefined as unknown as (kind: string, input: ExternalAgentConfiguration) => Promise<{ settings: AgentSettings }>
   }
-  const names = ['listAvailableAgentModels', 'scanConfiguredCodex', 'configureExternalAgentConnection']
+  const names = ['adoptDeclaredContextWindow', 'listAvailableAgentModels', 'scanConfiguredCodex', 'configureExternalAgentConnection']
   const functions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && names.includes(node.name?.text ?? ''))
   vm.runInNewContext(ts.transpileModule(functions.map(node => node.getText(ast)).join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, state)
   return { state, native }
@@ -117,7 +117,7 @@ it('overwrites malformed historical URLs and does not inspect native config when
   expect(saved.settings.externalAgents?.codex?.baseUrl).toBe('https://new.example/v1')
   expect(state.readLocalCodexConfig).not.toHaveBeenCalled()
   expect(state.discoverAvailableModels).not.toHaveBeenCalled()
-  expect(state.saveAgentSettings).toHaveBeenCalledWith(expect.anything(), false)
+  expect(state.saveAgentSettings).toHaveBeenCalledWith(expect.anything(), true)
 })
 
 it('saves an incomplete new connection while clearing credentials belonging to the old endpoint', async () => {
@@ -142,4 +142,75 @@ it('never switches saved custom connections to native configuration when credent
   expect(result.modelsError).toContain('API Key')
   expect(state.readLocalCodexConfig).not.toHaveBeenCalled()
   expect(state.listLocalCodexModels).not.toHaveBeenCalled()
+})
+
+it('records an advertised window separately from a typed one', async () => {
+  const configuration: ExternalAgentConfiguration = { mode: 'hosted', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'saved-key', model: 'deepseek-chat' }
+  const { state } = fixture(configuration)
+  state.fetchAvailableModels.mockResolvedValueOnce([{ id: 'deepseek-chat', declaredContextWindow: 131072 }])
+  expect((await state.scanConfiguredCodex()).contextWindow).toBe(131072)
+  expect(state.saveAgentSettings).toHaveBeenCalledOnce()
+  const update = state.saveAgentSettings.mock.calls[0]![0] as unknown as (current: AgentSettings) => AgentSettings
+  const applied = update(await state.readSettings() as AgentSettings)
+  expect(applied.externalAgents?.codex?.declaredModelContextWindows).toEqual({ 'deepseek-chat': 131072 })
+  expect(applied.externalAgents?.codex?.modelContextWindows).toBeUndefined()
+
+  // A window the user typed stays authoritative; the advertised value is still recorded so
+  // the budget resolver can reserve output space, but it never replaces the typed one.
+  const typed = fixture({ ...configuration, modelContextWindows: { 'deepseek-chat': 65536 } })
+  typed.state.fetchAvailableModels.mockResolvedValueOnce([{ id: 'deepseek-chat', declaredContextWindow: 131072 }])
+  expect((await typed.state.scanConfiguredCodex()).contextWindow).toBe(65536)
+  const typedUpdate = typed.state.saveAgentSettings.mock.calls[0]![0] as unknown as (current: AgentSettings) => AgentSettings
+  const typedApplied = typedUpdate(await typed.state.readSettings() as AgentSettings)
+  expect(typedApplied.externalAgents?.codex?.modelContextWindows).toEqual({ 'deepseek-chat': 65536 })
+  expect(typedApplied.externalAgents?.codex?.declaredModelContextWindows).toEqual({ 'deepseek-chat': 131072 })
+})
+
+it('refreshes an advertised window when the endpoint reports a new capacity', async () => {
+  const configuration: ExternalAgentConfiguration = {
+    mode: 'hosted', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'saved-key', model: 'deepseek-chat',
+    declaredModelContextWindows: { 'deepseek-chat': 65536 }
+  }
+  const { state } = fixture(configuration)
+  state.fetchAvailableModels.mockResolvedValueOnce([{ id: 'deepseek-chat', declaredContextWindow: 131072 }])
+  expect((await state.scanConfiguredCodex()).contextWindow).toBe(131072)
+  expect(state.saveAgentSettings).toHaveBeenCalledOnce()
+  const update = state.saveAgentSettings.mock.calls[0]![0] as unknown as (current: AgentSettings) => AgentSettings
+  const applied = update(await state.readSettings() as AgentSettings)
+  expect(applied.externalAgents?.codex?.declaredModelContextWindows).toEqual({ 'deepseek-chat': 131072 })
+})
+
+it('keeps an unchanged advertised window without rewriting settings', async () => {
+  const configuration: ExternalAgentConfiguration = {
+    mode: 'hosted', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'saved-key', model: 'deepseek-chat',
+    declaredModelContextWindows: { 'deepseek-chat': 131072 }
+  }
+  const { state } = fixture(configuration)
+  state.fetchAvailableModels.mockResolvedValueOnce([{ id: 'deepseek-chat', declaredContextWindow: 131072 }])
+  expect((await state.scanConfiguredCodex()).contextWindow).toBe(131072)
+  expect(state.saveAgentSettings).not.toHaveBeenCalled()
+})
+
+it('adopts an advertised window that leaves a saved manual auto-compaction threshold valid', async () => {
+  const configuration: ExternalAgentConfiguration = {
+    mode: 'hosted', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'saved-key', model: 'deepseek-chat',
+    modelAutoCompactTokenLimits: { 'deepseek-chat': 50_000 }
+  }
+  const { state } = fixture(configuration)
+  state.fetchAvailableModels.mockResolvedValueOnce([{ id: 'deepseek-chat', declaredContextWindow: 65_536 }])
+  expect((await state.scanConfiguredCodex()).contextWindow).toBe(65_536)
+  expect(state.saveAgentSettings).toHaveBeenCalledOnce()
+})
+
+it('refuses an advertised window that cannot contain a saved manual auto-compaction threshold', async () => {
+  // The runtime rejects a threshold above 90% of the window on every run, so writing this
+  // pair would make the scan throw and leave the model list empty.
+  const configuration: ExternalAgentConfiguration = {
+    mode: 'hosted', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'saved-key', model: 'deepseek-chat',
+    modelAutoCompactTokenLimits: { 'deepseek-chat': 200_000 }
+  }
+  const { state } = fixture(configuration)
+  state.fetchAvailableModels.mockResolvedValueOnce([{ id: 'deepseek-chat', declaredContextWindow: 65_536 }])
+  expect((await state.scanConfiguredCodex()).contextWindow).toBeUndefined()
+  expect(state.saveAgentSettings).not.toHaveBeenCalled()
 })

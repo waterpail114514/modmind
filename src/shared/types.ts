@@ -843,6 +843,10 @@ export interface ExternalAgentConfiguration {
   model?: string
   /** Actual runtime context limits keyed by exact model ID; absent means registry lookup. */
   modelContextWindows?: Record<string, number>
+  /** Capacities the endpoint advertised on its model list; refreshed on every scan, never user-typed. */
+  declaredModelContextWindows?: Record<string, number>
+  /** Output ceilings the endpoint advertised, keyed by exact model ID. */
+  declaredModelContextOutputTokens?: Record<string, number>
   /** Independent auto-compaction overrides; absent means automatic calculation. */
   modelAutoCompactTokenLimits?: Record<string, number>
   reasoningEffortOptions?: Record<string, ReasoningEffort[]>
@@ -956,6 +960,10 @@ export interface AiModelInfo {
   providerLabel?: string
   ownedBy?: string
   reasoning?: ModelReasoningCapabilities
+  /** Context window the provider advertises in its catalog. Absent means the provider states none. */
+  declaredContextWindow?: number
+  /** Maximum output tokens the provider advertises in its catalog. */
+  declaredMaxOutputTokens?: number
 }
 
 export interface ModelReasoningCapabilities {

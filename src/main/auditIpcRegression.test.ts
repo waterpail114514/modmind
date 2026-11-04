@@ -57,7 +57,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root
 describe('production IPC audit regressions', () => {
   function legacyUpgrade(read: () => Promise<any>, fetcher: typeof fetch, write: (...args: any[]) => Promise<unknown>) {
     return original('upgradeQuotaConnections', {
-      readDeviceCredentials: read, fetch: fetcher, PROVIDER_SYNC_CAPABILITY_HEADERS: { 'X-ModMind-Sync-Capabilities': 'provider-ls' },
+      readDeviceCredentials: read, networkFetch: fetcher, PROVIDER_SYNC_CAPABILITY_HEADERS: { 'X-ModMind-Sync-Capabilities': 'provider-ls' },
       parseProviderSnapshot: (data: unknown) => data, readBeginnerAiPreferences: async () => ({ model: 'selected-model', reasoningLevel: 'high' }),
       writeDeviceCredentialsUnlocked: write, providerSyncService: undefined, quotaModelAvailabilityCache: new Map(), scannedModelCapabilities: new Map(), emitProviderConnectionsChanged: vi.fn()
     }).call

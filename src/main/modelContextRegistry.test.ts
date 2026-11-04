@@ -77,6 +77,33 @@ describe('offline model context registry', () => {
     }
   })
 
+  it('prefers the capacity the endpoint advertises over every local estimate', () => {
+    expect(resolveModelContextBudget('deepseek-v4-flash', { declaredContextWindow: 65536 })).toMatchObject({
+      source: 'declared', contextWindow: 65536
+    })
+    // A window the user typed still wins.
+    expect(resolveModelContextBudget('deepseek-v4-flash', { declaredContextWindow: 65536, contextWindow: 32768 })).toMatchObject({
+      source: 'override', contextWindow: 32768
+    })
+    // An unusable advertised value falls back to the existing resolution.
+    for (const declaredContextWindow of [0, -1, NaN, Infinity, 1.5, 100000001]) {
+      expect(resolveModelContextBudget('deepseek-v4-flash', { declaredContextWindow })).toMatchObject({ source: 'registry' })
+    }
+    // An advertised window stops family inference and never names a source model.
+    expect(resolveModelContextBudget('gpt-7-sol', { declaredContextWindow: 200000 })).toMatchObject({ source: 'declared', contextWindow: 200000 })
+    expect(resolveModelContextBudget('gpt-7-sol', { declaredContextWindow: 200000 }).inferredFrom).toBeUndefined()
+  })
+
+  it('reserves output space from the advertised limits instead of another deployment', () => {
+    // The registry knows this name at 1M. If its output figure leaked into an advertised 512K
+    // window the budget would collapse to roughly half; keep it proportional to what was advertised.
+    const advertised = resolveModelContextBudget('deepseek-v4-flash', { declaredContextWindow: 524288, allowLongerContext: true })
+    expect(advertised.contextWindow).toBe(524288)
+    expect(advertised.autoCompactTokenLimit).toBeGreaterThan(400_000)
+    expect(resolveModelContextBudget('deepseek-v4-flash', { declaredContextWindow: 65536, declaredMaxOutputTokens: 32768 })
+      .autoCompactTokenLimit).toBeLessThan(32768)
+  })
+
   it('validates overrides and keeps them tied to exact model IDs', () => {
     expect(normalizeModelContextWindows({ a: 65536, b: -1, c: Infinity, d: '512000' })).toEqual({ a: 65536 })
     expect(normalizeModelContextWindows({ a: 512, b: 100000001 })).toBeUndefined()

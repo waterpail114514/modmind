@@ -27,13 +27,12 @@ describe('website model catalog protocol', () => {
   })
 
   it('uses the authenticated website endpoint for legacy sessions without falling back upstream', async () => {
-    const fetcher = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => Response.json({ success: true, data: payload() }))
-    vi.stubGlobal('fetch', fetcher)
-    expect((await fetchDeviceModelCatalog('https://site.example', 'fixture-key', 'ls')).models).toHaveLength(2)
+    const fetcher = vi.fn(async (_input: string | URL, _init?: RequestInit) => Response.json({ success: true, data: payload() }))
+    expect((await fetchDeviceModelCatalog('https://site.example', 'fixture-key', 'ls', fetcher)).models).toHaveLength(2)
     expect(String(fetcher.mock.calls[0][0])).toBe('https://site.example/api/device/models?account=ls')
     expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: 'error', cache: 'no-store', headers: { Authorization: 'Bearer fixture-key', 'X-ModMind-Sync-Capabilities': 'provider-ls' } })
     fetcher.mockImplementation(async () => new Response('{}', { status: 503 }))
-    await expect(fetchDeviceModelCatalog('https://site.example', 'fixture-key', 'ls')).rejects.toThrow('尚未就绪')
+    await expect(fetchDeviceModelCatalog('https://site.example', 'fixture-key', 'ls', fetcher)).rejects.toThrow('尚未就绪')
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 

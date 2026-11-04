@@ -53,6 +53,15 @@ describe('managed Codex model metadata', () => {
     expect(buildCodexModelCatalog('private', { contextWindow: 524288 })!.models.at(-1)!.context_window).toBe(524288)
   })
 
+  it('lets an advertised window outrank registry guesses without replacing a typed one', () => {
+    expect(buildCodexModelCatalog('deepseek-chat', { declaredContextWindow: 65536 })!.models.at(-1)!.context_window).toBe(65536)
+    // A typed window stays authoritative over the advertised capacity.
+    expect(buildCodexModelCatalog('deepseek-chat', { contextWindow: 512000, declaredContextWindow: 65536 })!.models.at(-1)!.context_window).toBe(512000)
+    // The advertised output ceiling reserves space inside the window.
+    const advertised = buildCodexModelCatalog('deepseek-chat', { declaredContextWindow: 65536, declaredMaxOutputTokens: 8192 })!
+    expect(advertised.models.at(-1)!.auto_compact_token_limit).toBe(54476)
+  })
+
   it('does not apply native capabilities to arbitrary lookalike suffixes', () => {
     expect(buildCodexModelCatalog('gpt-5.4-mini-private')!.models.at(-1)!.supports_reasoning_summaries).toBe(false)
   })
