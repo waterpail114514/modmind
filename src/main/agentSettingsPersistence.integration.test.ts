@@ -46,6 +46,30 @@ it('still validates explicitly edited model preferences', async () => {
   expect(state.writeAgentSettingsAtomically).not.toHaveBeenCalled()
 })
 
+it('checks every stored threshold against the window the runtime will actually resolve', async () => {
+  const { state, readStored } = fixture()
+  const calls: unknown[][] = []
+  state.validateCodexAutoCompactTokenLimit.mockImplementation((...args: unknown[]) => { calls.push(args) })
+  const settings = readStored()
+  // The advertised window must reach the check: the runtime resolves it ahead of local tables,
+  // so omitting it here would accept a limit that the next run rejects (or reject a valid one).
+  await state.saveAgentSettings({
+    ...settings,
+    externalAgents: {
+      codex: {
+        ...settings.externalAgents.codex,
+        model: 'declared-model',
+        modelAutoCompactTokenLimits: { 'declared-model': 50000 },
+        declaredModelContextWindows: { 'declared-model': 65536 }
+      }
+    }
+  })
+  // Both thresholds are checked, each against its own model's advertised window.
+  expect(calls).toHaveLength(2)
+  expect(calls).toContainEqual(['declared-model', expect.objectContaining({ declaredContextWindow: 65536 }), 50000])
+  expect(calls).toContainEqual(['manual', expect.objectContaining({ declaredContextWindow: undefined }), 99999999])
+})
+
 it('does not let an old invalid context threshold block changes to reasoning or unrelated preferences', async () => {
   const { state, readStored } = fixture()
   const settings = readStored()

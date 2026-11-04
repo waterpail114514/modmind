@@ -4132,8 +4132,10 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
       if (contextFields(entry) !== contextFields(existingContext)) {
         // Every stored threshold must hold for its own model, not only the selected one:
         // an invalid pair on another model would otherwise surface mid-run after switching.
+        // The advertised window is part of the same options the runtime resolves, so leaving it
+        // out here would let a limit pass now and be rejected on the next run (or reject a valid one).
         for (const [id, limit] of Object.entries(entry.modelAutoCompactTokenLimits ?? {})) {
-          validateCodexAutoCompactTokenLimit(id, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[id] }, limit)
+          validateCodexAutoCompactTokenLimit(id, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[id], declaredContextWindow: entry.declaredModelContextWindows?.[id], declaredMaxOutputTokens: entry.declaredModelContextOutputTokens?.[id] }, limit)
         }
       }
       const existingOptions = normalizeReasoningEffortOptions(existing?.reasoningEffortOptions)
