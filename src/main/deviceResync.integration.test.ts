@@ -52,7 +52,7 @@ function harness() {
     deviceAuthorizationFailure: vi.fn(async () => {}),
     remoteClient: null, readRemoteEnabled: async () => false, stopRemoteClient: vi.fn(async () => {}),
     startRemoteClientIfPossible: vi.fn(), console,
-    fetch: vi.fn(), startDevicePolling: undefined as unknown as (site: string, code: string, expires: number, controller: AbortController) => void
+    networkFetch: vi.fn(), startDevicePolling: undefined as unknown as (site: string, code: string, expires: number, controller: AbortController) => void
   }
   vm.runInNewContext(codeFor('startDevicePolling'), sandbox)
   return { sandbox, initial, next, current: () => current, initializeSession, sessions, async run() { sandbox.startDevicePolling('https://site.example', 'SYNC0001', 600, controller); await vi.waitFor(() => expect(sandbox.deviceAuthorizationController).toBeNull()) } }

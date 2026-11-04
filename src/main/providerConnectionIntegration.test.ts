@@ -29,7 +29,7 @@ describe('provider discovery main integration', () => {
     const notify = vi.fn()
     const state = production(['upgradeQuotaConnections'], {
       readDeviceCredentials: async () => legacy,
-      fetch: vi.fn(async () => Response.json({ success: true, data: secondary })),
+      networkFetch: vi.fn(async () => Response.json({ success: true, data: secondary })),
       PROVIDER_SYNC_CAPABILITY_HEADERS: {}, parseProviderSnapshot,
       readBeginnerAiPreferences: async () => preferences,
       writeDeviceCredentialsUnlocked: write, emitProviderConnectionsChanged: notify,

@@ -1,6 +1,7 @@
 import bundled from './modelReasoningRegistry.json'
 import { buildReasoningRegistry, type ReasoningRegistry } from '../shared/modelReasoningRegistry'
 import { parseModelFamily } from './modelFamily'
+import { networkFetch, type ProxiedFetch } from './networkRequest'
 import type { AiModelInfo, ModelReasoningCapabilities } from '../shared/types'
 
 const unknown = (): ModelReasoningCapabilities => ({ source: 'unknown', controls: [], efforts: [] })
@@ -10,7 +11,7 @@ export class ModelReasoningCatalog {
   private checkedAt = 0
   private retryAt = 0
   private pending?: Promise<void>
-  constructor(registry: ReasoningRegistry = bundled as ReasoningRegistry, private fetcher: typeof fetch = fetch) { this.registry = registry }
+  constructor(registry: ReasoningRegistry = bundled as ReasoningRegistry, private fetcher: ProxiedFetch = networkFetch) { this.registry = registry }
 
   async refresh(force = false): Promise<void> {
     if (this.pending) return this.pending

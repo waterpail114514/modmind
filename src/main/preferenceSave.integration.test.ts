@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows, validModelContext } from '../shared/modelContext'
+import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows, normalizeDeclaredModelContextWindows, validModelContext } from '../shared/modelContext'
 import { normalizeQuotaModelPreferences } from './quotaModelPreferences'
 import { buildCodexModelCatalog, validateCodexAutoCompactTokenLimit } from './codexModelCatalog'
 import { isReasoningEffort, reasoningSelectionEffort } from '../shared/modelReasoning'
@@ -46,7 +46,10 @@ it('saving unchanged preferences neither interrupts the task nor writes settings
   expect(write).toHaveBeenCalledTimes(1)
   await sandbox.saveBeginnerAiPreferences({ ...prefs, modelContextWindows: { ...prefs.modelContextWindows, test: 1050000 } })
   expect(write).toHaveBeenCalledTimes(2)
-  await sandbox.saveBeginnerAiPreferences({ ...prefs, modelContextWindows: {} })
+  // Clearing windows while keeping an over-large threshold for another model is rejected;
+  // clearing both writes through.
+  await expect(sandbox.saveBeginnerAiPreferences({ ...prefs, modelContextWindows: {} })).rejects.toThrow('90%')
+  await sandbox.saveBeginnerAiPreferences({ ...prefs, modelContextWindows: {}, modelAutoCompactTokenLimits: {} })
   expect(write).toHaveBeenCalledTimes(3)
   await expect(sandbox.saveBeginnerAiPreferences({ ...prefs, modelContextWindows: { test: 512 } })).rejects.toThrow('上下文窗口')
   expect(write).toHaveBeenCalledTimes(3)
@@ -57,6 +60,10 @@ it('saving unchanged preferences neither interrupts the task nor writes settings
   await expect(sandbox.saveBeginnerAiPreferences({ ...prefs, modelAutoCompactTokenLimits: { test: 0 } })).rejects.toThrow('自动压缩阈值')
   await expect(sandbox.saveBeginnerAiPreferences({ ...prefs, modelAutoCompactTokenLimits: { test: 500000 } })).rejects.toThrow('90%')
   await expect(sandbox.saveBeginnerAiPreferences({ ...prefs, modelContextWindows: { test: 100000 } })).rejects.toThrow('90%')
+  // A threshold stored for another model must also hold against that model's own window.
+  await expect(sandbox.saveBeginnerAiPreferences({
+    ...prefs, modelContextWindows: { test: 524288, another: 100000 }, modelAutoCompactTokenLimits: { test: 200000, another: 200000 }
+  })).rejects.toThrow('90%')
   expect(write).toHaveBeenCalledTimes(5)
 })
 
@@ -134,7 +141,7 @@ it('passes exact-model thresholds through the configured Codex route', async () 
     readSettings: async () => ({ allowLongerContext: false }),
     refreshConfiguredReasoning: async () => undefined,
     modelReasoningFor: () => ({ efforts: [] }),
-    reasoningSelectionEffort, normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, selectedReasoningEfforts, codexReasoningCapabilities,
+    reasoningSelectionEffort, normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, normalizeDeclaredModelContextWindows, selectedReasoningEfforts, codexReasoningCapabilities,
     configuredCodexServerConfig: undefined as unknown as (configuration: import('../shared/types').ExternalAgentConfiguration) => Promise<CodexServerConfig>
   }
   vm.runInNewContext(ts.transpileModule(fn.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, sandbox)
@@ -143,6 +150,13 @@ it('passes exact-model thresholds through the configured Codex route', async () 
   const switched = await sandbox.configuredCodexServerConfig({ ...configuration, model: 'another', reasoningEffort: undefined } as unknown as import('../shared/types').ExternalAgentConfiguration)
   expect(switched.contextWindow).toBeUndefined()
   expect(switched.autoCompactTokenLimit).toBeUndefined()
+  // Advertised capacities reach the runtime catalog, but a typed window still wins.
+  const declared = await sandbox.configuredCodexServerConfig({
+    ...configuration, declaredModelContextWindows: { private: 65536 }, declaredModelContextOutputTokens: { private: 32768 }
+  } as unknown as import('../shared/types').ExternalAgentConfiguration)
+  expect(declared.declaredContextWindow).toBe(65536)
+  expect(declared.declaredMaxOutputTokens).toBe(32768)
+  expect(declared.contextWindow).toBe(512000)
   expect(switched.allowLongerContext).toBe(false)
   sandbox.readSettings = async () => ({ allowLongerContext: true })
   expect((await sandbox.configuredCodexServerConfig(configuration as unknown as import('../shared/types').ExternalAgentConfiguration)).allowLongerContext).toBe(true)

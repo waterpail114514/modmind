@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows } from '../shared/modelContext'
+import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows, normalizeDeclaredModelContextWindows } from '../shared/modelContext'
 import { isReasoningEffort, normalizeReasoningEffortOptions, selectedReasoningEfforts } from '../shared/modelReasoning'
 import { mergeAgentSettingsPatch } from '../shared/agentSettingsPatch'
 
@@ -16,7 +16,7 @@ function fixture() {
     fs: { readFile: async () => JSON.stringify(stored) }, settingsFile: () => 'settings.json',
     normalizeAgentApprovalMode: (value: any) => value, normalizeNetworkProxyUrl: (value: any) => value,
     normalizeJavaPreferences: (value: any) => value, normalizeAppearance: () => ({}),
-    normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, normalizeReasoningEffortOptions, isReasoningEffort, selectedReasoningEfforts,
+    normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, normalizeDeclaredModelContextWindows, normalizeReasoningEffortOptions, isReasoningEffort, selectedReasoningEfforts,
     validateCodexAutoCompactTokenLimit: vi.fn(() => { throw new Error('invalid old model threshold') }),
     reasoningSelectionEffort: vi.fn(),
     safeStorage: { isEncryptionAvailable: () => true, encryptString: (key: string) => Buffer.from(key) },

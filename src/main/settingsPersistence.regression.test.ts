@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { normalizeAppearance } from '../shared/appTheme'
 import { normalizeAgentApprovalMode } from '../shared/agentApproval'
 import { mergeAgentSettingsPatch } from '../shared/agentSettingsPatch'
-import { normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits } from '../shared/modelContext'
+import { normalizeModelContextWindows, normalizeDeclaredModelContextWindows, normalizeModelAutoCompactTokenLimits } from '../shared/modelContext'
 import { isReasoningEffort, normalizeReasoningEffortOptions, selectedReasoningEfforts, reasoningSelectionEffort } from '../shared/modelReasoning'
 import { writeSettingsFile } from './settingsFile'
 
@@ -46,7 +46,7 @@ async function fixture() {
     fs: { ...fs }, path, Buffer, URL, randomUUID, console,
     app: { getPath: () => root }, agentSettingsWriteTail: Promise.resolve(),
     normalizeAppearance, normalizeAgentApprovalMode, mergeAgentSettingsPatch,
-    normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, isReasoningEffort,
+    normalizeModelContextWindows, normalizeDeclaredModelContextWindows, normalizeModelAutoCompactTokenLimits, isReasoningEffort,
     normalizeReasoningEffortOptions, selectedReasoningEfforts, reasoningSelectionEffort,
     safeStorage: { isEncryptionAvailable: () => true, encryptString: (value: string) => Buffer.from(value), decryptString: (value: Buffer) => value.toString() },
     writeSettingsFile, readLocalCodexConfig: async () => null, validateCodexAutoCompactTokenLimit: () => {},

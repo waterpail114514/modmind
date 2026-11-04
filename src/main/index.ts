@@ -150,7 +150,7 @@ const validateResourcePack: typeof import("../../feature-plugins/resource-packs/
 
 import { normalizeAiModelSelection,settingsForAiSelection,type AiModelSelection } from '../shared/aiSelection'
 import { ProviderSyncService, parseProviderSnapshot, providerOwnerKey, reconcileProviderSync, type ProviderSnapshot, type ProviderModelDiscovery } from './providerSync'
-import { normalizeModelAutoCompactTokenLimits,normalizeModelContextWindows,validModelContext } from '../shared/modelContext'
+import { normalizeModelAutoCompactTokenLimits,normalizeModelContextWindows,normalizeDeclaredModelContextWindows,validModelContext } from '../shared/modelContext'
 import { codexReasoningCapabilities,isReasoningEffort,normalizeReasoningEffortOptions,reasoningSelectionEffort,selectedReasoningEfforts } from '../shared/modelReasoning'
 import type { PluginDiagnostics,PluginOverlayWindowState,PluginSnapshot } from '../shared/plugins'
 import { normalizeProjectName,validateProjectNameInput } from '../shared/projectName'
@@ -1101,7 +1101,7 @@ async function upgradeQuotaConnections(previous: RoutingCredentials, token: stri
     current.siteUrl === previous.siteUrl && current.username === previous.username && current.apiKey === previous.apiKey &&
     current.baseUrl === previous.baseUrl && current.account === previous.account && current.group === previous.group)
   if (!unchanged(before)) throw new Error('账号或连接已更新，请重试')
-  const response = await fetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${token}` } })
+  const response = await networkFetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${token}` } })
   if (response.status === 404) return false
   if (!response.ok) throw new Error('无法刷新供应商连接，请稍后重试')
   const envelope = await response.json() as { success?: unknown; data?: unknown }
@@ -1523,7 +1523,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
     while (Date.now() < deadline && !controller.signal.aborted) {
       try {
         await waitForDevicePoll(retryDelays[Math.min(retryIndex, retryDelays.length - 1)], controller.signal)
-        const result = await pollDeviceCode(siteUrl, code, controller.signal, fetch, Boolean(customApi))
+        const result = await pollDeviceCode(siteUrl, code, controller.signal, networkFetch, Boolean(customApi))
         if (result.status === 'pending') {
           retryIndex = 0
           continue
@@ -1707,7 +1707,7 @@ async function disconnectDeviceLocally(): Promise<DeviceConnectionState> {
   const previous = await readDeviceCredentials()
   if (previous?.sync) {
     const session = await quotaSessionStore().read().catch(() => null)
-    if (session?.owner === providerOwnerKey(previous)) await fetch(`${previous.siteUrl}/api/device/session`, { method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${session.token}` } }).catch(() => undefined)
+    if (session?.owner === providerOwnerKey(previous)) await networkFetch(`${previous.siteUrl}/api/device/session`, { method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${session.token}` } }).catch(() => undefined)
   }
   await deviceStateWrites.run(() => fs.rm(deviceCredentialsFile(), { force: true }))
   await quotaRouter().reset()
@@ -2278,7 +2278,9 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   if (previous.model === preferences.model && previous.account === preferences.account && previous.group === preferences.group && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
   const credentials = await readDeviceCredentials()
   if (credentials?.sync && (previous.model !== preferences.model || previous.account !== preferences.account || previous.group !== preferences.group)) throw new Error('请通过模型列表切换模型与供应商')
-  validateCodexAutoCompactTokenLimit(model, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow }, compactLimit)
+  for (const [id, limit] of Object.entries(preferences.modelAutoCompactTokenLimits ?? {})) {
+    validateCodexAutoCompactTokenLimit(id, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow: preferences.modelContextWindows?.[id] }, limit)
+  }
   if (preferences.reasoningLevel !== 'auto') {
     reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(model, preferences.reasoningEffortOptions))
   }
@@ -2444,7 +2446,7 @@ async function configuredCodexServerConfig(configuration: ExternalAgentConfigura
   await refreshConfiguredReasoning('codex', configuration)
   const reasoningCapabilities = modelReasoningFor(baseUrl, apiKey, model)
   const efforts = selectedReasoningEfforts(model, configuration.reasoningEffortOptions)
-  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model], allowLongerContext: (await readSettings()).allowLongerContext === true }
+  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], declaredContextWindow: normalizeDeclaredModelContextWindows(configuration.declaredModelContextWindows)?.[model], declaredMaxOutputTokens: normalizeDeclaredModelContextWindows(configuration.declaredModelContextOutputTokens)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model], allowLongerContext: (await readSettings()).allowLongerContext === true }
 }
 
 async function prepareManagedCodex(
@@ -2480,7 +2482,7 @@ async function prepareManagedCodex(
       await previousPreparation
       try {
         users.controller.signal.throwIfAborted()
-        const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow })
+        const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow, declaredContextWindow: serverConfig.declaredContextWindow, declaredMaxOutputTokens: serverConfig.declaredMaxOutputTokens })
         if (contextBudget.source === 'inferred') diagnosticJournal.record({
           subsystem: 'ai', operation: 'model-context-budget', phase: 'inferred',
           message: `上下文预算参考 ${contextBudget.inferredFrom}`,
@@ -4128,7 +4130,11 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
       ])
       const existingContext = { ...existing, modelContextWindows: normalizeModelContextWindows(existing?.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(existing?.modelAutoCompactTokenLimits) }
       if (contextFields(entry) !== contextFields(existingContext)) {
-        validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
+        // Every stored threshold must hold for its own model, not only the selected one:
+        // an invalid pair on another model would otherwise surface mid-run after switching.
+        for (const [id, limit] of Object.entries(entry.modelAutoCompactTokenLimits ?? {})) {
+          validateCodexAutoCompactTokenLimit(id, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[id] }, limit)
+        }
       }
       const existingOptions = normalizeReasoningEffortOptions(existing?.reasoningEffortOptions)
       const existingEffort = isReasoningEffort(existing?.reasoningEffort) && selectedReasoningEfforts(existing?.model ?? '', existingOptions).includes(existing.reasoningEffort) ? existing.reasoningEffort : undefined
@@ -4137,7 +4143,7 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
       }
     }
     if (!entry.clearApiKey && entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
-    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, clearApiKey: undefined, hasStoredKey: undefined}
+    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), declaredModelContextWindows: normalizeDeclaredModelContextWindows(entry.declaredModelContextWindows), declaredModelContextOutputTokens: normalizeDeclaredModelContextWindows(entry.declaredModelContextOutputTokens), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, clearApiKey: undefined, hasStoredKey: undefined}
     if (!entry.clearApiKey && entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
     else if (!entry.clearApiKey && existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
   }
@@ -4576,6 +4582,8 @@ async function readSettings(strict = false): Promise<AgentSettings> {
         baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.slice(0, 4096) : undefined,
         model: typeof entry.model === 'string' ? entry.model.slice(0, 512) : undefined,
         modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows),
+        declaredModelContextWindows: normalizeDeclaredModelContextWindows(entry.declaredModelContextWindows),
+        declaredModelContextOutputTokens: normalizeDeclaredModelContextWindows(entry.declaredModelContextOutputTokens),
         modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits),
         reasoningEffortOptions: normalizeReasoningEffortOptions(entry.reasoningEffortOptions),
         reasoningEffort: isReasoningEffort(entry.reasoningEffort) && selectedReasoningEfforts(entry.model ?? '', normalizeReasoningEffortOptions(entry.reasoningEffortOptions)).includes(entry.reasoningEffort) ? entry.reasoningEffort : undefined,
@@ -4672,7 +4680,7 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
     externalAgents: { [kind]: nextConfiguration }
   }
   // Persist first; availability, model discovery and CLI detection belong to refresh/run.
-  const saved = await saveAgentSettings(next, false)
+  const saved = await saveAgentSettings(next, true)
   return { kind, detail: '连接已保存到本地设置', settings: publicAgentSettings(saved) }
 }
 
@@ -4692,21 +4700,31 @@ async function adoptDeclaredContextWindow(
 ): Promise<number | undefined> {
   const id = (model ?? '').trim()
   if (!id) return undefined
-  const declared = models.find(entry => entry.id === id)?.declaredContextWindow
+  const advertised = models.find(entry => entry.id === id)
+  const declared = advertised?.declaredContextWindow
   if (!declared) return undefined
-  const existing = saved?.[id]
-  if (existing !== undefined) return existing
+  // A typed threshold outranks the advertised capacity. Persisting a window that cannot contain
+  // it would make the runtime reject the setting on the next run, so leave both untouched.
   const manualCompactLimit = compactLimits?.[id]
   const largestAcceptedCompactLimit = Math.floor(declared * 0.9)
   if (manualCompactLimit !== undefined && manualCompactLimit > largestAcceptedCompactLimit) return undefined
+  // Advertised capacities are refreshed on every scan; only an unchanged value skips the write.
+  if (saved?.[id] === declared) return declared
+  const declaredOutput = advertised?.declaredMaxOutputTokens
   await saveAgentSettings(current => {
     const codex = current.externalAgents?.codex
-    if (!codex || (codex.model ?? '').trim() !== id || codex.modelContextWindows?.[id] !== undefined) return current
+    if (!codex || (codex.model ?? '').trim() !== id) return current
     return {
       ...current,
       externalAgents: {
         ...current.externalAgents,
-        codex: { ...codex, modelContextWindows: { ...codex.modelContextWindows, [id]: declared } }
+        codex: {
+          ...codex,
+          declaredModelContextWindows: { ...codex.declaredModelContextWindows, [id]: declared },
+          declaredModelContextOutputTokens: declaredOutput === undefined
+            ? Object.fromEntries(Object.entries(codex.declaredModelContextOutputTokens ?? {}).filter(([key]) => key !== id))
+            : { ...codex.declaredModelContextOutputTokens, [id]: declaredOutput }
+        }
       }
     }
   })
@@ -4728,7 +4746,7 @@ async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCod
     if (configured.mode === 'hosted') {
       if (!configured.apiKey?.trim()) throw new Error('无法读取已保存的 API Key，请重新填写并保存')
       const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表')
-      const declaredWindow = await adoptDeclaredContextWindow(discovered.models, configured.model, configured.modelContextWindows, configured.modelAutoCompactTokenLimits)
+      const declaredWindow = await adoptDeclaredContextWindow(discovered.models, configured.model, configured.declaredModelContextWindows, configured.modelAutoCompactTokenLimits)
       return { ...connection, contextWindow: connection.contextWindow ?? declaredWindow, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
     }
     const models = await listAvailableAgentModels('codex', configured)
@@ -6614,11 +6632,12 @@ async function runExternalCodingAgent(
   const localCodexModel = !usesQuota && runExternalConfiguration.mode !== 'hosted'
     ? runExternalConfiguration.model || localCodexConfig?.model : undefined
   const localCodexContextWindow = runExternalConfiguration.modelContextWindows?.[localCodexModel ?? '']
+    ?? runExternalConfiguration.declaredModelContextWindows?.[localCodexModel ?? '']
     ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.contextWindow : undefined)
   const localCodexManualCompactLimit = runExternalConfiguration.modelAutoCompactTokenLimits?.[localCodexModel ?? '']
     ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.autoCompactTokenLimit : undefined)
   const localCodexAutoCompactLimit = localCodexModel
-    ? resolveCodexAutoCompactTokenLimit(localCodexModel, { baseUrl: localCodexConfig?.baseUrl, contextWindow: localCodexContextWindow, allowLongerContext: settings.allowLongerContext }, localCodexManualCompactLimit)
+    ? resolveCodexAutoCompactTokenLimit(localCodexModel, { baseUrl: localCodexConfig?.baseUrl, contextWindow: runExternalConfiguration.modelContextWindows?.[localCodexModel ?? ''], declaredContextWindow: runExternalConfiguration.declaredModelContextWindows?.[localCodexModel ?? ''], declaredMaxOutputTokens: runExternalConfiguration.declaredModelContextOutputTokens?.[localCodexModel ?? ''], allowLongerContext: settings.allowLongerContext }, localCodexManualCompactLimit)
     : undefined
   let executionUsage: import('../shared/types').AiTokenUsage | undefined
   const safetyReviewerConfig: AiReviewerConfig = { reviewMode: 'codex-auto' }
@@ -6919,7 +6938,7 @@ async function runExternalCodingAgent(
       signal: signal ?? new AbortController().signal,
       persistentRetry: true,
       onStarted: () => {
-        const configuredContextWindow = codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined)
+        const configuredContextWindow = codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ?? runExternalConfiguration.declaredModelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined)
         if (configuredContextWindow) {
           executionUsage = { contextWindow: configuredContextWindow, contextWindowSource: 'configuration', model: codexSetup?.model ?? runExternalConfiguration.model, backend }
           sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
@@ -6931,8 +6950,8 @@ async function runExternalCodingAgent(
       },
       onUsage: usage => {
         executionUsage = { ...usage, contextTokens: usage.contextTokens ?? (usage.cumulative ? executionUsage?.contextTokens : usage.inputTokens),
-          contextWindow: codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined) ?? usage.contextWindow ?? executionUsage?.contextWindow,
-          contextWindowSource: codexSetup?.contextWindow || !usesQuota && runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ? 'configuration' : 'runtime',
+          contextWindow: codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ?? runExternalConfiguration.declaredModelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined) ?? usage.contextWindow ?? executionUsage?.contextWindow,
+          contextWindowSource: codexSetup?.contextWindow || !usesQuota && (runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ?? runExternalConfiguration.declaredModelContextWindows?.[runExternalConfiguration.model ?? '']) ? 'configuration' : 'runtime',
           model: usage.model ?? codexSetup?.model ?? runExternalConfiguration.model, backend }
         sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
         if (!isInspiration) void creation.mutate(state => {

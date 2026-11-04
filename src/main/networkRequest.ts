@@ -196,6 +196,8 @@ async function requestRoute(url: string): Promise<{ dispatcher: Agent | ProxyAge
 /** Fetch-compatible streaming transport for AI/media requests using the same
  * configured proxy policy as managed downloads. Unlike the process global fetch,
  * this does not silently bypass the application's selected proxy. */
+export type ProxiedFetch = (input: string | URL, init?: RequestInit) => Promise<Response>
+
 export async function networkFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   init.signal?.throwIfAborted()
   const url = input.toString()

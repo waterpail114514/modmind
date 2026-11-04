@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { normalizeRelayBaseUrl, normalizeSiteUrl } from './deviceIntegration'
+import { networkFetch, type ProxiedFetch } from './networkRequest'
 import { isSelectableQuotaModel, quotaModelMetadata, quotaModelDisplayMetadata, quotaModelOptionKey, validateQuotaModelSelection } from '../shared/quotaModels'
 import { PROVIDER_SYNC_CAPABILITY_HEADERS, validPaidProviderAccount, validProviderKind } from '../shared/providerAccounts'
 import { parseProviderGroups, parseProviderModels, type ProviderGroup } from '../shared/providerRoutes'
@@ -23,7 +24,7 @@ export interface QuotaRoutingDependencies {
   listModels: (credentials: RoutingCredentials) => Promise<AiModelInfo[]>
   readPreferences: () => Promise<BeginnerAiPreferences>
   applyModel: (model: string, route?: QuotaRoute) => Promise<BeginnerAiPreferences>
-  fetcher?: typeof fetch
+  fetcher?: ProxiedFetch
   now?: () => number
   upgradeConnections?: (credentials: RoutingCredentials, session: RoutingSession) => Promise<boolean>
 }
@@ -53,8 +54,8 @@ export class QuotaModelRouting {
   private switching = false
   private cooldownUntil = 0
   private readonly now: () => number
-  private readonly fetcher: typeof fetch
-  constructor(private readonly deps: QuotaRoutingDependencies) { this.now = deps.now ?? Date.now; this.fetcher = deps.fetcher ?? fetch }
+  private readonly fetcher: ProxiedFetch
+  constructor(private readonly deps: QuotaRoutingDependencies) { this.now = deps.now ?? Date.now; this.fetcher = deps.fetcher ?? networkFetch }
   get busy(): boolean { return this.switching }
   invalidate(): void { this.cache = undefined; this.directories.clear() }
   async reset(): Promise<void> { this.invalidate(); this.cooldownUntil = 0; await this.deps.clearSession() }
