@@ -1,4 +1,5 @@
 import type { AiModelInfo, AppVersionCheckResult, DeviceKeyStatus, DeviceUsage } from '../shared/types'
+import { ensureOpenAiV1Base } from '../shared/apiConnection'
 import { parseReasoningCapabilities } from '../shared/modelReasoning'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
@@ -74,8 +75,7 @@ export function normalizeRelayBaseUrl(value: string): string {
 }
 
 export function openAiV1BaseUrl(value: string): string {
-  const base = normalizeRelayBaseUrl(value)
-  return /\/v1$/i.test(base) ? base : `${base}/v1`
+  return ensureOpenAiV1Base(normalizeRelayBaseUrl(value))
 }
 
 function parseCustomApi(encoded: string): CustomApiConfig {

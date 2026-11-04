@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
+import { setTimeout as delay } from 'node:timers/promises'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
+import { hasApiVersionPath, normalizeAiApiBase } from '../shared/apiConnection'
+import { retryAfterDelay } from './networkRequest'
 
 const ast = ts.createSourceFile('index.ts', readFileSync('src/main/index.ts', 'utf8'), ts.ScriptTarget.Latest, true)
 const source = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'discoverAvailableModels')!.getText(ast)
@@ -9,6 +12,9 @@ function harness() {
   const networkFetch = vi.fn(async () => Response.json({ data: [{ id: 'fixture-model' }] }))
   const context = vm.createContext({ URL, AbortSignal, networkFetch,
     normalizeApiBaseUrl: (base: string) => base.replace(/\/$/, ''),
+    normalizeAiApiBase, hasApiVersionPath, retryAfterDelay, delay,
+    MODEL_SCAN_TOTAL_TIMEOUT_MS: 30_000, MODEL_SCAN_REQUEST_TIMEOUT_MS: 20_000, MODEL_SCAN_MAX_ATTEMPTS: 3,
+    modelScanTasks: new Map(),
     quotaConfiguration: { current: () => 1 }, scannedModelCapabilities: new Map(), quotaPreferenceKey: (base: string) => base,
     modelReasoningCatalog: { refresh: async () => {}, enrich: (models: unknown) => models },
     parseModelPayload: (payload: { data: unknown[] }) => payload.data ?? []
@@ -38,11 +44,18 @@ describe('model discovery failure reasons', () => {
     expect(h.fetch).toHaveBeenCalledTimes(2)
   })
 
-  it.each([401, 403, 429, 503])('keeps HTTP %s failures explicit and does not try another route', async status => {
+  it.each([401, 403])('keeps HTTP %s failures explicit and does not try another route', async status => {
     const h = harness()
     h.fetch.mockResolvedValue(new Response('', { status }))
     await expect(h.run()).rejects.toThrow(`HTTP ${status}`)
     expect(h.fetch).toHaveBeenCalledOnce()
+  })
+
+  it.each([429, 503])('retries HTTP %s and then keeps the failure explicit', async status => {
+    const h = harness()
+    h.fetch.mockResolvedValue(new Response('', { status }))
+    await expect(h.run()).rejects.toThrow(`HTTP ${status}`)
+    expect(h.fetch).toHaveBeenCalledTimes(3)
   })
 
   it('keeps invalid JSON distinct from a missing endpoint', async () => {

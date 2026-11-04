@@ -186,6 +186,9 @@ describe('device integration protocol', () => {
     expect(normalizeSiteUrl('https://site.example.com/')).toBe('https://site.example.com')
     expect(openAiV1BaseUrl('https://relay.example.com')).toBe('https://relay.example.com/v1')
     expect(openAiV1BaseUrl('https://relay.example.com/v1/')).toBe('https://relay.example.com/v1')
+    expect(openAiV1BaseUrl('https://relay.example.com/api/v1')).toBe('https://relay.example.com/api/v1')
+    expect(openAiV1BaseUrl('https://relay.example.com/v2')).toBe('https://relay.example.com/v2')
+    expect(openAiV1BaseUrl('https://relay.example.com/v1beta')).toBe('https://relay.example.com/v1beta')
     expect(parseDeviceDeepLink(
       'mcdev://sync?site=https%3A%2F%2Fsite.example.com&code=6KQ8W2H5D9M4R7TX',
       'https://site.example.com'

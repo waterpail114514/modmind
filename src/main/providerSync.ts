@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { modelCatalogFields, modelCatalogPath, parseDeviceModelCatalog, type DeviceModelCatalogFields } from './deviceModelCatalogApi'
 import { normalizeRelayBaseUrl, normalizeSiteUrl } from './deviceIntegration'
+import { ensureOpenAiV1Base } from '../shared/apiConnection'
 import { isSelectableQuotaModel, quotaModelMetadata, quotaModelDisplayMetadata, quotaModelOptionKey, validateQuotaModelSelection } from '../shared/quotaModels'
 import type { QuotaModelCatalog, QuotaModelSelection, QuotaModelSwitchResult } from '../shared/quotaModels'
 import type { AiModelSelection } from '../shared/aiSelection'
@@ -36,7 +37,7 @@ export function parseProviderSnapshot(value: unknown): ProviderSnapshot {
     if (c.model !== null && c.model !== undefined && (typeof c.model !== 'string' || !isSelectableQuotaModel(c.model))) throw new Error('供应商默认模型无效')
     if ((c.group != null && typeof c.group !== 'string') || (c.node != null && typeof c.node !== 'string')) throw new Error('供应商线路无效')
     const baseUrl = normalizeRelayBaseUrl(typeof c.baseUrl === 'string' ? c.baseUrl : '')
-    const inferenceBaseUrl = normalizeRelayBaseUrl(typeof c.inferenceBaseUrl === 'string' ? c.inferenceBaseUrl : `${baseUrl}${baseUrl.endsWith('/v1') ? '' : '/v1'}`)
+    const inferenceBaseUrl = normalizeRelayBaseUrl(typeof c.inferenceBaseUrl === 'string' ? c.inferenceBaseUrl : ensureOpenAiV1Base(baseUrl))
     return { account: c.account, label: typeof c.label === 'string' ? c.label.slice(0, 256) : c.account, kind: c.kind, baseUrl, inferenceBaseUrl, apiKey: c.apiKey.trim(), model: typeof c.model === 'string' ? c.model : null,
       ...modelCatalogFields(c), ...(Array.isArray(c.models) ? { models: [...new Set((c.models as string[]).filter(isSelectableQuotaModel))].slice(0, 512) } : {}), group: typeof c.group === 'string' ? c.group : null, node: typeof c.node === 'string' ? c.node : null } as ProviderConnection
   })

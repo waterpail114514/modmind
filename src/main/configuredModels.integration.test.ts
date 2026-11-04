@@ -12,7 +12,9 @@ function fixture(configuration: ExternalAgentConfiguration = {}) {
   const native = { home: '/native', model: 'gpt-native', models: ['gpt-native'], hasApiKey: false, baseUrl: undefined as string | undefined }
   const state = {
     Error,
+    AbortController,
     sameApiBaseUrl,
+    activeModelScanController: null,
     publicAgentSettings: (settings: AgentSettings) => ({ ...settings, externalAgents: { codex: { ...settings.externalAgents?.codex, apiKey: '' } } }),
     app: { getPath: () => '/modmind' },
     readSettings: vi.fn(async () => ({ codingBackend: 'quota', externalAgents: { codex: configuration } })),
@@ -55,7 +57,7 @@ it('queries a custom native provider rather than the CLI built-in catalog', asyn
   const { state, native } = fixture({ mode: 'local' })
   native.baseUrl = 'https://api.deepseek.com/v1'
   expect((await state.scanConfiguredCodex()).models).toEqual(['deepseek-chat', 'deepseek-reasoner'])
-  expect(state.fetchAvailableModels).toHaveBeenCalledWith(native.baseUrl, 'native-key', expect.any(String))
+  expect(state.fetchAvailableModels).toHaveBeenCalledWith(native.baseUrl, 'native-key', expect.any(String), expect.anything())
   expect(state.listLocalCodexModels).not.toHaveBeenCalled()
 })
 

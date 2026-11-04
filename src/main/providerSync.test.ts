@@ -777,6 +777,15 @@ describe('provider sync v2', () => {
     expect(()=>parseProviderSnapshot({...sync,connections:[sync.connections[0],sync.connections[0]]})).toThrow()
     expect(()=>parseProviderSnapshot({...sync,connections:[{...sync.connections[0],inferenceBaseUrl:'javascript:bad'}]})).toThrow()
   })
+  it('derives the inference base without doubling an existing version segment', () => {
+    const f=providerFixture(),sync=f.owner().sync,paid=sync.connections[0]
+    const { inferenceBaseUrl: _derived, ...withoutInference }=paid
+    const derive=(baseUrl:string)=>parseProviderSnapshot({...sync,connections:[{...withoutInference,baseUrl}]}).connections[0].inferenceBaseUrl
+    expect(derive('https://paid.example')).toBe('https://paid.example/v1')
+    expect(derive('https://paid.example/v1')).toBe('https://paid.example/v1')
+    expect(derive('https://paid.example/v2')).toBe('https://paid.example/v2')
+    expect(derive('https://paid.example/V1')).toBe('https://paid.example/V1')
+  })
   it('independently binds surfaces, uses the right key, and never mutates upstream for free selection',async()=>{
     const f=providerFixture()
     await f.service.select('gpt-6-astra',{scope:'workspace',billing:'quota',account:'secondary'})

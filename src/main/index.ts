@@ -23,6 +23,7 @@ import { is,optimizer } from '@electron-toolkit/utils'
 import { app,BrowserWindow,dialog,ipcMain,Menu,nativeImage,Notification,protocol,safeStorage,screen,shell,Tray } from 'electron'
 import extractZip from './safeExtractZip'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { setTimeout as delay } from 'node:timers/promises'
 import { execFile } from 'node:child_process'
 import { createHash,randomUUID } from 'node:crypto'
 import { createReadStream,promises as fs,readFileSync } from 'node:fs'
@@ -116,7 +117,7 @@ import { recordZipExpansion } from './archiveImportPolicy'
 import { buildScriptFingerprint } from './buildTrust'
 import { inferMinecraftVersions,inferGradleLoader,parseGradleProperties } from './existingProjectMetadata'
 import { convertLegacyModtoolProject,readLegacyModtoolProject } from './legacyProjectImport'
-import { networkFetch,setNetworkProxy,shutdownNetwork } from './networkRequest'
+import { networkFetch,retryAfterDelay,setNetworkProxy,shutdownNetwork } from './networkRequest'
 import { requestAiTextResponse } from './aiTextRequest'
 import { migrateMovedProjectMetadata, migrateSelectedSnapshotMetadata } from './projectMetadataMigration'
 import { sameProjectPath } from './projectPath'
@@ -168,7 +169,7 @@ import { QuotaRoutingSessionStore } from './quotaRoutingSessionStore'
 import { validateQuotaModelSelection } from '../shared/quotaModels'
 import type { QuotaModelCatalog, QuotaModelSwitchResult } from '../shared/quotaModels'
 import { readLocalCodexApiKey,readLocalCodexConfig } from './localCodexConfig'
-import { sameApiBaseUrl } from '../shared/apiConnection'
+import { hasApiVersionPath, normalizeAiApiBase, sameApiBaseUrl } from '../shared/apiConnection'
 import { resolveModelContextBudget } from './modelContextRegistry'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { createPluginBridgeTarget,getPluginRuntime,getPluginService,importPluginZipInteractive,initializePlugins,refreshPluginRegistry,registerPluginProtocolSchemeEarly,shutdownPlugins,waitForPluginRegistry } from './pluginBridgeIntegration'
@@ -1015,6 +1016,10 @@ const QUOTA_USAGE_MAX_AGE_MS = 2 * 60_000
 const QUOTA_MODEL_MAX_AGE_MS = 5 * 60_000
 const quotaModelAvailabilityCache = new Map<string, { checkedAt: number; models: AiModelInfo[] }>()
 const scannedModelCapabilities = new Map<string, { checkedAt: number; models: AiModelInfo[] }>()
+// Concurrent entry points (settings scan, workbench discovery, capability refresh)
+// can ask for the same endpoint at once; share one sweep instead of duplicating it.
+const modelScanTasks = new Map<string, Promise<{ baseUrl: string; models: AiModelInfo[] }>>()
+let activeModelScanController: AbortController | null = null
 let quotaModelRouter: QuotaModelRouting | undefined
 let quotaModelSwitchInProgress = false
 let providerSyncService: ProviderSyncService | undefined
@@ -1288,7 +1293,7 @@ async function quotaModelsForCredentials(credentials: DeviceCredentials, force =
     return cached.models
   }
   const models = credentials.provider === 'custom'
-    ? await fetchAvailableModels(openAiV1BaseUrl(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
+    ? await fetchAvailableModels(normalizeAiApiBase(credentials.baseUrl), credentials.apiKey, '无法读取账号可用模型')
     : (await fetchDeviceModelCatalog(credentials.siteUrl, credentials.apiKey, credentials.account ?? undefined)).models
   if (revision !== quotaConfiguration.current()) throw new Error('线路已更新，请重新读取模型列表')
   quotaModelAvailabilityCache.set(key, { checkedAt: Date.now(), models })
@@ -4618,20 +4623,17 @@ async function readSettings(strict = false): Promise<AgentSettings> {
 }
 
 function normalizeApiBaseUrl(value: string): string {
-  const url = new URL(value.trim())
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('API URL must use HTTP or HTTPS')
-  if (url.username || url.password) throw new Error('API URL cannot contain credentials')
-  return url.toString().replace(/\/$/, '')
+  return normalizeAiApiBase(value, 'API URL')
 }
 
-async function listAvailableAgentModels(kind: ExternalAgentKind, input: ExternalAgentConfiguration): Promise<AiModelInfo[]> {
+async function listAvailableAgentModels(kind: ExternalAgentKind, input: ExternalAgentConfiguration, signal?: AbortSignal): Promise<AiModelInfo[]> {
   if (kind === 'codex' && input.mode !== 'hosted') {
     const local = await readLocalCodexConfig()
     // A custom provider's /models is authoritative. The CLI catalog contains
     // OpenAI defaults even when config.toml points at a different provider.
     if (local.baseUrl) {
       const apiKey = await readLocalCodexApiKey()
-      return fetchAvailableModels(normalizeApiBaseUrl(local.baseUrl), apiKey, '无法读取当前服务的模型列表')
+      return fetchAvailableModels(normalizeApiBaseUrl(local.baseUrl), apiKey, '无法读取当前服务的模型列表', signal)
     }
     const detected = await detectInstalledCodex(input)
     const models = detected.installed ? await listLocalCodexModels(detected.executable).catch(() => []) : []
@@ -4644,7 +4646,7 @@ async function listAvailableAgentModels(kind: ExternalAgentKind, input: External
   const apiKey = input.apiKey?.trim() || (sameApiBaseUrl(baseUrl, storedEntry?.baseUrl) ? storedEntry?.apiKey?.trim() ?? '' : '') || (sameApiBaseUrl(baseUrl, native?.baseUrl) ? await readLocalCodexApiKey() : '')
   if (!apiKey) throw new Error('Please enter an API Key before scanning models')
 
-  return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key')
+  return fetchAvailableModels(baseUrl, apiKey, 'Please enter a valid Base URL and API Key', signal)
 }
 
 async function configureExternalAgentConnection(kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) {
@@ -4678,6 +4680,11 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
 
 async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {
   const configured = (await readSettings()).externalAgents?.codex ?? {}
+  // A newer scan supersedes the previous one; retiring it must stop its requests
+  // instead of leaving a stale sweep running against the old endpoint.
+  activeModelScanController?.abort()
+  const controller = new AbortController()
+  activeModelScanController = controller
   const status = await detectInstalledCodex(configured)
   const local = configured.mode === 'hosted' ? null : await readLocalCodexConfig()
   const connection = local ?? {
@@ -4690,15 +4697,17 @@ async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCod
   try {
     if (configured.mode === 'hosted') {
       if (!configured.apiKey?.trim()) throw new Error('无法读取已保存的 API Key，请重新填写并保存')
-      const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表')
+      const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表', controller.signal)
       return { ...connection, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
     }
-    const models = await listAvailableAgentModels('codex', configured)
+    const models = await listAvailableAgentModels('codex', configured, controller.signal)
     return { ...connection, status, models: models.map(model => model.id) }
   } catch (error) {
     // Detection and editing stay available offline. Never disguise a failed
     // provider lookup by falling back to the unrelated built-in GPT catalog.
     return { ...connection, status, models: [], modelsError: error instanceof Error ? error.message : '无法读取模型列表' }
+  } finally {
+    if (activeModelScanController === controller) activeModelScanController = null
   }
 }
 
@@ -4741,59 +4750,89 @@ async function listBeginnerModels(force = false): Promise<AiModelInfo[]> {
   return models
 }
 
-async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<{ baseUrl: string; models: AiModelInfo[] }> {
-  const revision = quotaConfiguration.current()
-  await modelReasoningCatalog.refresh()
-  const normalized = normalizeApiBaseUrl(baseUrl)
-  const url = new URL(normalized)
-  const bases = [normalized]
-  if (!/\/v\d+(?:beta\d*)?$/i.test(url.pathname.replace(/\/$/, ''))) {
-    url.pathname = `${url.pathname.replace(/\/$/, '')}/v1`
-    bases.push(url.toString().replace(/\/$/, ''))
-  }
-  let empty: { baseUrl: string; models: AiModelInfo[] } | undefined
-  let invalidPayload = false
-  for (const candidate of bases) {
-    for (const suffix of ['models', 'model']) {
-      const endpoint = new URL(candidate)
-      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/${suffix}`
-      let response: Response
-      try {
-        response = await networkFetch(endpoint.toString(), {
-          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-          signal: AbortSignal.timeout(20_000)
-        })
-      } catch (error) {
-        const failure = error as { name?: string; code?: string; cause?: { code?: string } } | null
-        const code = failure?.cause?.code ?? failure?.code ?? ''
-        const reason = failure?.name === 'TimeoutError' || /^(?:ETIMEDOUT|UND_ERR_(?:CONNECT|HEADERS|BODY)_TIMEOUT)$/.test(code)
-          ? '网络请求超时'
-          : /^(?:ENOTFOUND|EAI_AGAIN)$/.test(code) ? '无法解析供应商地址'
-          : /^(?:CERT_|ERR_TLS_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) ? '供应商证书校验失败'
-          : '网络连接失败'
-        throw new Error(`${errorMessage}（${reason}），请检查网络后重试`)
-      }
-      if (!response.ok) {
-        if (response.status === 404 || response.status === 405) continue
-        // Authentication, quota and server failures are not missing route errors.
-        throw new Error(`${errorMessage}（HTTP ${response.status}）`)
-      }
-      let payload: unknown
-      try { payload = await response.json() as unknown } catch { invalidPayload = true; continue }
-      const models = modelReasoningCatalog.enrich(parseModelPayload(payload), candidate)
-      if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
-      for (const keyBase of new Set([normalized, candidate])) {
-        if (revision === quotaConfiguration.current()) scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
-      }
-      return { baseUrl: candidate, models }
+const MODEL_SCAN_TOTAL_TIMEOUT_MS = 30_000
+const MODEL_SCAN_REQUEST_TIMEOUT_MS = 20_000
+const MODEL_SCAN_MAX_ATTEMPTS = 3
+
+async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMessage: string, signal?: AbortSignal): Promise<{ baseUrl: string; models: AiModelInfo[] }> {
+  const normalized = normalizeAiApiBase(baseUrl, 'API URL')
+  const taskKey = quotaPreferenceKey(normalized, apiKey)
+  const running = modelScanTasks.get(taskKey)
+  if (running) return running
+  const task = (async () => {
+    const revision = quotaConfiguration.current()
+    // One budget for the whole sweep: probing up to four routes serially must not
+    // leave the caller hanging for minutes when every request stalls.
+    const roundSignal = AbortSignal.any([AbortSignal.timeout(MODEL_SCAN_TOTAL_TIMEOUT_MS), ...(signal ? [signal] : [])])
+    const scanAborted = (): Error => new Error(signal?.aborted ? '模型列表读取已取消' : `${errorMessage}（网络请求超时），请检查网络后重试`)
+    if (roundSignal.aborted) throw scanAborted()
+    await modelReasoningCatalog.refresh()
+    const url = new URL(normalized)
+    const bases = [normalized]
+    if (!hasApiVersionPath(normalized)) {
+      url.pathname = `${url.pathname.replace(/\/+$/, '')}/v1`
+      bases.push(url.toString().replace(/\/+$/, ''))
     }
-  }
-  if (empty) return empty
-  throw new Error(invalidPayload ? `${errorMessage}（模型服务返回了无效数据）` : `${errorMessage}（模型列表接口不存在或不支持访问），请检查供应商 API 地址或重新同步连接`)
+    const requestEndpoint = async (endpointUrl: string): Promise<{ ok: true; response: Response } | { ok: false; status: number }> => {
+      if (roundSignal.aborted) throw scanAborted()
+      for (let attempt = 1; ; attempt += 1) {
+        let response: Response
+        try {
+          response = await networkFetch(endpointUrl, {
+            headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+            signal: AbortSignal.any([roundSignal, AbortSignal.timeout(MODEL_SCAN_REQUEST_TIMEOUT_MS)])
+          })
+        } catch (error) {
+          if (roundSignal.aborted) throw scanAborted()
+          const failure = error as { name?: string; code?: string; cause?: { code?: string } } | null
+          const code = failure?.cause?.code ?? failure?.code ?? ''
+          const reason = failure?.name === 'TimeoutError' || /^(?:ETIMEDOUT|UND_ERR_(?:CONNECT|HEADERS|BODY)_TIMEOUT)$/.test(code)
+            ? '网络请求超时'
+            : /^(?:ENOTFOUND|EAI_AGAIN)$/.test(code) ? '无法解析供应商地址'
+            : /^(?:CERT_|ERR_TLS_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) ? '供应商证书校验失败'
+            : '网络连接失败'
+          throw new Error(`${errorMessage}（${reason}），请检查网络后重试`)
+        }
+        if (response.ok) return { ok: true, response }
+        // Throttling and server faults are worth a bounded retry; auth and request
+        // errors are not, and must keep their status instead of probing another route.
+        if (response.status !== 429 && response.status < 500) return { ok: false, status: response.status }
+        if (attempt >= MODEL_SCAN_MAX_ATTEMPTS) return { ok: false, status: response.status }
+        try { await response.body?.cancel() } catch { /* Draining must not mask the real status. */ }
+        try { await delay(retryAfterDelay(response.headers.get('retry-after'), 250 * 2 ** (attempt - 1)), undefined, { signal: roundSignal }) }
+        catch { throw scanAborted() }
+      }
+    }
+    let empty: { baseUrl: string; models: AiModelInfo[] } | undefined
+    let invalidPayload = false
+    for (const candidate of bases) {
+      for (const suffix of ['models', 'model']) {
+        const endpoint = new URL(candidate)
+        endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/${suffix}`
+        const result = await requestEndpoint(endpoint.toString())
+        if (!result.ok) {
+          if (result.status === 404 || result.status === 405) continue
+          throw new Error(`${errorMessage}（HTTP ${result.status}）`)
+        }
+        let payload: unknown
+        try { payload = await result.response.json() as unknown } catch { invalidPayload = true; continue }
+        const models = modelReasoningCatalog.enrich(parseModelPayload(payload), candidate)
+        if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
+        for (const keyBase of new Set([normalized, candidate])) {
+          if (revision === quotaConfiguration.current()) scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
+        }
+        return { baseUrl: candidate, models }
+      }
+    }
+    if (empty) return empty
+    throw new Error(invalidPayload ? `${errorMessage}（模型服务返回了无效数据）` : `${errorMessage}（模型列表接口不存在或不支持访问），请检查供应商 API 地址或重新同步连接`)
+  })()
+  modelScanTasks.set(taskKey, task)
+  try { return await task } finally { if (modelScanTasks.get(taskKey) === task) modelScanTasks.delete(taskKey) }
 }
 
-async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
-  return (await discoverAvailableModels(baseUrl, apiKey, errorMessage)).models
+async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string, signal?: AbortSignal): Promise<AiModelInfo[]> {
+  return (await discoverAvailableModels(baseUrl, apiKey, errorMessage, signal)).models
 }
 
 function normalizeCodingPath(value: string, _allowBuildScriptChanges = true, _allowWrapperConfiguration = true, project: ProjectInfo = requireProject()): string {
