@@ -1,8 +1,10 @@
+import { sameApiBaseUrl } from '../shared/apiConnection'
+import { synchronizeCodexProfiles } from './codexProfiles'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows } from '../shared/modelContext'
+import { normalizeModelAutoCompactTokenLimits, normalizeModelContextWindows, normalizeDeclaredModelContextWindows } from '../shared/modelContext'
 import { isReasoningEffort, normalizeReasoningEffortOptions, selectedReasoningEfforts } from '../shared/modelReasoning'
 import { mergeAgentSettingsPatch } from '../shared/agentSettingsPatch'
 
@@ -11,12 +13,12 @@ function fixture() {
   const fn = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'saveAgentSettings')!
   let stored: any = { externalAgents: { codex: { mode: 'hosted', baseUrl: 'invalid-old-url', model: 'manual', modelAutoCompactTokenLimits: { manual: 99999999 } } }, encryptedAgentKeys: { codex: 'old-encrypted-key' } }
   const state: any = {
-    Promise, JSON, Error, console, Buffer,
+    Promise, JSON, Error, console, Buffer, sameApiBaseUrl, synchronizeCodexProfiles,
     agentSettingsWriteTail: Promise.resolve(),
     fs: { readFile: async () => JSON.stringify(stored) }, settingsFile: () => 'settings.json',
     normalizeAgentApprovalMode: (value: any) => value, normalizeNetworkProxyUrl: (value: any) => value,
     normalizeJavaPreferences: (value: any) => value, normalizeAppearance: () => ({}),
-    normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, normalizeReasoningEffortOptions, isReasoningEffort, selectedReasoningEfforts,
+    normalizeModelContextWindows, normalizeModelAutoCompactTokenLimits, normalizeDeclaredModelContextWindows, normalizeReasoningEffortOptions, isReasoningEffort, selectedReasoningEfforts,
     validateCodexAutoCompactTokenLimit: vi.fn(() => { throw new Error('invalid old model threshold') }),
     reasoningSelectionEffort: vi.fn(),
     safeStorage: { isEncryptionAvailable: () => true, encryptString: (key: string) => Buffer.from(key) },
@@ -44,6 +46,30 @@ it('still validates explicitly edited model preferences', async () => {
   state.fs.readFile = async () => JSON.stringify({ externalAgents: { codex: { model: 'previous' } } })
   await expect(state.saveAgentSettings(settings)).rejects.toThrow('invalid old model threshold')
   expect(state.writeAgentSettingsAtomically).not.toHaveBeenCalled()
+})
+
+it('checks every stored threshold against the window the runtime will actually resolve', async () => {
+  const { state, readStored } = fixture()
+  const calls: unknown[][] = []
+  state.validateCodexAutoCompactTokenLimit.mockImplementation((...args: unknown[]) => { calls.push(args) })
+  const settings = readStored()
+  // The advertised window must reach the check: the runtime resolves it ahead of local tables,
+  // so omitting it here would accept a limit that the next run rejects (or reject a valid one).
+  await state.saveAgentSettings({
+    ...settings,
+    externalAgents: {
+      codex: {
+        ...settings.externalAgents.codex,
+        model: 'declared-model',
+        modelAutoCompactTokenLimits: { 'declared-model': 50000 },
+        declaredModelContextWindows: { 'declared-model': 65536 }
+      }
+    }
+  })
+  // Both thresholds are checked, each against its own model's advertised window.
+  expect(calls).toHaveLength(2)
+  expect(calls).toContainEqual(['declared-model', expect.objectContaining({ declaredContextWindow: 65536 }), 50000])
+  expect(calls).toContainEqual(['manual', expect.objectContaining({ declaredContextWindow: undefined }), 99999999])
 })
 
 it('does not let an old invalid context threshold block changes to reasoning or unrelated preferences', async () => {

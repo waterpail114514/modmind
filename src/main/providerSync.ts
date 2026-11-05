@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { modelCatalogFields, modelCatalogPath, parseDeviceModelCatalog, type DeviceModelCatalogFields } from './deviceModelCatalogApi'
 import { normalizeRelayBaseUrl, normalizeSiteUrl } from './deviceIntegration'
+import { networkFetch } from './networkRequest'
 import { isSelectableQuotaModel, quotaModelMetadata, quotaModelDisplayMetadata, quotaModelOptionKey, validateQuotaModelSelection } from '../shared/quotaModels'
 import type { QuotaModelCatalog, QuotaModelSelection, QuotaModelSwitchResult } from '../shared/quotaModels'
 import type { AiModelSelection } from '../shared/aiSelection'
@@ -133,7 +134,7 @@ export class ProviderSyncService {
     const retryKey = providerOwnerKey(owner) + path
     if (path.startsWith('/api/device/models') && this.now() < (this.catalogRetries.get(retryKey) ?? 0)) throw new Error('官网模型列表暂不可用，请稍后刷新；已保留当前设置')
     let response: Response
-    try { response = await (this.deps.fetcher ?? fetch)(`${normalizeSiteUrl(owner.siteUrl)}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${bearer}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) }
+    try { response = await (this.deps.fetcher ?? networkFetch)(`${normalizeSiteUrl(owner.siteUrl)}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${bearer}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) }
     catch { throw new Error('无法连接模型服务，请稍后重试') }
     if (response.status === 429) { this.cooldownUntil = this.now() + Math.min(300, Math.max(1, Number(response.headers.get('Retry-After')) || 30)) * 1000 }
     if (path.startsWith('/api/device/models') && [429, 503].includes(response.status)) {

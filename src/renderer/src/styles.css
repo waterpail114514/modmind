@@ -4946,6 +4946,21 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 .settings-page .codex-install-overlay .settings-button-group { justify-content: center; }
 .settings-page .codex-ai-settings > .external-agent-settings { grid-column: 1; }
 .settings-page .codex-connection-settings { padding-top: 18px; border-top: 1px solid var(--theme-line); }
+.settings-page .codex-profile-manager { display: grid; gap: 12px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--theme-line); }
+.settings-page .codex-profile-manager-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-page .codex-profile-manager-head h3 { margin: 0; color: var(--theme-text); font-size: 14px; font-weight: 600; }
+.settings-page .codex-profile-list { display: grid; gap: 8px; }
+.settings-page .codex-profile-empty { margin: 0; color: var(--theme-muted); font-size: 13px; line-height: 1.6; }
+.settings-page .codex-profile-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--theme-line); border-radius: 8px; background: var(--theme-surface); }
+.settings-page .codex-profile-row.active { border-color: var(--theme-action); background: var(--theme-selected); }
+.settings-page .codex-profile-main { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; padding: 0; border: 0; background: transparent; text-align: left; color: var(--theme-text); cursor: pointer; }
+.settings-page .codex-profile-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-page .codex-profile-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--theme-on-action); background: var(--theme-action); }
+.settings-page .codex-profile-url { min-width: 0; color: var(--theme-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-page .codex-profile-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.settings-page .codex-test-result { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px; border: 1px solid var(--theme-line); border-radius: 8px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.settings-page .codex-test-result.ok { color: var(--theme-success); border-color: color-mix(in srgb, var(--theme-success) 40%, var(--theme-line)); background: var(--theme-success-bg); }
+.settings-page .codex-test-result.fail { color: var(--theme-danger); border-color: color-mix(in srgb, var(--theme-danger) 40%, var(--theme-line)); background: var(--theme-danger-bg); }
 .settings-page .codex-connection-settings .external-agent-editor-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .settings-page .codex-connection-settings .external-agent-editor-form > .field-label:first-child { grid-column: auto; }
 .settings-page .local-codex-settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
@@ -5214,3 +5229,6 @@ html[data-platform="macos"] .titlebar { min-height: 42px; }
 /* Shared chat body: inspiration artifacts keep their own controls. */
 .inspiration-minimal .agent-conversation { min-width: 0; padding: 0; }
 .inspiration-minimal .agent-conversation-region .inspiration-thinking-status { width: min(800px, calc(100% - clamp(80px, 10%, 240px))); }
+
+.codex-test-slot { min-height: 48px; }
+.codex-profile-list { max-height: 240px; overflow-y: auto; }

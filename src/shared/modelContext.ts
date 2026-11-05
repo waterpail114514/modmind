@@ -15,3 +15,11 @@ export function normalizeModelContextWindows(value: unknown): Record<string, num
 export function normalizeModelAutoCompactTokenLimits(value: unknown): Record<string, number> | undefined {
   return normalizeModelContextWindows(value)
 }
+
+/**
+ * Advertised capacities are kept apart from user overrides so a later scan can refresh them
+ * without overwriting a value the user typed. They use the same exact-model routing.
+ */
+export function normalizeDeclaredModelContextWindows(value: unknown): Record<string, number> | undefined {
+  return normalizeModelContextWindows(value)
+}

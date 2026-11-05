@@ -150,7 +150,7 @@ const validateResourcePack: typeof import("../../feature-plugins/resource-packs/
 
 import { normalizeAiModelSelection,settingsForAiSelection,type AiModelSelection } from '../shared/aiSelection'
 import { ProviderSyncService, parseProviderSnapshot, providerOwnerKey, reconcileProviderSync, type ProviderSnapshot, type ProviderModelDiscovery } from './providerSync'
-import { normalizeModelAutoCompactTokenLimits,normalizeModelContextWindows,validModelContext } from '../shared/modelContext'
+import { normalizeModelAutoCompactTokenLimits,normalizeModelContextWindows,normalizeDeclaredModelContextWindows,validModelContext } from '../shared/modelContext'
 import { codexReasoningCapabilities,isReasoningEffort,normalizeReasoningEffortOptions,reasoningSelectionEffort,selectedReasoningEfforts } from '../shared/modelReasoning'
 import type { PluginDiagnostics,PluginOverlayWindowState,PluginSnapshot } from '../shared/plugins'
 import { normalizeProjectName,validateProjectNameInput } from '../shared/projectName'
@@ -170,6 +170,8 @@ import type { QuotaModelCatalog, QuotaModelSwitchResult } from '../shared/quotaM
 import { readLocalCodexApiKey,readLocalCodexConfig } from './localCodexConfig'
 import { sameApiBaseUrl } from '../shared/apiConnection'
 import { resolveModelContextBudget } from './modelContextRegistry'
+import { codexProfileConfiguration, normalizeCodexProfile, synchronizeCodexProfiles } from './codexProfiles'
+import { ExternalAgentContextWindowError } from './agentContextWindow'
 import { modelReasoningCatalog } from './modelReasoningCatalog'
 import { createPluginBridgeTarget,getPluginRuntime,getPluginService,importPluginZipInteractive,initializePlugins,refreshPluginRegistry,registerPluginProtocolSchemeEarly,shutdownPlugins,waitForPluginRegistry } from './pluginBridgeIntegration'
 import { PluginChatBridge } from './pluginChatBridge'
@@ -210,6 +212,7 @@ DeviceApiError,
 normalizeRelayBaseUrl,
 normalizeSiteUrl,
 openAiV1BaseUrl,
+orderModelsForAgent,
 parseDeviceDeepLink,
 parseModelPayload,
 pollDeviceCode,
@@ -265,6 +268,10 @@ AiRecoveryInfo,
 AiSurface,
 AppVersionCheckResult,
 BeginnerAiPreferences,
+CodexConnectionTestResult,
+CodexProfile,
+CodexProfileInput,
+CodexProfileSummary,
 CodingResult,
 DetachedWindowTarget,
 DeviceConnectionState,
@@ -1101,7 +1108,7 @@ async function upgradeQuotaConnections(previous: RoutingCredentials, token: stri
     current.siteUrl === previous.siteUrl && current.username === previous.username && current.apiKey === previous.apiKey &&
     current.baseUrl === previous.baseUrl && current.account === previous.account && current.group === previous.group)
   if (!unchanged(before)) throw new Error('账号或连接已更新，请重试')
-  const response = await fetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${token}` } })
+  const response = await networkFetch(`${previous.siteUrl}/api/device/providers?credentials=1`, { redirect: 'error', signal: AbortSignal.timeout(12_000), headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${token}` } })
   if (response.status === 404) return false
   if (!response.ok) throw new Error('无法刷新供应商连接，请稍后重试')
   const envelope = await response.json() as { success?: unknown; data?: unknown }
@@ -1523,7 +1530,7 @@ function startDevicePolling(siteUrl: string, code: string, expiresIn: number, co
     while (Date.now() < deadline && !controller.signal.aborted) {
       try {
         await waitForDevicePoll(retryDelays[Math.min(retryIndex, retryDelays.length - 1)], controller.signal)
-        const result = await pollDeviceCode(siteUrl, code, controller.signal, fetch, Boolean(customApi))
+        const result = await pollDeviceCode(siteUrl, code, controller.signal, networkFetch, Boolean(customApi))
         if (result.status === 'pending') {
           retryIndex = 0
           continue
@@ -1707,7 +1714,7 @@ async function disconnectDeviceLocally(): Promise<DeviceConnectionState> {
   const previous = await readDeviceCredentials()
   if (previous?.sync) {
     const session = await quotaSessionStore().read().catch(() => null)
-    if (session?.owner === providerOwnerKey(previous)) await fetch(`${previous.siteUrl}/api/device/session`, { method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${session.token}` } }).catch(() => undefined)
+    if (session?.owner === providerOwnerKey(previous)) await networkFetch(`${previous.siteUrl}/api/device/session`, { method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(4000), headers: { Authorization: `Bearer ${session.token}` } }).catch(() => undefined)
   }
   await deviceStateWrites.run(() => fs.rm(deviceCredentialsFile(), { force: true }))
   await quotaRouter().reset()
@@ -2181,6 +2188,19 @@ const APP_SETTING_KEYS: readonly AppSettingKey[] = [
 
 /** Shared write path for the remote controller and the MCP app-setting tool. */
 async function applyAppSettingWrite(input: Record<string, unknown>): Promise<AgentSettings> {
+  if (input.key === 'codexConnection') {
+    const value = input.value as Record<string, unknown> | null
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['action', 'id', 'profile', 'baseUrl'].includes(key))) throw new Error('连接操作参数无效')
+    if (value.action === 'test') {
+      if (typeof value.id !== 'string' || typeof value.baseUrl !== 'string') throw new Error('测试连接需要已保存的连接 id 和地址')
+      return Object.assign(publicAgentSettings(await readSettings()), { connectionTest: await testCodexProfileConnection({ id: value.id, baseUrl: value.baseUrl }) })
+    }
+    if (value.action !== 'list' && value.action !== 'save' && value.action !== 'activate' && value.action !== 'delete') throw new Error('不支持的连接操作')
+    const profile = value.profile as CodexProfileInput | undefined
+    if (profile && (Object.keys(profile).some(key => !['id', 'name', 'mode', 'baseUrl', 'model', 'reasoningEffort', 'reasoningEffortOptions', 'modelContextWindows', 'modelAutoCompactTokenLimits'].includes(key)))) throw new Error('工作台连接工具不接收密钥或内部字段，请在设置页保存 API Key')
+    await manageCodexProfiles({ action: value.action, id: typeof value.id === 'string' ? value.id : undefined, profile })
+    return publicAgentSettings(await readSettings())
+  }
   const key = String(input.key ?? '') as AppSettingKey
   const value = input.value
   if (!APP_SETTING_KEYS.includes(key)) throw new Error(`不支持的应用设置键：${key || '(空)'}`)
@@ -2278,7 +2298,9 @@ async function saveBeginnerAiPreferences(value: BeginnerAiPreferences): Promise<
   if (previous.model === preferences.model && previous.account === preferences.account && previous.group === preferences.group && previous.reasoningLevel === preferences.reasoningLevel && previous.fastMode === preferences.fastMode && sameWindows && sameCompactLimits && sameEfforts) return preferences
   const credentials = await readDeviceCredentials()
   if (credentials?.sync && (previous.model !== preferences.model || previous.account !== preferences.account || previous.group !== preferences.group)) throw new Error('请通过模型列表切换模型与供应商')
-  validateCodexAutoCompactTokenLimit(model, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow }, compactLimit)
+  for (const [id, limit] of Object.entries(preferences.modelAutoCompactTokenLimits ?? {})) {
+    validateCodexAutoCompactTokenLimit(id, { baseUrl: credentials ? openAiV1BaseUrl(credentials.baseUrl) : undefined, contextWindow: preferences.modelContextWindows?.[id] }, limit)
+  }
   if (preferences.reasoningLevel !== 'auto') {
     reasoningSelectionEffort(preferences.reasoningLevel, undefined, selectedReasoningEfforts(model, preferences.reasoningEffortOptions))
   }
@@ -2444,7 +2466,7 @@ async function configuredCodexServerConfig(configuration: ExternalAgentConfigura
   await refreshConfiguredReasoning('codex', configuration)
   const reasoningCapabilities = modelReasoningFor(baseUrl, apiKey, model)
   const efforts = selectedReasoningEfforts(model, configuration.reasoningEffortOptions)
-  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model], allowLongerContext: (await readSettings()).allowLongerContext === true }
+  return { apiKey, baseUrl, model, reasoningEffort: reasoningSelectionEffort(configuration.reasoningEffort ?? 'auto', reasoningCapabilities, efforts), reasoningCapabilities: codexReasoningCapabilities(reasoningCapabilities, efforts), contextWindow: normalizeModelContextWindows(configuration.modelContextWindows)?.[model], declaredContextWindow: normalizeDeclaredModelContextWindows(configuration.declaredModelContextWindows)?.[model], declaredMaxOutputTokens: normalizeDeclaredModelContextWindows(configuration.declaredModelContextOutputTokens)?.[model], declaredMaxInputTokens: normalizeDeclaredModelContextWindows(configuration.declaredModelContextInputTokens)?.[model], autoCompactTokenLimit: normalizeModelAutoCompactTokenLimits(configuration.modelAutoCompactTokenLimits)?.[model], allowLongerContext: (await readSettings()).allowLongerContext === true }
 }
 
 async function prepareManagedCodex(
@@ -2480,7 +2502,7 @@ async function prepareManagedCodex(
       await previousPreparation
       try {
         users.controller.signal.throwIfAborted()
-        const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow })
+        const contextBudget = resolveModelContextBudget(serverConfig.model, { baseUrl: serverConfig.baseUrl, contextWindow: serverConfig.contextWindow, declaredContextWindow: serverConfig.declaredContextWindow, declaredMaxOutputTokens: serverConfig.declaredMaxOutputTokens, declaredMaxInputTokens: serverConfig.declaredMaxInputTokens })
         if (contextBudget.source === 'inferred') diagnosticJournal.record({
           subsystem: 'ai', operation: 'model-context-budget', phase: 'inferred',
           message: `上下文预算参考 ${contextBudget.inferredFrom}`,
@@ -4076,6 +4098,14 @@ async function writeAgentSettingsAtomically(stored: Record<string, unknown>): Pr
   await writeSettingsFile(settingsFile(), stored)
 }
 
+/** Stable id for the profile seeded from a pre-multi-slot `externalAgents.codex`. */
+const LEGACY_CODEX_PROFILE_ID = 'legacy-codex'
+/** Keep recovery scoped to the failed run. Never rewrite saved connection settings on failure. */
+async function adaptContextWindowAfterOverflow(error: unknown, _model: string | undefined): Promise<unknown> {
+  if (!(error instanceof ExternalAgentContextWindowError)) return error
+  return Object.assign(error, { message: error.message + '。请缩短输入，或新建会话后继续；如需修改窗口，请在设置 → AI 模型中核对失败模型的上下文窗口。当前设置和项目修改已保留。' })
+}
+
 async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSettings) => AgentSettings), validatePreferences = true): Promise<AgentSettings> {
   let resolveWrite!: (settings: AgentSettings) => void
   let rejectWrite!: (error: unknown) => void
@@ -4088,7 +4118,7 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
   const current = await readSettings(true)
   const value = typeof input === 'function' ? input(current) : mergeAgentSettingsPatch(current, input)
   const kinds = ['codex'] as const
-  const normalized: AgentSettings = {
+  let normalized: AgentSettings = {
     ...value,
     allowLongerContext: value.allowLongerContext === true,
     codingBackend: ['quota', ...kinds].includes(value.codingBackend) ? value.codingBackend : 'quota',
@@ -4106,7 +4136,7 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
   let existingAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
   let existingAgentEntries: AgentSettings['externalAgents'] = {}
   try {
-    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { externalAgents?: AgentSettings['externalAgents']; encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>> }
+    const existing = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { externalAgents?: AgentSettings['externalAgents']; encryptedKey?: string; externalAgentProvider?: ExternalAgentKind; encryptedAgentKeys?: Partial<Record<ExternalAgentKind, string>>; codexProfiles?: CodexProfile[]; activeCodexProfileId?: string | null }
     existingAgentEntries = existing.externalAgents ?? {}
     existingAgentKeys = existing.encryptedAgentKeys ?? {}
     if (existing.encryptedKey && existing.externalAgentProvider && !existingAgentKeys[existing.externalAgentProvider]) {
@@ -4116,19 +4146,34 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('原配置当前无法读取，已保留原文件；请重试保存', { cause: error })
   }
   const agentEntries: NonNullable<AgentSettings['externalAgents']> = {}
-  const encryptedAgentKeys: Partial<Record<ExternalAgentKind, string>> = {}
+  const encryptedAgentKeys: Record<string, string> = { ...(existingAgentKeys as Record<string, string>) }
+  if (Array.isArray(normalized.codexProfiles)) normalized = synchronizeCodexProfiles(normalized, current, encryptedAgentKeys, safeStorage)
   for (const kind of kinds) {
-    const entry = normalized.externalAgents?.[kind]
+    let entry = normalized.externalAgents?.[kind]
     if (!entry) continue
+    const previousConnection = current.externalAgents?.[kind]
+    const connectionChanged = entry.mode !== previousConnection?.mode || entry.baseUrl !== previousConnection?.baseUrl && !sameApiBaseUrl(entry.baseUrl, previousConnection?.baseUrl)
+      || Boolean(entry.clearApiKey && previousConnection?.apiKey) || Boolean(entry.apiKey && entry.apiKey !== previousConnection?.apiKey)
+    if (connectionChanged && normalized.activeCodexProfileId === current.activeCodexProfileId) {
+      entry = { ...entry, declaredModelContextWindows: undefined, declaredModelContextInputTokens: undefined, declaredModelContextOutputTokens: undefined }
+      if (normalized.activeCodexProfileId) normalized.codexProfiles = normalized.codexProfiles?.map(profile => profile.id === normalized.activeCodexProfileId ? { ...profile, declaredModelContextWindows: undefined, declaredModelContextInputTokens: undefined, declaredModelContextOutputTokens: undefined } : profile)
+    }
+    entry = { ...entry, connectionRevision: (previousConnection?.connectionRevision ?? 0) + (connectionChanged ? 1 : 0) }
     if (kind === 'codex' && validatePreferences) {
       const existing = existingAgentEntries[kind]
       const model = entry.model?.trim() ?? ''
       const contextFields = (configuration?: ExternalAgentConfiguration) => JSON.stringify([
-        configuration?.model, configuration?.modelContextWindows, configuration?.modelAutoCompactTokenLimits
+        configuration?.baseUrl, configuration?.model, normalizeModelContextWindows(configuration?.modelContextWindows), normalizeModelAutoCompactTokenLimits(configuration?.modelAutoCompactTokenLimits), normalizeDeclaredModelContextWindows(configuration?.declaredModelContextWindows), normalizeDeclaredModelContextWindows(configuration?.declaredModelContextInputTokens), normalizeDeclaredModelContextWindows(configuration?.declaredModelContextOutputTokens)
       ])
       const existingContext = { ...existing, modelContextWindows: normalizeModelContextWindows(existing?.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(existing?.modelAutoCompactTokenLimits) }
       if (contextFields(entry) !== contextFields(existingContext)) {
-        validateCodexAutoCompactTokenLimit(model, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[model] }, entry.modelAutoCompactTokenLimits?.[model])
+        // Every stored threshold must hold for its own model, not only the selected one:
+        // an invalid pair on another model would otherwise surface mid-run after switching.
+        // The advertised window is part of the same options the runtime resolves, so leaving it
+        // out here would let a limit pass now and be rejected on the next run (or reject a valid one).
+        for (const [id, limit] of Object.entries(entry.modelAutoCompactTokenLimits ?? {})) {
+          validateCodexAutoCompactTokenLimit(id, { baseUrl: entry.baseUrl, contextWindow: entry.modelContextWindows?.[id], declaredContextWindow: entry.declaredModelContextWindows?.[id], declaredMaxOutputTokens: entry.declaredModelContextOutputTokens?.[id], declaredMaxInputTokens: entry.declaredModelContextInputTokens?.[id] }, limit)
+        }
       }
       const existingOptions = normalizeReasoningEffortOptions(existing?.reasoningEffortOptions)
       const existingEffort = isReasoningEffort(existing?.reasoningEffort) && selectedReasoningEfforts(existing?.model ?? '', existingOptions).includes(existing.reasoningEffort) ? existing.reasoningEffort : undefined
@@ -4137,9 +4182,9 @@ async function saveAgentSettings(input: AgentSettingsPatch | ((current: AgentSet
       }
     }
     if (!entry.clearApiKey && entry.apiKey && !safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 API Key')
-    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, clearApiKey: undefined, hasStoredKey: undefined}
+    agentEntries[kind] = {...entry, modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows), declaredModelContextWindows: normalizeDeclaredModelContextWindows(entry.declaredModelContextWindows), declaredModelContextOutputTokens: normalizeDeclaredModelContextWindows(entry.declaredModelContextOutputTokens), declaredModelContextInputTokens: normalizeDeclaredModelContextWindows(entry.declaredModelContextInputTokens), modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits), reasoningEffortOptions: kind === 'codex' ? normalizeReasoningEffortOptions(entry.reasoningEffortOptions) : undefined, mode: entry.mode === 'hosted' ? 'hosted' : 'local', apiKey: undefined, clearApiKey: undefined, hasStoredKey: undefined}
     if (!entry.clearApiKey && entry.apiKey && safeStorage.isEncryptionAvailable()) encryptedAgentKeys[kind] = safeStorage.encryptString(entry.apiKey).toString('base64')
-    else if (!entry.clearApiKey && existingAgentKeys[kind]) encryptedAgentKeys[kind] = existingAgentKeys[kind]
+    else if (entry.clearApiKey) delete encryptedAgentKeys[kind]
   }
   const stored: Record<string, unknown> = { ...normalized, externalAgents: agentEntries }
   delete stored.encryptedAgentKeys
@@ -4576,6 +4621,10 @@ async function readSettings(strict = false): Promise<AgentSettings> {
         baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.slice(0, 4096) : undefined,
         model: typeof entry.model === 'string' ? entry.model.slice(0, 512) : undefined,
         modelContextWindows: normalizeModelContextWindows(entry.modelContextWindows),
+        declaredModelContextWindows: normalizeDeclaredModelContextWindows(entry.declaredModelContextWindows),
+        declaredModelContextOutputTokens: normalizeDeclaredModelContextWindows(entry.declaredModelContextOutputTokens),
+        declaredModelContextInputTokens: normalizeDeclaredModelContextWindows(entry.declaredModelContextInputTokens),
+        connectionRevision: Number.isSafeInteger(entry.connectionRevision) ? entry.connectionRevision : 0,
         modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(entry.modelAutoCompactTokenLimits),
         reasoningEffortOptions: normalizeReasoningEffortOptions(entry.reasoningEffortOptions),
         reasoningEffort: isReasoningEffort(entry.reasoningEffort) && selectedReasoningEfforts(entry.model ?? '', normalizeReasoningEffortOptions(entry.reasoningEffortOptions)).includes(entry.reasoningEffort) ? entry.reasoningEffort : undefined,
@@ -4587,9 +4636,70 @@ async function readSettings(strict = false): Promise<AgentSettings> {
     if (!externalAgents.codex && (stored.codexExecutable || stored.externalAgentProvider === 'codex')) {
       externalAgents.codex = {executable: stored.codexExecutable, mode: 'hosted', baseUrl: stored.baseUrl, model: stored.model, reasoningEffort: storedReasoning as ExternalAgentConfiguration['reasoningEffort'], apiKey: stored.externalAgentProvider === 'codex' ? legacyApiKey : '', hasStoredKey: stored.externalAgentProvider === 'codex' && Boolean(stored.encryptedKey)}
     }
+    // Build the saved custom API profiles (multi-slot). Each profile keeps its own
+    // encrypted key under `codex:<id>`; the active one mirrors into `externalAgents.codex`.
+    const storedProfileKeys = (stored.encryptedAgentKeys ?? {}) as Record<string, string>
+    // A missing key means "never migrated"; an empty array means the user really has
+    // no connections left. Without that distinction a deleted last profile would come
+    // back on the next read.
+    const hasPersistedProfileList = Array.isArray(stored.codexProfiles)
+    const rawProfiles = hasPersistedProfileList ? stored.codexProfiles as unknown as Array<Record<string, unknown>> : []
+    const codexProfiles: CodexProfileSummary[] = rawProfiles
+      .filter((p): p is Record<string, unknown> => Boolean(p) && typeof p === 'object')
+      .map((p) => ({
+        id: typeof p.id === 'string' ? p.id : randomUUID(),
+        name: typeof p.name === 'string' ? p.name.slice(0, 256) : '未命名连接',
+        mode: p.mode === 'local' ? 'local' : 'hosted',
+        baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl.slice(0, 4096) : '',
+        model: typeof p.model === 'string' ? p.model.slice(0, 512) : '',
+        reasoningEffortOptions: normalizeReasoningEffortOptions(p.reasoningEffortOptions),
+        modelContextWindows: normalizeModelContextWindows(p.modelContextWindows),
+        modelAutoCompactTokenLimits: normalizeModelAutoCompactTokenLimits(p.modelAutoCompactTokenLimits),
+        declaredModelContextWindows: normalizeDeclaredModelContextWindows(p.declaredModelContextWindows),
+        declaredModelContextInputTokens: normalizeDeclaredModelContextWindows(p.declaredModelContextInputTokens),
+        declaredModelContextOutputTokens: normalizeDeclaredModelContextWindows(p.declaredModelContextOutputTokens),
+        reasoningEffort: isReasoningEffort(p.reasoningEffort) ? p.reasoningEffort : undefined,
+        hasStoredKey: false
+      }))
+    let activeCodexProfileId: string | null = typeof stored.activeCodexProfileId === 'string' ? stored.activeCodexProfileId : null
+    // Legacy migration: this settings file has never carried a profile list, but a
+    // codex connection exists -> seed one. The id is stable so repeated reads keep
+    // pointing at the same profile before the first write persists it.
+    if (!hasPersistedProfileList && codexProfiles.length === 0 && externalAgents.codex?.mode === 'hosted') {
+      const legacyId = LEGACY_CODEX_PROFILE_ID
+      codexProfiles.push({
+        id: legacyId,
+        name: '默认连接',
+        mode: 'hosted',
+        baseUrl: externalAgents.codex.baseUrl ?? '',
+        model: externalAgents.codex.model ?? '',
+        reasoningEffortOptions: externalAgents.codex.reasoningEffortOptions,
+        reasoningEffort: externalAgents.codex.reasoningEffort,
+        declaredModelContextWindows: externalAgents.codex.declaredModelContextWindows,
+        declaredModelContextInputTokens: externalAgents.codex.declaredModelContextInputTokens,
+        declaredModelContextOutputTokens: externalAgents.codex.declaredModelContextOutputTokens,
+        modelContextWindows: externalAgents.codex.modelContextWindows,
+        modelAutoCompactTokenLimits: externalAgents.codex.modelAutoCompactTokenLimits,
+        hasStoredKey: false
+      })
+      if (storedProfileKeys.codex) storedProfileKeys[`codex:${legacyId}`] = storedProfileKeys.codex
+      activeCodexProfileId = legacyId
+    }
+    if (codexProfiles.length > 0) {
+      for (const p of codexProfiles) {
+        p.hasStoredKey = Boolean(storedProfileKeys[`codex:${p.id}`] ?? (p.id === activeCodexProfileId ? storedProfileKeys.codex : undefined))
+      }
+      if (!activeCodexProfileId || !codexProfiles.some((p) => p.id === activeCodexProfileId)) {
+        activeCodexProfileId = codexProfiles[0].id
+      }
+    } else {
+      activeCodexProfileId = null
+    }
     settings = {
       externalAgents,
       allowLongerContext: stored.allowLongerContext === true,
+      codexProfiles,
+      activeCodexProfileId,
       codexApprovalMode: normalizeAgentApprovalMode(stored.codexApprovalMode),
       codingBackend: ['quota', 'codex'].includes(String(stored.codingBackend))
         ? stored.codingBackend as AgentSettings['codingBackend']
@@ -4654,7 +4764,7 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
   const targetBaseUrl = configuration?.mode === 'hosted' ? normalizeApiBaseUrl(configuration.baseUrl ?? '') : ''
   const sameConnection = sameApiBaseUrl(targetBaseUrl, existingConfiguration?.baseUrl)
   const native = configuration?.mode === 'hosted' && !configuration.apiKey?.trim() && !sameConnection ? await readLocalCodexConfig().catch(() => null) : null
-  const apiKey = configuration?.apiKey?.trim()
+  const apiKey = configuration?.clearApiKey ? '' : configuration?.apiKey?.trim()
     || (sameConnection ? existingConfiguration?.apiKey?.trim() : '')
     || (sameApiBaseUrl(targetBaseUrl, native?.baseUrl) ? await readLocalCodexApiKey().catch(() => '') : '')
   const nextConfiguration = {
@@ -4662,7 +4772,7 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
     ...configuration,
     executable: configuration?.mode === 'hosted' ? undefined : configuration?.executable,
     apiKey: apiKey || '',
-    clearApiKey: !apiKey && !sameConnection
+    clearApiKey: configuration?.clearApiKey === true || !apiKey && !sameConnection
   }
   if (nextConfiguration.mode === 'hosted') {
     nextConfiguration.baseUrl = targetBaseUrl
@@ -4672,8 +4782,43 @@ async function configureExternalAgentConnection(kind: ExternalAgentKind, configu
     externalAgents: { [kind]: nextConfiguration }
   }
   // Persist first; availability, model discovery and CLI detection belong to refresh/run.
-  const saved = await saveAgentSettings(next, false)
+  const saved = await saveAgentSettings(next, true)
   return { kind, detail: '连接已保存到本地设置', settings: publicAgentSettings(saved) }
+}
+
+/** Only adopt metadata from the exact saved connection that started this scan. */
+async function adoptDeclaredContextWindow(models: AiModelInfo[], snapshot: ExternalAgentConfiguration): Promise<{ contextWindow?: number; warning?: string }> {
+  const id = snapshot.model?.trim()
+  if (!id) return {}
+  const advertised = models.find(entry => entry.id === id)
+  const declared = advertised?.declaredContextWindow
+  const output = advertised?.declaredMaxOutputTokens
+  const input = advertised?.declaredMaxInputTokens
+  const unchanged = snapshot.declaredModelContextWindows?.[id] === declared && snapshot.declaredModelContextOutputTokens?.[id] === output && snapshot.declaredModelContextInputTokens?.[id] === input
+  if (unchanged) return { contextWindow: declared }
+  let result: { contextWindow?: number; warning?: string } = {}
+  await saveAgentSettings(current => {
+    const codex = current.externalAgents?.codex
+    if (!codex || codex.mode !== snapshot.mode || codex.model !== snapshot.model || codex.connectionRevision !== snapshot.connectionRevision || codex.apiKey !== snapshot.apiKey || !sameApiBaseUrl(codex.baseUrl, snapshot.baseUrl)) return current
+    try {
+      validateCodexAutoCompactTokenLimit(id, { baseUrl: codex.baseUrl, contextWindow: codex.modelContextWindows?.[id], declaredContextWindow: declared, declaredMaxOutputTokens: output, declaredMaxInputTokens: input }, codex.modelAutoCompactTokenLimits?.[id])
+    } catch {
+      result = { warning: '服务声明的容量与已保存的压缩阈值冲突，请在上下文设置中调整阈值后刷新。原设置已保留。' }
+      return current
+    }
+    const set = (values: Record<string, number> | undefined, value: number | undefined): Record<string, number> | undefined => {
+      const next = { ...values }
+      if (value === undefined) delete next[id]; else next[id] = value
+      return Object.keys(next).length ? next : undefined
+    }
+    result = { contextWindow: declared }
+    return { ...current, externalAgents: { ...current.externalAgents, codex: { ...codex,
+      declaredModelContextWindows: set(codex.declaredModelContextWindows, declared),
+      declaredModelContextInputTokens: set(codex.declaredModelContextInputTokens, input),
+      declaredModelContextOutputTokens: set(codex.declaredModelContextOutputTokens, output)
+    } } }
+  })
+  return result
 }
 
 async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCodexScan> {
@@ -4691,7 +4836,8 @@ async function scanConfiguredCodex(): Promise<import('../shared/types').LocalCod
     if (configured.mode === 'hosted') {
       if (!configured.apiKey?.trim()) throw new Error('无法读取已保存的 API Key，请重新填写并保存')
       const discovered = await discoverAvailableModels(configured.baseUrl ?? '', configured.apiKey, '无法读取当前服务的模型列表')
-      return { ...connection, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id) }
+      const declared = await adoptDeclaredContextWindow(discovered.models, configured)
+      return { ...connection, contextWindow: connection.contextWindow ?? declared.contextWindow, modelsError: declared.warning, status, baseUrl: discovered.baseUrl, models: discovered.models.map(model => model.id), defaultModel: discovered.models.find(model => !model.nonChat && model.toolCalling !== false)?.id }
     }
     const models = await listAvailableAgentModels('codex', configured)
     return { ...connection, status, models: models.map(model => model.id) }
@@ -4759,10 +4905,7 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
       endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/${suffix}`
       let response: Response
       try {
-        response = await networkFetch(endpoint.toString(), {
-          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-          signal: AbortSignal.timeout(20_000)
-        })
+        response = await networkFetch(endpoint.toString(), { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, signal: AbortSignal.timeout(20_000) })
       } catch (error) {
         const failure = error as { name?: string; code?: string; cause?: { code?: string } } | null
         const code = failure?.cause?.code ?? failure?.code ?? ''
@@ -4771,16 +4914,16 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
           : /^(?:ENOTFOUND|EAI_AGAIN)$/.test(code) ? '无法解析供应商地址'
           : /^(?:CERT_|ERR_TLS_|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE)/.test(code) ? '供应商证书校验失败'
           : '网络连接失败'
-        throw new Error(`${errorMessage}（${reason}），请检查网络后重试`)
+        throw Object.assign(new Error(`${errorMessage}（${reason}），请检查网络后重试`), { failureCode: code, failureKind: reason === '网络请求超时' ? 'timeout' : 'network' })
       }
       if (!response.ok) {
         if (response.status === 404 || response.status === 405) continue
         // Authentication, quota and server failures are not missing route errors.
-        throw new Error(`${errorMessage}（HTTP ${response.status}）`)
+        throw Object.assign(new Error(`${errorMessage}（HTTP ${response.status}）`), { httpStatus: response.status })
       }
       let payload: unknown
       try { payload = await response.json() as unknown } catch { invalidPayload = true; continue }
-      const models = modelReasoningCatalog.enrich(parseModelPayload(payload), candidate)
+      const models = orderModelsForAgent(modelReasoningCatalog.enrich(parseModelPayload(payload), candidate))
       if (!models.length) { empty ??= { baseUrl: candidate, models }; continue }
       for (const keyBase of new Set([normalized, candidate])) {
         if (revision === quotaConfiguration.current()) scannedModelCapabilities.set(quotaPreferenceKey(keyBase, apiKey), { checkedAt: Date.now(), models })
@@ -4789,11 +4932,65 @@ async function discoverAvailableModels(baseUrl: string, apiKey: string, errorMes
     }
   }
   if (empty) return empty
-  throw new Error(invalidPayload ? `${errorMessage}（模型服务返回了无效数据）` : `${errorMessage}（模型列表接口不存在或不支持访问），请检查供应商 API 地址或重新同步连接`)
+  throw Object.assign(new Error(invalidPayload ? `${errorMessage}（模型服务返回了无效数据）` : `${errorMessage}（模型列表接口不存在或不支持访问），请检查供应商 API 地址或重新同步连接`), { httpStatus: invalidPayload ? undefined : 404, failureKind: invalidPayload ? 'invalid-payload' : 'not-found' })
 }
 
 async function fetchAvailableModels(baseUrl: string, apiKey: string, errorMessage: string): Promise<AiModelInfo[]> {
   return (await discoverAvailableModels(baseUrl, apiKey, errorMessage)).models
+}
+
+/** Return diagnostics through the same discovery/transport path used by actual model scanning. */
+async function probeCodexConnection(baseUrl: string, apiKey: string): Promise<CodexConnectionTestResult> {
+  const started = Date.now()
+  try {
+    const result = await discoverAvailableModels(baseUrl, apiKey, '无法读取该地址的模型目录')
+    return { ok: true, baseUrl: result.baseUrl, models: result.models.filter(model => !model.nonChat && model.toolCalling !== false).map(model => model.id), latencyMs: Date.now() - started }
+  } catch (error) {
+    const failure = error as Error & { httpStatus?: number; failureCode?: string; failureKind?: CodexConnectionTestResult['failureKind'] }
+    const status = failure.httpStatus
+    return { ok: false, baseUrl, models: [], latencyMs: Date.now() - started, httpStatus: status, failureCode: failure.failureCode,
+      failureKind: failure.failureKind ?? (status === 401 ? 'unauthorized' : status === 403 ? 'forbidden' : status === 404 ? 'not-found' : status === 429 ? 'rate-limit' : status && status >= 500 ? 'server' : 'network'), error: failure.message }
+  }
+}
+
+async function manageCodexProfiles(input: { action: 'list' | 'save' | 'delete' | 'activate'; id?: string; profile?: CodexProfileInput }): Promise<CodexProfileSummary[]> {
+  if (!input || !['list', 'save', 'delete', 'activate'].includes(input.action)) throw new Error('不支持的连接操作')
+  if (input.action === 'list') return ((await readSettings()).codexProfiles ?? []) as CodexProfileSummary[]
+  if (input.action !== 'save' && (typeof input.id !== 'string' || !input.id)) throw new Error('缺少连接 id')
+  const profile = input.action === 'save' ? normalizeCodexProfile(input.profile!) : undefined
+  const saved = await saveAgentSettings(current => {
+    const profiles = (current.codexProfiles ?? []).slice()
+    if (input.action === 'save' && profile) {
+      const index = profiles.findIndex(entry => entry.id === profile.id)
+      const update: CodexProfileInput = { ...profile, apiKey: input.profile?.apiKey, clearApiKey: input.profile?.clearApiKey }
+      if (index < 0) profiles.push(update); else profiles[index] = update
+      return { ...current, codexProfiles: profiles, activeCodexProfileId: current.activeCodexProfileId ?? profile.id }
+    }
+    if (!profiles.some(entry => entry.id === input.id)) throw new Error('连接档案不存在')
+    if (input.action === 'delete') {
+      const remaining = profiles.filter(entry => entry.id !== input.id)
+      return { ...current, codexProfiles: remaining, activeCodexProfileId: current.activeCodexProfileId === input.id ? remaining[0]?.id ?? null : current.activeCodexProfileId }
+    }
+    const active = profiles.find(entry => entry.id === input.id)!
+    return { ...current, codingBackend: 'codex', activeCodexProfileId: active.id, externalAgents: { ...current.externalAgents, codex: { ...codexProfileConfiguration(active), apiKey: '', clearApiKey: false } } }
+  })
+  return (saved.codexProfiles ?? []) as CodexProfileSummary[]
+}
+
+async function testCodexProfileConnection(input: { baseUrl: string; apiKey?: string; id?: string }): Promise<CodexConnectionTestResult> {
+  if (!input || typeof input.baseUrl !== 'string' || input.apiKey !== undefined && typeof input.apiKey !== 'string') throw new Error('连接参数无效')
+  const baseUrl = normalizeApiBaseUrl(input.baseUrl)
+  let apiKey = input.apiKey?.trim() ?? ''
+  if (!apiKey && input.id) {
+    const settings = await readSettings()
+    const profile = settings.codexProfiles?.find(entry => entry.id === input.id)
+    if (!profile || !sameApiBaseUrl(baseUrl, profile.baseUrl)) return { ok: false, baseUrl, models: [], latencyMs: 0, failureKind: 'credential-required', error: '地址已改变，请为新地址填写 API Key 后再测试' }
+    const stored = JSON.parse(await fs.readFile(settingsFile(), 'utf8')) as { encryptedAgentKeys?: Record<string, string> }
+    const encrypted = stored.encryptedAgentKeys?.['codex:' + profile.id] ?? (profile.id === 'legacy-codex' ? stored.encryptedAgentKeys?.codex : undefined)
+    if (encrypted && safeStorage.isEncryptionAvailable()) apiKey = safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
+  }
+  if (!apiKey) throw new Error('请填写 API Key 后再测试连接')
+  return probeCodexConnection(baseUrl, apiKey)
 }
 
 function normalizeCodingPath(value: string, _allowBuildScriptChanges = true, _allowWrapperConfiguration = true, project: ProjectInfo = requireProject()): string {
@@ -6576,11 +6773,12 @@ async function runExternalCodingAgent(
   const localCodexModel = !usesQuota && runExternalConfiguration.mode !== 'hosted'
     ? runExternalConfiguration.model || localCodexConfig?.model : undefined
   const localCodexContextWindow = runExternalConfiguration.modelContextWindows?.[localCodexModel ?? '']
+    ?? runExternalConfiguration.declaredModelContextWindows?.[localCodexModel ?? '']
     ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.contextWindow : undefined)
   const localCodexManualCompactLimit = runExternalConfiguration.modelAutoCompactTokenLimits?.[localCodexModel ?? '']
     ?? (localCodexConfig && localCodexConfig.model === localCodexModel ? localCodexConfig.autoCompactTokenLimit : undefined)
   const localCodexAutoCompactLimit = localCodexModel
-    ? resolveCodexAutoCompactTokenLimit(localCodexModel, { baseUrl: localCodexConfig?.baseUrl, contextWindow: localCodexContextWindow, allowLongerContext: settings.allowLongerContext }, localCodexManualCompactLimit)
+    ? resolveCodexAutoCompactTokenLimit(localCodexModel, { baseUrl: localCodexConfig?.baseUrl, contextWindow: localCodexContextWindow, declaredContextWindow: runExternalConfiguration.declaredModelContextWindows?.[localCodexModel ?? ''], declaredMaxOutputTokens: runExternalConfiguration.declaredModelContextOutputTokens?.[localCodexModel ?? ''], allowLongerContext: settings.allowLongerContext }, localCodexManualCompactLimit)
     : undefined
   let executionUsage: import('../shared/types').AiTokenUsage | undefined
   const safetyReviewerConfig: AiReviewerConfig = { reviewMode: 'codex-auto' }
@@ -6881,7 +7079,7 @@ async function runExternalCodingAgent(
       signal: signal ?? new AbortController().signal,
       persistentRetry: true,
       onStarted: () => {
-        const configuredContextWindow = codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined)
+        const configuredContextWindow = codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ?? runExternalConfiguration.declaredModelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined)
         if (configuredContextWindow) {
           executionUsage = { contextWindow: configuredContextWindow, contextWindowSource: 'configuration', model: codexSetup?.model ?? runExternalConfiguration.model, backend }
           sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
@@ -6893,8 +7091,8 @@ async function runExternalCodingAgent(
       },
       onUsage: usage => {
         executionUsage = { ...usage, contextTokens: usage.contextTokens ?? (usage.cumulative ? executionUsage?.contextTokens : usage.inputTokens),
-          contextWindow: codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined) ?? usage.contextWindow ?? executionUsage?.contextWindow,
-          contextWindowSource: codexSetup?.contextWindow || !usesQuota && runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ? 'configuration' : 'runtime',
+          contextWindow: codexSetup?.contextWindow ?? (!usesQuota ? runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ?? runExternalConfiguration.declaredModelContextWindows?.[runExternalConfiguration.model ?? ''] : undefined) ?? usage.contextWindow ?? executionUsage?.contextWindow,
+          contextWindowSource: codexSetup?.contextWindow || !usesQuota && (runExternalConfiguration.modelContextWindows?.[runExternalConfiguration.model ?? ''] ?? runExternalConfiguration.declaredModelContextWindows?.[runExternalConfiguration.model ?? '']) ? 'configuration' : 'runtime',
           model: usage.model ?? codexSetup?.model ?? runExternalConfiguration.model, backend }
         sendAiOutput(event, 'usage', '', sessionId, project.path, context.runId, { usage: executionUsage })
         if (!isInspiration) void creation.mutate(state => {
@@ -7301,7 +7499,8 @@ async function runExternalCodingAgent(
     }
     const completedAnswer = (candidate: Awaited<ReturnType<typeof runExternalAgent>>): string => candidate.finalAnswer?.text
       ?? selectFinalAiAnswer(bufferedFinalResponse, candidate.summary, deliveredResponseContents)
-    const result = await aiRuntimeActivityContext.run(reportRuntimeActivity, () => runExternalAgent(externalRunOptions))
+    const result = await aiRuntimeActivityContext.run(reportRuntimeActivity, () => runExternalAgent(externalRunOptions)
+      .catch(async (error: unknown) => { throw await adaptContextWindowAfterOverflow(error, externalRunOptions.model) }))
     if (!completedAnswer(result)) {
       throw Object.assign(new Error('本轮已结束，但未收到完整回复。已保留当前修改和会话，请检查后再继续。'), { name: 'ExternalAgentOutputError' })
     }
@@ -8554,6 +8753,12 @@ function registerIpc(): void {
   })
   diagnosticHandle('external-agents:scanLocal', () => scanConfiguredCodex())
   diagnosticHandle('external-agents:configure', (_event, kind: ExternalAgentKind, configuration: ExternalAgentConfiguration) => configureExternalAgentConnection(kind, configuration))
+  diagnosticHandle('external-agents:listProfiles', () => manageCodexProfiles({ action: 'list' }))
+  diagnosticHandle('external-agents:saveProfile', (_event, input: CodexProfileInput) => manageCodexProfiles({ action: 'save', profile: input }))
+  diagnosticHandle('external-agents:deleteProfile', (_event, id: string) => manageCodexProfiles({ action: 'delete', id }))
+  diagnosticHandle('external-agents:setActiveProfile', (_event, id: string) => manageCodexProfiles({ action: 'activate', id }))
+  diagnosticHandle('external-agents:testConnection', (_event, input: { baseUrl: string; apiKey?: string; id?: string }) => testCodexProfileConnection(input))
+
   diagnosticHandle('external-agents:history', async (_event, kind: ExternalAgentKind) => {
     if (kind !== 'codex') throw new Error('不支持的外部代理')
     const project = aiProjectContext.getStore() ?? currentProject

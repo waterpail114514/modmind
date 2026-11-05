@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { expect, it, vi } from 'vitest'
-import { parseModelPayload } from './deviceIntegration'
+import { orderModelsForAgent, parseModelPayload } from './deviceIntegration'
 
 function fixture(respond: (url: string) => Response) {
   const source = readFileSync('src/main/index.ts', 'utf8')
   const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
-  const state = {
-    URL, Error, AbortSignal, parseModelPayload,
+  const state: any = {
+    URL, Error, AbortSignal, parseModelPayload, orderModelsForAgent,
     networkFetch: vi.fn(async (url: string) => respond(url)),
     modelReasoningCatalog: { refresh: async () => {}, enrich: (models: unknown) => models },
     quotaConfiguration: { current: vi.fn(() => 0) },
@@ -25,7 +25,7 @@ const models = () => Response.json({ data: [{ id: 'provider-first' }, { id: 'pro
 it('tries the supplied path first, then /v1 and returns the working base for persistence', async () => {
   const state = fixture(url => url.endsWith('/v1/models') ? models() : new Response('', { status: 404 }))
   expect(await state.discoverAvailableModels('https://provider.example/', 'fixture', 'failed')).toMatchObject({ baseUrl: 'https://provider.example/v1', models: [{ id: 'provider-first' }, { id: 'provider-second' }] })
-  expect(state.networkFetch.mock.calls.map(([url]) => url)).toEqual(['https://provider.example/models', 'https://provider.example/model', 'https://provider.example/v1/models'])
+  expect(state.networkFetch.mock.calls.map(([url]: [string]) => url)).toEqual(['https://provider.example/models', 'https://provider.example/model', 'https://provider.example/v1/models'])
 })
 
 it('retains a working unversioned endpoint without trying /v1', async () => {
@@ -38,7 +38,7 @@ it.each(['/v1', '/api/v1/', '/v2'])('does not append another version to %s', asy
   const state = fixture(() => new Response('', { status: 404 }))
   await expect(state.discoverAvailableModels(`https://provider.example${suffix}`, 'fixture', 'failed')).rejects.toThrow('failed')
   expect(state.networkFetch).toHaveBeenCalledTimes(2)
-  expect(state.networkFetch.mock.calls.every(([url]) => !url.includes('/v1/v1') && !url.includes('/v2/v1'))).toBe(true)
+  expect(state.networkFetch.mock.calls.every(([url]: [string]) => !url.includes('/v1/v1') && !url.includes('/v2/v1'))).toBe(true)
 })
 
 it.each([401, 403, 429, 500])('does not mask HTTP %s errors with path retries', async status => {

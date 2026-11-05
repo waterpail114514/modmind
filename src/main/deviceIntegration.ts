@@ -1,5 +1,6 @@
 import type { AiModelInfo, AppVersionCheckResult, DeviceKeyStatus, DeviceUsage } from '../shared/types'
 import { parseReasoningCapabilities } from '../shared/modelReasoning'
+import { validModelContext } from '../shared/modelContext'
 import { randomUUID } from 'node:crypto'
 import { decideAppUpdate } from './appUpdatePolicy'
 import { parseProviderSnapshot, type ProviderSnapshot } from './providerSync'
@@ -405,6 +406,44 @@ export async function checkAppVersion(siteUrl: string, currentVersion: string, s
   return { ...decision, ...(downloadUrl ? { downloadUrl } : {}) }
 }
 
+/** Endpoint families that a catalog publishes next to chat models but that an agent backend cannot drive. */
+const NON_CHAT_MODEL = /(?:^|[/_.:-])(?:embed(?:ding)?s?|rerank|tts|text-to-speech|whisper|transcri(?:be|ption)|moderation|bge)(?:$|[/_.:-])/i
+
+/** Read only explicit capability statements; an absent field stays unknown instead of guessing. */
+function parseModelCapabilities(id: string, record: Record<string, unknown>): { toolCalling?: boolean; nonChat?: boolean } {
+  const parameters = Array.isArray(record.supported_parameters)
+    ? record.supported_parameters.filter((value): value is string => typeof value === 'string')
+    : undefined
+  const capabilities = record.capabilities && typeof record.capabilities === 'object' && !Array.isArray(record.capabilities)
+    ? record.capabilities as Record<string, unknown> : undefined
+  const toolCalling = parameters ? parameters.includes('tools') : typeof capabilities?.tools === 'boolean' ? capabilities.tools : undefined
+  return {
+    ...(toolCalling === undefined ? {} : { toolCalling }),
+    ...(NON_CHAT_MODEL.test(id) ? { nonChat: true } : {})
+  }
+}
+
+/**
+ * Providers that publish capacities in their catalog state them here. Reading them keeps the
+ * budget anchored to what the endpoint actually serves instead of a same-family estimate.
+ * Field names differ per gateway, so every documented spelling is accepted and validated.
+ */
+function parseDeclaredLimits(record: Record<string, unknown>): { declaredContextWindow?: number; declaredMaxInputTokens?: number; declaredMaxOutputTokens?: number } {
+  const top = record.top_provider && typeof record.top_provider === 'object' && !Array.isArray(record.top_provider)
+    ? record.top_provider as Record<string, unknown> : undefined
+  const first = (values: unknown[]): number | undefined => values.find((value): value is number => validModelContext(value))
+  const context = first([
+    record.context_length, record.context_window, record.max_context_length,
+    record.max_model_len, top?.context_length
+  ])
+  const output = first([record.max_completion_tokens, record.max_output_tokens, top?.max_completion_tokens])
+  return {
+    ...(context === undefined ? {} : { declaredContextWindow: context }),
+    ...(validModelContext(record.max_input_tokens) ? { declaredMaxInputTokens: record.max_input_tokens } : {}),
+    ...(output === undefined ? {} : { declaredMaxOutputTokens: output })
+  }
+}
+
 export function parseModelPayload(payload: unknown): AiModelInfo[] {
   let entries: unknown[] = []
   if (Array.isArray(payload)) entries = payload
@@ -418,7 +457,7 @@ export function parseModelPayload(payload: unknown): AiModelInfo[] {
   const identifier = (value: unknown): string | undefined => typeof value === 'string' && value.trim() && value.trim().length <= 256 && !/[\x00-\x1f\x7f]/.test(value) ? value.trim() : undefined
   const text = (value: unknown, max: number): string | undefined => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined
   const models = entries.map((entry): AiModelInfo | null => {
-    if (typeof entry === 'string') { const id = identifier(entry); return id ? { id } : null }
+    if (typeof entry === 'string') { const id = identifier(entry); return id ? { id, ...parseModelCapabilities(id, {}) } : null }
     if (!entry || typeof entry !== 'object') return null
     const record = entry as Record<string, unknown>
     const id = identifier([record.id, record.name, record.model].find(value => typeof value === 'string' && value.trim()))
@@ -428,8 +467,19 @@ export function parseModelPayload(payload: unknown): AiModelInfo[] {
     const family = text(record.family, 128), description = text(record.description, 1000)
     const reasoning = parseReasoningCapabilities(entry)
     return { id, ...(name && name !== id ? { name } : {}), ...(family ? { family } : {}), ...(description ? { description } : {}),
-      ...(typeof record.recommended === 'boolean' ? { recommended: record.recommended } : {}), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}) }
+      ...(typeof record.recommended === 'boolean' ? { recommended: record.recommended } : {}), ...(ownedBy ? { ownedBy } : {}), ...(reasoning ? { reasoning } : {}),
+      ...parseModelCapabilities(id, record), ...parseDeclaredLimits(record) }
   }).filter((entry): entry is AiModelInfo => Boolean(entry))
   return [...new Map(models.map((model) => [model.id, model])).values()]
     .sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }))
+}
+
+/**
+ * An agent backend always needs a chat model that can call tools. Catalog text order is alphabetical,
+ * so a gateway that lists an embedding endpoint early would otherwise become the default selection.
+ * Entries the provider did not describe keep their original position.
+ */
+export function orderModelsForAgent(models: AiModelInfo[]): AiModelInfo[] {
+  const rank = (model: AiModelInfo) => model.nonChat ? 2 : model.toolCalling === false ? 1 : 0
+  return [...models].sort((left, right) => rank(left) - rank(right) || left.id.localeCompare(right.id, undefined, { numeric: true }))
 }

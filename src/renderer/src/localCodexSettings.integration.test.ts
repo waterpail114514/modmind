@@ -6,7 +6,7 @@ import { agentSettingsPatch, mergeAgentSettingsPatch } from '../../shared/agentS
 
 const source = readFileSync('src/renderer/src/App.tsx', 'utf8')
 const ast = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-const names = ['configureExternalAgent', 'scanLocalCodex', 'saveLocalCodexPreference', 'installExternalAgent']
+const names = ['updateCodexConnection', 'handleSaveConnection', 'scanLocalCodex', 'saveLocalCodexPreference', 'installExternalAgent']
 const declarations: string[] = []
 function visit(node: ts.Node) {
   if (ts.isVariableDeclaration(node) && names.includes(node.name.getText(ast))) declarations.push(`const ${node.getText(ast)};`)
@@ -33,6 +33,8 @@ function fixture() {
     localCodexScanInFlight: { current: null }, localCodexScanGeneration: { current: 0 },
     aiSettingsSelectionGeneration: { current: 0 },
     agentDraft: { baseUrl: 'https://new.example/v1', apiKey: 'fixture-key' },
+    settings: { externalAgents: { codex: configuration } }, activeCodexProfileId: 'a', pendingNewProfileId: null, draftIsNew: false, connectionTest: null, agentDraftName: 'A',
+    setDraftIsNew: vi.fn(), setPendingNewProfileId: vi.fn(),
     configuringAgents: {}, installingAgents: {}, scans: null, agents: [], notices: [],
     setConfiguringAgents: (update: any) => { state.configuringAgents = update(state.configuringAgents) },
     setInstallingAgents: (update: any) => { state.installingAgents = update(state.installingAgents) },
@@ -45,7 +47,8 @@ function fixture() {
     saveSettingsPatch: vi.fn(async (patch: any) => { state.settingsRef.current = { ...state.settingsRef.current, ...patch }; return true }),
     window: { modmind: {
       externalAgents: {
-        configure: vi.fn(async () => ({ settings: saved })),
+        setActiveProfile: vi.fn(async () => []),
+        saveProfile: vi.fn(async () => ({ settings: saved })),
         scanLocal: vi.fn(() => new Promise(() => {})),
         install: vi.fn(async () => ({ kind: 'codex', installed: true, label: 'Codex' }))
       }, settings: { getAgent: vi.fn(async () => saved) }
@@ -65,10 +68,10 @@ it('saves new credentials while an old scan is pending and releases save state b
   const oldScan = deferred<any>()
   state.window.modmind.externalAgents.scanLocal.mockReturnValueOnce(oldScan.promise)
   const retired = state.scanLocalCodex()
-  await state.configureExternalAgent('codex')
-  expect(state.window.modmind.externalAgents.configure).toHaveBeenCalledOnce()
+  await state.handleSaveConnection('codex')
+  expect(state.window.modmind.externalAgents.saveProfile).toHaveBeenCalledOnce()
   expect(state.configuringAgents.codex).toBe(false)
-  expect(state.notices).toContain('连接已保存到本地设置')
+  expect(state.notices).toContain('连接已保存')
   expect(state.scanning).toBe(true)
   oldScan.resolve({ status: { kind: 'codex', installed: true }, baseUrl: 'https://old.example/v1', models: ['stale-model'] })
   await retired
@@ -102,13 +105,13 @@ it('retains a manually selected model even when discovery omits that ID', async 
 it('retains connection drafts after a local write failure and allows a successful retry', async () => {
   vi.useFakeTimers()
   const state = fixture()
-  state.window.modmind.externalAgents.configure.mockRejectedValueOnce(new Error('disk write failed'))
-  await state.configureExternalAgent('codex')
+  state.window.modmind.externalAgents.saveProfile.mockRejectedValueOnce(new Error('disk write failed'))
+  await state.handleSaveConnection('codex')
   expect(state.configuringAgents.codex).toBe(false)
   expect(state.setAgentDraft).not.toHaveBeenCalled()
   expect(state.notices.at(-1)).toContain('disk write failed')
-  await state.configureExternalAgent('codex')
-  expect(state.notices.at(-1)).toBe('连接已保存到本地设置')
+  await state.handleSaveConnection('codex')
+  expect(state.notices.at(-1)).toBe('连接已保存')
 })
 
 it('uses the shared integration installer and does not wait for an old model scan', async () => {
@@ -139,8 +142,8 @@ it('keeps unrelated preference writes queued during connection save from restori
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText, state)
   const pending = deferred<any>()
-  state.window.modmind.externalAgents.configure.mockReturnValueOnce(pending.promise)
-  const connectionSave = state.configureExternalAgent('codex')
+  state.window.modmind.externalAgents.saveProfile.mockReturnValueOnce(pending.promise)
+  const connectionSave = state.handleSaveConnection('codex')
   const preferenceSave = state.performPreferenceSave({ darkMode: true })
   pending.resolve({ settings: { externalAgents: { codex: { mode: 'hosted', baseUrl: 'https://new.example/v1', model: 'manual-id' } } } })
   await Promise.all([connectionSave, preferenceSave])

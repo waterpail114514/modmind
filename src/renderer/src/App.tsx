@@ -129,7 +129,10 @@ import {
   UserRound,
   WandSparkles,
   X,
-  Zap
+  Zap,
+  Plug,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react'
 import type {
   ModMindApi,
@@ -172,7 +175,9 @@ import type {
   McpBridgeState,
   DiagnosticPageSnapshot,
   SidebarViewId,
-  DetachedWindowTarget
+  DetachedWindowTarget,
+  CodexProfileSummary,
+  CodexConnectionTestResult
 } from '../../shared/types'
 import type { GiteeBuildResult, GiteeBuildSettings, GiteeBuildValidation } from '../../shared/production'
 import { AI_CONTINUATION_PROMPT, aiPromptFingerprint, isRepeatedAiPrompt } from '../../shared/aiPrompt'
@@ -2731,6 +2736,23 @@ export default function App(): React.JSX.Element {
     sameApiBaseUrl(agentDraft.baseUrl, settings.externalAgents?.codex?.baseUrl) && settings.externalAgents?.codex?.hasStoredKey
     || sameApiBaseUrl(agentDraft.baseUrl, localCodexScan?.baseUrl) && localCodexScan?.hasApiKey
   )
+  const [agentDraftName, setAgentDraftName] = useState('')
+  const [draftIsNew, setDraftIsNew] = useState(false)
+  const [pendingNewProfileId, setPendingNewProfileId] = useState<string | null>(null)
+  const connectionTestGeneration = useRef(0)
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [connectionTest, setConnectionTest] = useState<CodexConnectionTestResult | null>(null)
+  const [connectionTestError, setConnectionTestError] = useState('')
+  const invalidateConnectionTest = (): void => { connectionTestGeneration.current += 1; setTestingConnection(false); setConnectionTest(null); setConnectionTestError('') }
+  const initializedCodexProfileNameRef = useRef(false)
+  useEffect(() => {
+    if (initializedCodexProfileNameRef.current) return
+    const active = settings.codexProfiles?.find((p) => p.id === settings.activeCodexProfileId)
+    if (active) {
+      setAgentDraftName(active.name)
+      initializedCodexProfileNameRef.current = true
+    }
+  }, [settings.codexProfiles, settings.activeCodexProfileId])
   const [aiHistoryLoadedKey, setAiHistoryLoadedKey] = useState('')
   const [workbenchPersistenceState, setWorkbenchPersistenceState] = useState<WorkbenchPersistenceState>('loading')
   const [workbenchPersistenceMessage, setWorkbenchPersistenceMessage] = useState('正在读取对话')
@@ -4742,40 +4764,182 @@ export default function App(): React.JSX.Element {
     void saveSettingsPatch({ javaPreferences: { ...base, [scenario]: value } })
   }
 
-  const configureExternalAgent = async (kind: ExternalAgentKind): Promise<void> => {
-    if (configuringAgents[kind]) return
-    const current = settingsRef.current.externalAgents?.codex
-    const model = current?.model?.trim() || ''
-    const configuration: ExternalAgentConfiguration = { ...current, ...agentDraft, mode: 'hosted', model }
-    if (!configuration.baseUrl?.trim()) {
-      setNotice('请填写 Base URL')
+  const codexProfiles = (settings.codexProfiles ?? []) as CodexProfileSummary[]
+  const activeCodexProfileId = settings.activeCodexProfileId ?? null
+  const confirmDiscardConnectionDraft = async (): Promise<boolean> => {
+    const active = settings.codexProfiles?.find(profile => profile.id === activeCodexProfileId)
+    const dirty = Boolean(agentDraft.apiKey?.trim()) || (agentDraft.baseUrl ?? '') !== (settings.externalAgents?.codex?.baseUrl ?? '') || agentDraftName !== (active?.name ?? '')
+    if (!dirty || draftIsNew && !agentDraft.apiKey?.trim() && !agentDraft.baseUrl?.trim() && !agentDraftName.trim()) return true
+    return requestConfirm({ title: '放弃未保存的连接修改？', message: '当前填写的连接信息尚未保存。', confirmLabel: '放弃并切换' })
+  }
+
+  const updateCodexConnection = async (mutate: () => Promise<unknown>): Promise<AgentSettings> => {
+    ++aiSettingsSelectionGeneration.current
+    ++localCodexScanGeneration.current
+    localCodexScanInFlight.current = null
+    setLocalCodexScanning(false)
+    const save = settingsSaveTailRef.current.catch(() => undefined).then(async () => {
+      await mutate()
+      const refreshed = await window.modmind.settings.getAgent()
+      settingsConfirmedRef.current = refreshed
+      const visible = [...settingsPendingPatchesRef.current.values()].reduce(mergeAgentSettingsPatch, refreshed)
+      settingsRef.current = visible
+      setSettings(visible)
+      return refreshed
+    })
+    settingsSaveTailRef.current = save.then(() => undefined, () => undefined)
+    return save
+  }
+
+  const handleSaveConnection = async (): Promise<void> => {
+    if (configuringAgents.codex) return
+    const baseUrl = agentDraft.baseUrl?.trim()
+    if (!baseUrl) { setNotice('请填写 Base URL'); return }
+    const inherited = !draftIsNew && settings.externalAgents?.codex?.model?.trim() || ''
+    const tested = connectionTest?.ok ? connectionTest.models : []
+    const model = agentDraft.model?.trim() || (tested.includes(inherited) ? inherited : tested[0] || inherited)
+    if (!model) { setNotice('请填写模型 ID，或测试连接后选择模型'); return }
+    if (draftIsNew && !agentDraft.apiKey?.trim()) { setNotice('请填写 API Key'); return }
+    const id = pendingNewProfileId ?? activeCodexProfileId ?? crypto.randomUUID()
+    setConfiguringAgents(current => ({ ...current, codex: true }))
+    try {
+      const existing = draftIsNew ? undefined : settings.codexProfiles?.find(profile => profile.id === id)
+      const refreshed = await updateCodexConnection(async () => {
+        await window.modmind.externalAgents.saveProfile({ ...existing, id, name: agentDraftName.trim() || '默认连接', mode: 'hosted', baseUrl, model, apiKey: agentDraft.apiKey })
+        await window.modmind.externalAgents.setActiveProfile(id)
+      })
+      setAgentDraft({ baseUrl: refreshed.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
+      setDraftIsNew(false)
+      setPendingNewProfileId(null)
+      setLocalCodexScan(null)
+      setNotice('连接已保存')
+      void scanLocalCodex()
+    } catch (error) { setNotice(`保存连接失败：${errorMessage(error)}`) }
+    finally { setConfiguringAgents(current => ({ ...current, codex: false })) }
+  }
+
+  const handleSelectProfile = async (id: string): Promise<void> => {
+    if (!await confirmDiscardConnectionDraft()) return
+    invalidateConnectionTest()
+    if (draftIsNew) {
+      setDraftIsNew(false)
+      setPendingNewProfileId(null)
+    }
+    if (id === activeCodexProfileId && settings.externalAgents?.codex?.mode === 'hosted') {
+      setAgentDraft({ baseUrl: settings.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
+      const profile = codexProfiles.find((p) => p.id === id)
+      if (profile) setAgentDraftName(profile.name)
       return
     }
-    setConfiguringAgents((current) => ({ ...current, [kind]: true }))
+    setConfiguringAgents((current) => ({ ...current, codex: true }))
     try {
-      // Retire old scans without waiting for their provider; only local writes serialize.
-      ++aiSettingsSelectionGeneration.current
-      ++localCodexScanGeneration.current
+      const refreshed = await updateCodexConnection(() => window.modmind.externalAgents.setActiveProfile(id))
+      setAgentDraft({ baseUrl: refreshed.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
+      const profile = refreshed.codexProfiles?.find((p) => p.id === id)
+      if (profile) setAgentDraftName(profile.name)
+      setNotice(`已切换到连接：${profile?.name ?? ''}`)
+      localCodexScanGeneration.current += 1
       localCodexScanInFlight.current = null
-      setLocalCodexScanning(false)
-      const save = settingsSaveTailRef.current.catch(() => undefined).then(async () => {
-        const result = await window.modmind.externalAgents.configure(kind, configuration)
-        const refreshedSettings = result.settings ?? await window.modmind.settings.getAgent()
-        settingsConfirmedRef.current = refreshedSettings
-        const visible = [...settingsPendingPatchesRef.current.values()].reduce(mergeAgentSettingsPatch, refreshedSettings)
-        settingsRef.current = visible
-        setSettings(visible)
-        setAgentDraft({ baseUrl: refreshedSettings.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
-      })
-      settingsSaveTailRef.current = save.catch(() => undefined)
-      await save
-      setNotice('连接已保存到本地设置')
       setLocalCodexScan(null)
       void scanLocalCodex()
     } catch (error) {
-      setNotice(`连接保存失败：${errorMessage(error)}`)
+      setNotice(`切换连接失败：${errorMessage(error)}`)
     } finally {
-      setConfiguringAgents((current) => ({ ...current, [kind]: false }))
+      setConfiguringAgents((current) => ({ ...current, codex: false }))
+    }
+  }
+
+  const handleDeleteProfile = async (id: string): Promise<void> => {
+    const target = codexProfiles.find((p) => p.id === id)
+    const confirmed = await requestConfirm({
+      title: '删除自定义 API 连接',
+      message: `确定删除“${target?.name || target?.baseUrl || '该连接'}”吗？`,
+      detail: '保存的 API Key 会同时从本机加密存储中移除，此操作无法撤销。',
+      confirmLabel: '删除',
+      tone: 'danger',
+      actionIcon: 'delete'
+    })
+    if (!confirmed) return
+    try {
+      const refreshed = await updateCodexConnection(() => window.modmind.externalAgents.deleteProfile(id))
+      if (id === activeCodexProfileId) {
+        setDraftIsNew(false)
+        setPendingNewProfileId(null)
+        setAgentDraft({ baseUrl: refreshed.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
+        const profile = refreshed.codexProfiles?.find((p) => p.id === refreshed.activeCodexProfileId)
+        if (profile) setAgentDraftName(profile.name)
+      }
+      setNotice('已删除自定义 API 连接')
+    } catch (error) {
+      setNotice(`删除连接失败：${errorMessage(error)}`)
+    }
+  }
+
+  const handleAddProfile = async (): Promise<void> => {
+    if (draftIsNew) return
+    if (!await confirmDiscardConnectionDraft()) return
+    setDraftIsNew(true)
+    setPendingNewProfileId(`p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`)
+    setAgentDraft({ baseUrl: '', apiKey: '' })
+    setAgentDraftName('')
+    invalidateConnectionTest()
+  }
+
+  const handleCancelNewProfile = (): void => {
+    setDraftIsNew(false)
+    setPendingNewProfileId(null)
+    setAgentDraft({ baseUrl: settings.externalAgents?.codex?.baseUrl ?? '', apiKey: '' })
+    const profile = codexProfiles.find((p) => p.id === activeCodexProfileId)
+    if (profile) setAgentDraftName(profile.name)
+    invalidateConnectionTest()
+  }
+
+  // The IPC layer rewrites `error` into a generic sentence, so build the diagnostic
+  // line from the structured fields instead — that is the whole point of the button.
+  const describeConnectionTest = (result: CodexConnectionTestResult): string => {
+    const status = result.httpStatus
+    if (result.failureKind === 'credential-required') return '地址已改变，请为新地址填写 API Key 后再测试'
+    if (result.failureKind === 'invalid-payload') return '返回的不是有效模型目录，请确认接口地址'
+    if (status === 401) return 'HTTP 401 · API Key 无效，或该密钥已被吊销'
+    if (status === 403) return 'HTTP 403 · 密钥没有访问权限，或该地区被限制'
+    if (status === 404) return 'HTTP 404 · 这个地址没有 /models 接口，请确认 Base URL（多数服务以 /v1 结尾）'
+    if (status === 429) return 'HTTP 429 · 请求过于频繁或额度不足，稍后再试'
+    if (typeof status === 'number' && status >= 500) return `HTTP ${status} · 服务端出错，不是本地配置问题`
+    if (typeof status === 'number') return `HTTP ${status} · 接口拒绝了请求`
+    const code = result.failureCode ?? ''
+    if (result.failureKind === 'timeout') return '连接超时 · 20 秒内没有响应，地址可能不通，或被网络/代理拦截'
+    if (code === 'ECONNREFUSED') return '连接被拒绝 · 该端口没有服务在监听，请检查地址和端口'
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return '域名解析失败 · 请检查地址拼写、DNS 或代理设置'
+    if (/CERT|TLS|SSL/.test(code)) return '证书校验失败 · 可能是自签证书或代理拦截了连接'
+    if (result.failureKind === 'network') return '无法连接 · 网络不通或请求被拦截，请检查 Base URL 与代理'
+    return result.error || '未知错误'
+  }
+
+  const handleTestConnection = async (): Promise<void> => {
+    const baseUrl = agentDraft.baseUrl?.trim() || settings.externalAgents?.codex?.baseUrl || ''
+    if (!baseUrl) {
+      setNotice('请先填写 Base URL 再测试连接')
+      return
+    }
+    invalidateConnectionTest()
+    const generation = connectionTestGeneration.current
+    setTestingConnection(true)
+    try {
+      const result = await window.modmind.externalAgents.testConnection({
+        baseUrl,
+        apiKey: agentDraft.apiKey?.trim() || undefined,
+        id: draftIsNew ? undefined : activeCodexProfileId ?? undefined
+      })
+      if (generation !== connectionTestGeneration.current) return
+      setConnectionTest(result)
+      if (!result.ok) setConnectionTestError(describeConnectionTest(result))
+    } catch (error) {
+      const message = errorMessage(error)
+      if (generation !== connectionTestGeneration.current) return
+      setConnectionTestError(message)
+      setConnectionTest({ ok: false, baseUrl, models: [], latencyMs: 0, error: message })
+    } finally {
+      if (generation === connectionTestGeneration.current) setTestingConnection(false)
     }
   }
 
@@ -4837,9 +5001,8 @@ export default function App(): React.JSX.Element {
       setExternalAgentsReady(true)
       const current = settingsRef.current.externalAgents?.codex
       if (scannedConnection?.mode === 'hosted' && current?.mode === 'hosted' && current.baseUrl === scannedConnection.baseUrl && result.models.length) {
-        if (!current.model?.trim() || result.baseUrl !== current.baseUrl) {
-          await saveLocalCodexPreference({ baseUrl: result.baseUrl,
-            ...(!current.model?.trim() ? { model: result.models[0], reasoningEffort: undefined } : {}) })
+        if (!current.model?.trim() && result.defaultModel) {
+          await saveLocalCodexPreference({ model: result.defaultModel, reasoningEffort: undefined })
         }
       }
       return result
@@ -4863,16 +5026,17 @@ export default function App(): React.JSX.Element {
     const current = settingsRef.current
     await saveSettingsPatch({ externalAgents: { ...current.externalAgents, codex: { ...current.externalAgents?.codex, mode: current.externalAgents?.codex?.mode ?? 'local', ...patch } } })
     if (patch.model !== undefined) resetSurfaceAiSelections()
+
   }
 
   useEffect(() => {
-    if (visibleAiSettingsBackend !== 'codex' || view !== 'settings') return
+    if (visibleAiSettingsBackend !== 'codex' || view !== 'settings' || draftIsNew) return
     const storedUrl = settings.externalAgents?.codex?.baseUrl ?? ''
     const preferredUrl = settings.externalAgents?.codex?.mode === 'hosted' ? storedUrl || localCodexScan?.baseUrl || '' : localCodexScan?.baseUrl || storedUrl
     setAgentDraft(current => current.baseUrl?.trim() && current.baseUrl !== storedUrl ? current : {
       ...current, baseUrl: preferredUrl
     })
-  }, [visibleAiSettingsBackend, view, localCodexScan?.baseUrl, settings.externalAgents?.codex?.baseUrl, settings.externalAgents?.codex?.mode])
+  }, [visibleAiSettingsBackend, view, localCodexScan?.baseUrl, settings.externalAgents?.codex?.baseUrl, settings.externalAgents?.codex?.mode, draftIsNew])
 
   useEffect(() => {
     if (visibleAiSettingsBackend === 'codex') void scanLocalCodex()
@@ -5854,21 +6018,21 @@ export default function App(): React.JSX.Element {
                   </QuotaModelPicker> : <div className="codex-settings-gate">
                   <fieldset className="codex-ai-settings" aria-label="本机 Codex 设置" disabled={codexSettingsBlocked} aria-hidden={codexSettingsBlocked || undefined}><div className="local-codex-settings">
                     <div className="beginner-ai-preferences">
-                      <label className="beginner-model-control"><span>模型</span><div>{localCodexScan?.models.length ? <select value={settings.externalAgents?.codex?.model ?? localCodexScan.model ?? ''} disabled={configuringAgents.codex} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
+                      <label className="beginner-model-control"><span>模型</span><div>{!draftIsNew && localCodexScan?.models.length ? <select value={settings.externalAgents?.codex?.model ?? localCodexScan.model ?? ''} disabled={configuringAgents.codex || draftIsNew} onChange={(event) => void saveLocalCodexPreference({ model: event.target.value, reasoningEffort: undefined })}>
                         <option value="" disabled>请选择当前服务的模型</option>
                         {settings.externalAgents?.codex?.model && !localCodexScan.models.includes(settings.externalAgents.codex.model) ? <option value={settings.externalAgents.codex.model}>{settings.externalAgents.codex.model}</option> : null}
                         {localCodexScan.models.map(model => <option key={model} value={model}>{model}</option>)}
-                      </select> : <input key={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} defaultValue={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} placeholder="输入模型 ID" disabled={configuringAgents.codex} onBlur={event => { const model = event.target.value.trim(); if (model && model !== settings.externalAgents?.codex?.model) void saveLocalCodexPreference({ model, reasoningEffort: undefined }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />}<button type="button" className="icon-button" title="刷新当前服务的模型" disabled={localCodexScanning || configuringAgents.codex} onClick={() => void scanLocalCodex()}>{localCodexScanning ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div></label>
-                      <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={settings.externalAgents?.codex?.reasoningEffort ?? 'auto'} allowedEfforts={selectedReasoningEfforts(settings.externalAgents?.codex?.model ?? '', settings.externalAgents?.codex?.reasoningEffortOptions)} disabled={configuringAgents.codex} onChange={value => void saveLocalCodexPreference({ reasoningEffort: value === 'auto' ? undefined : value })} /></div>
+                      </select> : <input key={draftIsNew ? pendingNewProfileId : settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} defaultValue={draftIsNew ? agentDraft.model ?? '' : settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''} placeholder="输入模型 ID" disabled={configuringAgents.codex} onBlur={event => { const model = event.target.value.trim(); if (draftIsNew) setAgentDraft(current => ({ ...current, model })); else if (model && model !== settings.externalAgents?.codex?.model) void saveLocalCodexPreference({ model, reasoningEffort: undefined }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />}<button type="button" className="icon-button" title="刷新当前服务的模型" disabled={localCodexScanning || configuringAgents.codex || draftIsNew} onClick={() => void scanLocalCodex()}>{localCodexScanning ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}</button></div></label>
+                      <div className="beginner-reasoning-control"><span>思考强度</span><ReasoningControl value={settings.externalAgents?.codex?.reasoningEffort ?? 'auto'} allowedEfforts={selectedReasoningEfforts(settings.externalAgents?.codex?.model ?? '', settings.externalAgents?.codex?.reasoningEffortOptions)} disabled={configuringAgents.codex || draftIsNew} onChange={value => void saveLocalCodexPreference({ reasoningEffort: value === 'auto' ? undefined : value })} /></div>
                     </div>
                     {localCodexScanError && !codexSettingsBlocked ? <p role="alert">{localCodexScanError} <button className="secondary-button compact" type="button" onClick={() => void scanLocalCodex()}>重试</button></p> : null}
                     <ModelContextSetting
-                      key={`codex:${settings.externalAgents?.codex?.mode}:${settings.externalAgents?.codex?.model}:${settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined) ?? 'auto'}:${settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined) ?? 'auto'}`}
+                      key={`codex:${settings.externalAgents?.codex?.mode}:${settings.externalAgents?.codex?.model}:${settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? settings.externalAgents?.codex?.declaredModelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined) ?? 'auto'}:${settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined) ?? 'auto'}`}
                       model={settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''}
-                      value={settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined)}
+                      value={settings.externalAgents?.codex?.modelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? settings.externalAgents?.codex?.declaredModelContextWindows?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.contextWindow : undefined)}
                       compactValue={settings.externalAgents?.codex?.modelAutoCompactTokenLimits?.[settings.externalAgents?.codex?.model ?? ''] ?? (settings.externalAgents?.codex?.mode !== 'hosted' ? localCodexScan?.autoCompactTokenLimit : undefined)}
                       allowLongerContext={Boolean(settings.allowLongerContext)}
-                      saving={Boolean(configuringAgents.codex)}
+                      saving={Boolean(configuringAgents.codex) || draftIsNew}
                       onAllowLongerContextChange={allowLongerContext => void saveSettingsPatch({ allowLongerContext })}
                       onSave={(value, compactValue) => {
                         const model = settings.externalAgents?.codex?.model ?? localCodexScan?.model ?? ''
@@ -5881,12 +6045,38 @@ export default function App(): React.JSX.Element {
                     />
                   </div>
                   <div className="external-agent-settings">
+                    <div className="codex-profile-manager">
+                      <div className="codex-profile-manager-head">
+                        <h3>自定义 API 连接</h3>
+                        <button className="secondary-button compact" type="button" onClick={handleAddProfile} disabled={draftIsNew || codexSettingsBlocked}><Plus size={14} />新增连接</button>
+                      </div>
+                      <div className="codex-profile-list">
+                        {codexProfiles.length === 0 ? <p className="codex-profile-empty">还没有保存的自定义连接。点击“新增连接”创建一个，或直接在下方填写后保存。</p> : codexProfiles.map((profile) => (
+                          <div className={`codex-profile-row${profile.id === activeCodexProfileId ? ' active' : ''}`} key={profile.id}>
+                            <button className="codex-profile-main" type="button" disabled={configuringAgents.codex} onClick={() => void handleSelectProfile(profile.id)}>
+                              <span className="codex-profile-name">{profile.name}{profile.id === activeCodexProfileId && <span className="codex-profile-badge"><Plug size={12} />当前</span>}</span>
+                              <span className="codex-profile-url">{profile.baseUrl || '（未填写地址）'}{profile.hasStoredKey ? ' · 已保存密钥' : ''}</span>
+                            </button>
+                            <div className="codex-profile-actions">
+                              <button className="icon-button" type="button" title="删除该连接" disabled={configuringAgents.codex} onClick={() => void handleDeleteProfile(profile.id)}><Trash2 size={15} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                     <div className="codex-connection-settings">
                         <div className="external-agent-editor-form">
-                          <label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={event => setAgentDraft(current => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
-                          <label className="field-label">API Key<SecretInput secretKey="codex" stored={localCodexHasStoredKey} value={agentDraft.apiKey ?? ''} onChange={event => setAgentDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={localCodexHasStoredKey ? '已发现凭证，留空保持不变' : '输入 API Key'} /></label>
+                          <label className="field-label">连接名称<input value={agentDraftName} onChange={event => setAgentDraftName(event.target.value)} placeholder="例如：公司网关 / OpenRouter" /></label>
+                          <label className="field-label">Base URL<input value={agentDraft.baseUrl ?? ''} onChange={event => { setAgentDraft(current => ({ ...current, baseUrl: event.target.value })); invalidateConnectionTest() }} placeholder="https://api.example.com/v1" /></label>
+                          <label className="field-label">API Key<SecretInput secretKey="codex" stored={!draftIsNew && localCodexHasStoredKey} value={agentDraft.apiKey ?? ''} onChange={event => { setAgentDraft(current => ({ ...current, apiKey: event.target.value })); invalidateConnectionTest() }} placeholder={!draftIsNew && localCodexHasStoredKey ? '已发现凭证，留空保持不变' : '输入 API Key'} /></label>
                         </div>
-                        <div className="settings-actions editor-actions"><span role="status">{localCodexHasStoredKey ? '凭证已保存' : ''}</span><div className="settings-button-group"><button className="primary-button compact" type="button" disabled={configuringAgents.codex} onClick={() => void configureExternalAgent('codex')}>{configuringAgents.codex ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}保存连接</button></div></div>
+                        <div className="settings-actions editor-actions"><span role="status">{draftIsNew ? '正在新建连接' : localCodexHasStoredKey ? '凭证已保存' : ''}</span><div className="settings-button-group">{draftIsNew && <button className="secondary-button compact" type="button" onClick={handleCancelNewProfile}>取消</button>}<button className="secondary-button compact" type="button" disabled={testingConnection} onClick={() => void handleTestConnection()}>{testingConnection ? <LoaderCircle className="spin" size={14} /> : <Plug size={14} />}测试连接</button><button className="primary-button compact" type="button" disabled={configuringAgents.codex} onClick={() => void handleSaveConnection()}>{configuringAgents.codex ? <LoaderCircle className="spin" size={14} /> : <Save size={14} />}{draftIsNew ? '新增连接' : '保存连接'}</button></div></div>
+                        <div className="codex-test-slot">{connectionTest && (
+                          <div className={`codex-test-result ${connectionTest.ok ? 'ok' : 'fail'}`} role={connectionTest.ok ? 'status' : 'alert'}>
+                            {connectionTest.ok ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                            <span>{connectionTest.ok ? (connectionTest.models.length ? `目录可访问 · 耗时 ${connectionTest.latencyMs} ms · 候选模型 ${connectionTest.models.length} 个` : `接口可达 · 耗时 ${connectionTest.latencyMs} ms，但没有返回模型列表`) : `连接失败：${connectionTestError || connectionTest.error || '未知错误'}`}</span>
+                          </div>
+                        )}</div>
                     </div>
                   </div></fieldset>
                   {codexSettingsBlocked ? <div className="codex-install-overlay">

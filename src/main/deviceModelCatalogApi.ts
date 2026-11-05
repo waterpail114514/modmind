@@ -1,5 +1,6 @@
 import { isSelectableQuotaModel } from '../shared/quotaModels'
 import { validProviderAccount, PROVIDER_SYNC_CAPABILITY_HEADERS } from '../shared/providerAccounts'
+import { networkFetch, type ProxiedFetch } from './networkRequest'
 
 export interface DeviceModelCatalogFields {
   modelsUrl?: string
@@ -51,8 +52,8 @@ export function parseDeviceModelCatalog(value: Record<string, unknown>, account?
 }
 
 /** Legacy synced accounts use the same server cache, with no upstream fallback. */
-export async function fetchDeviceModelCatalog(siteUrl: string, bearer: string, account?: string) {
-  const response = await fetch(new URL(modelCatalogPath(siteUrl, account), siteUrl), {
+export async function fetchDeviceModelCatalog(siteUrl: string, bearer: string, account?: string, fetcher: ProxiedFetch = networkFetch) {
+  const response = await fetcher(new URL(modelCatalogPath(siteUrl, account), siteUrl), {
     redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(12_000),
     headers: { ...PROVIDER_SYNC_CAPABILITY_HEADERS, Authorization: `Bearer ${bearer}` }
   })

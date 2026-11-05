@@ -742,6 +742,23 @@ describe('agent stream failure extraction', () => {
       expect(classifyAgentStreamFailure('429 Too Many Requests; stream disconnected', type).transient).toBe(false)
     }
   )
+  it('names an oversized prompt together with the capacity the provider stated', () => {
+    expect(classifyAgentStreamFailure("this model's maximum context length is 65536 tokens", { contextWindowExceeded: {} }))
+      .toMatchObject({ status: null, transient: false, kind: 'context-window' })
+    expect(classifyAgentStreamFailure('maximum context length is 65536 tokens').reason).toContain('65,536')
+    expect(classifyAgentStreamFailure('maximum context length is 65536 tokens').reason).toContain('上下文窗口')
+    expect(classifyAgentStreamFailure('prompt is too long for this model').reason).toContain('上下文窗口')
+    // Real managed Codex 0.154.0 wraps the provider body in a JSON string and
+    // only labels it "other", so the wording fallback is what catches it in production.
+    const forwarded = JSON.stringify({ error: { message: "this model's maximum context length is 65536 tokens", type: 'invalid_request_error', code: 'context_length_exceeded' } })
+    expect(classifyAgentStreamFailure(forwarded, 'other')).toMatchObject({ status: null, transient: false, kind: 'context-window' })
+    expect(classifyAgentStreamFailure(forwarded, 'other').reason).toContain('65,536')
+  })
+  it('keeps a plain rate limit away from the context-window path', () => {
+    expect(classifyAgentStreamFailure('429 Too Many Requests').kind).toBe('rate-limit')
+    expect(classifyAgentStreamFailure('too many tokens per minute', 'rateLimitExceeded').kind).toBe('rate-limit')
+  })
+
   it('falls back to message classification for unknown structured errors', () => {
     expect(classifyAgentStreamFailure('socket hang up', 'other').transient).toBe(true)
     expect(classifyAgentStreamFailure('503 Service Unavailable', { futureError: {} }).transient).toBe(true)

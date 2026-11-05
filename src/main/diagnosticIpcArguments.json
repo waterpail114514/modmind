@@ -334,6 +334,9 @@
     "kind",
     "configuration"
   ],
+  "external-agents:deleteProfile": [
+    "id"
+  ],
   "external-agents:history": [
     "kind"
   ],
@@ -345,6 +348,15 @@
   ],
   "external-agents:openDocs": [
     "kind"
+  ],
+  "external-agents:saveProfile": [
+    "input"
+  ],
+  "external-agents:setActiveProfile": [
+    "id"
+  ],
+  "external-agents:testConnection": [
+    "input"
   ],
   "feature-plugins:install": [
     "expectedId"

@@ -37,6 +37,11 @@ export interface CodexServerConfig {
   contextWindow?: number
   autoCompactTokenLimit?: number
   allowLongerContext?: boolean
+  /** Capacity the endpoint advertised; outranks local tables but never a typed override. */
+  declaredContextWindow?: number
+  /** Output ceiling the endpoint advertised, used to reserve space inside the window. */
+  declaredMaxOutputTokens?: number
+  declaredMaxInputTokens?: number
   /** Original provider address before routing through the local protocol adapter. */
   upstreamBaseUrl?: string
 }
@@ -160,8 +165,14 @@ function validateConfig(value: unknown): CodexServerConfig {
   const upstreamBaseUrl = typeof record.upstreamBaseUrl === 'string' ? normalizeBaseUrl(record.upstreamBaseUrl) : undefined
   const contextWindow = record.contextWindow as number | undefined
   const autoCompactTokenLimit = record.autoCompactTokenLimit as number | undefined
-  validateCodexAutoCompactTokenLimit(model, { baseUrl: upstreamBaseUrl ?? baseUrl, contextWindow }, autoCompactTokenLimit)
-  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow, autoCompactTokenLimit, allowLongerContext: record.allowLongerContext === true, upstreamBaseUrl}
+  const declaredContextWindow = record.declaredContextWindow as number | undefined
+  const declaredMaxOutputTokens = record.declaredMaxOutputTokens as number | undefined
+  const declaredMaxInputTokens = record.declaredMaxInputTokens as number | undefined
+  if (declaredMaxInputTokens !== undefined && !validModelContext(declaredMaxInputTokens)) throw new Error('端点声明的输入上限无效')
+  if (declaredContextWindow !== undefined && !validModelContext(declaredContextWindow)) throw new Error('端点声明的上下文窗口必须是 1,024–100,000,000 之间的整数')
+  if (declaredMaxOutputTokens !== undefined && !validModelContext(declaredMaxOutputTokens)) throw new Error('端点声明的输出上限必须是 1,024–100,000,000 之间的整数')
+  validateCodexAutoCompactTokenLimit(model, { baseUrl: upstreamBaseUrl ?? baseUrl, contextWindow, declaredContextWindow, declaredMaxOutputTokens, declaredMaxInputTokens }, autoCompactTokenLimit)
+  return {apiKey, baseUrl, model, reasoningEffort, reasoningCapabilities: record.reasoningCapabilities as ModelReasoningCapabilities | undefined, contextWindow, autoCompactTokenLimit, allowLongerContext: record.allowLongerContext === true, declaredContextWindow, declaredMaxOutputTokens, declaredMaxInputTokens, upstreamBaseUrl}
 }
 
 function codexConfigText(config: CodexServerConfig, modelCatalogPath: string | undefined, autoCompactTokenLimit: number): string {
@@ -187,7 +198,7 @@ function codexConfigText(config: CodexServerConfig, modelCatalogPath: string | u
 }
 
 async function writeCodexConfig(configPath: string, config: CodexServerConfig): Promise<boolean> {
-  const options = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, reasoning: config.reasoningCapabilities, allowLongerContext: config.allowLongerContext }
+  const options = { baseUrl: config.upstreamBaseUrl ?? config.baseUrl, contextWindow: config.contextWindow, declaredContextWindow: config.declaredContextWindow, declaredMaxOutputTokens: config.declaredMaxOutputTokens, declaredMaxInputTokens: config.declaredMaxInputTokens, reasoning: config.reasoningCapabilities, allowLongerContext: config.allowLongerContext }
   const catalog = await prepareCodexModelCatalog(path.dirname(configPath), config.model, options)
   const autoCompactTokenLimit = resolveCodexAutoCompactTokenLimit(config.model, options, config.autoCompactTokenLimit)
   const desired = codexConfigText(config, catalog.path, autoCompactTokenLimit)
